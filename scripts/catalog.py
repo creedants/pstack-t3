@@ -12,7 +12,7 @@ GROUPS = [
     ("Understand", lambda name: name in {"how", "why", "teach", "recall", "blast-radius", "bro"}),
     ("Plan and run long work", lambda name: name in {"figure-it-out", "show-me-your-work"}),
     ("Verify", lambda name: name in {"tdd", "create-verification-skill", "maintain-verification-skill", "benchmark-checklist"}),
-    ("Write and clean", lambda name: name in {"unslop", "technical-writing", "no-comments", "typescript-best-practices"}),
+    ("Write and clean", lambda name: name in {"unslop", "technical-writing", "no-comments", "typescript-best-practices", "correct"}),
     ("Setup and authoring", lambda name: name in {"setup-pstack", "pstack-runtime", "pstack-author-skill", "automate-me", "make-bot-ui"}),
     ("Principles", lambda name: name.startswith("principle-")),
 ]
