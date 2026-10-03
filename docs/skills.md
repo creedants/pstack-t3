@@ -51,7 +51,6 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Skill | What it does |
 | --- | --- |
-| [`correct`](../skills/correct/SKILL.md) | Find the mistakes agents keep repeating in this repo and make each one impossible. Try architecture first, then types, then a lint whose error names the fix, then a test, and write docs last. Prove each check fails on a real past mistake. Repeat this each time the operator corrects you. Use for /correct. |
 | [`no-comments`](../skills/no-comments/SKILL.md) | Spawn Comment Sicko, fix accepted findings, and offer encodings for claimed constraints. |
 | [`technical-writing`](../skills/technical-writing/SKILL.md) | Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages. |
 | [`typescript-best-practices`](../skills/typescript-best-practices/SKILL.md) | TypeScript best practices. Use when reading or editing any .ts or .tsx file. |
@@ -62,6 +61,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | Skill | What it does |
 | --- | --- |
 | [`automate-me`](../skills/automate-me/SKILL.md) | Use for "automate me", "create/update/refresh my -mode skill", "turn/capture my preferences or working style into a skill", or wanting agents to follow how the user works. Drafts or revises a personal -mode skill via pstack-author-skill + unslop, installed for every T3 provider, optionally pulling fresh evidence from recent T3 threads. |
+| [`correct`](../skills/correct/SKILL.md) | Find the mistakes agents keep repeating in this repo and make each one impossible. Try architecture first, then types, then a lint whose error names the fix, then a test, and write docs last. Prove each check fails on a real past mistake. Repeat this each time the operator corrects you. Use for /correct. |
 | [`make-bot-ui`](../skills/make-bot-ui/SKILL.md) | >- Use when building a custom UI (page, dashboard, buttons) that should wake an existing bot over its webhook (for example a Grok Bot or Cursor automation routine), when the user must provide a webhook sender key, or when exposing that UI on Tailscale. |
 | [`pstack-author-skill`](../skills/pstack-author-skill/SKILL.md) | Author, update, or tune a skill so it works under every provider T3 runs (Claude Code, Codex, Grok, Cursor): frontmatter, placement, lean body, and a fresh-child test. Use for 'write a skill', 'new skill for X', 'update this skill', 'tune this skill's description', or when reflect or automate-me hands off a skill edit. |
 | [`pstack-runtime`](../skills/pstack-runtime/SKILL.md) | How pstack-t3 skills delegate, pick models, isolate work, schedule, and verify inside T3 Code through the orchestrator V2 tools. Read before running any other pstack skill that spawns workers, picks a model, or schedules work. |

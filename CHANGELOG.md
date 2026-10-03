@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Synced to upstream pstack 0.15.7 ([cursor/plugins@9511e60](https://github.com/cursor/plugins/commit/9511e60321f7e533a187d62854a3d53a53752874)). Adds `/correct`.
+- Synced to upstream pstack 0.15.7 ([cursor/plugins@9511e60](https://github.com/cursor/plugins/commit/9511e60321f7e533a187d62854a3d53a53752874)). Adds `$correct`.
 - A README covering what pstack-t3 does, real run excerpts, a table of example prompts, a diagram, and an FAQ.
 - A [guide](docs/guide.md) to the first hour, a [how-it-works](docs/how-it-works.md) page, and a generated [skills catalog](docs/skills.md) that the build keeps in sync.
 - A banner and a social preview image in `docs/assets/`.

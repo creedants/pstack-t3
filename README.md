@@ -100,7 +100,7 @@ The [guide](docs/guide.md) walks through your first hour.
 | `$poteto-mode babysit PR 482 until it's green.` | It watches CI and review threads, fixes what it can, and reports. |
 | `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log, scheduled checks, and per-PR verification before merge. |
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
-| `$correct` | You keep correcting agents for the same mistakes. It finds each class and makes that class impossible in the repo. |
+| `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
 
 See [all 52 skills and every playbook](docs/skills.md).
 
