@@ -27,6 +27,7 @@ It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), 
 - **Makes different models check each other's work.** `$interrogate` sends your diff to reviewers on different model families at once. You get one verdict, with claims the lead has verified and agreement mapped across families.
 - **Runs work in parallel without collisions.** `$swarm` splits work across workers or races them. `$arena` runs several attempts and grafts the best parts into one. Workers that write get their own git worktree.
 - **Proves the change works.** It reproduces bugs on the real surface, including driving a web UI through T3's preview tools, and verifies against the real artifact rather than "it compiles".
+- **Gives each project its own standing coordinator.** `$brigade` opens a head chef thread per project or focus area, the way Lauren runs one coordinator per area. You move between them and review what landed.
 - **Keeps going while you're away.** Overnight runs use child agents, separate worktree threads, and an hourly scheduled check. It still stops for anything irreversible you didn't authorize.
 - **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so.
 - **Writes like a senior engineer.** Short, direct replies, every claim labeled measured, inferred, or guess, and the engineering principles behind each decision named.
@@ -101,8 +102,9 @@ The [guide](docs/guide.md) walks through your first hour.
 | `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log, scheduled checks, and per-PR verification before merge. |
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
+| `$brigade open a head chef for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
 
-See [all 52 skills and every playbook](docs/skills.md).
+See [all 53 skills and every playbook](docs/skills.md).
 
 ## How it works
 

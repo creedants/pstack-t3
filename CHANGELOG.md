@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `$brigade`, a skill new to pstack-t3. It gives a project or focus area a pinned head chef thread that holds a purpose, groups incoming requests, delegates them to poteto-mode playbooks, gates every merge on a review by another model family at the exact head SHA, and reports only what changed since the last report. `brigade.py` keeps each restaurant's state under `~/.local/state/pstack-t3/brigade/`. See [the plan](docs/brigade-plan.md).
 - Synced to upstream pstack 0.15.7 ([cursor/plugins@9511e60](https://github.com/cursor/plugins/commit/9511e60321f7e533a187d62854a3d53a53752874)). Adds `$correct`.
 - Synced to upstream pstack 0.15.9 ([cursor/plugins@e43c7ee](https://github.com/cursor/plugins/commit/e43c7ee26e00)). `$architect` assumes an agent edits the code next and screens designs for split ownership, two ways to do one task, importable internals, and hand-synced lists. The Perf issue playbook replaces its eight strategy families with seven ordered performance mantras, and Hillclimb orders perf hypotheses by them.
 - A README covering what pstack-t3 does, real run excerpts, a table of example prompts, a diagram, and an FAQ.

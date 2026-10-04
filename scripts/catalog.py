@@ -10,7 +10,7 @@ GROUPS = [
     ("Entry point", lambda name: name == "poteto-mode"),
     ("Multi-model workflows", lambda name: name in {"interrogate", "swarm", "arena", "architect", "reflect"}),
     ("Understand", lambda name: name in {"how", "why", "teach", "recall", "blast-radius", "bro"}),
-    ("Plan and run long work", lambda name: name in {"figure-it-out", "show-me-your-work"}),
+    ("Plan and run long work", lambda name: name in {"brigade", "figure-it-out", "show-me-your-work"}),
     ("Verify", lambda name: name in {"tdd", "create-verification-skill", "maintain-verification-skill", "benchmark-checklist"}),
     ("Write and clean", lambda name: name in {"unslop", "technical-writing", "no-comments", "typescript-best-practices"}),
     ("Setup and authoring", lambda name: name in {"setup-pstack", "pstack-runtime", "pstack-author-skill", "automate-me", "make-bot-ui", "correct"}),

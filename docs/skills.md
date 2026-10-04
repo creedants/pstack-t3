@@ -35,6 +35,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Skill | What it does |
 | --- | --- |
+| [`brigade`](../skills/brigade/SKILL.md) | Give a project or a focus area its own standing head chef: one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook. |
 | [`figure-it-out`](../skills/figure-it-out/SKILL.md) | Design an auditable playbook when no narrower one fits: a large migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and logs decisions via show-me-your-work. Use for /figure-it-out, 'figure it out', a large migration, or when no narrower playbook applies. |
 | [`show-me-your-work`](../skills/show-me-your-work/SKILL.md) | Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, autonomous or multi-phase runs, or work a human reviews after stepping away. |
 
