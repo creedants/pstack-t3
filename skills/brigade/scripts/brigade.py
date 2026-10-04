@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
-    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary"),
+    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
@@ -159,20 +160,24 @@ class Restaurant:
     def update(self, table, ident, kind, **fields):
         rows, row = self.find(table, ident)
         changed = {key: value for key, value in fields.items() if value is not None}
+        moved = "state" in changed and changed["state"] != row.get("state")
         row.update(changed)
         self.save_rows(table, rows)
-        if "state" in changed:
+        if moved:
             self.log(kind, ident, changed["state"], row.get("summary") or row.get("question", ""))
         return row
 
 
-def open_restaurant(root, project_root, name):
+LANDING = ("human", "merge", "push", "local")
+
+
+def open_restaurant(root, project_root, name, landing):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
     created = not (directory / "restaurant.json").exists()
     if created:
         directory.mkdir(parents=True, exist_ok=True)
-        meta = {"restaurant": name, "projectRoot": str(project_root),
+        meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
                 "openedAt": now(), "lastActivityAt": now(), "lastReportAt": None, "thread": None, "schedules": {}}
         write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     meta = json.loads((directory / "restaurant.json").read_text())
@@ -272,6 +277,103 @@ def report(restaurant, write=True):
     return text
 
 
+MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
+LAND = Path(__file__).resolve().parents[2] / "landing" / "scripts" / "land.py"
+
+
+def holder(restaurant, dish):
+    return f"{slug(restaurant.meta['restaurant'])}/{dish}"
+
+
+def claim_lease(restaurant, dish, paths):
+    """Claim the dish's paths in the repository's landing queue. A refused claim fires nothing."""
+    result = subprocess.run([sys.executable, str(LAND), "--repo", restaurant.meta["projectRoot"], "lease", "claim",
+                             "--holder", holder(restaurant, dish), "--paths", paths], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise BrigadeError("nothing fired: " + result.stderr.strip().removeprefix("land: "))
+    return result.stdout.strip()
+
+
+def menu_purpose(restaurant):
+    text = (restaurant.dir / "menu.md").read_text()
+    match = re.search(r"^## Purpose\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    purpose = match.group(1).strip() if match else ""
+    if not purpose or purpose.startswith("What this restaurant exists to achieve"):
+        raise BrigadeError("menu.md has no purpose yet; write the Purpose section before briefing a worker")
+    return purpose
+
+
+def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
+    """The worker brief, assembled from the store so no field is left out or left as a placeholder."""
+    _, dish = restaurant.find("dishes.tsv", ident)
+    paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
+    if not paths or not lease:
+        raise BrigadeError(f"{ident} has no lease; fire with --paths, or pass --paths and --lease")
+    if not acceptance:
+        raise BrigadeError("a brief needs at least one --acceptance criterion")
+    if dish["state"] not in ("in-progress", "sent-back"):
+        raise BrigadeError(f"{ident} is {dish['state']}; brief a dish that is in progress or sent back")
+    if not dish["branch"]:
+        dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
+    tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
+    land = LAND
+    report = restaurant.dir / "reports" / f"{ident}.md"
+    findings = restaurant.dir / "reports" / f"{ident}-review.md"
+    lines = [
+        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", "",
+        f"GOAL: {goal}",
+        f"PURPOSE: {menu_purpose(restaurant)}",
+        f"TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
+        "SCOPE:",
+        f"- You run in your own git worktree on branch `{dish['branch']}`, started from `{base}`. Work only there, and commit on that branch.",
+        f"- Change only these paths, leased to you as {lease}: {paths}. A change outside them is refused when it lands. Report it instead of making it.",
+        "- Keep history linear: no merge commits. Never merge, rebase a shared branch, push trunk, or open a PR. The landing queue does that.",
+        "", "CONTEXT:", *([f"- {item}" for item in context] or ["- None beyond the tickets."]),
+        *([f"- A reviewer sent an earlier attempt back. Its findings: {findings}"] if findings.exists() else []),
+        "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
+        "", "VERIFY:", f"- {verify}",
+        f"- Run builds and tests through `python3 {land} slot -- <command>`.",
+        *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
+          if dish["station"] in MEASURING_STATIONS else []),
+        "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. At the limit, write the report with what you have and stop.",
+        "", "REPORT:",
+        f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
+        "- Then end your turn with one line naming the report path. Writing the report is how the coordinator knows you are done.",
+        "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
+    ]
+    text = "\n".join(lines) + "\n"
+    write_atomic(restaurant.dir / "briefs" / f"{ident}.md", text)
+    return text
+
+
+def started_at(restaurant, ident):
+    """When the dish's current attempt started: its last move to in-progress."""
+    moves = [row["at"] for row in restaurant.rows("log.tsv") if row["kind"] == "dish" and row["id"] == ident and row["state"] == "in-progress"]
+    return datetime.fromisoformat(moves[-1]) if moves else None
+
+
+def watch(restaurant):
+    lines = []
+    moment = datetime.now(timezone.utc)
+    for dish in restaurant.rows("dishes.tsv"):
+        if dish["state"] != "in-progress":
+            continue
+        start = started_at(restaurant, dish["id"]) or datetime.fromisoformat(dish["at"])
+        minutes = int((moment - start).total_seconds() // 60)
+        timebox = int(dish.get("timebox") or 60)
+        report = restaurant.dir / "reports" / f"{dish['id']}.md"
+        where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
+        written = datetime.fromtimestamp(report.stat().st_mtime, timezone.utc) if report.exists() else None
+        if written and written >= start:
+            ago = int((moment - written).total_seconds() // 60)
+            lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
+        elif minutes > timebox:
+            lines.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
+        else:
+            lines.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+    return "\n".join(lines) or "no work in progress"
+
+
 def walk(root, stale_hours=24):
     lines = []
     for meta_path in sorted(root.glob("*/*/restaurant.json")):
@@ -279,7 +381,8 @@ def walk(root, stale_hours=24):
         meta = restaurant.meta
         age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
         idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
-        lines.append(f"{meta['restaurant']} ({meta['projectRoot']}){idle}: {status_line(restaurant)}")
+        landing = f", lands by {meta['landing']}" if meta.get("landing") else ""
+        lines.append(f"{meta['restaurant']} ({meta['projectRoot']}{landing}){idle}: {status_line(restaurant)}")
         lines.append(f"  thread {meta.get('thread') or 'not recorded'}, store {restaurant.dir}")
         for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
             lines.append(f"  {question['id']}: {question['question']}")
@@ -295,10 +398,13 @@ def parser():
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--landing", choices=LANDING, required=True,
+                   help="who lands work: human (PRs you merge), merge (PRs the queue merges), push (no PRs), local (a lane ref)")
 
     p = sub.add_parser("set", help="record the head chef thread or a schedule id")
     p.add_argument("--thread")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
+    p.add_argument("--landing", choices=LANDING, help="record a landing mode changed with land.py mode")
 
     p = sub.add_parser("ticket", help="add, list, or update tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -318,12 +424,27 @@ def parser():
     p.add_argument("--summary", required=True)
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
+    p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
+    p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
+
+    p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field is missing")
+    p.add_argument("id")
+    p.add_argument("--goal", required=True, help="one sentence: the outcome")
+    p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
+    p.add_argument("--verify", required=True, help="exact commands that prove it, plus known gotchas")
+    p.add_argument("--paths", default="", help="leased paths, when fire did not claim them")
+    p.add_argument("--lease", default="", help="the landing lease id, when fire did not claim it")
+    p.add_argument("--base", required=True, help="the trunk ref the worker's branch starts from, such as origin/main")
+    p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
+
+    sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
 
     p = sub.add_parser("dish", help="update a dish")
     p.add_argument("id")
     p.add_argument("--state", choices=DISH_STATES)
     for field in ("task", "thread", "branch", "pr", "sha"):
         p.add_argument(f"--{field}")
+    p.add_argument("--timebox", type=int, help="minutes; raise it once for a worker that is still making progress")
 
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
@@ -364,7 +485,7 @@ def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
     if args.command == "open":
-        restaurant, created = open_restaurant(root, args.project_root, args.name)
+        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing)
         return f"{'opened' if created else 'exists'} {restaurant.dir}"
     if args.command == "walk":
         return walk(root, args.stale_hours)
@@ -376,6 +497,8 @@ def run(argv):
         meta = restaurant.meta
         if args.thread:
             meta["thread"] = args.thread
+        if args.landing:
+            meta["landing"] = args.landing
         for pair in args.schedule:
             name, _, ident = pair.partition("=")
             if not ident:
@@ -404,9 +527,11 @@ def run(argv):
             if ticket["state"] != "waiting":
                 raise BrigadeError(f"{ident} is {ticket['state']}, not waiting")
         dish = restaurant.next_id("dishes.tsv")
+        lease = claim_lease(restaurant, dish, args.paths) if args.paths else ""
         restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": args.station,
                                          "tickets": ",".join(ids), "task": args.task, "thread": args.thread,
-                                         "branch": args.branch, "summary": args.summary})
+                                         "branch": args.branch, "summary": args.summary, "timebox": args.timebox,
+                                         "lease": lease, "paths": args.paths})
         restaurant.log("dish", dish, "in-progress", args.summary)
         rows = restaurant.rows("rail.tsv")
         for row in rows:
@@ -416,7 +541,7 @@ def run(argv):
         for row in rows:
             if row["id"] in ids:
                 restaurant.log("ticket", row["id"], "assigned", row["summary"])
-        return dish
+        return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
 
     if args.command == "dish":
         if args.state in ("queued", "merged"):
@@ -425,7 +550,7 @@ def run(argv):
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=args.thread,
-                                branch=args.branch, pr=args.pr, sha=args.sha)
+                                branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox)
         if args.state == "merged":
             for ticket in filter(None, row["tickets"].split(",")):
                 restaurant.update("rail.tsv", ticket, "ticket", state="done")
@@ -454,6 +579,10 @@ def run(argv):
         rows = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
         return "\n".join(f"{q['id']}: {q['question']} Options: {q['options']}. Default: {q['default']}." for q in rows) or "no open decisions"
 
+    if args.command == "brief":
+        return brief(restaurant, args.id, args.goal, args.acceptance, args.verify, args.paths, args.lease, args.base, args.context)
+    if args.command == "watch":
+        return watch(restaurant)
     if args.command == "status":
         return status_line(restaurant)
     if args.command == "close":

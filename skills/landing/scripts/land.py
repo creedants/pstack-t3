@@ -24,7 +24,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-MODES = ("auto", "human", "local")
+MODES = ("human", "merge", "push", "local")
+LEGACY_MODES = {"auto": "push"}
+REMOTE_MODES = ("human", "merge", "push")
+MERGE_METHODS = ("merge", "squash", "rebase")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS contract (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS lease (
@@ -119,6 +122,27 @@ def governor_slots():
 
 
 @contextlib.contextmanager
+def exclusive_slot():
+    """Hold every slot, landing included, so a benchmark runs on a quiet machine.
+    Slots are taken in a fixed order with blocking locks, so two exclusive callers cannot deadlock."""
+    if os.environ.get("LAND_SLOT"):
+        raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
+    directory = governor_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    names = ["landing-0"] + [f"worker-{index}" for index in range(governor_slots())]
+    handles = [open(directory / name, "a") for name in names]
+    try:
+        for handle in handles:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        os.environ["LAND_SLOT"] = "exclusive"
+        yield
+    finally:
+        os.environ.pop("LAND_SLOT", None)
+        for handle in handles:
+            handle.close()
+
+
+@contextlib.contextmanager
 def slot(pool="worker"):
     """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
     A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock."""
@@ -178,6 +202,10 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(entry)")}
+        for column in ("title", "body"):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     @classmethod
     def for_repo(cls, path):
@@ -203,7 +231,10 @@ class Store:
 
     @property
     def contract(self):
-        return {row["key"]: json.loads(row["value"]) for row in self.db.execute("SELECT key, value FROM contract")}
+        contract = {row["key"]: json.loads(row["value"]) for row in self.db.execute("SELECT key, value FROM contract")}
+        if "mode" in contract:
+            contract["mode"] = LEGACY_MODES.get(contract["mode"], contract["mode"])
+        return contract
 
     @property
     def repo(self):
@@ -255,24 +286,26 @@ def trunk_ref(contract):
     return f"refs/remotes/{contract['remote']}/{contract['trunk']}"
 
 
-def init(path, trunk, mode, remote, base, checks, setup, batch, timeout):
+def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method="merge"):
+    mode = LEGACY_MODES.get(mode, mode)
     common = common_dir(path)
     repo = common.parent if common.name == ".git" else Path(git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = state_home() / "landing" / store_name(common)
     directory.mkdir(parents=True, exist_ok=True)
     store = Store(directory)
     wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
-              "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "paused": ""}
+              "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
     fixed = ("commonDir", "trunk", "mode", "remote")
 
     def refuse_clash(current):
+        current = {**current, "mode": LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
         clash = [key for key in fixed if key in current and current[key] != wanted[key]]
         if clash:
             raise LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
-                            "changing trunk, mode, or remote needs a new repository contract")
+                            "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
 
     refuse_clash(store.contract)
-    if mode in ("auto", "human"):
+    if mode in REMOTE_MODES:
         if not git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
             raise LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
         git("fetch", remote, trunk, cwd=repo)
@@ -287,6 +320,23 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout):
             raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
         git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
     return f"{'updated' if current else 'created'} {directory}"
+
+
+def change_mode(store, mode, merge_method):
+    """Switch between the remote modes while nothing is in flight. Local mode lands on a different ref, so it needs its own contract."""
+    mode = LEGACY_MODES.get(mode, mode)
+    current = store.contract["mode"]
+    if "local" in (mode, current) and mode != current:
+        raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
+    with store.tx() as db:
+        busy = db.execute("SELECT count(*) FROM entry WHERE state IN ('queued', 'landing', 'awaiting-merge')").fetchone()[0]
+        if busy:
+            raise LandError(f"{busy} entries are queued, landing, or awaiting merge; change the mode when the queue is empty")
+        db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps(mode),))
+        if merge_method:
+            db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(merge_method),))
+        store.log(db, "queue", 0, f"mode {mode}", f"was {current}")
+    return f"landing mode is now {mode}" + (f", merging with --{merge_method}" if merge_method else "")
 
 
 def lease_claim(store, holder, paths, ttl_hours):
@@ -309,7 +359,7 @@ def lease_id(text):
     return int(text.lstrip("L"))
 
 
-def submit(store, holder, branch, sha, lease, reviewer):
+def submit(store, holder, branch, sha, lease, reviewer, title="", body=""):
     contract, repo = store.contract, store.repo
     lease_number = lease_id(lease)
     sha = git("rev-parse", "--verify", f"{sha}^{{commit}}", cwd=repo).stdout.strip()
@@ -335,8 +385,9 @@ def submit(store, holder, branch, sha, lease, reviewer):
             raise LandError(f"changes paths outside L{lease_number}: {', '.join(outside)}; widen the lease or split the change")
         if existing:
             db.execute("DELETE FROM entry WHERE id = ?", (existing["id"],))
-        cursor = db.execute("INSERT INTO entry (at, holder, branch, sha, base, fingerprint, lease, reviewer, state) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued')", (stamp(), holder, branch, sha, base, print_, lease_number, reviewer))
+        cursor = db.execute("INSERT INTO entry (at, holder, branch, sha, base, fingerprint, lease, reviewer, state, title, body) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+                            (stamp(), holder, branch, sha, base, print_, lease_number, reviewer, title, body))
         db.execute("UPDATE lease SET state = 'submitted' WHERE id = ?", (lease_number,))
         store.log(db, "entry", cursor.lastrowid, "queued", f"{holder}: {branch}")
     return f"Q{cursor.lastrowid}"
@@ -564,15 +615,33 @@ def ensure_pr(store, entry):
     view = gh("pr", "view", human_branch(entry), "--json", "url", "-q", ".url", cwd=store.repo)
     url = view.stdout.strip() if view.returncode == 0 else ""
     if not url:
-        title = git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
-        body = f"Queued by {entry['holder']} from `{entry['branch']}`. Reviewed by {entry['reviewer']} at {entry['sha']}."
+        title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
+        receipt = f"Queued by {entry['holder']} from `{entry['branch']}`. Reviewed by {entry['reviewer']} at {entry['sha']}."
+        body = f"{entry['body'].rstrip()}\n\n{receipt}" if entry["body"] else receipt
         created = gh("pr", "create", "--base", contract["trunk"], "--head", human_branch(entry), "--title", title, "--body", body, cwd=store.repo)
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())
         url = created.stdout.strip().splitlines()[-1]
     with store.tx() as db:
         store.set_entry(db, entry["id"], "awaiting-merge", pr=url, note="")
+    if contract["mode"] == "merge":
+        request_merge(store, entry["id"], url)
     return True
+
+
+MERGE_REQUESTED = "merge requested by the queue"
+
+
+def request_merge(store, ident, url):
+    """Merge mode: ask GitHub to merge when required checks pass, or merge now when the PR has none to wait for."""
+    method = f"--{store.contract.get('mergeMethod') or 'merge'}"
+    queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
+    if queued.returncode != 0:
+        now_ = gh("pr", "merge", url, method, cwd=store.repo)
+        if now_.returncode != 0:
+            raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
+    with store.tx() as db:
+        store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
 
 
 def poll_human(store):
@@ -581,6 +650,8 @@ def poll_human(store):
         if not entry["pr"]:
             ensure_pr(store, entry)
             entry = store.db.execute("SELECT * FROM entry WHERE id = ?", (entry["id"],)).fetchone()
+        elif store.contract["mode"] == "merge" and entry["note"] != MERGE_REQUESTED:
+            request_merge(store, entry["id"], entry["pr"])
         view = gh("pr", "view", entry["pr"], "--json", "state,headRefOid,mergeCommit",
                   "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
         state, head, merged = (view.stdout.strip().split(" ") + ["", "", ""])[:3]
@@ -615,13 +686,17 @@ def land(store):
         reconcile(store)
         integration = Integration(store)
         landed, bounced, opened = [], [], []
-        if store.contract["mode"] == "human":
+        if store.contract["mode"] in ("human", "merge"):
             git("fetch", store.contract["remote"], store.contract["trunk"], cwd=store.repo)
             if rewound(store, git("rev-parse", trunk_ref(store.contract), cwd=store.repo).stdout.strip()):
                 return report(store, [], [], [])
             landed, bounced = poll_human(store)
             for entry in store.entries("queued"):
                 (opened if land_human(store, integration, entry) else bounced).append(entry["id"])
+            if store.contract["mode"] == "merge" and opened:
+                more_landed, more_bounced = poll_human(store)
+                landed, bounced = landed + more_landed, bounced + more_bounced
+                opened = [ident for ident in opened if ident not in more_landed + more_bounced]
             return report(store, landed, bounced, opened)
         single, rounds = False, 0
         while (queued := store.entries("queued")) and not store.contract.get("paused"):
@@ -650,7 +725,8 @@ def report(store, landed, bounced, opened):
     if landed:
         lines.append("landed " + ", ".join(f"Q{i} ({rows[i]['holder']})" for i in landed))
     if opened:
-        lines.append("opened PRs for " + ", ".join(f"Q{i} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
+        lead = "opened PRs that merge when their checks pass: " if store.contract["mode"] == "merge" else "opened PRs for "
+        lines.append(lead + ", ".join(f"Q{i} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
     lines += [f"bounced Q{i} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
     waiting = [f"Q{row['id']}" for row in rows.values() if row["state"] in ("queued", "landing")]
     if waiting:
@@ -682,13 +758,19 @@ def parser():
 
     p = sub.add_parser("init", help="write the repository's landing contract")
     p.add_argument("--trunk", required=True, help="branch on the remote, or a lane name in local mode")
-    p.add_argument("--mode", choices=MODES, required=True)
+    p.add_argument("--mode", choices=MODES + tuple(LEGACY_MODES), required=True,
+                   help="human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref")
     p.add_argument("--remote", default="origin")
     p.add_argument("--base", default="", help="local mode: the commit the lane starts from")
     p.add_argument("--check", action="append", default=[], help="command that must pass before landing; repeatable")
     p.add_argument("--setup", default="", help="command run before checks in the clean integration worktree, such as npm ci")
     p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
     p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
+    p.add_argument("--merge-method", choices=MERGE_METHODS, default="merge", help="merge mode: how the queue merges its PRs")
+
+    p = sub.add_parser("mode", help="switch between human, merge, and push while nothing is in flight")
+    p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
+    p.add_argument("--merge-method", choices=MERGE_METHODS)
 
     p = sub.add_parser("lease", help="claim, renew, release, or list path leases")
     t = p.add_subparsers(dest="action", required=True)
@@ -709,12 +791,15 @@ def parser():
     p.add_argument("--sha", required=True, help="the exact SHA the review passed")
     p.add_argument("--lease", required=True)
     p.add_argument("--reviewer", required=True, help="provider/model of the reviewer that passed this SHA")
+    p.add_argument("--title", default="", help="human mode: the PR title (default: the last commit subject)")
+    p.add_argument("--body-file", default="", help="human mode: a file holding the PR body")
 
     sub.add_parser("land", help="drain the queue unless another run holds it")
     sub.add_parser("resume", help="clear a pause after you checked trunk")
     p = sub.add_parser("status")
     p.add_argument("id", nargs="?")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
+    p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     return top
 
@@ -725,10 +810,11 @@ def run(argv):
         command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
         if not command:
             raise LandError("slot needs a command after --")
-        with slot():
+        with (exclusive_slot() if args.exclusive else slot()):
             return None, subprocess.run(command).returncode
     if args.command == "init":
-        return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout), 0
+        return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
+                    args.merge_method), 0
     store = Store.for_repo(args.repo)
     if args.command == "lease":
         if args.action == "claim":
@@ -747,8 +833,11 @@ def run(argv):
                 db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (number,))
             store.log(db, "lease", number, "renewed" if args.action == "renew" else "released")
         return f"L{number} {'renewed' if args.action == 'renew' else 'released'}", 0
+    if args.command == "mode":
+        return change_mode(store, args.mode, args.merge_method), 0
     if args.command == "submit":
-        return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer), 0
+        body = Path(args.body_file).read_text() if args.body_file else ""
+        return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body), 0
     if args.command == "land":
         return land(store), 0
     if args.command == "resume":

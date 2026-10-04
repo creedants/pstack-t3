@@ -152,7 +152,7 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 
 ## Top-level threads
 
-Create top-level threads only when the user asked for separate threads or invoked a playbook that names them (Orchestrate, Autopilot-full, Autopilot-stack). Invoking those playbooks is that request. Everything else uses child tasks.
+Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
 
 ```json
 {

@@ -220,6 +220,20 @@ if args[:2] == ["pr", "create"]:
         (base / "crash-on-create").unlink()
         os.kill(os.getppid(), signal.SIGKILL)
     print("https://github.com/o/r/pull/9")
+elif args[:2] == ["pr", "merge"]:
+    print(" ".join(args), file=open(base / "merge-calls", "a"))
+    if (base / "merge-refused").exists():
+        print("GraphQL: At least 1 approving review is required by reviewers with write access.", file=sys.stderr)
+        sys.exit(1)
+    if "--auto" in args:
+        if not (base / "required-checks").exists():
+            print("GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+    import subprocess
+    head = subprocess.run(["git", "--git-dir", str(base / "origin.git"), "rev-parse", "refs/heads/landing/q1"],
+                          capture_output=True, text=True).stdout.strip()
+    (base / "pr-state").write_text(f"MERGED {{head}} 1111111111111111111111111111111111111111")
 elif args[:2] == ["pr", "view"] and "url" in args:
     if not (base / "pr-url").exists():
         sys.exit(1)
@@ -246,6 +260,54 @@ elif args[:2] == ["pr", "view"]:
             (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_merges_its_own_pr_when_there_are_no_checks_to_wait_for(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual((self.base / "merge-calls").read_text().splitlines(),
+                             ["pr merge https://github.com/o/r/pull/9 --auto --merge", "pr merge https://github.com/o/r/pull/9 --merge"])
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_lets_github_merge_after_required_checks_and_asks_once(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: Q1 (r/D1) https://github.com/o/r/pull/9")
+            self.assertEqual(self.land("land"), "nothing to land")
+            candidate = sh("git", "rev-parse", "landing/q1", cwd=self.base / "origin.git")
+            (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual(len((self.base / "merge-calls").read_text().splitlines()), 1)
+
+    def test_merge_mode_pauses_when_github_requires_a_human_approval(self):
+        with self.fake_gh():
+            (self.base / "merge-refused").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            out = self.land("land")
+            self.assertIn("queue paused: GitHub refused to merge https://github.com/o/r/pull/9", out)
+            self.assertIn("approving review is required", out)
+
+    def test_the_mode_changes_only_while_nothing_is_in_flight(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.queue_one()
+            self.land("land")
+            self.assertIn("awaiting merge; change the mode when the queue is empty", self.land("mode", "merge", ok=False))
+            candidate = sh("git", "rev-parse", "landing/q1", cwd=self.base / "origin.git")
+            (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
+            self.land("land")
+            self.assertEqual(self.land("mode", "merge", "--merge-method", "squash"), "landing mode is now merge, merging with --squash")
+            self.assertTrue(self.land("status").startswith("merge mode onto"))
+            self.assertIn("needs a new contract", self.land("mode", "local", ok=False))
+
+    def test_a_contract_written_with_the_old_auto_mode_reads_as_push(self):
+        self.init(mode="auto")
+        self.assertTrue(self.land("status").startswith("push mode onto"))
+        self.assertEqual(self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh").split()[0], "updated")
 
     def test_human_mode_adopts_the_pr_a_crashed_run_created(self):
         with self.fake_gh():
@@ -299,7 +361,7 @@ elif args[:2] == ["pr", "view"]:
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
         with mock.patch.dict(os.environ, {"PATH": f"{wrapper}:{os.environ['PATH']}"}):
             self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER, ok=False)
-        self.assertEqual(self.land("status"), "auto mode onto refs/remotes/origin/main. leases held: 1.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1.")
 
     def test_a_policy_rejection_pauses_the_queue_after_one_check_run(self):
         self.land("init", "--trunk", "main", "--mode", "auto", "--check", f"echo run >> {self.base}/runs")
@@ -374,6 +436,54 @@ elif args[:2] == ["pr", "view"]:
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.base / "other"), "status"],
                                 capture_output=True, text=True, env=os.environ.copy())
         self.assertIn("has no landing contract", result.stderr)
+
+    def test_an_exclusive_slot_waits_for_every_other_slot_and_refuses_nesting(self):
+        import time
+        governor = self.base / "state/pstack-t3/governor"
+        governor.mkdir(parents=True)
+        (governor / "governor.json").write_text(json.dumps({"slots": 2}))
+        marks = self.base / "marks"
+        worker = subprocess.Popen([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", f"echo worker-start >> {marks}; sleep 2; echo worker-end >> {marks}"],
+                                  env=os.environ.copy())
+        time.sleep(0.5)
+        bench = subprocess.run([sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "sh", "-c", f"echo bench >> {marks}"],
+                               capture_output=True, text=True, timeout=30, env=os.environ.copy())
+        worker.wait(timeout=30)
+        self.assertEqual(bench.returncode, 0, bench.stderr)
+        self.assertEqual(marks.read_text().split(), ["worker-start", "worker-end", "bench"])
+        nested = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "true"],
+                                capture_output=True, text=True, timeout=30, env=os.environ.copy())
+        self.assertNotEqual(nested.returncode, 0)
+        self.assertIn("must be the outermost slot", nested.stderr)
+
+    def test_human_mode_uses_the_submitted_pr_title_and_body(self):
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            sha = self.worker("w1", {"a.txt": "agent\n"})
+            self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            body = self.base / "body.md"
+            body.write_text("Cuts load time by 300 ms.\n")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER,
+                      "--title", "Faster load", "--body-file", str(body))
+            self.land("land")
+        create = [line for line in log.read_text().splitlines() if "'create'" in line][0]
+        self.assertIn("'--title', 'Faster load'", create)
+        self.assertIn("Cuts load time by 300 ms.", create)
+        self.assertIn("Reviewed by codex/gpt-6.1-sol", create)
+
+    def test_a_store_from_before_pr_text_columns_is_migrated(self):
+        self.init()
+        store = land.Store.for_repo(self.work)
+        store.db.execute("DROP TABLE entry")
+        store.db.executescript(land.SCHEMA)
+        self.assertNotIn("title", {row["name"] for row in store.db.execute("PRAGMA table_info(entry)")})
+        store.db.close()
+        self.assertEqual(self.queue_one(), "Q1")
+        self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
 
     def test_nested_slots_do_not_deadlock_with_one_slot(self):
         governor = self.base / "state/pstack-t3/governor"

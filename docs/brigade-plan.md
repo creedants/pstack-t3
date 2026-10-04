@@ -15,10 +15,10 @@ brigade has no overall coordinator. The user moves between restaurants.
 | House rules | Standing orders pasted into every brief: merge policy, forbidden paths, verification bar. | `house-rules.md` |
 | Rail | Append-only intake. The head chef groups related tickets before it fires any. | `rail.tsv` |
 | Suppliers | Scheduled intake from GitHub issues, labels, and notifications. | `schedule_task` |
-| Station | A worker that runs one pstack playbook. Small dishes are child tasks. A dish that needs a PR owner is a worktree thread. | `delegate_task`, `t3_thread_launch`, `$poteto-mode` |
+| Station | A worker that runs one pstack playbook in its own worktree thread, briefed by `brigade.py brief`. | `t3_thread_launch` with a worktree strategy, `$poteto-mode` |
 | Commis | Read-only prep: research, repro, scouting. | Read-only children, `how`, `why` |
 | Banquet | A one-off program with an end. | Orchestrate playbook |
-| Pass | Every result is checked against its ticket and the menu by a verifier on a different model family than the author. | `verifiers` role, `interrogate`, `pass.tsv` keyed by PR and head SHA |
+| Pass | Every result is checked against its ticket and the menu by a verifier subagent on a different model family than the author. | `delegate_task` from the `verifiers` role, `pass.tsv` keyed by head SHA |
 | 86 board | Items that need the user: blocked work, irreversible actions, product calls. The only interrupt. | `86.md` |
 | Line check, close-out | Morning brief and end-of-service report: what landed, how it served the menu, what to sample. | `schedule_task` `fixed_time` bound to the head chef thread |
 | Recipe book | A mistake several stations repeat becomes a lint, type, or skill. | `correct` |
@@ -75,3 +75,19 @@ The head chef thread is the only writer. Nothing is committed.
    - The tests found three defects, all fixed: the report repeated a dish under every state it passed through, ticket assignment was not logged, and the head chef had to read the script source because the skill listed only some commands.
 3. Pilot one restaurant (Bridgekit) for a few services, then a second.
 4. Docs and release.
+
+## Pilot: Bridgekit performance, 2026-10-04
+
+A head chef on Claude Opus 5.5 ran 5 dishes in 4.5 hours with 21 minutes of its own active time. 4 merged as PRs, 1 was dropped because no change beat the noise. Grok wrote every change. Codex and Claude reviewed them, and 2 of 6 reviews sent work back for real bugs. The landing queue had no conflicts or bounces. An audit of the head chef's thread found the problems below. Each change is in the CHANGELOG.
+
+| Finding | Cost | Change |
+| --- | --- | --- |
+| 3 of 8 worker runs stayed open after the worker wrote its report, so no completion notice woke the head chef | 31 to 53 minutes idle each, found only when the user asked for status | Workers are worktree threads. A liveness schedule runs `brigade.py watch`, which flags a written report or an overrun timebox. |
+| Subagent workers were invisible to the user and one died in a T3 restart | Status questions from the user, one lost run | Worktree threads show in the sidebar and survive restarts. Reviewers stay subagents: 6 of 6 closed normally in 2 to 12 minutes. |
+| The baseline was measured while other workers ran | `perf/baseline.json` reads about 20% slow | `land.py slot --exclusive`, added to every measuring station's brief |
+| A hand-assembled brief left a placeholder | One worker cancelled and respawned | `brigade.py brief` assembles and checks every field |
+| The lease was claimed before the dish had an ID | Ordering ambiguity in the skill | `brigade.py fire --paths` claims the lease first |
+| The queue's PR text was rewritten by hand 4 times | 4 extra `gh pr edit` calls | `land.py submit --title --body-file` |
+| One decision repeated as "still open" in 8 replies | Noise | Raise once, then only in reports |
+| "Clean up branches" deleted 4 user branches | Broader than asked | Delete only branches the restaurant created |
+| Doubled log entries | Cosmetic | Log a state only when it changes |
