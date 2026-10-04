@@ -29,7 +29,8 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 - Run to the next real blocker. "Should I continue" is never a question. Progress updates wait for the report or the next real decision.
 - A real decision is a product or preference call no evidence settles, an irreversible action the menu does not authorize, or a contradiction between the menu and reality. Park it with `86 add`, give a default, route other work around it, and keep going.
-- Never write code yourself. Grouping tickets, writing briefs, reviewing evidence, and landing a verified commit are your work. Code changes, conflict resolution, and restacks are dishes.
+- Never write code yourself. Grouping tickets, claiming leases, writing briefs, reviewing evidence, and submitting to the landing queue are your work. Code changes and conflict fixes are dishes.
+- Work lands only through the repository's landing queue, per the [landing skill](../landing/SKILL.md). Several restaurants can share one repository. The queue and its leases keep them off each other.
 
 ## The script
 
@@ -38,23 +39,24 @@ These words name files, commands, and steps. They never appear in speech. Replie
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>"
 $B status                                    # one line of counts
-$B set --thread <id> --schedule <name>=<id> --merge-policy pass|pr-only|local-only
+$B set --thread <id> --schedule <name>=<id>
 $B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>]   # prints T<n>
 $B ticket list [--state waiting|assigned|done|dropped]
 $B ticket set T3 --state dropped
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" [--task <taskId>] [--thread <threadId>] [--branch <b>]   # prints D<n>
-$B dish D2 --state in-progress|in-review|merged|dropped [--pr <url>] [--sha <head>] [--task ...] [--thread ...] [--branch ...]
+$B dish D2 --state in-progress|in-review|queued|merged|dropped [--pr <url>] [--sha <head>] [--task ...] [--thread ...] [--branch ...]
 $B pass record D2 --sha <head> --verdict pass|send-back|blocked --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family]
 $B pass check D2 --sha <head>                # exits 1 unless that SHA passed
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 answer Q1 --answer "..." ; $B 86 list
 $B close [--dry-run]                         # report of what changed since the last one
 python3 <skills>/brigade/scripts/brigade.py walk
+L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
 
 Every command takes `--help`. Workers write their reports to `<restaurant dir>/reports/<dish>.md`.
 
-Under merge policy `pass`, `dish --state merged` fails unless the dish has a `pass` verdict at its current head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family.
+`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family.
 
 ## Open a restaurant
 
@@ -62,9 +64,10 @@ Run from any thread.
 
 1. Name the target project and focus. List projects with `t3_project_list`. A restaurant lives in exactly one T3 project, because a head chef can only read and steer threads in its own project.
 2. Draft the menu from evidence: the repo's README and AGENTS.md, open issues (`gh issue list`), and recent threads via the **recall** skill. Ask the user only for what the evidence cannot settle, normally the purpose itself. Use the **grilling** skill when the purpose is vague.
-3. Run `python3 <skills>/brigade/scripts/brigade.py open --project-root <root> --name "<restaurant>" --merge-policy pass|pr-only|local-only`. It prints the restaurant directory. Fill `menu.md`. Append house rules: base branch, forbidden paths, verification bar, intake sources, worker cap.
-4. Launch the head chef with `t3_thread_launch`: `projectId` of the target, `workspaceStrategy: {"type": "root"}`, title `Head chef: <restaurant>`, and a `message` that says "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run your first service." Record the returned `threadId` with `$B set --thread <id>`.
-5. Tell the user where the thread is. If it is in another project, you cannot read or message it after launch. That is expected.
+3. Run `python3 <skills>/brigade/scripts/brigade.py open --project-root <root> --name "<restaurant>"`. It prints the restaurant directory. Fill `menu.md`. Append house rules: forbidden paths, verification bar, intake sources, worker cap.
+4. Make sure the repository has a landing contract: `$L status`. When it has none, run `$L init` per the [landing skill](../landing/SKILL.md#set-up-a-repository-once), with the repository's own test and type-check commands as checks. Mode `human` is the default for a repository with a remote. Use `auto` only when the user granted autonomous merges for that repository.
+5. Launch the head chef with `t3_thread_launch`: `projectId` of the target, `workspaceStrategy: {"type": "root"}`, title `Head chef: <restaurant>`, and a `message` that says "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run your first service." Record the returned `threadId` with `$B set --thread <id>`.
+6. Tell the user where the thread is and which landing mode the repository uses. If it is in another project, you cannot read or message it after launch. That is expected.
 
 ## First service
 
@@ -74,6 +77,7 @@ Run from any thread.
    - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`.
    - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source.
    - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report."
+   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time.
    - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`.
 4. Run a service.
 
@@ -84,15 +88,17 @@ Every wake runs this: a user message, a child completion, or a schedule.
 1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. It is the purpose every decision answers to.
 2. **Take tickets.** Each user request or supplier finding becomes `$B ticket add`. Fetch supplier sources (`gh issue list`, `gh pr list`, notifications) only when the house rules name them. Drop a ticket that is off the menu with `$B ticket set <id> --state dropped` and say why in the report.
 3. **Group before firing.** Read the waiting tickets together. Several reports of one cause are one dish. Fire a ticket alone only when it is urgent or unrelated to the rest. A ticket that is a whole program with a done predicate runs as one dish whose station is poteto-mode's Orchestrate playbook.
-4. **Fire.** Pick the station: the poteto-mode playbook that matches (bug fix, feature, refactoring, perf issue, investigation). Write the brief per the Orchestrate playbook's brief template (`../poteto-mode/playbooks/orchestrate.md`): goal, scope, context, acceptance, verify, report, plus the menu's purpose line, the house rules verbatim, and "write your report to `<restaurant dir>/reports/<dish>.md`". Open it with "Use the poteto-mode skill and its `<station>` playbook." Delegate per [the runtime](../pstack-runtime/SKILL.md#delegation): a bounded dish is a `delegate_task` child with `mode: "async"`, isolated per [Isolation](../pstack-runtime/SKILL.md#isolation). A dish that needs a PR owner is a `t3_thread_launch` worktree thread. Run `$B fire` with the task or thread ID and branch. Keep in-flight dishes under the house-rules cap.
-5. **End the turn** while dishes run. Completions wake you. Never schedule a wake to wait for a child.
-6. **Review.** On a completion, read the diff and evidence yourself. A worker's "done" is a claim. Run `$B dish <id> --state in-review --pr <url> --sha <head>`. Spawn one verifier from the `verifiers` role on a model family other than the author's. Its read-only brief: the tickets, the menu, the diff at that SHA, and two questions: does it work on the real surface, and does it serve the menu without scope the tickets did not ask for. Record the verdict with `$B pass record`.
-7. **Act on the verdict.**
-   - `pass`: land per the merge policy. `pass`: the owner merges, or you fast-forward a clean verified commit. `pr-only`: leave the PR for the user. `local-only`: merge into the base branch without pushing. Then `$B dish <id> --state merged` (or leave it `passed` under `pr-only`). Link every PR with `link_pull_request`.
+4. **Claim.** Before firing, `$L lease claim --holder <restaurant>/<dish>` the paths the dish will change. A refused claim names the holder. Fold the dish into the holder's work when it is this restaurant's, or hold the tickets until that lease is released. Never claim `.` for a dish that touches a few files.
+5. **Fire.** Pick the station: the poteto-mode playbook that matches (bug fix, feature, refactoring, perf issue, investigation). Write the brief per the Orchestrate playbook's brief template (`../poteto-mode/playbooks/orchestrate.md`): goal, scope, context, acceptance, verify, report, plus the menu's purpose line, the house rules verbatim, the worker rules from the [landing skill's brief step](../landing/SKILL.md#run-writers-through-it) with the leased paths, and "write your report to `<restaurant dir>/reports/<dish>.md`". Open it with "Use the poteto-mode skill and its `<station>` playbook." Delegate per [the runtime](../pstack-runtime/SKILL.md#delegation): a bounded dish is a `delegate_task` child with `mode: "async"`, isolated per [Isolation](../pstack-runtime/SKILL.md#isolation). A long-lived dish is a `t3_thread_launch` worktree thread. Run `$B fire` with the task or thread ID and branch. Keep in-flight dishes under the house-rules cap.
+6. **End the turn** while dishes run. Completions wake you. Never schedule a wake to wait for a child.
+7. **Review.** On a completion, read the diff and evidence yourself. A worker's "done" is a claim. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier from the `verifiers` role on a model family other than the author's. Its read-only brief: the tickets, the menu, the diff at that SHA, and two questions: does it work on the real surface, and does it serve the menu without scope the tickets did not ask for. Record the verdict with `$B pass record`.
+8. **Act on the verdict.**
+   - `pass`: `$L submit --holder <restaurant>/<dish> --branch <b> --sha <head> --lease L<n> --reviewer <provider/model>`, then `$B dish <id> --state queued`, then `$L land`. When it lands, `$B dish <id> --state merged`. In human mode it opens a PR first. Record it with `$B dish <id> --pr <url>`, link it with `link_pull_request`, and mark the dish merged when a later `land` reports it landed.
+   - Bounced by the queue: the lease is active again. Fire a fresh worker with the original brief, the bounce reason, and current trunk. A conflict or a changed rebase needs a new review.
    - `send-back`: a fresh worker with consolidated scope: the original brief, the verifier's findings, and the branch. Never resume the old worker.
    - `blocked`: `86 add` if only the user can unblock it. Otherwise fix the environment and run the pass again.
-8. **Fix the recipe.** When two dishes repeat the same mistake, fire a dish that runs the **correct** skill to make it impossible (lint, type, test, or skill). Run the **reflect** skill over this restaurant's threads once a week.
-9. **Report** when the schedule says so, when an 86 needs the user, or at the end of a service the user started. Run `$B close`. Your reply is at most three sentences on what the changes mean for the menu, then the `close` output verbatim. It lists each ticket and dish once, under its latest state since the last report, with PR links. Write no other report file.
+9. **Fix the recipe.** When two dishes repeat the same mistake, fire a dish that runs the **correct** skill to make it impossible (lint, type, test, or skill). Run the **reflect** skill over this restaurant's threads once a week.
+10. **Report** when the schedule says so, when an 86 needs the user, or at the end of a service the user started. Run `$B close`. Your reply is at most three sentences on what the changes mean for the menu, then the `close` output verbatim. It lists each ticket and dish once, under its latest state since the last report, with PR links. Write no other report file.
 
 ## Executive chef's view
 

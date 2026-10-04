@@ -18,9 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TICKET_STATES = ("waiting", "assigned", "done", "dropped")
-DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "merged", "dropped")
+DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "queued", "merged", "dropped")
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
-MERGE_POLICIES = ("pass", "pr-only", "local-only")
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
@@ -33,7 +32,8 @@ PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q"}
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
-    ("dish", "passed"): "Passed review, not merged",
+    ("dish", "passed"): "Passed review, not submitted",
+    ("dish", "queued"): "Waiting to land",
     ("dish", "sent-back"): "Sent back after review",
     ("dish", "blocked"): "Blocked",
     ("dish", "in-progress"): "In progress",
@@ -67,7 +67,7 @@ HOUSE_RULES = """# House rules: {restaurant}
 Paste these into every brief verbatim.
 
 1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.
-2. Merge policy: {merge_policy}.
+2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.
 """
 
 
@@ -166,19 +166,19 @@ class Restaurant:
         return row
 
 
-def open_restaurant(root, project_root, name, merge_policy="pass"):
+def open_restaurant(root, project_root, name):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
     created = not (directory / "restaurant.json").exists()
     if created:
         directory.mkdir(parents=True, exist_ok=True)
-        meta = {"restaurant": name, "projectRoot": str(project_root), "mergePolicy": merge_policy,
+        meta = {"restaurant": name, "projectRoot": str(project_root),
                 "openedAt": now(), "lastActivityAt": now(), "lastReportAt": None, "thread": None, "schedules": {}}
         write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     meta = json.loads((directory / "restaurant.json").read_text())
     for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
         if not (directory / filename).exists():
-            write_atomic(directory / filename, template.format(restaurant=meta["restaurant"], merge_policy=meta["mergePolicy"]))
+            write_atomic(directory / filename, template.format(restaurant=meta["restaurant"]))
     restaurant = Restaurant(directory)
     for table in TABLES:
         if not (directory / table).exists():
@@ -195,6 +195,7 @@ def counts(restaurant):
         "in progress": dishes.count("in-progress"),
         "in review": dishes.count("in-review"),
         "passed review": dishes.count("passed"),
+        "waiting to land": dishes.count("queued"),
         "sent back": dishes.count("sent-back"),
         "blocked": dishes.count("blocked"),
         "merged": dishes.count("merged"),
@@ -294,12 +295,10 @@ def parser():
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--merge-policy", choices=MERGE_POLICIES, default="pass")
 
     p = sub.add_parser("set", help="record the head chef thread or a schedule id")
     p.add_argument("--thread")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
-    p.add_argument("--merge-policy", choices=MERGE_POLICIES)
 
     p = sub.add_parser("ticket", help="add, list, or update tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -365,7 +364,7 @@ def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
     if args.command == "open":
-        restaurant, created = open_restaurant(root, args.project_root, args.name, args.merge_policy)
+        restaurant, created = open_restaurant(root, args.project_root, args.name)
         return f"{'opened' if created else 'exists'} {restaurant.dir}"
     if args.command == "walk":
         return walk(root, args.stale_hours)
@@ -377,8 +376,6 @@ def run(argv):
         meta = restaurant.meta
         if args.thread:
             meta["thread"] = args.thread
-        if args.merge_policy:
-            meta["mergePolicy"] = args.merge_policy
         for pair in args.schedule:
             name, _, ident = pair.partition("=")
             if not ident:
@@ -422,11 +419,11 @@ def run(argv):
         return dish
 
     if args.command == "dish":
-        if args.state == "merged" and restaurant.meta["mergePolicy"] == "pass":
+        if args.state in ("queued", "merged"):
             _, current = restaurant.find("dishes.tsv", args.id)
             ok, why = pass_check(restaurant, args.id, args.sha or current["sha"])
             if not ok:
-                raise BrigadeError(f"merge policy is pass and {why}")
+                raise BrigadeError(f"only reviewed work lands: {why}")
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=args.thread,
                                 branch=args.branch, pr=args.pr, sha=args.sha)
         if args.state == "merged":

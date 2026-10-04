@@ -28,15 +28,15 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
 
-    def open(self, policy="pass"):
-        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--merge-policy", policy)
+    def open(self):
+        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf")
 
     def test_open_creates_the_store_once_and_keeps_edits(self):
         self.assertEqual(self.open(), f"opened {self.at}")
         (self.at / "menu.md").write_text("# Menu: Perf\n\nKeep startup under 400 ms.\n")
         self.assertEqual(self.open(), f"exists {self.at}")
         self.assertEqual((self.at / "menu.md").read_text(), "# Menu: Perf\n\nKeep startup under 400 ms.\n")
-        self.assertIn("Merge policy: pass.", (self.at / "house-rules.md").read_text())
+        self.assertIn("only through the repository's landing queue", (self.at / "house-rules.md").read_text())
         self.assertIn("Never use them in replies", (self.at / "house-rules.md").read_text())
 
     def test_fire_groups_waiting_tickets_into_one_dish(self):
@@ -60,17 +60,19 @@ class BrigadeTest(unittest.TestCase):
                                       "--author", CLAUDE, "--verifier", "cursor/claude-sonnet-5-5", "--same-family"), "D1 passed")
         self.assertIn("same model family", (self.at / "pass.tsv").read_text())
 
-    def test_merge_under_pass_policy_needs_a_pass_at_the_current_sha(self):
+    def test_queueing_or_merging_needs_a_pass_at_the_current_sha(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         self.brigade("pass", "record", "D1", "--pr", "u/1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
-        self.assertEqual(self.brigade("dish", "D1", "--state", "merged", "--sha", "def", ok=False),
-                         "brigade: merge policy is pass and D1 has no review verdict for def")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued", "--sha", "def", ok=False),
+                         "brigade: only reviewed work lands: D1 has no review verdict for def")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
+        self.assertEqual(self.brigade("status"), "waiting to land: 1")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
         self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done [user] s")
 
-    def test_send_back_blocks_merge_and_pr_only_policy_does_not_check(self):
+    def test_send_back_blocks_landing(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
@@ -78,8 +80,8 @@ class BrigadeTest(unittest.TestCase):
                      "--author", CLAUDE, "--verifier", CODEX, "--note", "test asserts the bug")
         self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
                          "brigade: D1 at abc: send-back (test asserts the bug)")
-        self.brigade("set", "--merge-policy", "pr-only")
-        self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued", ok=False),
+                         "brigade: only reviewed work lands: D1 at abc: send-back (test asserts the bug)")
 
     def test_report_lists_only_what_changed_since_the_last_report(self):
         self.open()

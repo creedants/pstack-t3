@@ -28,6 +28,7 @@ It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), 
 - **Runs work in parallel without collisions.** `$swarm` splits work across workers or races them. `$arena` runs several attempts and grafts the best parts into one. Workers that write get their own git worktree.
 - **Proves the change works.** It reproduces bugs on the real surface, including driving a web UI through T3's preview tools, and verifies against the real artifact rather than "it compiles".
 - **Gives each project its own standing coordinator.** `$brigade` opens a head chef thread per project or focus area, the way Lauren runs one coordinator per area. You move between them and review what landed.
+- **Lets many agents write to one repo at once.** `$landing` gives each repository one trunk, path leases claimed before work starts, and a single queue that rebases, checks, and lands reviewed commits. Writers never merge. Builds and tests share a machine-wide slot limit.
 - **Keeps going while you're away.** Overnight runs use child agents, separate worktree threads, and an hourly scheduled check. It still stops for anything irreversible you didn't authorize.
 - **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so.
 - **Writes like a senior engineer.** Short, direct replies, every claim labeled measured, inferred, or guess, and the engineering principles behind each decision named.
@@ -103,8 +104,9 @@ The [guide](docs/guide.md) walks through your first hour.
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
 | `$brigade open a head chef for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
+| `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 
-See [all 53 skills and every playbook](docs/skills.md).
+See [all 54 skills and every playbook](docs/skills.md).
 
 ## How it works
 
