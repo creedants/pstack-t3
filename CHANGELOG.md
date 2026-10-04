@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Synced to upstream pstack 0.15.7 ([cursor/plugins@9511e60](https://github.com/cursor/plugins/commit/9511e60321f7e533a187d62854a3d53a53752874)). Adds `$correct`.
+- Synced to upstream pstack 0.15.9 ([cursor/plugins@e43c7ee](https://github.com/cursor/plugins/commit/e43c7ee26e00)). `$architect` assumes an agent edits the code next and screens designs for split ownership, two ways to do one task, importable internals, and hand-synced lists. The Perf issue playbook replaces its eight strategy families with seven ordered performance mantras, and Hillclimb orders perf hypotheses by them.
 - A README covering what pstack-t3 does, real run excerpts, a table of example prompts, a diagram, and an FAQ.
 - A [guide](docs/guide.md) to the first hour, a [how-it-works](docs/how-it-works.md) page, and a generated [skills catalog](docs/skills.md) that the build keeps in sync.
 - A banner and a social preview image in `docs/assets/`.

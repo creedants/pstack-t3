@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.7-555.svg" alt="upstream pstack 0.15.7"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.9-555.svg" alt="upstream pstack 0.15.9"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
