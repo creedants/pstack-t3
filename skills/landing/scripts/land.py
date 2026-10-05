@@ -755,8 +755,9 @@ def request_merge(store, ident, url):
 
     The read runs before any gh pr merge, including --auto. A pending posted check waits.
     A failed posted check bounces. With no posted check, the land run that first sees it
-    waits. A later land merges when checks are still absent. A base-branch policy refusal
-    or disabled auto-merge, while checks are still absent, waits and does not pause the queue.
+    waits. A later land merges when checks are still absent. While checks are still absent,
+    the queue waits and does not pause when the plain merge or the --auto attempt is refused
+    because the base branch policy prohibits the merge, or because auto-merge is disabled.
     An approving review, or changes requested, pauses the queue and does not call gh pr merge."""
     blocker, detail = merge_blocker(store, url)
     if blocker == "review":
@@ -782,11 +783,13 @@ def request_merge(store, ident, url):
         return
     now_ = gh("pr", "merge", url, method, cwd=store.repo)
     if now_.returncode != 0:
-        reason = (now_.stderr or queued.stderr).strip()
-        if blocker == "absent" and unposted_merge_refusal(reason):
+        plain = (now_.stderr or "").strip()
+        auto = (queued.stderr or "").strip()
+        if blocker == "absent" and (unposted_merge_refusal(plain) or unposted_merge_refusal(auto)):
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
             return
+        reason = plain or auto or "gh pr merge failed"
         raise Infrastructure(f"GitHub refused to merge {url}: {reason}")
     with store.tx() as db:
         store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
