@@ -114,36 +114,36 @@ A coordinator is a pinned T3 thread for one project or one focus area. It takes 
 Type this in any thread.
 
 ```
-$brigade open a head chef for <project> focused on <goal>.
+$brigade open a standing coordinator for <project> focused on <goal>.
 ```
 
-The opener asks who lands the work, unless you already named a mode. It recommends `merge` when the repository has a remote. The mode belongs to the repository. Every coordinator on that repository shares it. If a landing contract already exists, that mode applies here too.
+The opener asks who lands the work, unless you already named a mode. It recommends `merge` when the repository has a remote. The mode belongs to the repository. Every coordinator on that repository shares it. If the repository already has a landing contract, the opener tells you its mode. Choosing another mode switches it for every coordinator on that repository.
 
 ### Landing modes
 
 | Mode | What reaches trunk | Are you a gate? |
 | --- | --- | --- |
-| `merge` | The queue rebases onto trunk, runs the checks, pushes `landing/q<n>`, opens a PR, and merges it. It uses GitHub auto-merge when the repository has required checks, and merges at once otherwise. | No. You review what landed. A required approving review pauses the queue until you relax that rule or switch to `human`. |
+| `merge` | The queue rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. It reads posted checks before any `gh pr merge`, including `--auto`. A pending posted check waits. A failed posted check bounces. A later `land` reads the checks again when the note is `merge requested by the queue`, and a failed check then bounces the entry. A failed or unreadable check read pauses the queue and does not merge. It merges only when that read succeeds and no posted check is pending or failed. After the PR merges, it deletes remote `landing/q<n>`. It deletes a local `landing/q<n>` when git can. When that local delete fails, the entry still counts as landed and `land` prints the branch it left. | No. You review what landed. A required approving review pauses the queue until you relax that rule or switch to `human`. |
 | `human` | The same PR, left open. It counts as landed when someone merges that checked head. | Yes. You merge every PR. |
-| `push` | Rebased commits, pushed to trunk with `git push --force-with-lease` only while the remote is still at the tested base. There is no PR. | No. You review the history afterward. |
+| `push` | Rebased commits that passed the checks, pushed to trunk with `git push --force-with-lease` only while the remote is still at the tested base. There is no PR. | No. You review the history afterward. |
 | `local` | Nothing on the real trunk. The queue moves `refs/landing/<trunk>`. The remote does not change. | Yes, for the real trunk. You merge that ref into a branch when you are ready. |
 
 `push` is the name to use. `auto` is an older alias of `push`.
 
 `land.py mode` switches among `merge`, `human`, and `push` only while nothing is queued, landing, or awaiting merge. A move to or from `local` needs a new contract. [How work lands](how-it-works.md#how-work-lands) describes the queue those modes share.
 
-The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase, with every other run of characters turned into one hyphen.
+The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase. Each run of characters other than a-z and 0-9 becomes one hyphen, and leading or trailing hyphens are dropped.
 
-You should see these files.
+The store holds these files.
 
 - `menu.md`, with the headings `Purpose`, `What good looks like`, `Off the menu`, and `Budget`.
 - `house-rules.md`.
 - `restaurant.json`.
 - `rail.tsv`, `dishes.tsv`, `pass.tsv`, `86.tsv`, and `log.tsv`, each with a header and no rows.
 
-Replace the `Purpose` section in `menu.md` with one or two sentences of your own. `brigade.py brief` refuses to write a worker brief while `Purpose` is empty or still the template. The opener appends standing orders to `house-rules.md`. They name forbidden paths, the verification bar, intake sources, and a worker cap. The worker cap is an instruction to the coordinator. The script does not count running workers.
+The opener drafts `menu.md` from the README, AGENTS.md, open issues, and recent threads, and asks you for the purpose when evidence does not settle it. `brigade.py brief` refuses to write a worker brief while `Purpose` is empty or still the template. The opener appends standing orders to `house-rules.md`. They name forbidden paths, the verification bar, intake sources, and a worker cap. The worker cap is an instruction to the coordinator. The script does not count running workers.
 
-The opener launches the coordinator with `t3_thread_launch` on the project root and pins that thread. The sidebar title is `Head chef: <name>`. If that thread is in another project, the thread you typed in cannot read it afterward.
+The opener launches the coordinator with `t3_thread_launch` on the project root. The sidebar title is `Head chef: <name>`. On its first run the coordinator pins that thread. If that thread is in another project, the thread you typed in cannot read it afterward.
 
 ### Give it work
 
@@ -166,7 +166,7 @@ It wakes on your messages, on a reviewer finishing, and on its schedules. A morn
 - **Cleanup.** After a unit merges, is dropped, or is sent back, it removes that unit's worktree and branch. It deletes `landing/q<n>` after that PR merges or closes. It deletes only branches it created. It fast-forwards your checkout with `git merge --ff-only` only when that checkout is clean and on trunk.
 - **Reports.** The reply is short, then the output of `brigade.py close`. That output lists each request and unit once, under its latest state since the last report, with PR links.
 
-To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. It prints counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
+To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. If your checkout is not `~/pstack-t3`, use that checkout's `skills/brigade/scripts/brigade.py`. It prints counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
 
 To stop one, ask it to close. It deletes its schedules, writes a last report, and unpins its thread. The store stays.
 

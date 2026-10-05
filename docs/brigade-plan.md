@@ -12,7 +12,7 @@ brigade has no overall coordinator. The user moves between restaurants.
 | Restaurant | One project, or one focus area inside a project. A project may hold several. | T3 project |
 | Head chef | One long-lived top-level thread per restaurant, pinned in that project. It never writes code. | `t3_thread_launch` with `projectId`, `t3_thread_organize` pin |
 | Menu | The restaurant's purpose, what good looks like, non-goals, and budget. | `menu.md` |
-| House rules | Standing orders pasted into every brief: merge policy, forbidden paths, verification bar. | `house-rules.md` |
+| House rules | Standing orders pasted into every brief. They name forbidden paths, the verification bar, and that work lands through the repository's landing queue. | `house-rules.md` |
 | Rail | Append-only intake. The head chef groups related tickets before it fires any. | `rail.tsv` |
 | Suppliers | Scheduled intake from GitHub issues, labels, and notifications. | `schedule_task` |
 | Station | A worker that runs one pstack playbook in its own worktree thread, briefed by `brigade.py brief`. | `t3_thread_launch` with a worktree strategy, `$poteto-mode` |
@@ -38,7 +38,7 @@ The kitchen terms name files, commands, and process steps only. They never reach
 
 `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<restaurant>/`
 
-- `restaurant.json`: name, project root, merge policy, head chef thread, schedule IDs, last activity, last report.
+- `restaurant.json` records the name, project root, landing mode chosen at open, head chef thread, schedule IDs, last activity, and last report. The mode that decides what reaches trunk is the repository's landing contract.
 - `menu.md`, `house-rules.md`: written from templates at opening, then edited by the head chef.
 - `rail.tsv` (tickets), `dishes.tsv` (grouped work assigned to a station), `pass.tsv` (one verdict per dish and head SHA), `86.tsv` (decisions for the user): current state, updated in place.
 - `log.tsv`: every state change, append-only.
@@ -49,7 +49,7 @@ The head chef thread is the only writer. Nothing is committed.
 
 ## Defaults
 
-- Merge policy `pass`: `brigade.py dish <id> --state merged` fails unless the dish has a `pass` verdict at its current head SHA. A menu may set `pr-only` or `local-only`.
+- `brigade.py dish <id> --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. The landing mode belongs to the repository's landing contract (`land.py init` and `land.py mode`). The restaurant records the mode it was opened with.
 - `pass record` refuses a verifier from the author's model family unless `--same-family` is given, and then notes it on the verdict.
 - A report lists only log entries after `lastReportAt`, so nothing the user already saw repeats.
 - `walk` marks a restaurant idle after 24 hours without activity, so a stalled head chef shows up.

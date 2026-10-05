@@ -121,7 +121,7 @@ Every wake runs this: a user message, a verifier's completion, or a schedule.
 
 ## Git and PR housekeeping
 
-The head chef owns every git and PR chore its work creates, so the user does none of it. In `merge`, `push`, and `local` mode the user has no step at all. In `human` mode the user only merges.
+The head chef owns every git and PR chore its work creates. In `merge` and `push` mode the user has no step. In `human` mode the user merges each PR. In `local` mode the user merges `refs/landing/<trunk>` into a branch.
 
 - Write each PR's title and body through `submit`, and link every PR with `link_pull_request`.
 - Keep the landing drain schedule while anything is queued or awaiting merge.
