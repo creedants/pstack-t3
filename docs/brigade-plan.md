@@ -38,7 +38,7 @@ The kitchen terms name files, commands, and process steps only. They never reach
 
 `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<restaurant>/`
 
-- `restaurant.json` records the name, project root, landing mode chosen at open, head chef thread, schedule IDs, last activity, and last report. The mode that decides what reaches trunk is the repository's landing contract.
+- `restaurant.json` records the name, project root, the landing mode chosen at open or the one last recorded with `brigade.py set --landing`, the head chef thread, schedule IDs, last activity, and last report. The mode that decides what reaches trunk is the repository's landing contract.
 - `menu.md`, `house-rules.md`: written from templates at opening, then edited by the head chef.
 - `rail.tsv` (tickets), `dishes.tsv` (grouped work assigned to a station), `pass.tsv` (one verdict per dish and head SHA), `86.tsv` (decisions for the user): current state, updated in place.
 - `log.tsv`: every state change, append-only.
@@ -49,7 +49,7 @@ The head chef thread is the only writer. Nothing is committed.
 
 ## Defaults
 
-- `brigade.py dish <id> --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. The landing mode belongs to the repository's landing contract (`land.py init` and `land.py mode`). The restaurant records the mode it was opened with.
+- `brigade.py dish <id> --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. The landing mode belongs to the repository's landing contract (`land.py init` and `land.py mode`). `restaurant.json` records the landing mode chosen at open, or the one last recorded with `brigade.py set --landing`.
 - `pass record` refuses a verifier from the author's model family unless `--same-family` is given, and then notes it on the verdict.
 - A report lists only log entries after `lastReportAt`, so nothing the user already saw repeats.
 - `walk` marks a restaurant idle after 24 hours without activity, so a stalled head chef shows up.
