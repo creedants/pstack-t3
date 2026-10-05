@@ -86,7 +86,7 @@ Keep the checkout on disk, because the install links to it. Then open a new T3 t
 1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional, and the defaults are sensible.
 2. Start any real task with `$poteto-mode`.
 
-The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which skill fits? Ask `$poteto-help`. It answers that part and hands you a prompt. It does not start the work.
+The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which skill fits? Ask `$poteto-help`. It answers and hands you a prompt. It does not start the work.
 
 ## What you can say
 

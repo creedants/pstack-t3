@@ -13,7 +13,7 @@ This file maps questions to the skills and guide sections that hold the answers.
 
 ## Find out what they need
 
-Infer the need from the message and the conversation. A named situation, such as "which skill reviews a PR?", goes straight to its section. If the need is still unclear, ask one multiple-choice question with these options in the host's question tool, then answer only the section they pick:
+Infer the need from the message and the conversation. A named situation, such as "which skill reviews a PR?", goes straight to its section. If the need is still unclear, ask one multiple-choice question with these options, then answer only the section they pick:
 
 - Get set up
 - Start a task with `$poteto-mode`
@@ -36,7 +36,7 @@ Typing `$name` loads a skill, and any skill can also load when its description m
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `$setup-pstack` and pick a smaller budget or cheaper models. A role set to `inherit` runs on the chat's model, which saves tokens when the chat runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `$poteto-mode` for work that needs rigor.
 
-pstack-t3 runs in T3 Code. Outside T3, the skills fall back to the host's own subagents on the current model, without cross-provider panels or `schedule_task`. For Cursor itself, use [upstream pstack](https://github.com/cursor/plugins/tree/main/pstack).
+pstack-t3 runs in T3 Code. [Outside T3](../pstack-runtime/SKILL.md#outside-t3) covers other hosts.
 
 ## Start a task with `$poteto-mode`
 
@@ -46,7 +46,6 @@ Whether `$poteto-mode` stays on:
 
 - Naming `$poteto-mode` in a message attaches the skill to that message. It fades as the chat moves on.
 - T3 has no switch that pins the skill on later tasks. Start the next task with `$poteto-mode` again.
-- The user says a turn is casual, or that they want the mode off, and it stays out.
 
 Mid-chat, "new task" makes the mode match a fresh playbook. `$poteto-mode` already uses the poteto-agent persona for the subagents its playbook steps spawn. To get the same style from a subagent of your own, call `delegate_task` and paste the body of [`../pstack-runtime/agents/poteto-agent.md`](../pstack-runtime/agents/poteto-agent.md) at the top of the brief. [The runtime](../pstack-runtime/SKILL.md) has the call shape.
 
@@ -129,7 +128,7 @@ Principles are one-rule skills that `$poteto-mode` reads and cites in its replie
 |---|---|
 | The mode stopped applying after a few turns | It was loaded by one message and faded. Start each task with `$poteto-mode`, or name it again when it drifts. |
 | A question got treated as the next step of the last task | Say "new task", or say the turn doesn't need the mode. |
-| A new model choice had no effect | `$setup-pstack` writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles. |
+| A new model choice had no effect | A project `.pstack/t3-roles.json` overrides the same role from the user file. Run `roles.py show` to see which file won. [Where roles live](../pstack-runtime/SKILL.md#where-roles-live). |
 | Runs cost more than expected | See the cost paragraph under Get set up. |
 | A skill didn't load on its own | Typing `$name` loads a skill, and any skill can also load when its description matches. `$poteto-mode` doesn't run every skill. |
 | Parallel agents overwrote each other | Give each writer its own git worktree. For several agents on one repo, use [`$landing`](../landing/SKILL.md) so each claims paths before it writes. |
