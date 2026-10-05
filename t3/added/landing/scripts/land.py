@@ -768,26 +768,27 @@ def request_merge(store, ident, url):
         else:
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
-        return
+        return False
     if blocker == "failed":
         bounce_open_pr(store, ident, url, f"required checks failed on {url}: {detail}", armed)
-        return
+        return False
     method = f"--{store.contract.get('mergeMethod') or 'merge'}"
     queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
     if queued.returncode == 0:
         with store.tx() as db:
             store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
-        return
+        return True
     now_ = gh("pr", "merge", url, method, cwd=store.repo)
     if now_.returncode != 0:
         plain = (now_.stderr or "").strip()
         if blocker == "absent" and unposted_merge_refusal(plain):
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
-            return
+            return False
         raise Infrastructure(f"GitHub refused to merge {url}: {plain or 'gh pr merge failed'}")
     with store.tx() as db:
         store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
+    return True
 
 
 def delete_queue_branch(store, entry):
@@ -873,14 +874,21 @@ def poll_human(store):
             if blocker == "review":
                 pause_for_review(store, entry["pr"], detail, disarm=True, armed=armed)
             continue
-        request_merge(store, entry["id"], entry["pr"])
+        # A merge command can return before pr view reports MERGED.
+        reads = 4 if request_merge(store, entry["id"], entry["pr"]) else 1
         entry = entry_row(store, entry["id"])
         if entry["state"] == "bounced":
             bounced.append(entry["id"])
             continue
         if entry["state"] != "awaiting-merge":
             continue
-        take_pr(store, entry, landed, bounced)
+        for attempt in range(reads):
+            if take_pr(store, entry, landed, bounced):
+                break
+            entry = entry_row(store, entry["id"])
+            if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
+                break
+            time.sleep(0.5)
     return landed, bounced
 
 
