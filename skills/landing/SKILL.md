@@ -43,8 +43,8 @@ Run `init` the first time any coordinator writes to a repository. The mode decid
 
 | Mode | Landing does | The user |
 | --- | --- | --- |
-| `merge` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. It enables GitHub auto-merge when the repository has required checks. It waits while a posted check is still running, bounces when a posted check has failed, and merges at once only when no check is posted. After the PR merges, it deletes `landing/q<n>` on the remote and in the local checkout. | Reviews after the fact. Nothing waits on them. |
-| `human` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. Leaves the PR open. Marks it landed when someone merges it, and deletes `landing/q<n>`. | Merges every PR. |
+| `merge` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. It reads posted checks before it runs `gh pr merge`, including `--auto`. A pending posted check waits. A failed posted check bounces. A later `land` reads checks again on an entry already noted `merge requested by the queue`, and a check that fails then bounces the entry and makes the lease active. It merges only when that read succeeds and no posted check is pending or failed. With no posted check, it merges at once. A failed or unreadable check read pauses the queue and does not merge. After the PR merges, it deletes remote `landing/q<n>`. It deletes a local `landing/q<n>` branch when one exists and git can delete it. When that delete fails, `land` still marks the entry landed and prints the branch it left. | Reviews after the fact. Nothing waits on them. |
+| `human` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. Leaves the PR open. Marks it landed when someone merges it, deletes remote `landing/q<n>`, and prints a local branch it could not delete. | Merges every PR. |
 | `push` | Rebases, runs the checks, and pushes trunk only if the remote is still at the tested base. No PRs. | Reviews after the fact, in the commit history. |
 | `local` | Lands on `refs/landing/<trunk>`, which no checkout uses. Pass `--base`. | Merges the lane into a branch when ready. |
 
@@ -64,7 +64,7 @@ For every unit of writing work:
 6. **Settle.** Read `status Q<n>`.
    - `landed`: the lease is released. Record it in the coordinator's tables, then remove the worker's worktree with `git worktree remove` and delete its branch.
    - `bounced`: the lease is active again for the fix. Fire a fresh worker with the original brief, the bounce reason, and current trunk. A conflict or a changed rebase needs a new review after the fix.
-   - `awaiting-merge` (`merge` and `human` mode): the PR is open. In `merge` mode the queue merges it once posted checks have passed, or at once when none were posted. The next `land` run marks it landed when it merges and deletes `landing/q<n>`.
+   - `awaiting-merge` (`merge` and `human` mode): the PR is open. In `merge` mode the queue merges it once a check read succeeds and no posted check is pending or failed, including an entry already noted `merge requested by the queue`. A failed posted check bounces that entry and makes the lease active. The next `land` marks it landed when the PR merges, deletes remote `landing/q<n>`, and prints a local branch it could not delete.
 
 ## Keep the queue moving
 

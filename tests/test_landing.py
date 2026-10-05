@@ -309,7 +309,8 @@ elif args[:2] == ["pr", "view"]:
             self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: Q1 (r/D1) https://github.com/o/r/pull/9")
             self.assertIn("waiting for required checks", self.land("status", "Q1"))
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
-            self.assertNotIn("pr merge https://github.com/o/r/pull/9 --squash", (self.base / "merge-calls").read_text())
+            calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
+            self.assertNotIn("pr merge https://github.com/o/r/pull/9 --squash", calls)
             self.assertEqual(self.land("land"), "nothing to land")
             (self.base / "checks").unlink()
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
@@ -540,16 +541,19 @@ elif args[:2] == ["pr", "view"]:
         governor.mkdir(parents=True)
         (governor / "governor.json").write_text(json.dumps({"slots": 2}))
         marks = self.base / "marks"
+        # land.py's slot gate reads LAND_SLOT. The queue sets it around this suite, so the
+        # subprocesses under test must not inherit it. The nested command still sets it itself.
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
         worker = subprocess.Popen([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", f"echo worker-start >> {marks}; sleep 2; echo worker-end >> {marks}"],
-                                  env=os.environ.copy())
+                                  env=env)
         time.sleep(0.5)
         bench = subprocess.run([sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "sh", "-c", f"echo bench >> {marks}"],
-                               capture_output=True, text=True, timeout=30, env=os.environ.copy())
+                               capture_output=True, text=True, timeout=30, env=env)
         worker.wait(timeout=30)
         self.assertEqual(bench.returncode, 0, bench.stderr)
         self.assertEqual(marks.read_text().split(), ["worker-start", "worker-end", "bench"])
         nested = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "true"],
-                                capture_output=True, text=True, timeout=30, env=os.environ.copy())
+                                capture_output=True, text=True, timeout=30, env=env)
         self.assertNotEqual(nested.returncode, 0)
         self.assertIn("must be the outermost slot", nested.stderr)
 
