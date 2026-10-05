@@ -219,6 +219,21 @@ class BrigadeTest(unittest.TestCase):
     def test_commands_outside_a_restaurant_fail_with_the_fix(self):
         self.assertIn("run brigade.py open", self.brigade("status", ok=False))
 
+    def test_set_schedule_drops_a_recorded_name_and_a_missing_one(self):
+        self.open()
+        self.brigade("set", "--schedule", "liveness=sched-4", "--schedule", "drain=sched-5")
+        self.brigade("set", "--schedule", "liveness=")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"], {"drain": "sched-5"})
+        self.brigade("set", "--schedule", "evening=")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"], {"drain": "sched-5"})
+        self.brigade("set", "--schedule", "morning=sched-1")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"],
+                         {"drain": "sched-5", "morning": "sched-1"})
+        error = self.brigade("set", "--schedule", "drain", ok=False)
+        self.assertIn("NAME=ID", error)
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"],
+                         {"drain": "sched-5", "morning": "sched-1"})
+
 
 if __name__ == "__main__":
     unittest.main()
