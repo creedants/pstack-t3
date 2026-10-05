@@ -58,7 +58,7 @@ What happens:
 5. **It proves the fix.** The same reproduction now passes, plus whatever checks the project has.
 6. **It reports plainly.** Short sentences, every claim labeled measured, inferred, or guess, and the principles that shaped each decision named.
 
-`$poteto-mode` applies to the task you started with it. Follow-ups on that task stay in its playbook. Start a different task with `$poteto-mode` again. Say so if you want it off.
+`$poteto-mode` applies from the message that names it. It fades as the thread moves on. The user names it again for the next task.
 
 ## 4. Get several opinions
 

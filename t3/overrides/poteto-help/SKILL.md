@@ -9,11 +9,11 @@ Answer the user's question about pstack, hand them a prompt they can send, and l
 
 A message that asks for work, such as "use pstack to fix this bug", is not a help question. Read [`poteto-mode`](../poteto-mode/SKILL.md), do the work under it, and mention once that the next task should start with `$poteto-mode`.
 
-This file maps questions to the skills and guide sections that hold the answers. Those files own the details. Read the file you route to before you quote it, and trust it when it disagrees with this map. The links here point into the installed skills, which the user may not be able to open, so give the user the file's public copy on `https://github.com/creedants/pstack-t3/blob/main/` followed by its path.
+This file maps questions to the skills and guide sections that hold the answers. Those files own the details. Read the file you route to before you quote it, and trust it when it disagrees with this map. The links here point into the installed skills, which the user may not be able to open, so give the user the file's public copy: `https://github.com/creedants/pstack-t3/blob/main/` followed by its path.
 
 ## Find out what they need
 
-Infer the need from the message and the conversation. A named situation, such as "which skill reviews a PR?", goes straight to its section. If the need is still unclear, ask one multiple-choice question with the host's question tool, with these options, then answer only the section they pick.
+Infer the need from the message and the conversation. A named situation, such as "which skill reviews a PR?", goes straight to its section. If the need is still unclear, ask one multiple-choice question with these options in the host's question tool, then answer only the section they pick:
 
 - Get set up
 - Start a task with `$poteto-mode`
@@ -23,16 +23,16 @@ Infer the need from the message and the conversation. A named situation, such as
 
 Check the state that changes the answer, and mention it only when it does:
 
-- No `~/.config/pstack-t3/roles.json` and no `.pstack/t3-roles.json` means `$setup-pstack` hasn't run for this user, so every role uses its default model. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) lists them.
+- No `.pstack/t3-roles.json`, and no `~/.config/pstack-t3/roles.json` or `$XDG_CONFIG_HOME/pstack-t3/roles.json`, means `$setup-pstack` hasn't run for this user, so every role uses its default model. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) lists them.
 - No `verify-*` skill or other app harness in the project means agents have no scripted way to drive the app. Mention `$create-verification-skill` when the question is about proving a change works.
 
 ## Get set up
 
-1. Clone the checkout and run `python3 scripts/install.py`. Then run `python3 scripts/install.py doctor`. Each provider you use should show the same count on both sides of `N/N pstack-t3`.
-2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`. A new session reads that file the next time a skill resolves roles.
+1. `git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3`, then run `python3 scripts/install.py` in that directory. Then run `python3 scripts/install.py doctor`. Each provider should show the same count on both sides of `N/N pstack-t3`.
+2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles.
 3. Start a real task with `$poteto-mode`, a goal, and a check that can pass or fail.
 
-Typing `$name` loads a skill, and any skill can also load when its description matches. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [guide](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md) have the details. Offer to word their first prompt with them.
+Typing `$name` loads a skill, and any skill can also load when its description matches. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them.
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `$setup-pstack` and pick a smaller budget or cheaper models. A role set to `inherit` runs on the chat's model, which saves tokens when the chat runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `$poteto-mode` for work that needs rigor.
 
@@ -42,9 +42,9 @@ pstack-t3 runs in T3 Code. Outside T3, the skills fall back to the host's own su
 
 `$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
 
-Whether `$poteto-mode` stays on:
+Whether `$poteto-mode` stays on depends on how the user starts it:
 
-- Naming `$poteto-mode` in a message loads it for that task. Follow-ups on the same task stay in the playbook it opened.
+- Naming `$poteto-mode` in a message attaches the skill to that message. It fades as the chat moves on.
 - T3 has no switch that pins the skill on later tasks. Start the next task with `$poteto-mode` again.
 - The user says a turn is casual, or that they want the mode off, and it stays out.
 
@@ -100,11 +100,11 @@ Close calls:
 - `$figure-it-out` designs one rigorous run. The Orchestrate playbook runs a program that spans days and many PRs. The Autonomous run playbook drives one task to a finish condition.
 - `$landing` is the queue several agents share when they write one repo. `$brigade` is the standing thread that sends work to that queue.
 
-Not part of this install:
+Not in pstack:
 
-- `$deslop`, `control-cli`, and `control-ui` are optional. Use them when they are installed. If `$deslop` is not installed, strip the slop yourself with [`$unslop`](../unslop/SKILL.md). If `control-cli` or `control-ui` is not installed, drive a CLI in the terminal and a web UI with T3's preview tools.
-- Recurring work uses `schedule_task`. There is no separate skill for it. Writing a skill uses [`$pstack-author-skill`](../pstack-author-skill/SKILL.md).
-- pstack has no `$orchestrate` skill. Orchestrate is a `$poteto-mode` playbook. If some other tool shows an orchestrate command, it is not this one.
+- `$deslop`, `control-cli`, and `control-ui` are optional. Use them when they are installed. If `$deslop` is not installed, strip the slop with [`$unslop`](../unslop/SKILL.md). If `control-cli` or `control-ui` is not installed, drive a CLI in the terminal and a web UI with T3's preview tools.
+- Recurring work uses `schedule_task`, a T3 tool.
+- pstack has no `$orchestrate` skill. Orchestrate is a `$poteto-mode` playbook. If the `$` picker shows `$orchestrate`, another skill provides it.
 
 ## Playbooks and principles
 
@@ -127,9 +127,9 @@ Principles are one-rule skills that `$poteto-mode` reads and cites in its replie
 
 | Symptom | Fix |
 |---|---|
-| The mode stopped applying after a few turns | The skill was loaded for one task. Start the next task with `$poteto-mode`. |
+| The mode stopped applying after a few turns | It was loaded by one message and faded. Start each task with `$poteto-mode`, or name it again when it drifts. |
 | A question got treated as the next step of the last task | Say "new task", or say the turn doesn't need the mode. |
-| A new model choice had no effect | `$setup-pstack` writes `~/.config/pstack-t3/roles.json`. A new session reads it. Re-running a skill in this session resolves roles again. |
+| A new model choice had no effect | `$setup-pstack` writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles. |
 | Runs cost more than expected | See the cost paragraph under Get set up. |
 | A skill didn't load on its own | Typing `$name` loads a skill, and any skill can also load when its description matches. `$poteto-mode` doesn't run every skill. |
 | Parallel agents overwrote each other | Give each writer its own git worktree. For several agents on one repo, use [`$landing`](../landing/SKILL.md) so each claims paths before it writes. |
