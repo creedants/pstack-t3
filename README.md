@@ -206,7 +206,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 - Live end-to-end runs of the longest playbooks (Orchestrate, Autopilot) on real multi-PR projects.
 - Testing on macOS, and on T3's other providers (OpenCode, Antigravity, ACP agents).
 - A T3-native port of Lauren's long-form guide.
-- Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. Today syncing is a manual `scripts/sync_upstream.py` run, and a nightly scheduled sync runs on the maintainer's machine.
+- Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. Today syncing is a manual `scripts/sync_upstream.py` run.
 - Cloud workers through local cua container sandboxes. Today landing still only needs a branch, a path lease, and a reviewed commit.
 - Batch bisection in the landing queue. Today a failed batch tries one entry alone, then batches the rest again. `--batch` applies to `push` and `local` only. `merge` and `human` open one PR per change.
 - A cap on running workers that a script enforces. Today `land.py slot` limits how many heavy commands run, and the worker cap is a line in `house-rules.md`.
