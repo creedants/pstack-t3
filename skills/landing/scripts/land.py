@@ -479,7 +479,20 @@ def pause(store, reason):
         store.log(db, "queue", 0, "paused", reason)
 
 
+def forget_absent(db, ident):
+    """Drop this entry's drain marker. A settled entry must not stay in the map."""
+    row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
+    if not row:
+        return
+    raw = json.loads(row["value"])
+    if str(ident) not in raw:
+        return
+    del raw[str(ident)]
+    db.execute("INSERT OR REPLACE INTO contract VALUES ('absentDrain', ?)", (json.dumps(raw),))
+
+
 def settle_landed(store, db, ident, landed, note=""):
+    forget_absent(db, ident)
     lease = db.execute("SELECT lease FROM entry WHERE id = ?", (ident,)).fetchone()["lease"]
     store.set_entry(db, ident, "landed", landed=landed, note=note)
     db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (lease,))
@@ -488,6 +501,7 @@ def settle_landed(store, db, ident, landed, note=""):
 
 def settle_bounced(store, db, ident, reason):
     """A bounced entry gives its lease back to the holder for the fix, with a fresh expiry."""
+    forget_absent(db, ident)
     lease = db.execute("SELECT lease FROM entry WHERE id = ?", (ident,)).fetchone()["lease"]
     store.set_entry(db, ident, "bounced", note=reason, candidate="")
     db.execute("UPDATE lease SET state = 'active', expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=6)), lease))
@@ -635,12 +649,12 @@ MERGE_REQUESTED = "merge requested by the queue"
 WAITING_FOR_CHECKS = "waiting for required checks before merging"
 BLOCKER_QUERY = (
     '[.reviewDecision // "", '
-    '([.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
-    '([.statusCheckRollup[] | select((.conclusion // "") as $c | (.state // "") as $s '
+    '([(.statusCheckRollup // [])[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
+    '([(.statusCheckRollup // [])[] | select((.conclusion // "") as $c | (.state // "") as $s '
     '| ($c == "FAILURE" or $c == "CANCELLED" or $c == "TIMED_OUT" or $s == "FAILURE" or $s == "ERROR")) '
-    '| (.name // .context)] | join(","))] | @tsv'
+    '| (.name // .context)] | join(",")), '
+    '((.statusCheckRollup // []) | length)] | @tsv'
 )
-POSTED_QUERY = "([.statusCheckRollup // []] | length)"
 
 
 def classify_rollup(review, pending, failed, posted):
@@ -690,20 +704,17 @@ def remember_absent(store, ident, drain):
 def merge_blocker(store, url):
     """Why this PR must not merge yet.
 
-    Returns ('review', ''), ('pending', ''), ('failed', names), ('absent', ''), or ('', '')
-    when posted checks finished successfully. A failed command or an unparseable rollup
-    raises Infrastructure, and the caller must not merge."""
+    One gh pr view supplies the review, the pending count, the failed names, and how many
+    checks are posted. Returns ('review', ''), ('pending', ''), ('failed', names),
+    ('absent', ''), or ('', '') when posted checks finished successfully. A failed command
+    or an unparseable rollup raises Infrastructure, and the caller must not merge."""
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup", "-q", BLOCKER_QUERY, cwd=store.repo)
     if view.returncode != 0:
         raise Infrastructure(f"could not read checks for {url}: {view.stderr.strip() or 'gh pr view failed'}")
     fields = view.stdout.rstrip("\n").split("\t")
-    if len(fields) != 3 or not fields[1].isdigit():
+    if len(fields) != 4 or not fields[1].isdigit() or not fields[3].isdigit():
         raise Infrastructure(f"could not read checks for {url}: unparseable check rollup")
-    posted = gh("pr", "view", url, "--json", "statusCheckRollup", "-q", POSTED_QUERY, cwd=store.repo)
-    if posted.returncode != 0 or not posted.stdout.strip().isdigit():
-        detail = posted.stderr.strip() or "unparseable check rollup"
-        raise Infrastructure(f"could not read checks for {url}: {detail}")
-    return classify_rollup(fields[0], int(fields[1]), fields[2], int(posted.stdout.strip()))
+    return classify_rollup(fields[0], int(fields[1]), fields[2], int(fields[3]))
 
 
 def request_merge(store, ident, url):
