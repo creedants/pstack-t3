@@ -43,8 +43,8 @@ Run `init` the first time any coordinator writes to a repository. The mode decid
 
 | Mode | Landing does | The user |
 | --- | --- | --- |
-| `merge` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, opens a PR, and merges it itself: GitHub auto-merge when the repository has required checks, otherwise at once. | Reviews after the fact. Nothing waits on them. |
-| `human` | The same, but leaves the PR open. Marks it landed when someone merges it. | Merges every PR. |
+| `merge` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. It enables GitHub auto-merge when the repository has required checks. It waits while a posted check is still running, bounces when a posted check has failed, and merges at once only when no check is posted. After the PR merges, it deletes `landing/q<n>` on the remote and in the local checkout. | Reviews after the fact. Nothing waits on them. |
+| `human` | Rebases onto trunk, runs the checks, pushes `landing/q<n>`, and opens a PR. Leaves the PR open. Marks it landed when someone merges it, and deletes `landing/q<n>`. | Merges every PR. |
 | `push` | Rebases, runs the checks, and pushes trunk only if the remote is still at the tested base. No PRs. | Reviews after the fact, in the commit history. |
 | `local` | Lands on `refs/landing/<trunk>`, which no checkout uses. Pass `--base`. | Merges the lane into a branch when ready. |
 
@@ -64,7 +64,7 @@ For every unit of writing work:
 6. **Settle.** Read `status Q<n>`.
    - `landed`: the lease is released. Record it in the coordinator's tables, then remove the worker's worktree with `git worktree remove` and delete its branch.
    - `bounced`: the lease is active again for the fix. Fire a fresh worker with the original brief, the bounce reason, and current trunk. A conflict or a changed rebase needs a new review after the fix.
-   - `awaiting-merge` (`merge` and `human` mode): the PR is open. In `merge` mode GitHub merges it when its checks pass. The next `land` run marks it landed when it merges.
+   - `awaiting-merge` (`merge` and `human` mode): the PR is open. In `merge` mode the queue merges it once posted checks have passed, or at once when none were posted. The next `land` run marks it landed when it merges and deletes `landing/q<n>`.
 
 ## Keep the queue moving
 

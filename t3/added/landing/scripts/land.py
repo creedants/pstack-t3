@@ -656,27 +656,42 @@ def merge_blocker(store, url):
 
 
 def request_merge(store, ident, url):
-    """Merge mode: ask GitHub to merge when required checks pass, or merge now when the PR has none to wait for.
-    When GitHub refuses, find out why: running checks are waited out, failed checks bounce, a required review pauses."""
+    """Merge mode: ask GitHub to merge when required checks pass.
+
+    A posted check that is still running or has failed blocks the merge even when GitHub would allow it.
+    With no posted check, merge now. A required review still pauses, because GitHub refuses the merge."""
     method = f"--{store.contract.get('mergeMethod') or 'merge'}"
     queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
     if queued.returncode == 0:
-        note = MERGE_REQUESTED
-    else:
-        now_ = gh("pr", "merge", url, method, cwd=store.repo)
-        note = MERGE_REQUESTED
-        if now_.returncode != 0:
-            blocker, detail = merge_blocker(store, url)
-            if blocker == "pending":
-                note = WAITING_FOR_CHECKS
-            elif blocker == "failed":
-                with store.tx() as db:
-                    settle_bounced(store, db, ident, f"required checks failed on {url}: {detail}")
-                return
-            else:
-                raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
+        with store.tx() as db:
+            store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
+        return
+    blocker, detail = merge_blocker(store, url)
+    if blocker == "pending":
+        with store.tx() as db:
+            store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+        return
+    if blocker == "failed":
+        with store.tx() as db:
+            settle_bounced(store, db, ident, f"required checks failed on {url}: {detail}")
+        return
+    now_ = gh("pr", "merge", url, method, cwd=store.repo)
+    if now_.returncode != 0:
+        raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
     with store.tx() as db:
-        store.set_entry(db, ident, "awaiting-merge", note=note)
+        store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
+
+
+def delete_queue_branch(store, entry):
+    """Drop landing/q<n> after the PR has merged. A missing ref is success. A real delete failure returns False so the next land retries."""
+    branch = human_branch(entry)
+    remote = store.contract["remote"]
+    pushed = git("push", remote, "--delete", branch, cwd=store.repo, check=False)
+    if pushed.returncode != 0 and "does not exist" not in pushed.stderr:
+        return False
+    git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
+    git("branch", "-D", branch, cwd=store.repo, check=False)
+    return True
 
 
 def poll_human(store):
@@ -694,6 +709,8 @@ def poll_human(store):
         view = gh("pr", "view", entry["pr"], "--json", "state,headRefOid,mergeCommit",
                   "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
         state, head, merged = (view.stdout.strip().split(" ") + ["", "", ""])[:3]
+        if state == "MERGED" and not delete_queue_branch(store, entry):
+            continue
         with store.tx() as db:
             if state == "MERGED" and head == entry["candidate"]:
                 settle_landed(store, db, entry["id"], merged)
