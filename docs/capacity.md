@@ -20,7 +20,7 @@ The responsiveness probe is one HTTP GET of `/` on 127.0.0.1. It measures that r
 
 `sessions` counts a live process from the NUL-separated arguments in `/proc/<pid>/cmdline`. The basename of argv[0] is `grok` and argv[1] is `agent`, or the basename of argv[0] is `claude` and a later element is `--model` or begins with `--model=`. An argv[0] value that contains whitespace has no argument boundary, so it does not count. `claude-desktop` and the `codex` app-server hosts do not match those basenames. A shell whose script text only mentions these words counts zero.
 
-`build_procs` counts a Python process whose argv[1] is `scripts/build.py` or a path ending in `/scripts/build.py`, or whose argv[1] is `-m` and argv[2] is `unittest`. A direct exec of that build script counts too. A shell whose script text only mentions those strings counts zero. The count shows that those processes existed. Exit status in the loop log is what shows that an iteration passed.
+`build_procs` counts a Python process whose argv[1] is `scripts/build.py` or a path ending in `/scripts/build.py`, or whose argv[1] is `-m` and argv[2] is `unittest`. A direct exec of that build script counts too. A shell whose script text only mentions those strings counts zero. The count shows that those processes existed. Exit status in the loop log is what shows that an iteration passed. The idle-ramp table is the exception. Its `sessions` and `build_procs` cells came from the older substring counter, which that section names.
 
 Each official step is five samples, five seconds apart.
 
