@@ -42,6 +42,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>"
 $B status                                    # one line of counts
 $B set --thread <id> --schedule <name>=<id>
+$B set --schedule <name>= drops that name from restaurant.json. A name that is not recorded is already absent, and the command still succeeds. Other names stay.
 $B set --landing human|merge|push|local      # after every $L mode, so restaurant.json records it
 $B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>]   # prints T<n>
 $B ticket list [--state waiting|assigned|done|dropped]
@@ -90,8 +91,8 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
    - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`.
    - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source.
    - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report."
-   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time.
-   - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run the liveness check." Delete it when `$B watch` prints "no work in progress".
+   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
+   - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`.
    - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`.
 4. Run a service.
 
@@ -123,7 +124,7 @@ Every wake runs this: a user message, a verifier's completion, or a schedule.
 The head chef owns every git and PR chore its work creates. In `merge` and `push` mode the user has no step. In `human` mode the user merges each PR. In `local` mode the user merges `refs/landing/<trunk>` into a branch.
 
 - Write each PR's title and body through `submit`, and link every PR with `link_pull_request`.
-- Keep the landing drain schedule while anything is queued or awaiting merge.
+- Keep the landing drain schedule while anything is queued or awaiting merge. When you delete it, run `$B set --schedule drain=`.
 - After a dish merges, is dropped, or is sent back: archive its worker thread, remove its worktree, delete its dish branch locally and on the remote, and delete the queue's `landing/q<n>` branch once its PR merged or closed.
 - After a landing, when the user's checkout at the project root is clean and on trunk, fast-forward it with `git merge --ff-only`. Otherwise leave it alone.
 - A bounce or a conflict is a dish for a fresh worker, never a manual rebase.
@@ -137,7 +138,7 @@ Run on the liveness schedule, and at the start of any service while work is in p
 2. "report written": the worker is done, even if its run never closed. `t3_thread_interrupt` the thread if its run is still active, then review per Run a service step 6.
 3. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it.
 4. "running": nothing to do.
-5. When `$B watch` prints "no work in progress", delete the liveness schedule.
+5. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`.
 
 ## Executive chef's view
 
@@ -145,4 +146,4 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 ## Close a restaurant
 
-Delete its schedules with `delete_scheduled_task`, run `$B close` one last time, and unpin the thread with `t3_thread_organize`. Leave the store. It is the record.
+Delete its schedules with `delete_scheduled_task`, then clear each recorded name with `$B set --schedule <name>=`. Run `$B close` one last time, and unpin the thread with `t3_thread_organize`. Leave the store. It is the record.

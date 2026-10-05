@@ -500,10 +500,13 @@ def run(argv):
         if args.landing:
             meta["landing"] = args.landing
         for pair in args.schedule:
-            name, _, ident = pair.partition("=")
-            if not ident:
+            if "=" not in pair:
                 raise BrigadeError(f"--schedule takes NAME=ID, got {pair!r}")
-            meta["schedules"][name] = ident
+            name, ident = pair.split("=", 1)
+            if ident:
+                meta["schedules"][name] = ident
+            else:
+                meta["schedules"].pop(name, None)
         restaurant.save_meta(meta)
         return json.dumps(meta, indent=2)
 
