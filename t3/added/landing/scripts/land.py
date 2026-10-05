@@ -660,7 +660,7 @@ BLOCKER_QUERY = (
 def classify_rollup(review, pending, failed, posted):
     """The gate for one check read. Absent means GitHub has posted nothing yet."""
     if review in ("REVIEW_REQUIRED", "CHANGES_REQUESTED"):
-        return "review", ""
+        return "review", review
     if failed:
         return "failed", failed
     if pending > 0:
@@ -705,7 +705,7 @@ def merge_blocker(store, url):
     """Why this PR must not merge yet.
 
     One gh pr view supplies the review, the pending count, the failed names, and how many
-    checks are posted. Returns ('review', ''), ('pending', ''), ('failed', names),
+    checks are posted. Returns ('review', decision), ('pending', ''), ('failed', names),
     ('absent', ''), or ('', '') when posted checks finished successfully. A failed command
     or an unparseable rollup raises Infrastructure, and the caller must not merge."""
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup", "-q", BLOCKER_QUERY, cwd=store.repo)
@@ -717,15 +717,50 @@ def merge_blocker(store, url):
     return classify_rollup(fields[0], int(fields[1]), fields[2], int(fields[3]))
 
 
+def auto_merge_already_off(text):
+    lowered = (text or "").lower()
+    return "not enabled" in lowered or "not in auto merge" in lowered or "already disabled" in lowered
+
+
+def disarm_auto_merge(store, url):
+    """Turn auto-merge off. An empty return means it is off. A string is the failure."""
+    result = gh("pr", "merge", url, "--disable-auto", cwd=store.repo)
+    if result.returncode == 0:
+        return ""
+    text = (result.stderr or result.stdout or "gh pr merge --disable-auto failed").strip()
+    if auto_merge_already_off(text):
+        return ""
+    return text
+
+
+def bounce_open_pr(store, ident, url, reason):
+    """Bounce an open merge-mode PR. Disable auto-merge and leave the PR open, with no comment."""
+    problem = disarm_auto_merge(store, url)
+    if problem:
+        reason = f"{reason} (auto-merge still enabled: {problem})"
+    with store.tx() as db:
+        settle_bounced(store, db, ident, reason)
+
+
+def pause_for_review(store, url, detail, disarm):
+    problem = disarm_auto_merge(store, url) if disarm else ""
+    requirement = "has changes requested" if detail == "CHANGES_REQUESTED" else "needs an approving review"
+    if problem:
+        raise Infrastructure(f"{url} {requirement}. Auto-merge is still enabled: {problem}")
+    raise Infrastructure(f"{url} {requirement}")
+
+
 def request_merge(store, ident, url):
-    """Merge only after a successful check read shows nothing pending or failed.
+    """Merge only after a successful check read shows nothing pending, failed, or awaiting review.
 
     The read runs before any gh pr merge, including --auto. A pending posted check waits.
     A failed posted check bounces. With no posted check, the land run that first sees it
     waits. A later land merges when checks are still absent. A base-branch policy refusal
     or disabled auto-merge, while checks are still absent, waits and does not pause the queue.
-    A required review still reaches gh, which refuses the merge and pauses the queue."""
+    An approving review, or changes requested, pauses the queue and does not call gh pr merge."""
     blocker, detail = merge_blocker(store, url)
+    if blocker == "review":
+        pause_for_review(store, url, detail, disarm=False)
     drain = int(store.contract.get("drain") or 0)
     seen = absent_seen(store, ident)
     repeat_absent = blocker == "absent" and seen is not None and seen < drain
@@ -737,8 +772,7 @@ def request_merge(store, ident, url):
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
         return
     if blocker == "failed":
-        with store.tx() as db:
-            settle_bounced(store, db, ident, f"required checks failed on {url}: {detail}")
+        bounce_open_pr(store, ident, url, f"required checks failed on {url}: {detail}")
         return
     method = f"--{store.contract.get('mergeMethod') or 'merge'}"
     queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
@@ -832,10 +866,14 @@ def poll_human(store):
             continue
         if entry["note"] == MERGE_REQUESTED:
             blocker, detail = merge_blocker(store, entry["pr"])
+            if take_pr(store, entry, landed, bounced):
+                continue
             if blocker == "failed":
-                with store.tx() as db:
-                    settle_bounced(store, db, entry["id"], f"required checks failed on {entry['pr']}: {detail}")
+                bounce_open_pr(store, entry["id"], entry["pr"], f"required checks failed on {entry['pr']}: {detail}")
                 bounced.append(entry["id"])
+                continue
+            if blocker == "review":
+                pause_for_review(store, entry["pr"], detail, disarm=True)
             continue
         request_merge(store, entry["id"], entry["pr"])
         entry = entry_row(store, entry["id"])

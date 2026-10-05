@@ -495,7 +495,8 @@ elif args[:2] == ["pr", "view"]:
             self.queue_one()
             opened = self.land("land")
             self.assertNotIn("landed", opened)
-            self.assertFalse((self.base / "merge-calls").exists())
+            self.assertEqual((self.base / "merge-calls").read_text().strip(),
+                             "pr merge https://github.com/o/r/pull/9 --disable-auto")
             self.assertIn("bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", opened)
             self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
@@ -636,8 +637,9 @@ elif args[:2] == ["pr", "view"]:
             self.init(mode="merge")
             self.queue_one()
             out = self.land("land")
-            self.assertIn("queue paused: GitHub refused to merge https://github.com/o/r/pull/9", out)
-            self.assertIn("approving review is required", out)
+            self.assertIn("queue paused: https://github.com/o/r/pull/9 needs an approving review", out)
+            calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
+            self.assertNotIn("--auto", calls.split())
 
     def test_the_mode_changes_only_while_nothing_is_in_flight(self):
         with self.fake_gh():
