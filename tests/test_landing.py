@@ -215,7 +215,7 @@ class LandingTest(unittest.TestCase):
         """A gh stand-in. PR url lives in pr-url, the poll answer in pr-state. crash-on-create kills land after creating."""
         fake = self.base / "gh"
         fake.write_text(f"""#!{sys.executable}
-import os, signal, sys
+import json, os, signal, subprocess, sys
 from pathlib import Path
 base = Path({str(self.base)!r})
 args = sys.argv[1:]
@@ -246,18 +246,37 @@ elif args[:2] == ["pr", "merge"]:
     head = subprocess.run(["git", "--git-dir", str(base / "origin.git"), "rev-parse", "refs/heads/landing/q1"],
                           capture_output=True, text=True).stdout.strip()
     (base / "pr-state").write_text(f"MERGED {{head}} 1111111111111111111111111111111111111111")
-elif args[:2] == ["pr", "view"] and "reviewDecision,statusCheckRollup" in args:
+elif args[:2] == ["pr", "view"] and any("statusCheckRollup" in arg for arg in args):
     if (base / "checks-query-fails").exists():
         print("API unavailable", file=sys.stderr)
         sys.exit(1)
-    review = "REVIEW_REQUIRED" if (base / "merge-refused").exists() else "APPROVED"
-    checks = (base / "checks").read_text() if (base / "checks").exists() else ""
-    pending = "1" if checks == "pending" else "0"
-    failed = "test (3.12)" if checks == "failed" else ""
-    print(review + "\t" + pending + "\t" + failed)
-elif args[:2] == ["pr", "view"] and "statusCheckRollup" in args:
-    rollup = (base / "checks").read_text().strip() if (base / "checks").exists() else ""
-    print({{"pending": "1", "failed": "1", "passed": "2"}}.get(rollup, "0"))
+    if (base / "pr-checks.json").exists():
+        doc = (base / "pr-checks.json").read_text()
+    else:
+        kind = (base / "checks").read_text().strip() if (base / "checks").exists() else ""
+        review = "REVIEW_REQUIRED" if (base / "merge-refused").exists() else "APPROVED"
+        rollup = {{
+            "pending": [{{"name": "test", "status": "IN_PROGRESS"}}],
+            "failed": [{{"name": "test (3.12)", "status": "COMPLETED", "conclusion": "FAILURE"}}],
+            "passed": [
+                {{"name": "test (3.10)", "status": "COMPLETED", "conclusion": "SUCCESS"}},
+                {{"name": "test (3.12)", "status": "COMPLETED", "conclusion": "SUCCESS"}},
+            ],
+        }}.get(kind, [])
+        doc = json.dumps({{"reviewDecision": review, "statusCheckRollup": rollup}})
+    query = args[args.index("-q") + 1]
+    ran = subprocess.run(["jq", "-r", query], input=doc, capture_output=True, text=True)
+    if ran.returncode != 0:
+        print(ran.stderr, file=sys.stderr)
+        sys.exit(1)
+    sys.stdout.write(ran.stdout if ran.stdout.endswith("\\n") else ran.stdout + "\\n")
+    flip = base / "checks-flip"
+    if flip.exists():
+        (base / "checks").write_text(flip.read_text())
+        flip.unlink()
+        saved = base / "pr-checks.json"
+        if saved.exists():
+            saved.unlink()
 elif args[:2] == ["pr", "view"] and "url" in args:
     if not (base / "pr-url").exists():
         sys.exit(1)
@@ -376,8 +395,12 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertFalse((self.base / "merge-calls").exists())
 
+    def absent_marker(self):
+        return land.Store.for_repo(self.work).contract.get("absentDrain") or {}
+
     def test_merge_mode_does_not_merge_a_just_opened_pr_with_zero_posted_checks(self):
         with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
             self.init(mode="merge")
             self.queue_one()
             opened = self.land("land")
@@ -414,6 +437,7 @@ elif args[:2] == ["pr", "view"]:
 
     def test_merge_mode_waits_when_auto_merge_is_disabled_and_no_check_is_posted(self):
         with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
             (self.base / "auto-merge-disabled").write_text("")
             (self.base / "policy-until-passed").write_text("")
             self.init(mode="merge")
@@ -430,10 +454,60 @@ elif args[:2] == ["pr", "view"]:
             self.assertNotIn("landed", still_empty)
             self.assertIn("waiting for required checks", self.land("status", "Q1"))
             self.assertNotIn("Paused", self.land("status"))
+            (self.base / "pr-checks.json").unlink()
             (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
             self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_does_not_merge_when_a_pending_check_appears_between_reads(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"APPROVED","statusCheckRollup":[]}')
+            (self.base / "checks-flip").write_text("pending")
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertNotIn("landed", opened)
+            self.assertNotIn("queue paused", opened)
+            self.assertFalse((self.base / "merge-calls").exists())
+            self.assertIn("waiting for required checks", self.land("status", "Q1"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+
+    def test_merge_mode_does_not_merge_when_a_failed_check_appears_between_reads(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"APPROVED","statusCheckRollup":[]}')
+            (self.base / "checks-flip").write_text("failed")
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertNotIn("landed", opened)
+            self.assertFalse((self.base / "merge-calls").exists())
+            self.assertIn("bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", opened)
+            self.assertTrue(self.land("lease", "list").startswith("L1 active"))
+
+    def test_merge_mode_drops_the_absent_marker_when_the_entry_lands(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", opened)
+            self.assertEqual(self.absent_marker(), {"1": 1})
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertNotIn("1", self.absent_marker())
+
+    def test_merge_mode_drops_the_absent_marker_when_the_entry_bounces(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            self.assertEqual(self.absent_marker(), {"1": 1})
+            (self.base / "pr-checks.json").unlink()
+            (self.base / "checks").write_text("failed")
+            self.assertIn("bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", self.land("land"))
+            self.assertNotIn("1", self.absent_marker())
+            self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
     def test_a_checked_out_queue_branch_is_named_when_land_cannot_delete_it(self):
         with self.fake_gh():
