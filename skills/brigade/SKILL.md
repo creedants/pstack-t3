@@ -44,6 +44,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>"
 $B status                                    # one line of counts
 $B set --thread <id> --schedule <name>=<id>
+$B set --landing human|merge|push|local      # after every $L mode, so restaurant.json records it
 $B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>]   # prints T<n>
 $B ticket list [--state waiting|assigned|done|dropped]
 $B ticket set T3 --state dropped
@@ -77,7 +78,7 @@ Run from any thread.
    - `local`: nothing leaves the machine. Changes land on a lane ref the user merges.
    Say that `merge` and `push` put reviewed changes on trunk with no human gate. When the repository already has a landing contract (`$L status`), its mode applies to every restaurant on that repository. Say so before changing it.
 4. Run `python3 <skills>/brigade/scripts/brigade.py open --project-root <root> --name "<restaurant>" --landing <choice>`. It prints the restaurant directory. Fill `menu.md`. Append house rules: forbidden paths, verification bar, intake sources, worker cap.
-5. Set the repository's landing contract to the choice. When `$L status` shows no contract, run `$L init --mode <choice>` per the [landing skill](../landing/SKILL.md#set-up-a-repository-once), with the repository's own test and type-check commands as checks. When it shows another mode, run `$L mode <choice>`.
+5. Set the repository's landing contract to the choice. When `$L status` shows no contract, run `$L init --mode <choice>` per the [landing skill](../landing/SKILL.md#set-up-a-repository-once), with the repository's own test and type-check commands as checks. When it shows another mode, run `$L mode <choice>`, then `$B set --landing <choice>`.
 6. Launch the head chef with `t3_thread_launch`: `projectId` of the target, `workspaceStrategy: {"type": "root"}`, title `Head chef: <restaurant>`, and a `message` that says "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run your first service." Record the returned `threadId` with `$B set --thread <id>`.
 7. Tell the user where the thread is and which landing mode the repository uses. If it is in another project, you cannot read or message it after launch. That is expected.
 
