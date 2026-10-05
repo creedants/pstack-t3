@@ -256,6 +256,9 @@ elif args[:2] == ["pr", "merge"]:
     head = subprocess.run(["git", "--git-dir", str(base / "origin.git"), "rev-parse", "refs/heads/landing/q1"],
                           capture_output=True, text=True).stdout.strip()
     (base / "pr-state").write_text(f"MERGED {{head}} 1111111111111111111111111111111111111111")
+    if (base / "merge-state-lags").exists():
+        (base / "pr-state-after").write_text((base / "pr-state").read_text())
+        (base / "pr-state").write_text(f"OPEN {{head}} ")
 elif args[:2] == ["pr", "view"] and any("statusCheckRollup" in arg for arg in args):
     if (base / "checks-query-fails").exists():
         print("API unavailable", file=sys.stderr)
@@ -589,6 +592,37 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.work))
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
             self.assertIn("Q1 landed", self.land("status", "Q1"))
+
+    def test_merge_mode_lands_in_the_run_whose_plain_merge_succeeds(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            (self.base / "merge-state-lags").write_text("")
+            self.init(mode="merge", merge_method="squash")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", opened)
+            self.assertNotIn("landed", opened)
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertFalse(self.ref_exists("refs/remotes/origin/landing/q1", self.work))
+            self.assertIn("pr merge https://github.com/o/r/pull/9 --squash", (self.base / "merge-calls").read_text())
+
+    def test_merge_mode_lands_in_the_run_whose_auto_merge_completes(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            self.init(mode="merge", merge_method="squash")
+            self.queue_one()
+            self.land("land")
+            (self.base / "auto-merges-immediately").write_text("")
+            (self.base / "merge-state-lags").write_text("")
+            (self.base / "pr-checks.json").unlink()
+            (self.base / "checks").write_text("passed")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            calls = (self.base / "merge-calls").read_text().splitlines()
+            self.assertEqual(calls[-1], "pr merge https://github.com/o/r/pull/9 --auto --squash")
 
     def test_merge_mode_reports_a_merge_that_lands_after_the_opening_state_read(self):
         with self.fake_gh():
