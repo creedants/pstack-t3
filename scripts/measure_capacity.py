@@ -10,11 +10,21 @@ The responsiveness probe is one HTTP GET / to the T3 server listening on
 bin.mjs and not acp-mcp-bridge. probe_ok is 1 only when the status is 200
 and the body starts with the T3 HTML doctype. The timeout is 5 seconds.
 
-sessions counts live T3 agent processes. A process counts when its command
-line contains "grok agent", or when its comm is claude and the command line
-contains "--model". claude-desktop and the long-lived codex app-server hosts
-do not count. build_procs counts command lines that contain scripts/build.py
-or unittest, so a build step can show that the work was running.
+sessions counts live T3 agent processes from the NUL-separated argv in
+/proc/<pid>/cmdline. A process counts when the basename of argv[0] is grok
+and argv[1] is agent, or when the basename of argv[0] is claude and a later
+element is --model or begins with --model=. An argv[0] that contains
+whitespace has no argument boundary left, so it has no basename and does
+not count. claude-desktop and the codex app-server hosts do not match those
+basenames. A shell whose script text only mentions these words counts zero.
+
+build_procs counts the Python process that is running this repo's build
+script or the unittest module. The basename of argv[0] is python or python
+plus a numeric version, and argv[1] is scripts/build.py or a path that ends
+in /scripts/build.py, or argv[1] is -m and argv[2] is unittest. A direct
+exec whose argv[0] is that build script counts too. A shell whose script
+text only mentions those strings counts zero. The count is not, by itself,
+proof that a build passed.
 
 psi_full_avg10 is the 10-second "full" memory-stall average from
 /proc/pressure/memory, or "na" when that file is absent.
@@ -93,38 +103,72 @@ def cmdline(pid_path):
     return raw.replace(b"\0", b" ").decode("utf-8", "replace")
 
 
-def comm(pid_path):
-    try:
-        return (pid_path / "comm").read_text().strip()
-    except OSError:
-        return ""
-
-
 def each_pid():
     for entry in Path("/proc").iterdir():
         if entry.name.isdigit():
             yield entry
 
 
+def argv(pid_path):
+    try:
+        raw = (pid_path / "cmdline").read_bytes()
+    except OSError:
+        return []
+    if not raw:
+        return []
+    parts = raw.split(b"\0")
+    if parts[-1] == b"":
+        parts.pop()
+    return [part.decode("utf-8", "replace") for part in parts]
+
+
+def executable_basename(args):
+    """Basename of argv[0]. Empty when the kernel left no argument boundary."""
+    if not args or any(character.isspace() for character in args[0]):
+        return ""
+    return Path(args[0]).name
+
+
+def is_python(name):
+    if not name.startswith("python"):
+        return False
+    rest = name[len("python"):]
+    return rest == "" or all(part.isdigit() for part in rest.split("."))
+
+
+def is_build_script(arg):
+    if not arg or any(character.isspace() for character in arg):
+        return False
+    return arg == "scripts/build.py" or arg.endswith("/scripts/build.py")
+
+
+def is_session(args):
+    name = executable_basename(args)
+    if name == "grok":
+        return len(args) > 1 and args[1] == "agent"
+    if name == "claude":
+        return any(arg == "--model" or arg.startswith("--model=") for arg in args[1:])
+    return False
+
+
+def is_build(args):
+    if not args:
+        return False
+    if is_build_script(args[0]):
+        return True
+    if not is_python(executable_basename(args)) or len(args) < 2:
+        return False
+    if is_build_script(args[1]):
+        return True
+    return len(args) >= 3 and args[1] == "-m" and args[2] == "unittest"
+
+
 def count_sessions():
-    total = 0
-    for entry in each_pid():
-        text = cmdline(entry)
-        if "grok agent" in text:
-            total += 1
-            continue
-        if comm(entry) == "claude" and "--model" in text and "claude-desktop" not in text:
-            total += 1
-    return total
+    return sum(1 for entry in each_pid() if is_session(argv(entry)))
 
 
 def count_builds():
-    total = 0
-    for entry in each_pid():
-        text = cmdline(entry)
-        if "scripts/build.py" in text or "unittest" in text:
-            total += 1
-    return total
+    return sum(1 for entry in each_pid() if is_build(argv(entry)))
 
 
 def socket_inodes(pid_path):
