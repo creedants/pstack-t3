@@ -230,11 +230,18 @@ elif args[:2] == ["pr", "merge"]:
     if (base / "merge-refused").exists():
         print("GraphQL: At least 1 approving review is required by reviewers with write access.", file=sys.stderr)
         sys.exit(1)
+    if "--auto" in args and (base / "auto-merge-disabled").exists():
+        print("GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)", file=sys.stderr)
+        sys.exit(1)
     if "--auto" in args and not (base / "auto-merges-immediately").exists():
         if not (base / "required-checks").exists():
             print("GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)", file=sys.stderr)
             sys.exit(1)
         sys.exit(0)
+    checks_now = (base / "checks").read_text().strip() if (base / "checks").exists() else ""
+    if (base / "policy-until-passed").exists() and checks_now != "passed":
+        print("X Pull request o/r#9 is not mergeable: the base branch policy prohibits the merge.", file=sys.stderr)
+        sys.exit(1)
     import subprocess
     head = subprocess.run(["git", "--git-dir", str(base / "origin.git"), "rev-parse", "refs/heads/landing/q1"],
                           capture_output=True, text=True).stdout.strip()
@@ -248,6 +255,9 @@ elif args[:2] == ["pr", "view"] and "reviewDecision,statusCheckRollup" in args:
     pending = "1" if checks == "pending" else "0"
     failed = "test (3.12)" if checks == "failed" else ""
     print(review + "\t" + pending + "\t" + failed)
+elif args[:2] == ["pr", "view"] and "statusCheckRollup" in args:
+    rollup = (base / "checks").read_text().strip() if (base / "checks").exists() else ""
+    print({{"pending": "1", "failed": "1", "passed": "2"}}.get(rollup, "0"))
 elif args[:2] == ["pr", "view"] and "url" in args:
     if not (base / "pr-url").exists():
         sys.exit(1)
@@ -363,6 +373,65 @@ elif args[:2] == ["pr", "view"]:
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertFalse((self.base / "merge-calls").exists())
+
+    def test_merge_mode_does_not_merge_a_just_opened_pr_with_zero_posted_checks(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", opened)
+            self.assertNotIn("landed", opened)
+            self.assertNotIn("queue paused", opened)
+            self.assertIn("waiting for required checks", self.land("status", "Q1"))
+            self.assertNotIn("Paused", self.land("status"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertFalse((self.base / "merge-calls").exists())
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual((self.base / "merge-calls").read_text().splitlines(),
+                             ["pr merge https://github.com/o/r/pull/9 --auto --merge",
+                              "pr merge https://github.com/o/r/pull/9 --merge"])
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_lands_a_merged_pr_when_a_later_check_fails(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertIn("merge requested by the queue", self.land("status", "Q1"))
+            candidate = sh("git", "rev-parse", "landing/q1", cwd=self.base / "origin.git")
+            (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
+            (self.base / "checks").write_text("failed")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertIn("Q1 landed", self.land("status", "Q1"))
+
+    def test_merge_mode_waits_when_auto_merge_is_disabled_and_no_check_is_posted(self):
+        with self.fake_gh():
+            (self.base / "auto-merge-disabled").write_text("")
+            (self.base / "policy-until-passed").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", opened)
+            self.assertNotIn("queue paused", opened)
+            self.assertNotIn("landed", opened)
+            self.assertIn("waiting for required checks", self.land("status", "Q1"))
+            self.assertNotIn("Paused", self.land("status"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            still_empty = self.land("land")
+            self.assertNotIn("queue paused", still_empty)
+            self.assertNotIn("landed", still_empty)
+            self.assertIn("waiting for required checks", self.land("status", "Q1"))
+            self.assertNotIn("Paused", self.land("status"))
+            (self.base / "checks").write_text("passed")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_a_checked_out_queue_branch_is_named_when_land_cannot_delete_it(self):
         with self.fake_gh():
