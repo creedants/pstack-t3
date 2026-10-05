@@ -13,7 +13,7 @@ python3 scripts/install.py
 python3 scripts/install.py doctor
 ```
 
-`doctor` should show `52/52 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back.
+`doctor` should show `54/54 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back.
 
 Open a **new** T3 thread afterwards. Providers scan their skills when a session starts. Type `$` in the composer and you should see `poteto-mode`, `interrogate`, `swarm`, and the rest.
 
@@ -106,6 +106,69 @@ $recall what was I doing on the billing migration?
 ```
 
 `$recall` searches your T3 threads in the project, plus git and PR state, and returns a short current-state brief. To take over another thread's in-flight work, ask `$poteto-mode` to pick up that thread. Its Session pickup playbook reads the thread, its child tasks, its branch, and any resume note.
+
+## 8. Open a standing coordinator
+
+A coordinator is a pinned T3 thread for one project or one focus area. It takes requests, hands each unit of work to a playbook, has another model family review the result, and lands what passes. It never writes code. For one finite program with a done condition, use `$poteto-mode`. Its Orchestrate playbook stops when that work is done.
+
+Type this in any thread.
+
+```
+$brigade open a head chef for <project> focused on <goal>.
+```
+
+The opener asks who lands the work, unless you already named a mode. It recommends `merge` when the repository has a remote. The mode belongs to the repository. Every coordinator on that repository shares it. If a landing contract already exists, that mode applies here too.
+
+### Landing modes
+
+| Mode | What reaches trunk | Are you a gate? |
+| --- | --- | --- |
+| `merge` | The queue rebases onto trunk, runs the checks, pushes `landing/q<n>`, opens a PR, and merges it. It uses GitHub auto-merge when the repository has required checks, and merges at once otherwise. | No. You review what landed. A required approving review pauses the queue until you relax that rule or switch to `human`. |
+| `human` | The same PR, left open. It counts as landed when someone merges that checked head. | Yes. You merge every PR. |
+| `push` | Rebased commits, pushed to trunk with `git push --force-with-lease` only while the remote is still at the tested base. There is no PR. | No. You review the history afterward. |
+| `local` | Nothing on the real trunk. The queue moves `refs/landing/<trunk>`. The remote does not change. | Yes, for the real trunk. You merge that ref into a branch when you are ready. |
+
+`push` is the name to use. `auto` is an older alias of `push`.
+
+`land.py mode` switches among `merge`, `human`, and `push` only while nothing is queued, landing, or awaiting merge. A move to or from `local` needs a new contract. [How work lands](how-it-works.md#how-work-lands) describes the queue those modes share.
+
+The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase, with every other run of characters turned into one hyphen.
+
+You should see these files.
+
+- `menu.md`, with the headings `Purpose`, `What good looks like`, `Off the menu`, and `Budget`.
+- `house-rules.md`.
+- `restaurant.json`.
+- `rail.tsv`, `dishes.tsv`, `pass.tsv`, `86.tsv`, and `log.tsv`, each with a header and no rows.
+
+Replace the `Purpose` section in `menu.md` with one or two sentences of your own. `brigade.py brief` refuses to write a worker brief while `Purpose` is empty or still the template. The opener appends standing orders to `house-rules.md`. They name forbidden paths, the verification bar, intake sources, and a worker cap. The worker cap is an instruction to the coordinator. The script does not count running workers.
+
+The opener launches the coordinator with `t3_thread_launch` on the project root and pins that thread. The sidebar title is `Head chef: <name>`. If that thread is in another project, the thread you typed in cannot read it afterward.
+
+### Give it work
+
+Send the pinned thread a request.
+
+```
+Investigate the slow startup. Reproduce it, fix the cause, and verify the result.
+```
+
+It records the request and groups related requests into one unit of work.
+
+### What the coordinator does without you
+
+It wakes on your messages, on a reviewer finishing, and on its schedules. A morning run is every day at 09:00. A report is every day at 18:00. When `menu.md` names a source, intake also runs on an interval of at least one hour, matched to the sources in `house-rules.md`. A landing drain runs every 15 minutes while work is queued or awaiting merge. A liveness check runs every 10 minutes while work is in progress, because those worktree threads send no completion notice.
+
+- **Intake.** It reads `menu.md` and `house-rules.md` and records each request. It runs `gh issue list` and `gh pr list` only when the standing orders name those sources.
+- **Delegation.** It groups related requests, claims a path lease, writes the brief with `brigade.py brief`, and launches one worktree thread per unit. In-flight work stays under the worker cap in `house-rules.md`.
+- **Cross-family review.** It reads the worker's report and diff. One reviewer from another model family checks that exact commit. A pass is recorded against that commit. A reviewer from the author's family is used only when no other family can run, and the verdict says so.
+- **Landing.** On a pass it submits that commit to the queue and runs `land.py land`. Workers never merge. In `merge` and `human` mode the PR title and body go with the submit. A conflict or a changed rebase goes to a fresh worker and needs a new review.
+- **Cleanup.** After a unit merges, is dropped, or is sent back, it removes that unit's worktree and branch. It deletes `landing/q<n>` after that PR merges or closes. It deletes only branches it created. It fast-forwards your checkout with `git merge --ff-only` only when that checkout is clean and on trunk.
+- **Reports.** The reply is short, then the output of `brigade.py close`. That output lists each request and unit once, under its latest state since the last report, with PR links.
+
+To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. It prints counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
+
+To stop one, ask it to close. It deletes its schedules, writes a last report, and unpins its thread. The store stays.
 
 ## Tips and pitfalls
 

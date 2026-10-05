@@ -46,8 +46,16 @@ Diversity is counted by model family, not by provider, because one provider can 
 | Writers that could collide | Child tasks in a git worktree the lead creates |
 | Long-lived owners (Autopilot, Orchestrate) | Separate T3 threads bound to their own worktree |
 | Overnight and recurring checks | `schedule_task` |
+| A standing coordinator (`$brigade`) | A pinned thread on the project root. It never writes code. Each unit runs in its own worktree thread. |
+| The landing queue (`$landing`) | One queue per repository. `land.py land` is the only writer to trunk. Modes are in the [guide](guide.md#landing-modes). |
 
-The lead ends its turn while children work. T3 wakes it as each one finishes.
+The lead ends its turn while children work. T3 wakes it as each one finishes. A coordinator's worktree threads send no completion notice. Its liveness check runs every 10 minutes while work is in progress.
+
+## How work lands
+
+A writer claims a lease on the paths it will change before it starts. An overlapping claim is refused. The writer commits in its own worktree and stops. It never merges, rebases a shared branch, or pushes trunk. A reviewer from another model family checks that exact commit. The queue lands that commit, and bounces it when the rebased result differs from the reviewed one. Whoever runs `land.py land` while the lock is free drains the queue. Builds and tests run under `land.py slot`, which limits how many heavy commands run at once.
+
+The mode is one per repository. It decides what reaches trunk and whether you are a gate. The four modes are in [Open a standing coordinator](guide.md#landing-modes).
 
 ## How the repository is built
 
