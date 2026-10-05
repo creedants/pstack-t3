@@ -632,16 +632,51 @@ def ensure_pr(store, entry):
 MERGE_REQUESTED = "merge requested by the queue"
 
 
+WAITING_FOR_CHECKS = "waiting for required checks before merging"
+BLOCKER_QUERY = (
+    '[.reviewDecision // "", '
+    '([.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
+    '([.statusCheckRollup[] | select((.conclusion // "") as $c | (.state // "") as $s '
+    '| ($c == "FAILURE" or $c == "CANCELLED" or $c == "TIMED_OUT" or $s == "FAILURE" or $s == "ERROR")) '
+    '| (.name // .context)] | join(","))] | @tsv'
+)
+
+
+def merge_blocker(store, url):
+    """Why GitHub will not merge yet: ('review', ''), ('pending', ''), ('failed', names), or ('', '') when unknown."""
+    view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup", "-q", BLOCKER_QUERY, cwd=store.repo)
+    review, pending, failed = (view.stdout.rstrip("\n").split("\t") + ["", "", ""])[:3]
+    if review == "REVIEW_REQUIRED" or review == "CHANGES_REQUESTED":
+        return "review", ""
+    if failed:
+        return "failed", failed
+    if pending.isdigit() and int(pending) > 0:
+        return "pending", ""
+    return "", ""
+
+
 def request_merge(store, ident, url):
-    """Merge mode: ask GitHub to merge when required checks pass, or merge now when the PR has none to wait for."""
+    """Merge mode: ask GitHub to merge when required checks pass, or merge now when the PR has none to wait for.
+    When GitHub refuses, find out why: running checks are waited out, failed checks bounce, a required review pauses."""
     method = f"--{store.contract.get('mergeMethod') or 'merge'}"
     queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
-    if queued.returncode != 0:
+    if queued.returncode == 0:
+        note = MERGE_REQUESTED
+    else:
         now_ = gh("pr", "merge", url, method, cwd=store.repo)
+        note = MERGE_REQUESTED
         if now_.returncode != 0:
-            raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
+            blocker, detail = merge_blocker(store, url)
+            if blocker == "pending":
+                note = WAITING_FOR_CHECKS
+            elif blocker == "failed":
+                with store.tx() as db:
+                    settle_bounced(store, db, ident, f"required checks failed on {url}: {detail}")
+                return
+            else:
+                raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
     with store.tx() as db:
-        store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
+        store.set_entry(db, ident, "awaiting-merge", note=note)
 
 
 def poll_human(store):
@@ -652,6 +687,10 @@ def poll_human(store):
             entry = store.db.execute("SELECT * FROM entry WHERE id = ?", (entry["id"],)).fetchone()
         elif store.contract["mode"] == "merge" and entry["note"] != MERGE_REQUESTED:
             request_merge(store, entry["id"], entry["pr"])
+            entry = store.db.execute("SELECT * FROM entry WHERE id = ?", (entry["id"],)).fetchone()
+            if entry["state"] == "bounced":
+                bounced.append(entry["id"])
+                continue
         view = gh("pr", "view", entry["pr"], "--json", "state,headRefOid,mergeCommit",
                   "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
         state, head, merged = (view.stdout.strip().split(" ") + ["", "", ""])[:3]
@@ -696,7 +735,9 @@ def land(store):
             if store.contract["mode"] == "merge" and opened:
                 more_landed, more_bounced = poll_human(store)
                 landed, bounced = landed + more_landed, bounced + more_bounced
-                opened = [ident for ident in opened if ident not in more_landed + more_bounced]
+            states = {row["id"]: row["state"] for row in store.db.execute("SELECT id, state FROM entry")}
+            bounced += [ident for ident in opened if states[ident] == "bounced" and ident not in bounced]
+            opened = [ident for ident in opened if states[ident] == "awaiting-merge"]
             return report(store, landed, bounced, opened)
         single, rounds = False, 0
         while (queued := store.entries("queued")) and not store.contract.get("paused"):

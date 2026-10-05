@@ -60,6 +60,8 @@ class LandingTest(unittest.TestCase):
 
     def init(self, mode="auto", batch=1, **extra):
         args = ["init", "--trunk", extra.get("trunk", "main"), "--mode", mode, "--check", "./check.sh", "--batch", str(batch)]
+        if "merge_method" in extra:
+            args += ["--merge-method", extra["merge_method"]]
         if "base" in extra:
             args += ["--base", extra["base"]]
         return self.land(*args)
@@ -225,6 +227,9 @@ elif args[:2] == ["pr", "merge"]:
     if (base / "merge-refused").exists():
         print("GraphQL: At least 1 approving review is required by reviewers with write access.", file=sys.stderr)
         sys.exit(1)
+    if (base / "checks").exists() and "--auto" not in args:
+        print("X Pull request #9 is not mergeable: the base branch policy prohibits the merge.", file=sys.stderr)
+        sys.exit(1)
     if "--auto" in args:
         if not (base / "required-checks").exists():
             print("GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)", file=sys.stderr)
@@ -234,6 +239,12 @@ elif args[:2] == ["pr", "merge"]:
     head = subprocess.run(["git", "--git-dir", str(base / "origin.git"), "rev-parse", "refs/heads/landing/q1"],
                           capture_output=True, text=True).stdout.strip()
     (base / "pr-state").write_text(f"MERGED {{head}} 1111111111111111111111111111111111111111")
+elif args[:2] == ["pr", "view"] and "reviewDecision,statusCheckRollup" in args:
+    review = "REVIEW_REQUIRED" if (base / "merge-refused").exists() else "APPROVED"
+    checks = (base / "checks").read_text() if (base / "checks").exists() else ""
+    pending = "1" if checks == "pending" else "0"
+    failed = "test (3.12)" if checks == "failed" else ""
+    print(review + "\t" + pending + "\t" + failed)
 elif args[:2] == ["pr", "view"] and "url" in args:
     if not (base / "pr-url").exists():
         sys.exit(1)
@@ -281,6 +292,26 @@ elif args[:2] == ["pr", "view"]:
             (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertEqual(len((self.base / "merge-calls").read_text().splitlines()), 1)
+
+    def test_merge_mode_waits_for_running_checks_then_merges(self):
+        with self.fake_gh():
+            (self.base / "checks").write_text("pending")
+            self.init(mode="merge", merge_method="squash")
+            self.queue_one()
+            self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: Q1 (r/D1) https://github.com/o/r/pull/9")
+            self.assertIn("waiting for required checks", self.land("status", "Q1"))
+            self.assertEqual(self.land("land"), "nothing to land")
+            (self.base / "checks").unlink()
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertIn("pr merge https://github.com/o/r/pull/9 --squash", (self.base / "merge-calls").read_text())
+
+    def test_merge_mode_bounces_a_pr_whose_required_checks_failed(self):
+        with self.fake_gh():
+            (self.base / "checks").write_text("failed")
+            self.init(mode="merge")
+            self.queue_one()
+            self.assertEqual(self.land("land"), "bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)")
+            self.assertTrue(self.land("lease", "list").startswith("L1 active r/D1"))
 
     def test_merge_mode_pauses_when_github_requires_a_human_approval(self):
         with self.fake_gh():
