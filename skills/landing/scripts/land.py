@@ -640,40 +640,90 @@ BLOCKER_QUERY = (
     '| ($c == "FAILURE" or $c == "CANCELLED" or $c == "TIMED_OUT" or $s == "FAILURE" or $s == "ERROR")) '
     '| (.name // .context)] | join(","))] | @tsv'
 )
+POSTED_QUERY = "([.statusCheckRollup // []] | length)"
+
+
+def classify_rollup(review, pending, failed, posted):
+    """The gate for one check read. Absent means GitHub has posted nothing yet."""
+    if review in ("REVIEW_REQUIRED", "CHANGES_REQUESTED"):
+        return "review", ""
+    if failed:
+        return "failed", failed
+    if pending > 0:
+        return "pending", ""
+    if posted == 0:
+        return "absent", ""
+    return "", ""
+
+
+def unposted_merge_refusal(stderr):
+    """A refusal while no check is posted. The queue waits instead of pausing."""
+    text = stderr or ""
+    if "the base branch policy prohibits the merge" in text:
+        return True
+    return "auto merge is not allowed" in text.lower()
+
+
+def advance_drain(store):
+    """Count this land run. The same run polls twice, so an empty rollup waits for a later run."""
+    nxt = int(store.contract.get("drain") or 0) + 1
+    with store.tx() as db:
+        db.execute("INSERT OR REPLACE INTO contract VALUES ('drain', ?)", (json.dumps(nxt),))
+    return nxt
+
+
+def absent_seen(store, ident):
+    raw = store.contract.get("absentDrain") or {}
+    value = raw.get(str(ident))
+    return None if value is None else int(value)
+
+
+def remember_absent(store, ident, drain):
+    with store.tx() as db:
+        row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
+        raw = json.loads(row["value"]) if row else {}
+        raw.setdefault(str(ident), drain)
+        db.execute("INSERT OR REPLACE INTO contract VALUES ('absentDrain', ?)", (json.dumps(raw),))
+        store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
 
 
 def merge_blocker(store, url):
     """Why this PR must not merge yet.
 
-    Returns ('review', ''), ('pending', ''), ('failed', names), or ('', '') when the read
-    succeeded and nothing posted is pending or failed. A failed command or an unparseable
-    rollup raises Infrastructure, and the caller must not merge."""
+    Returns ('review', ''), ('pending', ''), ('failed', names), ('absent', ''), or ('', '')
+    when posted checks finished successfully. A failed command or an unparseable rollup
+    raises Infrastructure, and the caller must not merge."""
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup", "-q", BLOCKER_QUERY, cwd=store.repo)
     if view.returncode != 0:
         raise Infrastructure(f"could not read checks for {url}: {view.stderr.strip() or 'gh pr view failed'}")
     fields = view.stdout.rstrip("\n").split("\t")
     if len(fields) != 3 or not fields[1].isdigit():
         raise Infrastructure(f"could not read checks for {url}: unparseable check rollup")
-    review, pending, failed = fields
-    if review == "REVIEW_REQUIRED" or review == "CHANGES_REQUESTED":
-        return "review", ""
-    if failed:
-        return "failed", failed
-    if int(pending) > 0:
-        return "pending", ""
-    return "", ""
+    posted = gh("pr", "view", url, "--json", "statusCheckRollup", "-q", POSTED_QUERY, cwd=store.repo)
+    if posted.returncode != 0 or not posted.stdout.strip().isdigit():
+        detail = posted.stderr.strip() or "unparseable check rollup"
+        raise Infrastructure(f"could not read checks for {url}: {detail}")
+    return classify_rollup(fields[0], int(fields[1]), fields[2], int(posted.stdout.strip()))
 
 
 def request_merge(store, ident, url):
     """Merge only after a successful check read shows nothing pending or failed.
 
     The read runs before any gh pr merge, including --auto. A pending posted check waits.
-    A failed posted check bounces. With no posted check, try auto-merge and then merge now.
+    A failed posted check bounces. With no posted check, the land run that first sees it
+    waits. A later land merges when checks are still absent. A base-branch policy refusal
+    or disabled auto-merge, while checks are still absent, waits and does not pause the queue.
     A required review still reaches gh, which refuses the merge and pauses the queue."""
     blocker, detail = merge_blocker(store, url)
-    if blocker == "pending":
-        with store.tx() as db:
-            store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+    drain = int(store.contract.get("drain") or 0)
+    seen = absent_seen(store, ident)
+    repeat_absent = blocker == "absent" and seen is not None and seen < drain
+    if blocker == "pending" or (blocker == "absent" and not repeat_absent):
+        if blocker == "absent":
+            remember_absent(store, ident, drain)
+        else:
+            with store.tx() as db:
+                store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
         return
     if blocker == "failed":
         with store.tx() as db:
@@ -687,7 +737,12 @@ def request_merge(store, ident, url):
         return
     now_ = gh("pr", "merge", url, method, cwd=store.repo)
     if now_.returncode != 0:
-        raise Infrastructure(f"GitHub refused to merge {url}: {(now_.stderr or queued.stderr).strip()}")
+        reason = (now_.stderr or queued.stderr).strip()
+        if blocker == "absent" and unposted_merge_refusal(reason):
+            with store.tx() as db:
+                store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+            return
+        raise Infrastructure(f"GitHub refused to merge {url}: {reason}")
     with store.tx() as db:
         store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
 
@@ -712,48 +767,73 @@ def delete_queue_branch(store, entry):
     return True, warning
 
 
+def entry_row(store, ident):
+    return store.db.execute("SELECT * FROM entry WHERE id = ?", (ident,)).fetchone()
+
+
+def read_pr_state(store, url):
+    view = gh("pr", "view", url, "--json", "state,headRefOid,mergeCommit",
+              "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
+    return (view.stdout.strip().split(" ") + ["", "", ""])[:3]
+
+
+def take_pr(store, entry, landed, bounced):
+    """Settle a merged or closed PR before a failed check can bounce it.
+
+    Returns True when this poll should leave the entry alone."""
+    state, head, merged = read_pr_state(store, entry["pr"])
+    if state == "MERGED":
+        deleted, warning = delete_queue_branch(store, entry)
+        if not deleted:
+            return True
+        with store.tx() as db:
+            if head == entry["candidate"]:
+                settle_landed(store, db, entry["id"], merged, warning)
+                outcome = "landed"
+            else:
+                settle_bounced(store, db, entry["id"], f"merged at {merged[:12]} with head {head[:12]}, not the checked "
+                                                       f"{entry['candidate'][:12]}; review what reached trunk")
+                outcome = "bounced"
+            db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
+        (landed if outcome == "landed" else bounced).append(entry["id"])
+        return True
+    if state == "CLOSED":
+        with store.tx() as db:
+            settle_bounced(store, db, entry["id"], "PR closed without merging")
+        bounced.append(entry["id"])
+        return True
+    if state == "OPEN" and head and head != entry["candidate"]:
+        with store.tx() as db:
+            store.set_entry(db, entry["id"], "awaiting-merge", note=f"PR head changed to {head[:12]} outside the queue")
+        return True
+    return False
+
+
 def poll_human(store):
     landed, bounced = [], []
     for entry in store.entries("awaiting-merge"):
         if not entry["pr"]:
             ensure_pr(store, entry)
-            entry = store.db.execute("SELECT * FROM entry WHERE id = ?", (entry["id"],)).fetchone()
-        elif store.contract["mode"] == "merge" and entry["note"] == MERGE_REQUESTED:
+            entry = entry_row(store, entry["id"])
+        if take_pr(store, entry, landed, bounced):
+            continue
+        if store.contract["mode"] != "merge":
+            continue
+        if entry["note"] == MERGE_REQUESTED:
             blocker, detail = merge_blocker(store, entry["pr"])
             if blocker == "failed":
                 with store.tx() as db:
                     settle_bounced(store, db, entry["id"], f"required checks failed on {entry['pr']}: {detail}")
                 bounced.append(entry["id"])
-                continue
-        elif store.contract["mode"] == "merge":
-            request_merge(store, entry["id"], entry["pr"])
-            entry = store.db.execute("SELECT * FROM entry WHERE id = ?", (entry["id"],)).fetchone()
-            if entry["state"] == "bounced":
-                bounced.append(entry["id"])
-                continue
-        view = gh("pr", "view", entry["pr"], "--json", "state,headRefOid,mergeCommit",
-                  "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
-        state, head, merged = (view.stdout.strip().split(" ") + ["", "", ""])[:3]
-        warning = ""
-        if state == "MERGED":
-            deleted, warning = delete_queue_branch(store, entry)
-            if not deleted:
-                continue
-        with store.tx() as db:
-            if state == "MERGED" and head == entry["candidate"]:
-                settle_landed(store, db, entry["id"], merged, warning)
-                db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
-                landed.append(entry["id"])
-            elif state == "MERGED":
-                settle_bounced(store, db, entry["id"], f"merged at {merged[:12]} with head {head[:12]}, not the checked "
-                                                       f"{entry['candidate'][:12]}; review what reached trunk")
-                db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
-                bounced.append(entry["id"])
-            elif state == "CLOSED":
-                settle_bounced(store, db, entry["id"], "PR closed without merging")
-                bounced.append(entry["id"])
-            elif state == "OPEN" and head and head != entry["candidate"]:
-                store.set_entry(db, entry["id"], "awaiting-merge", note=f"PR head changed to {head[:12]} outside the queue")
+            continue
+        request_merge(store, entry["id"], entry["pr"])
+        entry = entry_row(store, entry["id"])
+        if entry["state"] == "bounced":
+            bounced.append(entry["id"])
+            continue
+        if entry["state"] != "awaiting-merge":
+            continue
+        take_pr(store, entry, landed, bounced)
     return landed, bounced
 
 
@@ -774,6 +854,8 @@ def land(store):
             git("fetch", store.contract["remote"], store.contract["trunk"], cwd=store.repo)
             if rewound(store, git("rev-parse", trunk_ref(store.contract), cwd=store.repo).stdout.strip()):
                 return report(store, [], [], [])
+            if store.contract["mode"] == "merge":
+                advance_drain(store)
             landed, bounced = poll_human(store)
             for entry in store.entries("queued"):
                 (opened if land_human(store, integration, entry) else bounced).append(entry["id"])

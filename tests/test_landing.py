@@ -292,6 +292,7 @@ elif args[:2] == ["pr", "view"]:
         with self.fake_gh():
             self.init(mode="merge")
             self.queue_one()
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", self.land("land"))
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertEqual((self.base / "merge-calls").read_text().splitlines(),
                              ["pr merge https://github.com/o/r/pull/9 --auto --merge", "pr merge https://github.com/o/r/pull/9 --merge"])
@@ -322,7 +323,7 @@ elif args[:2] == ["pr", "view"]:
             calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
             self.assertNotIn("pr merge https://github.com/o/r/pull/9 --squash", calls)
             self.assertEqual(self.land("land"), "nothing to land")
-            (self.base / "checks").unlink()
+            (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertIn("pr merge https://github.com/o/r/pull/9 --squash", (self.base / "merge-calls").read_text())
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
@@ -354,6 +355,7 @@ elif args[:2] == ["pr", "view"]:
             self.init(mode="merge")
             self.queue_one()
             self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: Q1 (r/D1) https://github.com/o/r/pull/9")
+            self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "Q1"))
             (self.base / "checks").write_text("failed")
             self.assertEqual(self.land("land"), "bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)")
