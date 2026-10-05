@@ -42,7 +42,7 @@ pstack-t3 runs in T3 Code. Outside T3, the skills fall back to the host's own su
 
 `$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
 
-Whether `$poteto-mode` stays on depends on how the user starts it:
+Whether `$poteto-mode` stays on:
 
 - Naming `$poteto-mode` in a message attaches the skill to that message. It fades as the chat moves on.
 - T3 has no switch that pins the skill on later tasks. Start the next task with `$poteto-mode` again.
