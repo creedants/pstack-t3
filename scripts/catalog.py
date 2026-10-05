@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GROUPS = [
-    ("Entry point", lambda name: name == "poteto-mode"),
+    ("Entry point", lambda name: name in {"poteto-help", "poteto-mode"}),
     ("Multi-model workflows", lambda name: name in {"interrogate", "swarm", "arena", "architect", "reflect"}),
     ("Understand", lambda name: name in {"how", "why", "teach", "recall", "blast-radius", "bro"}),
     ("Plan and run long work", lambda name: name in {"brigade", "landing", "figure-it-out", "show-me-your-work"}),

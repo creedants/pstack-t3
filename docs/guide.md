@@ -13,9 +13,9 @@ python3 scripts/install.py
 python3 scripts/install.py doctor
 ```
 
-`doctor` should show `54/54 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back.
+`doctor` should show `55/55 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back.
 
-Open a **new** T3 thread afterwards. Providers scan their skills when a session starts. Type `$` in the composer and you should see `poteto-mode`, `interrogate`, `swarm`, and the rest.
+Open a **new** T3 thread afterwards. Providers scan their skills when a session starts. Type `$` in the composer and you should see `poteto-mode`, `poteto-help`, `interrogate`, `swarm`, and the rest. Ask `$poteto-help` when you are stuck or cannot tell which skill fits. It answers and hands you a prompt. It does not start the work.
 
 To update later, run `git pull` in the checkout, then `python3 scripts/install.py`. The installed skills link into the checkout, so the pull updates them in place. Rerunning the installer is safe and links any skills that are new.
 
@@ -58,7 +58,7 @@ What happens:
 5. **It proves the fix.** The same reproduction now passes, plus whatever checks the project has.
 6. **It reports plainly.** Short sentences, every claim labeled measured, inferred, or guess, and the principles that shaped each decision named.
 
-`$poteto-mode` stays on for the rest of the thread and applies itself when a task needs rigor. Say so if you want it off.
+`$poteto-mode` applies to the task you started with it. Follow-ups on that task stay in its playbook. Start a different task with `$poteto-mode` again. Say so if you want it off.
 
 ## 4. Get several opinions
 

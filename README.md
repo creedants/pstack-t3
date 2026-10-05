@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.9-555.svg" alt="upstream pstack 0.15.9"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.10-555.svg" alt="upstream pstack 0.15.10"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
@@ -86,7 +86,7 @@ Keep the checkout on disk, because the install links to it. Then open a new T3 t
 1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional, and the defaults are sensible.
 2. Start any real task with `$poteto-mode`.
 
-The [guide](docs/guide.md) walks through your first hour.
+The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which skill fits? Ask `$poteto-help`. It answers that part and hands you a prompt. It does not start the work.
 
 ## What you can say
 
@@ -105,8 +105,9 @@ The [guide](docs/guide.md) walks through your first hour.
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
 | `$brigade open a head chef for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
+| `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
-See [all 54 skills and every playbook](docs/skills.md).
+See [all 55 skills and every playbook](docs/skills.md).
 
 ## How it works
 
