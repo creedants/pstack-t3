@@ -219,6 +219,8 @@ import json, os, signal, subprocess, sys
 from pathlib import Path
 base = Path({str(self.base)!r})
 args = sys.argv[1:]
+with open(base / "gh-calls", "a") as calls:
+    print(" ".join(args), file=calls)
 if args[:2] == ["pr", "create"]:
     (base / "pr-url").write_text("https://github.com/o/r/pull/9")
     if (base / "crash-on-create").exists():
@@ -227,6 +229,14 @@ if args[:2] == ["pr", "create"]:
     print("https://github.com/o/r/pull/9")
 elif args[:2] == ["pr", "merge"]:
     print(" ".join(args), file=open(base / "merge-calls", "a"))
+    if "--disable-auto" in args:
+        if (base / "disable-auto-fails").exists():
+            print((base / "disable-auto-fails").read_text() or "API unavailable", file=sys.stderr)
+            sys.exit(1)
+        if (base / "disable-auto-not-enabled").exists():
+            print("GraphQL: Auto merge is not enabled for this pull request", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
     if (base / "merge-refused").exists():
         print("GraphQL: At least 1 approving review is required by reviewers with write access.", file=sys.stderr)
         sys.exit(1)
@@ -283,6 +293,10 @@ elif args[:2] == ["pr", "view"] and "url" in args:
     print((base / "pr-url").read_text())
 elif args[:2] == ["pr", "view"]:
     print((base / "pr-state").read_text() if (base / "pr-state").exists() else "OPEN")
+    nxt = base / "pr-state-after"
+    if nxt.exists():
+        (base / "pr-state").write_text(nxt.read_text())
+        nxt.unlink()
 """)
         fake.chmod(0o755)
         return mock.patch.dict(os.environ, {"LAND_GH": str(fake)})
@@ -524,6 +538,97 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.work))
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
             self.assertIn("Q1 landed", self.land("status", "Q1"))
+
+    def test_merge_mode_reports_a_merge_that_lands_after_the_opening_state_read(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", self.land("land"))
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertIn("merge requested by the queue", self.land("status", "Q1"))
+            candidate = sh("git", "rev-parse", "landing/q1", cwd=self.base / "origin.git")
+            (self.base / "pr-state").write_text(f"OPEN {candidate} ")
+            (self.base / "pr-state-after").write_text(f"MERGED {candidate} abc123")
+            (self.base / "checks").write_text("passed")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+
+    def test_merge_mode_pauses_for_review_without_calling_auto_merge(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text(
+                '{"reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":'
+                '[{"name":"test (3.12)","status":"COMPLETED","conclusion":"SUCCESS"}]}')
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            out = self.land("land")
+            self.assertIn("queue paused", out)
+            self.assertIn("https://github.com/o/r/pull/9", out)
+            self.assertIn("approving review", out)
+            self.assertNotIn("landed", out)
+            calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
+            self.assertNotIn("--auto", calls.split())
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+
+    def test_merge_mode_pauses_when_changes_are_requested_without_calling_auto_merge(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text(
+                '{"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]}')
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            out = self.land("land")
+            self.assertIn("queue paused", out)
+            self.assertIn("https://github.com/o/r/pull/9", out)
+            self.assertIn("changes requested", out)
+            calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
+            self.assertNotIn("--auto", calls.split())
+
+    def test_merge_mode_disables_auto_merge_when_it_bounces_an_open_pr(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertIn("merge requested by the queue", self.land("status", "Q1"))
+            (self.base / "checks").write_text("failed")
+            out = self.land("land")
+            self.assertIn("bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", out)
+            self.assertIn("pr merge https://github.com/o/r/pull/9 --disable-auto", (self.base / "merge-calls").read_text())
+            self.assertNotIn("pr comment", (self.base / "gh-calls").read_text())
+            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertTrue(self.land("lease", "list").startswith("L1 active r/D1"))
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+
+    def test_merge_mode_reports_a_failure_to_disable_auto_merge_on_bounce(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            (self.base / "disable-auto-fails").write_text("API unavailable")
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            self.land("land")
+            (self.base / "checks").write_text("failed")
+            out = self.land("land")
+            self.assertIn("bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", out)
+            self.assertIn("auto-merge still enabled: API unavailable", out)
+            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertTrue(self.land("lease", "list").startswith("L1 active"))
+
+    def test_merge_mode_ignores_disable_auto_when_auto_merge_was_not_enabled(self):
+        with self.fake_gh():
+            (self.base / "checks").write_text("failed")
+            (self.base / "disable-auto-not-enabled").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            self.assertEqual(self.land("land"), "bounced Q1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)")
+            calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
+            self.assertIn("pr merge https://github.com/o/r/pull/9 --disable-auto", calls)
+            self.assertNotIn("auto-merge still enabled", self.land("status", "Q1"))
 
     def test_merge_mode_pauses_when_github_requires_a_human_approval(self):
         with self.fake_gh():
