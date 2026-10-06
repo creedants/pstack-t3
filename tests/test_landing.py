@@ -81,6 +81,28 @@ class LandingTest(unittest.TestCase):
     def ref_exists(self, ref, cwd):
         return subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=cwd, capture_output=True).returncode == 0
 
+    def install_racing_branch_delete(self):
+        """While git push --delete runs, another deleter holds the ref lock and removes the ref.
+
+        git 2.55 then rejects the push with "File exists" and "reference already exists".
+        That stderr does not contain "does not exist", and ls-remote shows the ref gone.
+        """
+        hook = self.base / "origin.git" / "hooks" / "pre-receive"
+        marker = self.base / "race-deleted"
+        hook.write_text(f"""#!/bin/sh
+marker={marker}
+while read old new ref; do
+  if [ "$new" = "0000000000000000000000000000000000000000" ]; then
+    path=$(git rev-parse --git-path "$ref")
+    echo x > "$path.lock"
+    rm -f "$path"
+    echo "$ref" >> "$marker"
+  fi
+done
+exit 0
+""")
+        hook.chmod(0o755)
+
     def test_leases_refuse_overlap_including_aliases_and_the_whole_repo(self):
         self.init()
         self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", "lib"), "L1")
@@ -592,6 +614,33 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.work))
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
             self.assertIn("Q1 landed", self.land("status", "Q1"))
+
+    def test_merge_mode_lands_when_the_remote_deletes_the_queue_branch_during_push(self):
+        with self.fake_gh():
+            self.install_racing_branch_delete()
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", opened)
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertIn("refs/heads/landing/q1", (self.base / "race-deleted").read_text())
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertFalse(self.ref_exists("refs/remotes/origin/landing/q1", self.work))
+
+    def test_merge_mode_leaves_the_entry_when_the_queue_branch_delete_fails(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            sh("git", "config", "receive.denyDeletes", "true", cwd=self.base / "origin.git")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertIn("merge requested by the queue", self.land("status", "Q1"))
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            sh("git", "config", "--unset", "receive.denyDeletes", cwd=self.base / "origin.git")
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_merge_mode_lands_in_the_run_whose_plain_merge_succeeds(self):
         with self.fake_gh():
