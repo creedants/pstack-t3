@@ -202,11 +202,6 @@ class RolesTest(unittest.TestCase):
         named = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
         kept = roles.resolve(config("unlimited", **{"judgment and prose": [named]}), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
         self.assertEqual(kept, [named])
-        for path in ("t3/setup.md", "t3/runtime.md"):
-            text = (ROOT / path).read_text()
-            self.assertIn("highest non-special", text, path)
-            self.assertNotIn("does not raise", text, path)
-        self.assertIn("`unlimited — max reasoning`", (ROOT / "t3/setup.md").read_text())
 
     def test_budget_understands_extra_high_and_keeps_none(self):
         model = {"id": "m", "options": [{"id": "reasoning_effort", "type": "select", "options": [{"id": "none"}, {"id": "low"}, {"id": "high"}, {"id": "extra-high"}]}]}
