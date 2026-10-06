@@ -49,7 +49,7 @@ Diversity is counted by model family, not by provider, because one provider can 
 | A standing coordinator (`$brigade`) | A pinned thread on the project root. It never writes code. Each unit runs in its own worktree thread. |
 | The landing queue (`$landing`) | One queue per repository. `land.py land` is the only writer to trunk. See [Landing modes](guide.md#landing-modes). |
 
-The lead ends its turn while children work. T3 wakes it as each one finishes. A coordinator's worker calls `t3_thread_send` on the coordinator thread as its last step, after the report file is written. That report-back wakes the coordinator. The liveness check runs every 10 minutes while work is in progress. `brigade.py watch` prints `report written, no report-back` when the report exists and this attempt is not marked reported. That line is a defect. The check reads the worker's activity, finds the cause, and fires a fix at that cause.
+The lead ends its turn while children work. T3 wakes it as each one finishes. A coordinator's worker calls `t3_thread_send` on the coordinator thread as its last step, after the report file is written. That report-back wakes the coordinator. The liveness check runs every 10 minutes while work is in progress. `brigade.py watch` prints `report written, no report-back` while the work is in progress, when the report was written for this attempt, and when this attempt is not marked reported. The report counts as written for this attempt when its modification time is at or after the attempt's start. A report left by a replaced worker does not count. That line is a defect. The check reads the worker's activity, finds the cause, and fires a fix at that cause.
 
 ## How a coordinator reports
 
