@@ -80,10 +80,13 @@ def check_tree(root):
                 findings.append(f"{rel_s}: missing {tool}")
         # The runtime's vocabulary table names each Cursor term it replaces.
         patterns = [] if rel_s == "pstack-runtime/SKILL.md" else FORBIDDEN
+        catalog_heredoc = "<<'JSON'" in text
         for number, line in enumerate(text.splitlines(), 1):
             for pattern, why in patterns:
                 if re.search(pattern, line):
                     findings.append(f"{rel}:{number}: {why}: {line.strip()[:120]}")
+            if catalog_heredoc and line[:1] in (" ", "\t") and line.strip() == "JSON":
+                findings.append(f"{rel}:{number}: catalog heredoc closer JSON is indented. Put JSON at column 0")
         if file.suffix == ".md":
             for target in LINK.findall(text):
                 path = target.split("#", 1)[0]
