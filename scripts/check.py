@@ -41,6 +41,29 @@ REQUIRED_TOOLS = {
     "setup-pstack/SKILL.md": ("watch_pull_request", "0.0.46-nightly.20261005.2702"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
+# Bash ends a <<'JSON' body only on a line that is JSON and nothing else.
+CATALOG_HEREDOC_OPEN = "<<'JSON'"
+CATALOG_HEREDOC_CLOSER = "JSON"
+
+
+def catalog_heredoc_findings(rel, text):
+    findings = []
+    in_body = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if not in_body:
+            if CATALOG_HEREDOC_OPEN in line:
+                in_body = True
+            continue
+        if line == CATALOG_HEREDOC_CLOSER:
+            in_body = False
+            continue
+        if line.strip() != CATALOG_HEREDOC_CLOSER:
+            continue
+        if line.lstrip() != line:
+            findings.append(f"{rel}:{number}: catalog heredoc closer JSON is indented. Put JSON at column 0")
+        else:
+            findings.append(f"{rel}:{number}: catalog heredoc closer JSON has trailing whitespace. The closer is JSON with nothing after it")
+    return findings
 
 
 def check_tree(root):
@@ -80,13 +103,11 @@ def check_tree(root):
                 findings.append(f"{rel_s}: missing {tool}")
         # The runtime's vocabulary table names each Cursor term it replaces.
         patterns = [] if rel_s == "pstack-runtime/SKILL.md" else FORBIDDEN
-        catalog_heredoc = "<<'JSON'" in text
         for number, line in enumerate(text.splitlines(), 1):
             for pattern, why in patterns:
                 if re.search(pattern, line):
                     findings.append(f"{rel}:{number}: {why}: {line.strip()[:120]}")
-            if catalog_heredoc and line[:1] in (" ", "\t") and line.strip() == "JSON":
-                findings.append(f"{rel}:{number}: catalog heredoc closer JSON is indented. Put JSON at column 0")
+        findings.extend(catalog_heredoc_findings(rel, text))
         if file.suffix == ".md":
             for target in LINK.findall(text):
                 path = target.split("#", 1)[0]

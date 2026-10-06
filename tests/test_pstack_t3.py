@@ -880,6 +880,37 @@ class BuildTest(unittest.TestCase):
             findings = check.check_tree(directory)
         self.assertFalse(any("heredoc closer" in finding for finding in findings))
 
+    def test_check_scopes_the_catalog_heredoc_closer_to_its_body(self):
+        text = "\n".join([
+            "---",
+            "name: demo",
+            "description: d",
+            "---",
+            "",
+            "  JSON",
+            "```bash",
+            "python3 tool <<'JSON'",
+            '{"name": "JSON"}',
+            "JSON ",
+            "JSON\t",
+            "  JSON",
+            "JSON",
+            "```",
+            "",
+            "  JSON",
+            "",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(text)
+            findings = check.check_tree(directory)
+        self.assertEqual(findings, [
+            "demo/SKILL.md:10: catalog heredoc closer JSON has trailing whitespace. The closer is JSON with nothing after it",
+            "demo/SKILL.md:11: catalog heredoc closer JSON has trailing whitespace. The closer is JSON with nothing after it",
+            "demo/SKILL.md:12: catalog heredoc closer JSON is indented. Put JSON at column 0",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
