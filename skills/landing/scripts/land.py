@@ -794,14 +794,18 @@ def request_merge(store, ident, url):
 def delete_queue_branch(store, entry):
     """Drop landing/q<n> after the PR has merged.
 
-    Returns (deleted, warning). A missing remote ref counts as deleted. A real remote
-    delete failure returns deleted False so the next land retries. A local branch that
-    exists and cannot be deleted is named in warning. The entry still lands."""
+    Returns (deleted, warning). A missing remote ref counts as deleted. That includes
+    a failed git push --delete whose error text does not say the ref is missing, once
+    git ls-remote shows the ref gone. A real remote delete failure, or an unreadable
+    remote, returns deleted False so the next land retries. A local branch that exists
+    and cannot be deleted is named in warning. The entry still lands."""
     branch = human_branch(entry)
     remote = store.contract["remote"]
     pushed = git("push", remote, "--delete", branch, cwd=store.repo, check=False)
     if pushed.returncode != 0 and "does not exist" not in pushed.stderr:
-        return False, ""
+        listed = git("ls-remote", remote, f"refs/heads/{branch}", cwd=store.repo, check=False)
+        if listed.returncode != 0 or listed.stdout.strip():
+            return False, ""
     git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
     warning = ""
     if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", cwd=store.repo, check=False).returncode == 0:

@@ -93,7 +93,7 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
    - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report."
    - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. After the queue opens a PR, that section has this thread call `watch_pull_request` and run `land` on each wake. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
    - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`.
-   - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`.
+   - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`. When the landing drain schedule is recreated, record the new id with `$B set --schedule drain=<id>`.
 4. Run a service.
 
 ## Run a service
