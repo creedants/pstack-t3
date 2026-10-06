@@ -155,19 +155,31 @@ class BrigadeTest(unittest.TestCase):
     def test_brief_assembles_every_field_and_adds_the_exclusive_rule_for_measuring_stations(self):
         self.open()
         self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
         text = self.brigade("brief", "D1", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
                             "--verify", "npm run perf", "--paths", "src/boot.ts", "--lease", "L4", "--base", "origin/main")
         self.assertTrue(text.startswith("Use the poteto-mode skill and its `perf-issue` playbook."))
+        report = f"{self.at}/reports/D1.md"
         for part in ("PURPOSE: Make startup fast.", "TICKETS: T1: Startup is slow", "branch `perf/d1`, started from `origin/main`",
                      "leased to you as L4: src/boot.ts", "- Median cold start below 400 ms", "slot --exclusive --",
-                     "TIMEBOX: 60 minutes", f"Write it to {self.at}/reports/D1.md", "1. Write in plain engineering prose."):
+                     "TIMEBOX: 60 minutes", f"Write it to {report}", "1. Write in plain engineering prose.",
+                     f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+
+    def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
+        self.open()
+        self.fire_one(station="bug-fix")
+        error = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v",
+                             "--paths", "a", "--lease", "L1", "--base", "origin/main", ok=False)
+        self.assertIn("brigade.py set --thread", error)
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
 
     def test_brief_refuses_a_menu_without_a_purpose_or_a_missing_acceptance(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.brigade("set", "--thread", "thread-coord")
         args = ["brief", "D1", "--goal", "g", "--verify", "v", "--paths", "a", "--lease", "L1", "--base", "origin/main"]
         self.assertIn("menu.md has no purpose yet", self.brigade(*args, "--acceptance", "a", ok=False))
         (self.at / "menu.md").write_text("## Purpose\n\nFix bugs.\n")
@@ -184,7 +196,13 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("D1: over its 30m timebox", self.brigade("watch"))
         (self.at / "reports").mkdir()
         (self.at / "reports/D1.md").write_text("done")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
+        self.assertEqual(self.brigade("dish", "D1", "--reported"), "D1 in-progress")
         self.assertEqual(self.brigade("watch"), "D1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        (self.at / "reports/D1.md").write_text("second attempt")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
 
     def test_fire_claims_the_lease_and_a_refused_claim_fires_nothing(self):
         import os
@@ -207,6 +225,7 @@ class BrigadeTest(unittest.TestCase):
             self.assertIn("nothing fired: paths overlap L1 held by perf/D1",
                           self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s", "--paths", "src/x.py", ok=False))
             self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] two")
+            self.brigade("set", "--thread", "thread-coord")
             text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
             self.assertIn("leased to you as L1: src.", text)
             self.assertIn("branch `perf/d1`", text)
