@@ -131,11 +131,14 @@ def install(args):
     state = state_dir(scope, user)
     manifest_file = state / "install-manifest.json"
     manifest = load_manifest(manifest_file)
-    (state / "backups").mkdir(parents=True, exist_ok=True)
-    backup_root = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=state / "backups"))
+    # Create the stamp directory on the first skill that has to be moved aside.
+    backup_root = None
     for harnesses, link in actions:
         link.parent.mkdir(parents=True, exist_ok=True)
         if link.exists() or link.is_symlink():
+            if backup_root is None:
+                (state / "backups").mkdir(parents=True, exist_ok=True)
+                backup_root = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=state / "backups"))
             backup = backup_root / harnesses[0] / link.name
             backup.parent.mkdir(parents=True, exist_ok=True)
             # Record before moving, so a crash mid-move still leaves a restorable entry.
