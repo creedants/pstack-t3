@@ -17,10 +17,13 @@ import land  # noqa: E402
 REVIEWER = "codex/gpt-6.1-sol"
 
 
+def git_env():
+    return {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+
 def sh(*args, cwd):
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
-                            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=git_env())
     if result.returncode != 0:
         raise AssertionError(f"{args} failed: {result.stderr}")
     return result.stdout.strip()
@@ -83,6 +86,9 @@ class LandingTest(unittest.TestCase):
         sh("git", "add", "-A", cwd=cwd or self.work)
         sh("git", "commit", "-qm", message, cwd=cwd or self.work)
         return sh("git", "rev-parse", "HEAD", cwd=cwd or self.work)
+
+    def git_raw(self, *args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, env=git_env())
 
     def land(self, *args, ok=True):
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), *args],
@@ -233,6 +239,41 @@ exit 0
         fixed = self.commit("w2 fixed", cwd=path)
         self.assertEqual(self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", fixed, "--lease", "L2", "--reviewer", REVIEWER), "Q3")
         self.assertEqual(self.land("land"), "landed Q3 (r/D2)")
+
+    def test_a_conflict_rerere_resolved_to_trunk_bounces(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "worker\n"})
+        (self.work / "a.txt").write_text("human\n")
+        self.commit("human")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        sh("git", "config", "rerere.enabled", "true", cwd=self.work)
+        sh("git", "config", "rerere.autoupdate", "true", cwd=self.work)
+        record = self.base / "record"
+        sh("git", "worktree", "add", "-q", "--detach", str(record), "origin/main", cwd=self.work)
+        conflict = self.git_raw("cherry-pick", sha, cwd=record)
+        self.assertNotEqual(conflict.returncode, 0, conflict.stdout + conflict.stderr)
+        (record / "a.txt").write_text("human\n")
+        sh("git", "rerere", cwd=record)
+        sh("git", "add", "a.txt", cwd=record)
+        sh("git", "cherry-pick", "--abort", cwd=record)
+        replay = self.git_raw("cherry-pick", sha, cwd=record)
+        detail = replay.stdout + replay.stderr
+        self.assertNotEqual(replay.returncode, 0, detail)
+        self.assertIn("CONFLICT", detail)
+        self.assertIn("could not apply", detail)
+        self.assertEqual(self.git_raw("status", "--porcelain", cwd=record).stdout, "")
+        self.assertEqual(self.git_raw("ls-files", "-u", cwd=record).stdout, "")
+        sh("git", "cherry-pick", "--abort", cwd=record)
+        self.assertEqual(self.land("land"), "bounced Q1 (r/D1): conflict with trunk")
+        status = self.land("status", "Q1")
+        self.assertIn("Q1 bounced", status)
+        self.assertIn("conflict with trunk", status)
+        self.assertNotIn("already in trunk", status)
+        self.assertEqual(self.land("lease", "list").split(" until ")[0], "L1 active r/D1")
+        self.assertEqual(self.origin_log(), ["human", "init"])
+        self.assertEqual(sh("git", "show", "main:a.txt", cwd=self.base / "origin.git"), "human")
 
     def test_landing_uses_the_pinned_sha_even_when_the_branch_moves_on(self):
         self.init()
