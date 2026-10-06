@@ -675,16 +675,37 @@ def human_branch(entry):
     return f"landing/e{entry['id']}"
 
 
+def publish_absent_branch(store, entry, branch):
+    """Push the checked candidate when the entry's branch is not on the remote.
+
+    An older queue pushed landing/q<n> and stored that commit as the candidate.
+    landing/e<n> was never created, so gh pr create refuses the new name.
+    The push sends the commit the queue already checked. A branch that is
+    already on the remote is left where it is."""
+    candidate = (entry["candidate"] or "").strip()
+    if not candidate:
+        return
+    remote = store.contract["remote"]
+    listed = git("ls-remote", "--heads", remote, f"refs/heads/{branch}", cwd=store.repo, check=False)
+    if listed.returncode != 0 or listed.stdout.strip():
+        return
+    push = git_push("--force", remote, f"{candidate}:refs/heads/{branch}", cwd=store.repo, check=False)
+    if push.returncode != 0:
+        raise Infrastructure("push failed: " + git_reason(push.stderr))
+
+
 def ensure_pr(store, entry):
     """Adopt the PR for the entry's branch, or open it. A crash between push and PR creation is safe to rerun."""
     contract = store.contract
-    view = gh("pr", "view", human_branch(entry), "--json", "url", "-q", ".url", cwd=store.repo)
+    branch = human_branch(entry)
+    view = gh("pr", "view", branch, "--json", "url", "-q", ".url", cwd=store.repo)
     url = view.stdout.strip() if view.returncode == 0 else ""
     if not url:
+        publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
         receipt = f"Queued by {entry['holder']} from `{entry['branch']}`. Reviewed by {entry['reviewer']} at {entry['sha']}."
         body = f"{entry['body'].rstrip()}\n\n{receipt}" if entry["body"] else receipt
-        created = gh("pr", "create", "--base", contract["trunk"], "--head", human_branch(entry), "--title", title, "--body", body, cwd=store.repo)
+        created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title, "--body", body, cwd=store.repo)
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())
         url = created.stdout.strip().splitlines()[-1]
@@ -935,39 +956,59 @@ def remote_branch_is_gone(store, branch, stderr):
     return _CLIENT_ABSENT_REF.search(stderr or "") is not None
 
 
-def delete_named_branch(store, branch, missing_ok):
-    """Drop one queue branch. Returns (deleted, warning).
+def forget_local_branch(store, branch):
+    """Drop the local branch and its remote-tracking ref. A branch git cannot delete is named in the warning."""
+    remote = store.contract["remote"]
+    git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
+    if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", cwd=store.repo, check=False).returncode != 0:
+        return ""
+    local = git("branch", "-D", branch, cwd=store.repo, check=False)
+    if local.returncode != 0:
+        return f"left local {branch}: {git_reason(local.stderr)}"
+    return ""
 
-    missing_ok treats git's exact absent line as nothing to delete, and does
-    not ask the forge. A branch that was never created must not block settle.
-    Any other failure uses remote_branch_is_gone."""
+
+def delete_named_branch(store, branch, missing_ok):
+    """Drop one queue branch. Returns (deleted, warning, absent, accepted).
+
+    accepted means the server took the delete. absent means git's exact line
+    says the remote ref does not exist. missing_ok treats that line as nothing
+    to delete and does not ask the forge. Any other failure uses
+    remote_branch_is_gone."""
     remote = store.contract["remote"]
     pushed = git_push(remote, "--delete", branch, cwd=store.repo, check=False)
-    if pushed.returncode != 0:
-        absent = _CLIENT_ABSENT_REF.search(pushed.stderr or "") is not None
+    absent = _CLIENT_ABSENT_REF.search(pushed.stderr or "") is not None
+    accepted = pushed.returncode == 0
+    if not accepted:
         if not (missing_ok and absent) and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
-            return False, ""
-    git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
-    warning = ""
-    if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", cwd=store.repo, check=False).returncode == 0:
-        local = git("branch", "-D", branch, cwd=store.repo, check=False)
-        if local.returncode != 0:
-            warning = f"left local {branch}: {git_reason(local.stderr)}"
-    return True, warning
+            return False, "", absent, False
+    return True, forget_local_branch(store, branch), absent, accepted
 
 
 def delete_queue_branch(store, entry):
     """Drop landing/e<n> after the PR has merged, and a leftover landing/q<n>.
 
-    Returns (deleted, warning). The delete counts as done when the server
-    accepts it, or when remote_branch_is_gone says the branch is gone.
-    A missing landing/q<n> does not block. A local branch that exists and
-    cannot be deleted is named in warning. The entry still lands when the
-    remote ref is gone."""
-    deleted, warning = delete_named_branch(store, human_branch(entry), missing_ok=False)
+    Returns (deleted, warning). The current name is done when the server
+    accepts the delete, or when remote_branch_is_gone says it is gone. An
+    entry pushed before the rename has no landing/e<n>. Git's absent line for
+    that name is done when the server accepts the delete of landing/q<n>, on
+    any remote. A missing landing/q<n> does not block once the current name
+    is gone. A local branch that exists and cannot be deleted is named in
+    warning. The entry still lands when the remote ref is gone."""
+    current = human_branch(entry)
+    legacy = f"landing/q{entry['id']}"
+    deleted, warning, absent, _accepted = delete_named_branch(store, current, missing_ok=False)
     if not deleted:
-        return False, ""
-    legacy_deleted, legacy_warning = delete_named_branch(store, f"landing/q{entry['id']}", missing_ok=True)
+        if not absent:
+            return False, ""
+        _legacy_deleted, legacy_warning, _legacy_absent, legacy_accepted = delete_named_branch(
+            store, legacy, missing_ok=False)
+        if not legacy_accepted:
+            return False, ""
+        local = forget_local_branch(store, current)
+        return True, " ".join(part for part in (local, legacy_warning) if part)
+    legacy_deleted, legacy_warning, _legacy_absent, _legacy_accepted = delete_named_branch(
+        store, legacy, missing_ok=True)
     if not legacy_deleted:
         return False, ""
     return True, " ".join(part for part in (warning, legacy_warning) if part)

@@ -599,6 +599,53 @@ elif args[:2] == ["pr", "view"]:
         lease = self.land("lease", "claim", "--holder", holder, "--paths", path)
         return self.land("submit", "--holder", holder, "--branch", name, "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
 
+    def base_land_script(self):
+        """The land.py from before queue branches were renamed, at 3678d11."""
+        path = self.base / "land-3678d11.py"
+        show = subprocess.run(
+            ["git", "show", "3678d11:t3/added/landing/scripts/land.py"],
+            cwd=ROOT, capture_output=True, text=True, check=True)
+        path.write_text(show.stdout)
+        return path
+
+    def use_land_script(self, path):
+        global SCRIPT
+        previous = SCRIPT
+        SCRIPT = path
+        return previous
+
+    def restore_land_script(self, previous):
+        global SCRIPT
+        SCRIPT = previous
+
+    def require_pr_head_on_origin(self):
+        """GitHub rejects pr create when the head branch is not on the remote."""
+        real = os.environ["LAND_GH"]
+        wrapper = self.base / "gh-head"
+        wrapper.write_text(
+            f"""#!{sys.executable}
+import os, subprocess, sys
+from pathlib import Path
+base = Path({str(self.base)!r})
+real = {real!r}
+args = sys.argv[1:]
+if args[:2] == ["pr", "create"]:
+    if (base / "pr-create-fails").exists():
+        print("gh: not authenticated", file=sys.stderr)
+        sys.exit(1)
+    head = args[args.index("--head") + 1]
+    present = subprocess.run(
+        ["git", "--git-dir", str(base / "origin.git"), "rev-parse", "--verify", "--quiet", "refs/heads/" + head],
+        capture_output=True).returncode == 0
+    if not present:
+        print("pull request create failed: GraphQL: Head ref must be a branch (createPullRequest)", file=sys.stderr)
+        sys.exit(1)
+os.execv(real, [real, *args])
+"""
+        )
+        wrapper.chmod(0o755)
+        os.environ["LAND_GH"] = str(wrapper)
+
     def test_an_old_landing_q_branch_is_deleted_when_the_entry_lands(self):
         with self.fake_gh():
             self.init(mode="human")
@@ -613,6 +660,61 @@ elif args[:2] == ["pr", "view"]:
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", remote))
             self.assertFalse(self.ref_exists("refs/heads/landing/e1", remote))
             self.assertFalse(self.ref_exists("refs/remotes/origin/landing/q1", self.work))
+
+    def test_a_merged_pr_on_landing_q_lands_when_the_remote_is_not_github(self):
+        with self.fake_gh():
+            sh("git", "remote", "set-url", "origin", str(self.base / "origin.git"), cwd=self.work)
+            previous = self.use_land_script(self.base_land_script())
+            try:
+                self.init(mode="human")
+                self.queue_one()
+                opened = self.land("land")
+                remote = self.base / "origin.git"
+                candidate = sh("git", "rev-parse", "refs/heads/landing/q1", cwd=remote)
+                (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
+                self.restore_land_script(previous)
+                previous = None
+                settled = self.land("land")
+            finally:
+                if previous is not None:
+                    self.restore_land_script(previous)
+            self.assertEqual(opened, "opened PRs for Q1 (r/D1) https://github.com/o/r/pull/9")
+            self.assertEqual(settled, "landed E1 (r/D1)")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", remote))
+            self.assertIn("E1 landed", self.land("status", "E1"))
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_a_legacy_push_without_a_pr_opens_the_pr_on_landing_e(self):
+        with self.fake_gh():
+            self.require_pr_head_on_origin()
+            previous = self.use_land_script(self.base_land_script())
+            try:
+                self.init(mode="human")
+                self.queue_one()
+                (self.base / "pr-create-fails").write_text("gh: not authenticated\n")
+                paused = self.land("land")
+                remote = self.base / "origin.git"
+                candidate = sh("git", "rev-parse", "refs/heads/landing/q1", cwd=remote)
+                self.assertFalse(self.ref_exists("refs/heads/landing/e1", remote))
+                (self.base / "pr-create-fails").unlink()
+                self.restore_land_script(previous)
+                previous = None
+                held = self.land("status", "Q1")
+                self.assertEqual(self.land("resume"), "queue resumed")
+                opened = self.land("land")
+            finally:
+                if previous is not None:
+                    self.restore_land_script(previous)
+            self.assertIn("queue paused", paused)
+            self.assertIn("awaiting-merge", held)
+            self.assertNotIn("pull/9", held)
+            self.assertNotIn("queue paused", opened)
+            self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote), opened)
+            self.assertEqual(sh("git", "rev-parse", "refs/heads/landing/e1", cwd=remote), candidate)
+            status = self.land("status", "E1")
+            self.assertIn("awaiting-merge", status)
+            self.assertIn("https://github.com/o/r/pull/9", status)
+            self.assertNotIn("Paused", self.land("status"))
 
     def test_human_mode_opens_a_pr_and_marks_landed_when_it_merges(self):
         with self.fake_gh():
