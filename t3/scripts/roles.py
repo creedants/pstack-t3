@@ -322,7 +322,7 @@ def _provider_for_exact(matches, wanted_family):
     return fallback
 
 
-def _preferred_seat(preference, catalog):
+def _preferred_seat(preference, catalog, budget="default"):
     """Return a concrete runnable target and explanations of changed intent."""
     rows = _runnable_rows(catalog)
     if not rows:
@@ -348,7 +348,9 @@ def _preferred_seat(preference, catalog):
             else:
                 provider, model = rows[0]
             cause = "missing family"
-    seat = apply_budget({"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, model, "large")
+    # xhigh is the built-in ceiling. unlimited replaces it with the model's highest non-special level.
+    stamp = "unlimited" if budget == "unlimited" else "large"
+    seat = apply_budget({"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, model, stamp)
     notes = []
     if cause is not None:
         notes.append(f"wanted {wanted}, using {provider['providerInstanceId']}/{model['id']} ({cause})")
@@ -357,7 +359,7 @@ def _preferred_seat(preference, catalog):
     if chosen is not None and rank(chosen) is not None and rank(preference.effort_ceiling) is not None and rank(chosen) < rank(preference.effort_ceiling):
         notes.append(f"wanted {preference.effort_ceiling}, using {chosen}")
     declares_fast = any(item.get("id") == "fastMode" and item.get("type") == "boolean" for item in options_of(model))
-    if preference.prefer_fast and declares_fast:
+    if preference.prefer_fast and declares_fast and family(model["id"]) == family(preference.model_id):
         seat = {**seat, "options": {**(seat.get("options") or {}), "fastMode": True}}
     return seat, tuple(notes)
 
@@ -399,7 +401,7 @@ def _lost_diversity(name, seats):
     return None
 
 
-def default_seats(name, catalog):
+def default_seats(name, catalog, budget="default"):
     """Resolve exactly the policy seats for this role from the live catalog."""
     policy = ROLE_DEFAULTS[name]
     if catalog is None:
@@ -418,7 +420,7 @@ def default_seats(name, catalog):
         return DefaultSelection(tuple(_verifier_seats(catalog)))
     seats, notes = [], []
     for number, preference in enumerate(policy, 1):
-        seat, seat_notes = _preferred_seat(preference, catalog)
+        seat, seat_notes = _preferred_seat(preference, catalog, budget)
         seats.append(seat)
         notes.extend(f"{name} seat {number}: {note}" for note in seat_notes)
     diversity = _lost_diversity(name, seats)
@@ -486,7 +488,7 @@ def resolve(config, catalog=None, names=None):
         configured = config["roles"].get(name)
         entry = {"source": config["sources"].get(name, "default")}
         if configured is None:
-            selection = default_seats(name, catalog)
+            selection = default_seats(name, catalog, config["budget"])
             if isinstance(selection.seats, str):
                 entry["seats"] = selection.seats
                 if selection.notes:

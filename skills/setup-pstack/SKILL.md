@@ -36,14 +36,14 @@ This prints every role with its seats and `source` (`default`, the user file, or
 **(a) Ask for a budget.** Use the host's question tool if it has one. Offer these labels, and name the current budget.
 
 - `default — built-in role reasoning or configured seat options`
-- `unlimited — highest reasoning each model offers`
+- `unlimited — max reasoning`
 - `large — xhigh reasoning`
 - `medium — high reasoning`
 - `small — medium reasoning`
 
-The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`). A seat at or below the cap keeps its level. A seat above the cap drops to the cap, or the closest lower level the model offers. A seat that names no level receives the cap. `default` leaves a built-in or configured level as it is. `unlimited` does not raise a seat that already names xhigh. A model without such an option is unaffected. `ultracode` and `ultrathink` are never set by a budget.
+The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`). A seat at or below the cap keeps its level. A seat above the cap drops to the cap, or the closest lower level the model offers. A seat that names no level receives the cap. `default` leaves a built-in or configured level as it is. `unlimited` raises a built-in preferred seat to the model's highest non-special level. The default Opus seat moves from xhigh to max. Grok's ladder tops out at xhigh, so the default Grok seat stays at xhigh. A configured seat that names its own level keeps that level when it is at or below the cap. A model without such an option is unaffected. `ultracode` and `ultrathink` are never set by a budget.
 
-**(b) Propose roles.** The built-in defaults are Claude Opus (`claude-opus-5-5`) at xhigh for judgment roles and Grok (`grok-4.7`) at xhigh for code roles. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats, judgment first. `skill tests` and `verifiers` stay on their catalog rules. Start from `roles.py show` in step 2. Keep configured roles unless the user changes them. Use the built-in seats for roles with `source: "default"`. Offer `large` for a new setup. It matches the built-in xhigh ceiling. Show each fallback note beside its role and seat. Codex and every other runnable configured provider remain available as user choices. Leave `skill tests` unset so its adaptive default stays.
+**(b) Propose roles.** The built-in defaults are Claude Opus (`claude-opus-5-5`) at xhigh for judgment roles and Grok (`grok-4.7`) at xhigh for code roles. Under `unlimited`, those seats rise as step 3(a) describes. Opus moves to max, and Grok stays at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats, judgment first. `skill tests` and `verifiers` stay on their catalog rules. Start from `roles.py show` in step 2. Keep configured roles unless the user changes them. Use the built-in seats for roles with `source: "default"`. Offer `large` for a new setup. It matches the built-in xhigh ceiling. Show each fallback note beside its role and seat. Codex and every other runnable configured provider remain available as user choices. Leave `skill tests` unset so its adaptive default stays.
 
 **(c) Confirm.** Show every role with its seats. Ask whether to accept as-is or change specific roles. For panel roles the seat count is the panel size.
 
@@ -58,7 +58,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
   --set "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh"
 ```
 
-The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when that catalog model declares the boolean option.
+The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when the chosen model is in the grok family and declares that boolean option. A fallback to another family does not set it.
 
 - The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass.
 - It refuses to write a seat that does not match the catalog and prints why. Fix the seat and rerun. Do not pass `--force` unless the user asks.

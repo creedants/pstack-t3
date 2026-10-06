@@ -188,11 +188,25 @@ class RolesTest(unittest.TestCase):
         capped = roles.resolve(config("small"), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
         self.assertEqual(capped, [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}])
 
-    def test_unlimited_budget_does_not_raise_builtin_xhigh(self):
-        seats = roles.resolve(config("unlimited"), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(seats, [GROK_SEAT])
+    def test_unlimited_budget_raises_builtin_seats_to_the_highest_non_special_level(self):
+        grok = roles.resolve(config("unlimited"), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(grok, [GROK_SEAT])
+        opus_max = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}}
         judgment = roles.resolve(config("unlimited"), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
-        self.assertEqual(judgment, [OPUS_SEAT])
+        self.assertEqual(judgment, [opus_max])
+        panel = roles.resolve(config("unlimited"), CATALOG, ["interrogate reviewers"])["roles"]["interrogate reviewers"]["seats"]
+        self.assertEqual(panel, [opus_max, GROK_SEAT])
+        verifiers = roles.resolve(config("unlimited"), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
+        self.assertEqual(verifiers[0], opus_max)
+        self.assertEqual(verifiers[2]["options"]["reasoningEffort"], "xhigh")
+        named = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
+        kept = roles.resolve(config("unlimited", **{"judgment and prose": [named]}), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
+        self.assertEqual(kept, [named])
+        for path in ("t3/setup.md", "t3/runtime.md"):
+            text = (ROOT / path).read_text()
+            self.assertIn("highest non-special", text, path)
+            self.assertNotIn("does not raise", text, path)
+        self.assertIn("`unlimited — max reasoning`", (ROOT / "t3/setup.md").read_text())
 
     def test_budget_understands_extra_high_and_keeps_none(self):
         model = {"id": "m", "options": [{"id": "reasoning_effort", "type": "select", "options": [{"id": "none"}, {"id": "low"}, {"id": "high"}, {"id": "extra-high"}]}]}
@@ -222,8 +236,8 @@ class RolesTest(unittest.TestCase):
     def test_arena_runners_with_one_runnable_provider_keeps_two_fallback_seats(self):
         catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
         entry = roles.resolve(config(), catalog, ["arena runners"])["roles"]["arena runners"]
-        opus_fast = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh", "fastMode": True}}
-        self.assertEqual(entry["seats"], [OPUS_SEAT, opus_fast])
+        self.assertEqual(entry["seats"], [OPUS_SEAT, OPUS_SEAT])
+        self.assertNotIn("fastMode", entry["seats"][1].get("options", {}))
         self.assertEqual(entry["notes"], [
             "arena runners seat 2: wanted grok-4.7, using claudeAgent/claude-opus-5-5 (missing family)",
             "arena runners: seats 1 and 2 both use claudeAgent/claude-opus-5-5, so the panel lost a distinct model",
@@ -385,8 +399,20 @@ class RolesTest(unittest.TestCase):
         blocked = {**grok, "canRunChildTask": False, "constraints": ["Provider is not authenticated."]}
         providers = [blocked if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
         entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh", "fastMode": True}}])
+        self.assertEqual(entry["seats"], [OPUS_SEAT])
+        self.assertNotIn("fastMode", entry["seats"][0]["options"])
         self.assertEqual(entry["notes"], ["swarm workers seat 1: wanted grok-4.7, using claudeAgent/claude-opus-5-5 (missing family)"])
+
+    def test_claude_and_codex_catalog_without_grok_does_not_set_fast_mode(self):
+        providers = [provider for provider in CATALOG["providers"] if provider["providerInstanceId"] in ("claudeAgent", "codex")]
+        catalog = {**CATALOG, "providers": providers}
+        entry = roles.resolve(config(), catalog, ["bug-fix"])["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [OPUS_SEAT])
+        self.assertNotIn("fastMode", entry["seats"][0]["options"])
+        self.assertIn("missing family", entry["notes"][0])
+        panel = roles.resolve(config(), catalog, ["interrogate reviewers"])["roles"]["interrogate reviewers"]
+        self.assertEqual(panel["seats"][1], OPUS_SEAT)
+        self.assertNotIn("fastMode", panel["seats"][1]["options"])
 
     def test_exact_model_prefers_the_provider_whose_first_model_is_in_the_family(self):
         wrapper = {
