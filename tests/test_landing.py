@@ -600,12 +600,10 @@ elif args[:2] == ["pr", "view"]:
         return self.land("submit", "--holder", holder, "--branch", name, "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
 
     def base_land_script(self):
-        """The land.py from before queue branches were renamed, at 3678d11."""
+        """Pre-rename land.py. The fixture replaces git show, which fails in a shallow clone."""
         path = self.base / "land-3678d11.py"
-        show = subprocess.run(
-            ["git", "show", "3678d11:t3/added/landing/scripts/land.py"],
-            cwd=ROOT, capture_output=True, text=True, check=True)
-        path.write_text(show.stdout)
+        source = ROOT / "tests/fixtures/land_before_e_rename.py"
+        path.write_bytes(source.read_bytes())
         return path
 
     def use_land_script(self, path):
