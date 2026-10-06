@@ -947,6 +947,28 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(row["timebox"], "45")
         self.assertEqual(row["branch"], "docs/gate")
 
+    def test_an_option_leading_summary_round_trips_through_bash(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                     "--landing", "merge", "--workers", "1")
+        self.brigade("ticket", "add", "--summary", "seed")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "seed")
+        blocker = "D1"
+        cases = (("-Werror", "T2", "D2"), ("--help", "T3", "D3"))
+        for summary, ticket, dish in cases:
+            self.brigade("ticket", "add", f"--summary={summary}")
+            refused = self.brigade("fire", "--tickets", ticket, "--station", "bug-fix",
+                                   f"--summary={summary}", "--timebox", "45", ok=False)
+            self.assertIn("nothing fired: 1 of 1 workers running", refused)
+            self.brigade("dish", blocker, "--state", "sent-back")
+            line = next(part for part in self.brigade("watch").splitlines() if part.startswith(f"{ticket}: unblocked"))
+            ran = self.bash_unblocked(self.at, line)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+            row = self.table_row(self.at, "dishes.tsv", dish)
+            self.assertEqual(row["summary"], summary)
+            self.assertEqual(row["timebox"], "45")
+            self.assertEqual(row["station"], "bug-fix")
+            blocker = dish
+
     def test_a_later_fire_does_not_keep_the_refused_attempts_fragment(self):
         from unittest import mock
         self.init_landing()
