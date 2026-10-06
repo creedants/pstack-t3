@@ -9,6 +9,7 @@ Kitchen words name files and commands. Output is plain engineering prose.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -16,10 +17,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-TICKET_STATES = ("waiting", "assigned", "done", "dropped")
+TICKET_STATES = ("waiting", "assigned", "moved", "done", "dropped")
+LIVE_TICKET_STATES = ("waiting", "assigned")
 DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "queued", "merged", "dropped")
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 OPEN_RUN_MINUTES = 10
@@ -42,6 +45,7 @@ SECTIONS = {
     ("dish", "in-progress"): "In progress",
     ("dish", "in-review"): "In progress",
     ("ticket", "waiting"): "New tickets, not started",
+    ("ticket", "moved"): "Handed to another coordinator",
     ("dish", "dropped"): "Dropped",
     ("ticket", "dropped"): "Dropped",
 }
@@ -105,8 +109,21 @@ def clean(value):
 def write_atomic(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as handle:
-        handle.write(text)
+        try:
+            handle.write(text)
+        except BaseException:
+            handle.close()
+            os.unlink(handle.name)
+            raise
     os.replace(handle.name, path)
+
+
+def is_timestamp(value):
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 class Restaurant:
@@ -114,39 +131,87 @@ class Restaurant:
         self.dir = Path(directory)
         if not (self.dir / "restaurant.json").is_file():
             raise BrigadeError(f"{self.dir} is not a restaurant (no restaurant.json); run brigade.py open")
+        self._lock_fd = None
+        self._lock_depth = 0
+
+    @contextmanager
+    def locked(self):
+        """Every write in this store holds an exclusive lock on restaurant.lock.
+
+        The lock is on a sidecar file because rewrites replace a table's inode.
+        It is reentrant within one Restaurant, so a command can hold it around
+        its reads and writes while each write also takes it.
+        """
+        if self._lock_depth == 0:
+            fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            self._lock_fd = fd
+        self._lock_depth += 1
+        try:
+            yield
+        finally:
+            self._lock_depth -= 1
+            if self._lock_depth == 0:
+                os.close(self._lock_fd)
+                self._lock_fd = None
+
+    def write(self, relative, text):
+        with self.locked():
+            write_atomic(self.dir / relative, text)
 
     @property
     def meta(self):
         return json.loads((self.dir / "restaurant.json").read_text())
 
     def save_meta(self, meta):
-        write_atomic(self.dir / "restaurant.json", json.dumps(meta, indent=2) + "\n")
+        self.write("restaurant.json", json.dumps(meta, indent=2) + "\n")
 
     def rows(self, table):
         path = self.dir / table
         if not path.exists():
             return []
-        lines = path.read_text().splitlines()
         header = TABLES[table]
-        return [dict(zip(header, line.split("\t"))) for line in lines[1:] if line]
+        at = header.index("at")
+        rows = []
+        # The last element is the text after the final newline: empty, or the tail of a killed append.
+        for number, line in enumerate(path.read_text().split("\n")[1:-1], start=2):
+            fields = line.split("\t")
+            if len(fields) != len(header) or not is_timestamp(fields[at]):
+                raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
+            rows.append(dict(zip(header, fields)))
+        return rows
 
     def save_rows(self, table, rows):
         header = TABLES[table]
         body = ["\t".join(header)] + ["\t".join(clean(row.get(key, "")) for key in header) for row in rows]
-        write_atomic(self.dir / table, "\n".join(body) + "\n")
+        self.write(table, "\n".join(body) + "\n")
 
     def append(self, table, row):
+        data = ("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n").encode()
         path = self.dir / table
-        if not path.exists():
-            self.save_rows(table, [])
-        with path.open("a") as handle:
-            handle.write("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n")
+        with self.locked():
+            if not path.exists():
+                self.save_rows(table, [])
+            fd = os.open(path, os.O_RDWR | os.O_APPEND)
+            try:
+                end = os.fstat(fd).st_size
+                if end and os.pread(fd, 1, end - 1) != b"\n":
+                    # A killed append left an unfinished tail. Writing after it would join two rows.
+                    end = os.pread(fd, end, 0).rfind(b"\n") + 1
+                    os.ftruncate(fd, end)
+                written = os.write(fd, data)
+                if written != len(data):
+                    os.ftruncate(fd, end)
+                    raise BrigadeError(f"wrote {written} of {len(data)} bytes to {table}; nothing appended")
+            finally:
+                os.close(fd)
 
     def log(self, kind, ident, state, note=""):
-        self.append("log.tsv", {"at": now(), "kind": kind, "id": ident, "state": state, "note": note})
-        meta = self.meta
-        meta["lastActivityAt"] = now()
-        self.save_meta(meta)
+        with self.locked():
+            self.append("log.tsv", {"at": now(), "kind": kind, "id": ident, "state": state, "note": note})
+            meta = self.meta
+            meta["lastActivityAt"] = now()
+            self.save_meta(meta)
 
     def next_id(self, table):
         numbers = [int(row["id"][1:]) for row in self.rows(table) if row.get("id", "")[1:].isdigit()]
@@ -189,18 +254,25 @@ def menu_section(text, heading):
     return match.group(1).strip() if match else ""
 
 
-def sibling_lines(restaurant):
-    project_root = restaurant.meta.get("projectRoot")
-    blocks = []
-    for meta_path in sorted(restaurant.dir.parent.glob("*/restaurant.json")):
-        if meta_path.parent == restaurant.dir:
+def siblings(directory, project_root):
+    """The other coordinators in this project directory on the same project root, by directory name."""
+    found = {}
+    for meta_path in sorted(directory.parent.glob("*/restaurant.json")):
+        if meta_path.parent == directory:
             continue
         try:
             meta = json.loads(meta_path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        if meta.get("projectRoot") != project_root:
-            continue
+        if meta.get("projectRoot") == project_root:
+            found[meta_path.parent.name] = meta
+    return found
+
+
+def sibling_lines(restaurant):
+    blocks = []
+    for directory_name, meta in siblings(restaurant.dir, restaurant.meta.get("projectRoot")).items():
+        meta_path = restaurant.dir.parent / directory_name / "restaurant.json"
         menu_path = meta_path.parent / "menu.md"
         menu = menu_path.read_text() if menu_path.is_file() else ""
         purpose = menu_section(menu, "Purpose")
@@ -247,9 +319,163 @@ def wait_for_meta(directory):
         time.sleep(0.01)
 
 
-def open_restaurant(root, project_root, name, landing, reporting="milestones"):
+def intake_owner(directory, project_root, source):
+    for name, meta in siblings(directory, project_root).items():
+        if source in (meta.get("intake") or []):
+            return name
+    return None
+
+
+def refuse_owned_intake(directory, project_root, sources):
+    for source in sources:
+        owner = intake_owner(directory, project_root, source)
+        if owner:
+            raise BrigadeError(f"{owner} already owns intake from {source}; move tickets to it instead")
+
+
+def intake_list(text):
+    sources = []
+    for item in text.split(","):
+        item = clean(item)
+        if item and item not in sources:
+            sources.append(item)
+    return sources
+
+
+def base_source(source):
+    """A taken ticket's source is `<source> (from <handoff id>)`. The intake source is the part before."""
+    return source.split(" (from ", 1)[0]
+
+
+def set_intake(restaurant, sources):
+    meta = restaurant.meta
+    refuse_owned_intake(restaurant.dir, meta.get("projectRoot"), sources)
+    for source in meta.get("intake") or []:
+        if source in sources:
+            continue
+        held = [row for row in restaurant.rows("rail.tsv")
+                if base_source(row["source"]) == source and row["state"] in LIVE_TICKET_STATES]
+        if held:
+            raise BrigadeError(f"{held[0]['id']} from {source} is {held[0]['state']}; finish, drop, or move it before dropping {source} from intake")
+    meta["intake"] = sources
+    return meta
+
+
+def handoff_id(directory, ticket):
+    """Unique across the store: the source store's path under the store root, then the ticket."""
+    return f"{directory.parent.name}/{directory.name}/{ticket}"
+
+
+def inbox_file(directory, handoff):
+    return directory / "inbox" / f"{handoff.replace('/', '~')}.json"
+
+
+def taken_row(directory, handoff):
+    """The ticket a take filed for this handoff in the coordinator at directory, if any."""
+    if not (directory / "restaurant.json").is_file():
+        return None
+    marker = f"(from {handoff})"
+    return next((row for row in Restaurant(directory).rows("rail.tsv") if row["source"].endswith(marker)), None)
+
+
+def is_live(directory, row):
+    """waiting and assigned are live. moved is as live as the ticket it became. A handoff not yet taken is live."""
+    if row["state"] != "moved":
+        return row["state"] in LIVE_TICKET_STATES
+    target = directory.parent / row["dish"].removeprefix("to:")
+    taken = taken_row(target, handoff_id(directory, row["id"]))
+    return taken is None or is_live(target, taken)
+
+
+def refuse_live_ref(restaurant, ref):
+    if not ref:
+        return
+    stores = [(restaurant.dir, restaurant.rows("rail.tsv"))]
+    for name in siblings(restaurant.dir, restaurant.meta.get("projectRoot")):
+        directory = restaurant.dir.parent / name
+        stores.append((directory, Restaurant(directory).rows("rail.tsv")))
+    for directory, rows in stores:
+        for row in rows:
+            if row["ref"] == ref and is_live(directory, row):
+                where = "" if directory == restaurant.dir else f" in {directory.name}"
+                raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
+
+
+def add_ticket(restaurant, summary, source, ref):
+    source, ref = clean(source), clean(ref)
+    meta = restaurant.meta
+    if source != "user":
+        owner = intake_owner(restaurant.dir, meta.get("projectRoot"), source)
+        if owner:
+            raise BrigadeError(f"{owner} owns intake from {source}; ask it to file this and move it here")
+        if source not in (meta.get("intake") or []):
+            raise BrigadeError(f"no coordinator owns intake from {source}; the one that reads it runs set --intake {source}")
+    refuse_live_ref(restaurant, ref)
+    ident = restaurant.next_id("rail.tsv")
+    restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
+                                   "ref": ref, "summary": summary})
+    restaurant.log("ticket", ident, "waiting", summary)
+    return ident
+
+
+def move_ticket(restaurant, ident, to):
+    meta = restaurant.meta
+    names = siblings(restaurant.dir, meta.get("projectRoot"))
+    name = to if to in names else next((n for n in names if slug(names[n].get("restaurant") or n) == slug(to)), None)
+    if name is None:
+        raise BrigadeError(f"{to} is not a sibling coordinator on {meta.get('projectRoot')}")
+    target = restaurant.dir.parent / name
+    destination = f"to:{name}"
+    rows, row = restaurant.find("rail.tsv", ident)
+    if row["state"] == "moved" and row["dish"] != destination:
+        raise BrigadeError(f"{ident} is already moved to {row['dish'].removeprefix('to:')}")
+    if row["state"] not in ("waiting", "moved"):
+        raise BrigadeError(f"{ident} is {row['state']}; only a waiting ticket moves")
+    if row["state"] == "waiting":
+        # State and destination commit in one rewrite, so the ref stays live here from this point on.
+        row["state"], row["dish"] = "moved", destination
+        restaurant.save_rows("rail.tsv", rows)
+    if not any(event["kind"] == "ticket" and event["id"] == ident and event["state"] == "moved"
+               for event in restaurant.rows("log.tsv")):
+        restaurant.log("ticket", ident, "moved", f"{row['summary']} (to {name})")
+    handoff = handoff_id(restaurant.dir, ident)
+    if taken_row(target, handoff) is None:
+        write_atomic(inbox_file(target, handoff), json.dumps({
+            "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
+        }, indent=2) + "\n")
+    thread = (names[name].get("thread") or "").strip()
+    return f"{ident} moved to {name}; " + (f"tell thread {thread}" if thread else f"no thread recorded for {name}")
+
+
+def take_tickets(restaurant):
+    lines = []
+    for path in sorted((restaurant.dir / "inbox").glob("*.json")):
+        try:
+            handoff = json.loads(path.read_text())
+        except json.JSONDecodeError as error:
+            raise BrigadeError(f"{path} is not valid JSON: {error}") from error
+        source = handoff["handoff"]
+        row = taken_row(restaurant.dir, source)
+        if row is None:
+            rows = restaurant.rows("rail.tsv")
+            row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
+                   "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"]}
+            restaurant.save_rows("rail.tsv", rows + [row])
+        if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
+            restaurant.log("ticket", row["id"], "waiting", f"from {source}")
+        path.unlink()
+        lines.append(f"{row['id']} from {source}: {row['summary']}")
+    return "\n".join(lines) or "nothing handed to you"
+
+
+def handed_count(restaurant):
+    return len(list((restaurant.dir / "inbox").glob("*.json")))
+
+
+def open_restaurant(root, project_root, name, landing, reporting="milestones", intake=()):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
+    refuse_owned_intake(directory, str(project_root), intake)
     # The project directory is shared by every coordinator on this path slug.
     # The coordinator directory is the claim, so mkdir must fail when it exists.
     directory.parent.mkdir(parents=True, exist_ok=True)
@@ -272,7 +498,7 @@ def open_restaurant(root, project_root, name, landing, reporting="milestones"):
         write_atomic(directory / table, "\t".join(header) + "\n")
     meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
             "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
-            "lastReportAt": None, "thread": None, "schedules": {}}
+            "lastReportAt": None, "thread": None, "schedules": {}, "intake": list(intake)}
     write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     return Restaurant(directory), True
 
@@ -291,6 +517,7 @@ def counts(restaurant):
         "blocked": dishes.count("blocked"),
         "merged": dishes.count("merged"),
         "decisions for you": len(questions),
+        "handed to you": handed_count(restaurant),
     }
 
 
@@ -359,7 +586,7 @@ def report(restaurant, write=True):
     path = None
     if write:
         path = restaurant.dir / "closeouts" / f"{stamp[:26].replace(':', '')}.md"
-        write_atomic(path, text)
+        restaurant.write(path.relative_to(restaurant.dir), text)
         meta["lastReportAt"] = stamp
         restaurant.save_meta(meta)
     return text, path
@@ -434,7 +661,7 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
     ]
     text = "\n".join(lines) + "\n"
-    write_atomic(restaurant.dir / "briefs" / f"{ident}.md", text)
+    restaurant.write(Path("briefs") / f"{ident}.md", text)
     return text
 
 
@@ -472,6 +699,20 @@ def watch(restaurant):
             lines.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
         else:
             lines.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+    for ticket in restaurant.rows("rail.tsv"):
+        if ticket["state"] != "moved":
+            continue
+        name = ticket["dish"].removeprefix("to:")
+        target = restaurant.dir.parent / name
+        handoff = handoff_id(restaurant.dir, ticket["id"])
+        # take writes the ticket before it deletes the file, so a missing file with no ticket was never delivered.
+        if inbox_file(target, handoff).exists():
+            lines.append(f"{ticket['id']}: moved to {name}, waiting for ticket take")
+        elif taken_row(target, handoff) is None:
+            lines.append(f"{ticket['id']}: moved to {name}, not delivered; run ticket move {ticket['id']} --to {name} again")
+    handed = handed_count(restaurant)
+    if handed:
+        lines.append(f"handed to you: {handed}; run ticket take")
     return "\n".join(lines) or "no work in progress"
 
 
@@ -519,6 +760,7 @@ def parser():
                    help="who lands work: human (PRs you merge), merge (PRs the queue merges), push (no PRs), local (a lane ref)")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
                    help="how often the coordinator replies (default: milestones)")
+    p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
 
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
@@ -526,8 +768,9 @@ def parser():
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
     p.add_argument("--landing", choices=LANDING, help="record a landing mode changed with land.py mode")
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
+    p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
 
-    p = sub.add_parser("ticket", help="add, list, or update tickets on the rail")
+    p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
     a = t.add_parser("add")
     a.add_argument("--summary", required=True)
@@ -537,7 +780,11 @@ def parser():
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
     a.add_argument("id")
-    a.add_argument("--state", choices=TICKET_STATES, required=True)
+    a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"], required=True)
+    a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
+    a.add_argument("id")
+    a.add_argument("--to", required=True, help="the sibling's directory name")
+    t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
     p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
@@ -674,7 +921,8 @@ def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
     if args.command == "open":
-        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting)
+        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting,
+                                              intake_list(args.intake))
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
         thread = (restaurant.meta.get("thread") or "").strip()
         if not created and thread:
@@ -686,9 +934,17 @@ def run(argv):
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at)
+    with restaurant.locked():
+        for table in TABLES:
+            restaurant.rows(table)
+        return command(restaurant, args)
 
+
+def command(restaurant, args):
     if args.command == "set":
         meta = restaurant.meta
+        if args.intake is not None:
+            meta = set_intake(restaurant, intake_list(args.intake))
         if args.thread:
             current = (meta.get("thread") or "").strip()
             if current and args.thread != current and not args.replace:
@@ -711,14 +967,17 @@ def run(argv):
 
     if args.command == "ticket":
         if args.action == "add":
-            ident = restaurant.next_id("rail.tsv")
-            restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": args.source,
-                                           "ref": args.ref, "summary": args.summary})
-            restaurant.log("ticket", ident, "waiting", args.summary)
-            return ident
+            return add_ticket(restaurant, args.summary, args.source, args.ref)
+        if args.action == "move":
+            return move_ticket(restaurant, args.id, args.to)
+        if args.action == "take":
+            return take_tickets(restaurant)
         if args.action == "list":
             rows = [row for row in restaurant.rows("rail.tsv") if not args.state or row["state"] == args.state]
             return "\n".join(f"{r['id']} {r['state']} [{r['source']}] {r['summary']}" + (f" {r['ref']}" if r["ref"] else "") for r in rows)
+        _, ticket = restaurant.find("rail.tsv", args.id)
+        if ticket["state"] == "moved":
+            raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
         restaurant.update("rail.tsv", args.id, "ticket", state=args.state)
         return f"{args.id} {args.state}"
 

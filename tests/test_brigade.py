@@ -66,6 +66,35 @@ def _race_child(mode, case, args):
             return original_save(self, table, rows)
 
         glob["Restaurant"].save_rows = hooked_save
+    elif mode == "append":
+        directory, label = args
+        restaurant = glob["Restaurant"](directory)
+        _wait_for_path(case / "go")
+        for number in range(200):
+            restaurant.append("log.tsv", {"at": glob["now"](), "kind": "ticket", "id": f"{label}{number}",
+                                          "state": "waiting", "note": f"{label} row {number}"})
+        sys.exit(0)
+    elif mode == "die-before-publish":
+        original = glob["write_atomic"]
+
+        def hooked(path, content):
+            if Path(path).parent.name == "inbox":
+                os._exit(9)
+            return original(path, content)
+
+        glob["write_atomic"] = hooked
+    elif mode == "die-before-log":
+        glob["Restaurant"].log = lambda self, *rest: os._exit(9)
+    elif mode == "die-inside-log-append":
+        real_write = os.write
+
+        def partial(fd, data):
+            if b"\tfrom " in data:
+                real_write(fd, data[:data.index(b"\tfrom ") + len(b"\tfro")])
+                os._exit(9)
+            return real_write(fd, data)
+
+        os.write = partial
     else:
         raise SystemExit(f"unknown mode {mode}")
     sys.exit(mod["main"](args))
@@ -101,6 +130,7 @@ class BrigadeTest(unittest.TestCase):
 
     def test_fire_groups_waiting_tickets_into_one_dish(self):
         self.open()
+        self.brigade("set", "--intake", "github")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Startup is slow on cold boot", "--source", "github", "--ref", "#12"), "T1")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Splash screen hangs"), "T2")
         self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "perf-issue", "--summary", "Cut cold start time"), "D1")
@@ -754,6 +784,277 @@ class BrigadeTest(unittest.TestCase):
             self.fail(f"timed out\nstdout:\n{out}\nstderr:\n{err}")
         self.assertEqual((proc.returncode, err.strip()), (0, ""), out)
         self.assertTrue(out.startswith(f"exists {self.at}"))
+
+
+class HandoffTest(unittest.TestCase):
+    """Two or three coordinators on one project root, as `app/<name>` under the store."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.store = Path(self.temporary.name) / "store"
+        self.project = (Path(self.temporary.name) / "app").resolve()
+        self.project.mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def dir(self, name):
+        return self.store / "app" / name
+
+    def run_brigade(self, name, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(name)), *args],
+                              capture_output=True, text=True)
+
+    def brigade(self, name, *args, ok=True):
+        result = self.run_brigade(name, *args)
+        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+        return (result.stdout if ok else result.stderr).strip()
+
+    def open(self, name, *extra):
+        return self.brigade(name, "open", "--project-root", str(self.project), "--name", name, "--landing", "merge", *extra)
+
+    def child(self, mode, name, *args):
+        return subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", mode, self.temporary.name,
+                               "--store", str(self.store), "--at", str(self.dir(name)), *args],
+                              capture_output=True, text=True, timeout=30, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+
+    def rows(self, name, table):
+        lines = (self.dir(name) / table).read_text().splitlines()
+        return [line.split("\t") for line in lines[1:]]
+
+    def inbox(self, name):
+        return sorted(path.name for path in (self.dir(name) / "inbox").glob("*")) if (self.dir(name) / "inbox").exists() else []
+
+    def handoff(self, source="core", target="engine", ref="https://github.com/o/r/issues/7"):
+        """core owns github, files T1, and moves it to engine. Returns engine's inbox file."""
+        self.open(source, "--intake", "github")
+        self.open(target)
+        self.brigade(source, "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", ref)
+        self.brigade(source, "ticket", "move", "T1", "--to", target)
+        return self.dir(target) / "inbox" / f"app~{source}~T1.json"
+
+    def test_a_sibling_cannot_claim_a_source_another_owns(self):
+        self.open("docs", "--intake", "github")
+        self.assertEqual(json.loads((self.dir("docs") / "restaurant.json").read_text())["intake"], ["github"])
+        self.open("engine")
+        self.assertEqual(self.brigade("engine", "set", "--intake", "github", ok=False),
+                         "brigade: docs already owns intake from github; move tickets to it instead")
+        self.assertEqual(self.brigade("engine", "open", "--project-root", str(self.project), "--name", "release",
+                                      "--landing", "merge", "--intake", "github", ok=False),
+                         "brigade: docs already owns intake from github; move tickets to it instead")
+        self.assertFalse(self.dir("release").exists())
+        self.assertEqual(json.loads((self.dir("engine") / "restaurant.json").read_text())["intake"], [])
+
+    def test_two_owners_of_one_source_both_refuse_to_file(self):
+        self.open("core")
+        self.open("docs")
+        for name in ("core", "docs"):
+            path = self.dir(name) / "restaurant.json"
+            meta = json.loads(path.read_text())
+            meta["intake"] = ["github"]
+            path.write_text(json.dumps(meta))
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "x", "--source", "github", ok=False),
+                         "brigade: docs owns intake from github; ask it to file this and move it here")
+        self.assertEqual(self.brigade("docs", "ticket", "add", "--summary", "x", "--source", "github", ok=False),
+                         "brigade: core owns intake from github; ask it to file this and move it here")
+        self.assertEqual(self.rows("core", "rail.tsv") + self.rows("docs", "rail.tsv"), [])
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "from the user"), "T1")
+
+    def test_one_ref_is_filed_once_while_live(self):
+        ref = "https://github.com/o/r/issues/7"
+        self.open("core", "--intake", "github")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "a", "--source", "github", "--ref", ref), "T1")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "b", "--source", "github", "--ref", f"  {ref} ", ok=False),
+                         f"brigade: {ref} is already T1 (waiting); nothing added")
+        self.brigade("core", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "fix")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "b", "--ref", ref, ok=False),
+                         f"brigade: {ref} is already T1 (assigned); nothing added")
+        self.brigade("core", "ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "reopened", "--source", "github", "--ref", ref), "T2")
+
+    def test_dropping_a_source_with_a_waiting_ticket_is_refused(self):
+        self.open("core", "--intake", "github,feed")
+        self.brigade("core", "ticket", "add", "--summary", "a", "--source", "github")
+        self.assertEqual(self.brigade("core", "set", "--intake", "feed", ok=False),
+                         "brigade: T1 from github is waiting; finish, drop, or move it before dropping github from intake")
+        self.brigade("core", "ticket", "set", "T1", "--state", "dropped")
+        self.brigade("core", "set", "--intake", "feed")
+        self.assertEqual(json.loads((self.dir("core") / "restaurant.json").read_text())["intake"], ["feed"])
+
+    def test_move_hands_a_ticket_to_a_sibling_and_take_files_it(self):
+        self.open("core", "--intake", "github")
+        self.open("engine")
+        self.brigade("engine", "set", "--thread", "thread-engine")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", "R7")
+        self.assertEqual(self.brigade("core", "ticket", "move", "T1", "--to", "engine"),
+                         "T1 moved to engine; tell thread thread-engine")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved [github] Fix the cache R7")
+        self.assertEqual(self.brigade("core", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "x", ok=False),
+                         "brigade: T1 is moved, not waiting")
+        self.assertEqual(self.brigade("core", "ticket", "set", "T1", "--state", "waiting", ok=False),
+                         "brigade: T1 moved to engine; it is that coordinator's ticket now")
+        self.assertEqual(json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()),
+                         {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "github", "ref": "R7"})
+        self.assertEqual(self.brigade("core", "watch"), "T1: moved to engine, waiting for ticket take")
+        self.assertEqual(self.brigade("engine", "watch"), "handed to you: 1; run ticket take")
+        self.assertEqual(self.brigade("engine", "status"), "reporting: milestones, handed to you: 1")
+        self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [github (from app/core/T1)] Fix the cache R7")
+        self.assertEqual(self.inbox("engine"), [])
+        self.assertEqual(self.brigade("core", "watch"), "no work in progress")
+        self.assertEqual(self.brigade("engine", "watch"), "no work in progress")
+        self.assertIn("## Handed to another coordinator\n\n- T1: Fix the cache (to engine)",
+                      self.brigade("core", "close", "--dry-run"))
+        self.assertEqual(self.brigade("engine", "ticket", "take"), "nothing handed to you")
+
+    def test_a_moved_ref_stays_live_through_each_move_until_the_end_of_the_chain_finishes(self):
+        ref = "R7"
+        self.open("core", "--intake", "github")
+        self.open("docs")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref)
+        self.brigade("core", "ticket", "move", "T1", "--to", "docs")
+        refused = f"brigade: {ref} is already T1 (moved); nothing added"
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref, ok=False), refused)
+        self.brigade("docs", "ticket", "take")
+        self.brigade("docs", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref, ok=False), refused)
+        self.brigade("engine", "ticket", "take")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), f"T1 waiting [github (from app/docs/T1)] s {ref}")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref, ok=False), refused)
+        self.brigade("engine", "ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref), "T2")
+
+    def test_a_new_owner_refuses_a_ref_the_old_owner_still_holds_live(self):
+        self.handoff(source="core", target="docs", ref="R7")
+        self.open("engine")
+        self.brigade("core", "set", "--intake", "")
+        self.brigade("engine", "set", "--intake", "github")
+        self.assertEqual(self.brigade("engine", "ticket", "add", "--summary", "s", "--source", "github", "--ref", "R7", ok=False),
+                         "brigade: R7 is already T1 in core (moved); nothing added")
+        self.assertEqual(self.brigade("engine", "ticket", "add", "--summary", "s", "--source", "github", "--ref", "R8"), "T1")
+
+    def test_a_move_interrupted_after_the_rewrite_publishes_once_on_rerun(self):
+        self.open("core", "--intake", "github")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", "R7")
+        died = self.child("die-before-publish", "core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved [github] Fix the cache R7")
+        self.assertEqual(self.inbox("engine"), [])
+        self.assertEqual(self.brigade("core", "watch"),
+                         "T1: moved to engine, not delivered; run ticket move T1 --to engine again")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.inbox("engine"), ["app~core~T1.json"])
+        self.assertEqual([row[1:4] for row in self.rows("core", "log.tsv") if row[3] == "moved"], [["ticket", "T1", "moved"]])
+        self.brigade("engine", "ticket", "take")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.inbox("engine"), [])
+
+    def test_watch_says_undelivered_when_the_inbox_file_is_deleted_before_take(self):
+        self.handoff().unlink()
+        self.assertEqual(self.brigade("core", "watch"),
+                         "T1: moved to engine, not delivered; run ticket move T1 --to engine again")
+
+    def test_take_twice_with_the_file_copied_back_files_one_ticket(self):
+        inbox = self.handoff()
+        saved = inbox.read_bytes()
+        self.brigade("engine", "ticket", "take")
+        inbox.write_bytes(saved)
+        self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
+        self.assertEqual(len(self.rows("engine", "rail.tsv")), 1)
+        self.assertEqual([row for row in self.rows("engine", "log.tsv") if row[4] == "from app/core/T1"],
+                         [[self.rows("engine", "log.tsv")[0][0], "ticket", "T1", "waiting", "from app/core/T1"]])
+        self.assertEqual(self.inbox("engine"), [])
+
+    def assert_one_handed_ticket(self, name="engine"):
+        self.assertEqual([row[2:] for row in self.rows(name, "rail.tsv")],
+                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache"]])
+        log = (self.dir(name) / "log.tsv").read_text()
+        self.assertTrue(log.endswith("\n"))
+        self.assertTrue(all(len(line.split("\t")) == 5 for line in log.splitlines()))
+        self.assertEqual([row[1:] for row in self.rows(name, "log.tsv") if "from app/core/T1" in row[4]],
+                         [["ticket", "T1", "waiting", "from app/core/T1"]])
+        self.assertEqual(self.inbox(name), [])
+        self.assertEqual(sorted(path.name for path in self.dir(name).glob("*.tmp")), [])
+
+    def test_a_take_killed_before_its_log_row_finishes_on_the_next_take(self):
+        self.handoff()
+        died = self.child("die-before-log", "engine", "ticket", "take")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(len(self.rows("engine", "rail.tsv")), 1)
+        self.assertEqual(self.rows("engine", "log.tsv"), [])
+        self.brigade("engine", "ticket", "take")
+        self.assert_one_handed_ticket()
+
+    def test_a_take_killed_inside_the_log_append_recovers_the_tail(self):
+        self.handoff()
+        died = self.child("die-inside-log-append", "engine", "ticket", "take")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertRegex((self.dir("engine") / "log.tsv").read_text(), r"\n[^\n]+\tticket\tT1\twaiting\tfro$")
+        self.brigade("engine", "ticket", "take")
+        self.assert_one_handed_ticket()
+
+    def test_a_failure_inside_the_temp_file_write_leaves_the_same_end_state(self):
+        self.handoff()
+        module = runpy.run_path(str(SCRIPT))
+        glob = module["run"].__globals__
+
+        class FailingTempfile:
+            @staticmethod
+            def NamedTemporaryFile(*args, **kwargs):
+                handle = tempfile.NamedTemporaryFile(*args, **kwargs)
+                write = handle.write
+
+                def fail(text):
+                    write(text[:10])
+                    handle.flush()
+                    raise OSError(28, "No space left on device")
+
+                handle.write = fail
+                return handle
+
+        glob["tempfile"] = FailingTempfile
+        with self.assertRaises(OSError):
+            glob["run"](["--at", str(self.dir("engine")), "ticket", "take"])
+        glob["tempfile"] = tempfile
+        self.assertEqual(self.rows("engine", "rail.tsv"), [])
+        self.assertEqual(self.inbox("engine"), ["app~core~T1.json"])
+        self.brigade("engine", "ticket", "take")
+        self.assert_one_handed_ticket()
+
+    def test_a_joined_line_stops_the_read_with_the_malformed_message(self):
+        self.open("core")
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        log = self.dir("core") / "log.tsv"
+        stamp = "2026-10-06T00:00:00.000000+00:00"
+        log.write_text(log.read_text() + f"{stamp}\tticket\tT6\twaiting\tfro{stamp}\tticket\tT7\twaiting\tnote\n")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 3 is malformed; fix or remove it")
+        log.write_text(log.read_text().replace(f"fro{stamp}\tticket\tT7\twaiting\tnote", "fro"))
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        log.write_text(log.read_text() + f"{stamp[:19]}\tticket")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        log.write_text(log.read_text() + f"{stamp}\tticket\tT8\twaiting\tnote\n")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+
+    def test_two_processes_appending_200_rows_each_leave_400_rows(self):
+        self.open("core")
+        procs = [subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "append",
+                                   self.temporary.name, str(self.dir("core")), label],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                 for label in ("a", "b")]
+        (Path(self.temporary.name) / "go").touch()
+        for proc in procs:
+            _, err = proc.communicate(timeout=60)
+            self.assertEqual(proc.returncode, 0, err)
+        rows = self.rows("core", "log.tsv")
+        self.assertEqual(len(rows), 400)
+        self.assertTrue(all(len(row) == 5 for row in rows))
+        self.assertEqual(sorted(row[4] for row in rows),
+                         sorted(f"{label} row {number}" for label in "ab" for number in range(200)))
+        self.assertEqual(self.brigade("core", "ticket", "list"), "")
 
 
 if __name__ == "__main__":
