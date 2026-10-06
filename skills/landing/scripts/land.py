@@ -64,8 +64,11 @@ def state_home():
 
 
 def git(*args, cwd, check=True, stdin=None):
+    """Run git with LC_ALL=C. Callers parse English diagnostics such as CONFLICT."""
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
     result = subprocess.run(["git", *args], cwd=cwd, input=stdin, capture_output=True, text=True,
-                            encoding="utf-8", errors="surrogateescape")
+                            encoding="utf-8", errors="surrogateescape", env=env)
     if check and result.returncode != 0:
         raise LandError(f"git {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
     return result
