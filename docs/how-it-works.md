@@ -32,7 +32,7 @@ pstack never hard-codes a model. Each step names a role, and `roles.py` resolves
 | --- | --- |
 | Single seat (`bug-fix`, `judgment and prose`, `swarm workers`, ...) | Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a model from another family for a fresh-child skill test. |
 | `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers` | Those two seats, Claude Opus then Grok |
-| `verifiers` | This thread's model plus one seat per other model family you can run |
+| `verifiers` | This thread's model plus one seat per other model family you can run. With one runnable model family, the `verifiers` seats repeat this thread's model. |
 
 `$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. A seat whose model you cannot run falls back, and the report names each replacement.
 

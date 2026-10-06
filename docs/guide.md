@@ -38,13 +38,13 @@ It calls `orchestrator_capabilities` first. That tool must be in the thread's to
 
 | Budget | Effect |
 | --- | --- |
-| `default` | Built-in Opus and Grok seats stay at xhigh. A configured seat keeps its level. An `inherit` `verifiers` seat stays `inherit`. Any other `verifiers` seat gets no level, so that model's own default applies. |
+| `default` | Built-in Opus and Grok seats stay at xhigh. A configured seat keeps its level. An `inherit` `verifiers` seat stays `inherit`. Any other built-in `verifiers` seat gets no level, so that model's own default applies. |
 | `small` | Medium reasoning everywhere. The cheapest. |
 | `medium` | High reasoning |
 | `large` | Extra-high reasoning |
 | `unlimited` | A seat that names no level gets the highest offered level at or below max. When every offered level is above that cap, the seat gets the lowest offered level. That includes a `verifiers` seat. An `inherit` seat becomes this thread's model at that level. A configured seat keeps its level when the level is at or below max. When its level is above max, it drops to the highest level at or below max, or to the lowest offered level when every offered level is above that cap. |
 
-Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a runnable model from another family and names no reasoning level. Arena, architect, and interrogate panels are those two seats. `arena cross-judge pool` uses the same two seats. `verifiers` is this thread's model plus one seat per other model family you can run. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
+Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a runnable model from another family and names no reasoning level. Arena, architect, and interrogate panels are those two seats. `arena cross-judge pool` uses the same two seats. `verifiers` is this thread's model plus one seat per other model family you can run. With one runnable model family, the `verifiers` seats repeat this thread's model. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
 
 You can skip setup entirely. The defaults in the previous paragraph still apply. A seat whose model you cannot run falls back, and the report names each replacement.
 
