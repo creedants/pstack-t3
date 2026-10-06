@@ -502,11 +502,17 @@ if args[:1] == ["api"] and any("/branches/" in arg for arg in args):
 if args[:2] == ["pr", "create"]:
     if "--head" in args:
         (base / "pr-head").write_text(args[args.index("--head") + 1])
-    (base / "pr-url").write_text("https://github.com/o/r/pull/9")
+    number = "9"
+    seq = base / "pr-seq"
+    if seq.exists():
+        number = seq.read_text().strip() or "9"
+        seq.write_text(str(int(number) + 1) + "\\n")
+    url = "https://github.com/o/r/pull/" + number
+    (base / "pr-url").write_text(url)
     if (base / "crash-on-create").exists():
         (base / "crash-on-create").unlink()
         os.kill(os.getppid(), signal.SIGKILL)
-    print("https://github.com/o/r/pull/9")
+    print(url)
 elif args[:2] == ["pr", "merge"]:
     print(" ".join(args), file=open(base / "merge-calls", "a"))
     if "--disable-auto" in args:
@@ -585,12 +591,19 @@ elif args[:2] == ["pr", "view"] and "--json" in args and "url" in args[args.inde
     fields = args[args.index("--json") + 1].split(",")
     target = args[2] if len(args) > 2 and not args[2].startswith("-") else ""
     state = "OPEN"
+    head_oid = ""
     legacy_state = base / "legacy-pr-state"
     if target.startswith("landing/q") and legacy_state.exists():
-        state = legacy_state.read_text().strip().split()[0] or "OPEN"
+        parts = legacy_state.read_text().strip().split()
+        if parts:
+            state = parts[0] or "OPEN"
+        if len(parts) > 1:
+            head_oid = parts[1]
     doc = {{"url": url}} if "url" in fields else {{}}
     if "state" in fields:
         doc["state"] = state
+    if "headRefOid" in fields:
+        doc["headRefOid"] = head_oid
     if "-q" not in args:
         print(url)
     else:
@@ -806,6 +819,38 @@ os.execv({real!r}, [{real!r}, *args])
     def test_merge_mode_adopts_the_pr_a_crashed_landing_q_create_left(self):
         self.adopt_pr_left_on_landing_q("merge")
 
+    def created_heads(self):
+        calls = (self.base / "gh-calls").read_text().splitlines()
+        return [line.split("--head ", 1)[1].split(" ", 1)[0]
+                for line in calls if line.startswith("pr create ")]
+
+    def crashed_landing_q_pr(self):
+        """An older land.py opened the PR on landing/q<n> and died before storing the URL."""
+        self.record_created_pr_branch()
+        self.require_pr_head_on_origin()
+        previous = self.use_land_script(self.base_land_script())
+        try:
+            self.init(mode="human")
+            self.queue_one()
+            (self.base / "crash-on-create").write_text("")
+            crashed = subprocess.run(
+                [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
+                capture_output=True, text=True, env=os.environ.copy())
+            self.assertEqual(crashed.returncode, -9, crashed.stdout + crashed.stderr)
+            self.restore_land_script(previous)
+            previous = None
+        finally:
+            if previous is not None:
+                self.restore_land_script(previous)
+        return sh("git", "rev-parse", "refs/heads/landing/q1", cwd=self.base / "origin.git")
+
+    def clear_candidate(self, ident):
+        store = land.Store.for_repo(self.work)
+        try:
+            store.db.execute("UPDATE entry SET candidate = '' WHERE id = ?", (ident,))
+        finally:
+            store.db.close()
+
     def test_a_closed_pr_on_landing_q_is_not_adopted(self):
         self.skip_non_open_pr_on_landing_q("CLOSED")
 
@@ -813,40 +858,70 @@ os.execv({real!r}, [{real!r}, *args])
         self.skip_non_open_pr_on_landing_q("MERGED")
 
     def skip_non_open_pr_on_landing_q(self, state):
-        """A closed or merged pull request on landing/q<n> is not this entry's."""
+        """A closed or merged pull request on landing/q<n> at another head is a reused id."""
         with self.fake_gh():
-            self.record_created_pr_branch()
-            self.require_pr_head_on_origin()
-            previous = self.use_land_script(self.base_land_script())
-            try:
-                self.init(mode="human")
-                self.queue_one()
-                (self.base / "crash-on-create").write_text("")
-                crashed = subprocess.run(
-                    [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
-                    capture_output=True, text=True, env=os.environ.copy())
-                self.assertEqual(crashed.returncode, -9, crashed.stdout + crashed.stderr)
-                (self.base / "legacy-pr-state").write_text(state + "\n")
-                self.restore_land_script(previous)
-                previous = None
-                reported = self.land("land")
-            finally:
-                if previous is not None:
-                    self.restore_land_script(previous)
+            (self.base / "pr-seq").write_text("9\n")
+            candidate = self.crashed_landing_q_pr()
+            other = "0123456789abcdef0123456789abcdef01234567"
+            self.assertNotEqual(other, candidate)
+            (self.base / "legacy-pr-state").write_text(f"{state} {other}\n")
+            reported = self.land("land")
         calls = (self.base / "gh-calls").read_text()
-        heads = [line.split("--head ", 1)[1].split(" ", 1)[0]
-                 for line in calls.splitlines() if line.startswith("pr create ")]
-        self.assertEqual(heads, ["landing/q1", "landing/e1"], reported)
+        self.assertEqual(self.created_heads(), ["landing/q1", "landing/e1"], reported)
         self.assertIn(
-            'pr view landing/q1 --json url,state -q select(.state == "OPEN") | .url',
+            'pr view landing/q1 --json url,state,headRefOid -q '
+            f'select(.state == "OPEN" or .headRefOid == "{candidate}") | .url',
             calls)
         remote = self.base / "origin.git"
-        candidate = sh("git", "rev-parse", "refs/heads/landing/q1", cwd=remote)
         self.assertEqual(sh("git", "rev-parse", "refs/heads/landing/e1", cwd=remote), candidate)
         self.assertNotIn("adopted", reported)
         status = self.land("status", "E1")
         self.assertIn("awaiting-merge", status)
-        self.assertIn("https://github.com/o/r/pull/9", status)
+        self.assertIn("https://github.com/o/r/pull/10", status)
+        self.assertNotIn("https://github.com/o/r/pull/9", status)
+
+    def test_a_merged_pr_on_landing_q_at_the_candidate_lands(self):
+        with self.fake_gh():
+            candidate = self.crashed_landing_q_pr()
+            (self.base / "legacy-pr-state").write_text(f"MERGED {candidate}\n")
+            (self.base / "pr-state").write_text(f"MERGED {candidate} abc123\n")
+            reported = self.land("land")
+        self.assertEqual(self.created_heads(), ["landing/q1"], reported)
+        self.assertEqual(
+            reported,
+            "landed E1 (r/D1)\nadopted E1 (r/D1) https://github.com/o/r/pull/9")
+        remote = self.base / "origin.git"
+        self.assertFalse(self.ref_exists("refs/heads/landing/q1", remote))
+        self.assertFalse(self.ref_exists("refs/heads/landing/e1", remote))
+        self.assertIn("E1 landed", self.land("status", "E1"))
+        self.assertIn("landed as abc123", self.land("status", "E1"))
+        self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_a_closed_pr_on_landing_q_at_the_candidate_bounces(self):
+        with self.fake_gh():
+            candidate = self.crashed_landing_q_pr()
+            (self.base / "legacy-pr-state").write_text(f"CLOSED {candidate}\n")
+            (self.base / "pr-state").write_text(f"CLOSED {candidate}\n")
+            reported = self.land("land")
+        self.assertEqual(self.created_heads(), ["landing/q1"], reported)
+        self.assertEqual(
+            reported,
+            "adopted E1 (r/D1) https://github.com/o/r/pull/9\n"
+            "bounced E1 (r/D1): PR closed without merging")
+        remote = self.base / "origin.git"
+        self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+        self.assertFalse(self.ref_exists("refs/heads/landing/e1", remote))
+        self.assertIn("bounced", self.land("status", "E1"))
+        self.assertIn("PR closed without merging", self.land("status", "E1"))
+        self.assertTrue(self.land("lease", "list").startswith("L1 active"))
+
+    def test_an_open_pr_on_landing_q_is_adopted_with_no_stored_candidate(self):
+        with self.fake_gh():
+            self.crashed_landing_q_pr()
+            self.clear_candidate(1)
+            reported = self.land("land")
+        self.assertEqual(self.created_heads(), ["landing/q1"], reported)
+        self.assertEqual(reported, "adopted E1 (r/D1) https://github.com/o/r/pull/9")
 
     def test_human_mode_opens_a_pr_and_marks_landed_when_it_merges(self):
         with self.fake_gh():
