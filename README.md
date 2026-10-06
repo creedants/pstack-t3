@@ -23,7 +23,7 @@ It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), 
 
 ## A standing coordinator
 
-`$brigade` pins one thread to a project, or to one focus area inside a project. You send it requests. It hands each request to a poteto-mode playbook in that request's own worktree thread, asks another model family to review the change, and lands what passes through the landing queue.
+`$brigade` pins one coordinator thread to a project, or to one focus area inside a project. You send it requests. It groups related requests into one unit, hands that unit to a poteto-mode playbook in the unit's own worktree thread, asks another model family to review the change, and lands what passes through the landing queue.
 
 The landing mode belongs to the repository. Four modes decide what reaches trunk.
 
@@ -32,7 +32,7 @@ The landing mode belongs to the repository. Four modes decide what reaches trunk
 - `push` pushes trunk after the checks pass, and opens no pull request.
 - `local` lands on `refs/landing/<trunk>` and does not change the remote.
 
-You pick a reporting level when you open the coordinator. `every-turn` sends a short reply after every wake. `milestones` replies when work merges, a review sends work back or blocks it, a decision needs you, something fails, or the queue pauses. `digest` replies for a decision or a failure, and sends one summary when nothing is left in progress, in review, passed review, or waiting to land. The [guide](docs/guide.md#8-open-a-standing-coordinator) describes each level and how to change it.
+You pick a reporting level when you open the coordinator. `every-turn` sends a short reply after every wake. `milestones` replies when work merges. It also replies when a review sends work back or blocks it, when a decision needs you, when something fails, or when the queue pauses. `digest` replies for a decision or a failure. It sends one summary when nothing is left in progress, in review, passed review, or waiting to land. The [guide](docs/guide.md#8-open-a-standing-coordinator) describes each level and how to change it.
 
 ```
 $brigade open a standing coordinator for bridgekit focused on startup performance.
