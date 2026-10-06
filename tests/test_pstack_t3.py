@@ -353,6 +353,21 @@ class BuildTest(unittest.TestCase):
             findings = check.check_tree(directory)
         self.assertTrue(any("subagent_type" in finding for finding in findings))
 
+    def test_check_requires_watch_tool_names_on_the_runtime_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "pstack-runtime"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: pstack-runtime\ndescription: d\n---\n\nNo watch here.\n")
+            findings = check.check_tree(directory)
+            self.assertIn("pstack-runtime/SKILL.md: missing watch_pull_request", findings)
+            self.assertIn("pstack-runtime/SKILL.md: missing unwatch_pull_request", findings)
+            (skill / "SKILL.md").write_text(
+                "---\nname: pstack-runtime\ndescription: d\n---\n\n"
+                "Call `watch_pull_request`. Call `unwatch_pull_request`.\n"
+            )
+            findings = check.check_tree(directory)
+        self.assertFalse(any("missing watch" in finding or "missing unwatch" in finding for finding in findings))
+
 
 if __name__ == "__main__":
     unittest.main()

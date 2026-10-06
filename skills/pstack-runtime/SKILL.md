@@ -23,6 +23,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | separate chat, coordinator chat, PR owner thread | A top-level thread from `t3_thread_launch`, only where [Top-level threads](#top-level-threads) allows it. |
 | worktree for a worker | A git worktree the child creates for itself, or a `t3_thread_launch` worktree binding for top-level threads. See [Isolation](#isolation). |
 | `/loop`, hourly tick, automation, scheduled wakeup | `schedule_task`. See [Scheduling](#scheduling). |
+| `scripts/watch-pr`, a poll loop, waiting on CI | `watch_pull_request` on the thread that owns the PR. See [Pull request watching](#pull-request-watching). |
 | transcript, chat history, cloud-agent URL | A T3 thread, read with `t3_thread_search` and `t3_thread_read`. |
 | control-ui, browser MCP | T3 preview tools: `preview_open`, `preview_snapshot`, `preview_click`, `preview_type`, `preview_evaluate`, `preview_recording_start`. |
 | ask the user (`AskQuestion`) | The host's question tool if it has one, otherwise a short question in the reply. |
@@ -184,6 +185,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
 - Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
 - Do not schedule a tick to wait for a child task. Child completions already wake this thread.
+- Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event, and as a fallback heartbeat of at least an hour beside a watch.
 
 ## Local state
 
@@ -211,6 +213,24 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 ## Pull requests
 
 After you open a PR or start driving an existing one, call `link_pull_request` with its full URL. For a stack, link every layer. Linking attaches the PR to the calling thread. When a child or launched thread opens a PR, it links it and the parent links it too. Linking twice is safe. Before finishing PR work, call `list_thread_pull_requests` and link any missing PR. Report a link failure instead of claiming the PR is linked.
+
+## Pull request watching
+
+Call `watch_pull_request` after `link_pull_request`, when this thread is waiting on that PR's checks, reviews, or conflicts. Pass the PR URL, or the repository and number. T3 links the PR first if this thread has not linked it yet.
+
+T3 checks the open PR every two minutes. It wakes this thread when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
+
+A wake is news, not a merge decision. Read the PR and decide yourself before you merge.
+
+A subagent cannot watch. The parent thread owns the PR. The child finishes and reports back. The thread that owns the PR calls `watch_pull_request`.
+
+Call `unwatch_pull_request` before you hand the work back to the user. The PR stays linked. While T3 watches, the thread stays in the user's Working list. Unwatching returns the thread to their inbox.
+
+Watching ends when the PR merges or closes, when its thread settles or is archived, when the user stops this thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. Unsettle the thread before you start a new watch.
+
+pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick that waits for CI, a review, or a conflict all become this call. The forge commands that classify a verdict stay. Run them after a wake. They are not the wait.
+
+`schedule_task` stays for a cadence that has no PR event, such as an hourly audit, a morning report, or a soak. Beside a watch, a `schedule_task` interval is only a fallback heartbeat, and that interval is at least an hour (`everyMs` at least `3600000`).
 
 ## Pending requests
 

@@ -68,7 +68,11 @@ For every unit of writing work:
 
 ## Keep the queue moving
 
-While any entry you submitted is `queued` or `awaiting-merge`, keep a drain schedule with `schedule_task`. Drains from other coordinators on the same repository are harmless, because the queue lock runs one at a time. Use the schedule `{"type": "interval", "everyMs": 900000}` with the prompt "Run `python3 <skills>/landing/scripts/land.py --repo <checkout> land` and act on what it prints per the landing skill." Delete it with `delete_scheduled_task` when `status` shows nothing queued or awaiting merge. A crashed run is recovered by the next one. It asks git whether the last attempt was published before it retries.
+While any entry you submitted is `queued` or `awaiting-merge`, keep the queue moving. Drains from other coordinators on the same repository are harmless, because the queue lock runs one at a time.
+
+In `merge` and `human` mode, once `land` has opened a PR, this thread calls `watch_pull_request` on that PR per [Pull request watching](../pstack-runtime/SKILL.md#pull-request-watching). This thread owns the PR. A worker child cannot watch. On each wake, run `land` and act on what it prints. Watching ends when the PR merges or closes. Call `unwatch_pull_request` before you report the result back to the user.
+
+Keep a `schedule_task` heartbeat for a `queued` entry that has no open PR yet, and as a fallback beside the watch. Use `{"type": "interval", "everyMs": 3600000}` with the prompt "Run `python3 <skills>/landing/scripts/land.py --repo <checkout> land` and act on what it prints per the landing skill." A PR with no posted check produces none of the wake reasons in that section. A later `land` is what merges it. Do not drop the heartbeat in `merge` mode. Delete it with `delete_scheduled_task` when `status` shows nothing queued or awaiting merge. A crashed run is recovered by the next one. It asks git whether the last attempt was published before it retries.
 
 ## When the queue pauses
 

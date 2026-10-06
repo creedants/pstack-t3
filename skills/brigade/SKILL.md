@@ -93,14 +93,14 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
    - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`.
    - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source.
    - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report."
-   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
+   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. After the queue opens a PR, that section has this thread call `watch_pull_request` and run `land` on each wake. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
    - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`.
    - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`.
 4. Run a service.
 
 ## Run a service
 
-Every wake runs this: a user message, a verifier's completion, or a schedule.
+Every wake runs this: a user message, a verifier's completion, a schedule, or a `watch_pull_request` wake.
 
 1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. It is the purpose every decision answers to.
 2. **Take tickets.** Each user request or supplier finding becomes `$B ticket add`. Fetch supplier sources (`gh issue list`, `gh pr list`, notifications) only when the house rules name them. Drop a ticket that is off the menu with `$B ticket set <id> --state dropped` and say why in the report.
@@ -113,7 +113,7 @@ Every wake runs this: a user message, a verifier's completion, or a schedule.
 5. **End the turn** while dishes run. Worker threads do not send completion notices. The liveness schedule finds finished and stuck work.
 6. **Review.** When a worker is done, read its report and diff yourself. A worker's "done" is a claim. `t3_thread_read` on the worker thread returns its `worktreePath` and branch. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from the `verifiers` role on a model family other than the author's. Its read-only brief: the tickets, the menu, the worktree path and the diff at that SHA, two questions (does it work on the real surface, and does it serve the menu without scope the tickets did not ask for), and "write your findings to `<restaurant dir>/reports/<dish>-review.md`". Record the verdict with `$B pass record`.
 7. **Act on the verdict.**
-   - `pass`: write the PR title and body (what changed, the measured effect, how it was verified) to `<restaurant dir>/prs/<dish>.md`, then `$L submit --holder <restaurant>/<dish> --branch <b> --sha <head> --lease L<n> --reviewer <provider/model> --title "..." --body-file <restaurant dir>/prs/<dish>.md`, then `$B dish <id> --state queued`, then `$L land`. When it lands, `$B dish <id> --state merged`. In `merge` and `human` mode it opens a PR first. Record it with `$B dish <id> --pr <url>`, link it with `link_pull_request`, and mark the dish merged when a later `land` reports it landed.
+   - `pass`: write the PR title and body (what changed, the measured effect, how it was verified) to `<restaurant dir>/prs/<dish>.md`, then `$L submit --holder <restaurant>/<dish> --branch <b> --sha <head> --lease L<n> --reviewer <provider/model> --title "..." --body-file <restaurant dir>/prs/<dish>.md`, then `$B dish <id> --state queued`, then `$L land`. When it lands, `$B dish <id> --state merged`. In `merge` and `human` mode it opens a PR first. Record it with `$B dish <id> --pr <url>`, link it with `link_pull_request`, and call `watch_pull_request` on it per [Pull request watching](../pstack-runtime/SKILL.md#pull-request-watching). This head chef thread owns the PR. On each wake, run `$L land`. Watching ends when the PR merges. Call `unwatch_pull_request` before you report back to the user. Mark the dish merged when a later `land` reports it landed.
    - Bounced by the queue: the lease is active again. Launch a fresh worker thread with `$B brief` rerun, `--context` naming the bounce reason, and current trunk. A conflict or a changed rebase needs a new review.
    - `send-back`: `$B dish <id> --state in-progress`, rerun `$B brief` (it adds the verifier's findings file), and launch a fresh worker thread on a new branch from the old branch's head. Never message the old worker to fix its own work.
    - After a dish merges, is dropped, or is sent back, clean up per [Git and PR housekeeping](#git-and-pr-housekeeping).
@@ -126,7 +126,7 @@ Every wake runs this: a user message, a verifier's completion, or a schedule.
 The head chef owns every git and PR chore its work creates. In `merge` and `push` mode the user has no step. In `human` mode the user merges each PR. In `local` mode the user merges `refs/landing/<trunk>` into a branch.
 
 - Write each PR's title and body through `submit`, and link every PR with `link_pull_request`.
-- Keep the landing drain schedule while anything is queued or awaiting merge. When you delete it, run `$B set --schedule drain=`.
+- Keep the landing drain schedule while anything is queued or awaiting merge, per the [landing skill](../landing/SKILL.md#keep-the-queue-moving). After the queue opens a PR, also watch it as that section says. When you delete the schedule, run `$B set --schedule drain=`. Call `unwatch_pull_request` before you report back to the user.
 - After a dish merges, is dropped, or is sent back: archive its worker thread, remove its worktree, delete its dish branch locally and on the remote, and delete the queue's `landing/q<n>` branch once its PR merged or closed.
 - After a landing, when the user's checkout at the project root is clean and on trunk, fast-forward it with `git merge --ff-only`. Otherwise leave it alone.
 - A bounce or a conflict is a dish for a fresh worker, never a manual rebase.
@@ -148,4 +148,4 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 ## Close a restaurant
 
-Delete its schedules with `delete_scheduled_task`, then clear each recorded name with `$B set --schedule <name>=`. Run `$B close` one last time, and unpin the thread with `t3_thread_organize`. Leave the store. It is the record.
+Call `unwatch_pull_request` on each PR this thread is still watching. Delete its schedules with `delete_scheduled_task`, then clear each recorded name with `$B set --schedule <name>=`. Run `$B close` one last time, and unpin the thread with `t3_thread_organize`. Leave the store. It is the record.

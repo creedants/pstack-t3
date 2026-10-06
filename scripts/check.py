@@ -27,6 +27,18 @@ FORBIDDEN = [
     (r"cursor\.com/agents|cloud agent", "Cursor cloud agents; T3 child tasks or threads"),
 ]
 FRONTMATTER_REQUIRED = ("name", "description")
+# Generated files that teach a PR wait must name T3's watch tools. Absent files are not checked.
+REQUIRED_TOOLS = {
+    "pstack-runtime/SKILL.md": ("watch_pull_request", "unwatch_pull_request"),
+    "landing/SKILL.md": ("watch_pull_request", "unwatch_pull_request"),
+    "brigade/SKILL.md": ("watch_pull_request", "unwatch_pull_request"),
+    "poteto-mode/playbooks/babysit.md": ("watch_pull_request",),
+    "poteto-mode/playbooks/shipping.md": ("watch_pull_request",),
+    "poteto-mode/playbooks/autonomous-run.md": ("watch_pull_request",),
+    "poteto-mode/playbooks/orchestrate.md": ("watch_pull_request",),
+    "poteto-mode/playbooks/autopilot-full.md": ("watch_pull_request",),
+    "poteto-mode/playbooks/autopilot-stack.md": ("watch_pull_request",),
+}
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
 
 
@@ -61,8 +73,12 @@ def check_tree(root):
             continue
         rel = file.relative_to(root)
         text = file.read_text()
+        rel_s = str(rel)
+        for tool in REQUIRED_TOOLS.get(rel_s, ()):
+            if tool not in text:
+                findings.append(f"{rel_s}: missing {tool}")
         # The runtime's vocabulary table names each Cursor term it replaces.
-        patterns = [] if str(rel) == "pstack-runtime/SKILL.md" else FORBIDDEN
+        patterns = [] if rel_s == "pstack-runtime/SKILL.md" else FORBIDDEN
         for number, line in enumerate(text.splitlines(), 1):
             for pattern, why in patterns:
                 if re.search(pattern, line):
