@@ -646,6 +646,28 @@ os.execv(real, [real, *args])
         wrapper.chmod(0o755)
         os.environ["LAND_GH"] = str(wrapper)
 
+    def record_created_pr_branch(self):
+        """A PR is visible to `gh pr view` only for the head `pr create` used."""
+        real = os.environ["LAND_GH"]
+        wrapper = self.base / "gh-branch"
+        wrapper.write_text(
+            f"""#!{sys.executable}
+import os, sys
+from pathlib import Path
+base = Path({str(self.base)!r})
+args = sys.argv[1:]
+if args[:2] == ["pr", "create"] and "--head" in args:
+    (base / "pr-head").write_text(args[args.index("--head") + 1])
+if args[:2] == ["pr", "view"] and "url" in args and len(args) > 2 and args[2].startswith("landing/"):
+    recorded = (base / "pr-head").read_text() if (base / "pr-head").exists() else ""
+    if recorded != args[2]:
+        sys.exit(1)
+os.execv({real!r}, [{real!r}, *args])
+"""
+        )
+        wrapper.chmod(0o755)
+        os.environ["LAND_GH"] = str(wrapper)
+
     def test_an_old_landing_q_branch_is_deleted_when_the_entry_lands(self):
         with self.fake_gh():
             self.init(mode="human")
@@ -715,6 +737,43 @@ os.execv(real, [real, *args])
             self.assertIn("awaiting-merge", status)
             self.assertIn("https://github.com/o/r/pull/9", status)
             self.assertNotIn("Paused", self.land("status"))
+
+    def adopt_pr_left_on_landing_q(self, mode):
+        """An older land.py opened the PR on landing/q<n> and died before storing the URL."""
+        with self.fake_gh():
+            self.record_created_pr_branch()
+            previous = self.use_land_script(self.base_land_script())
+            try:
+                self.init(mode=mode)
+                self.queue_one()
+                (self.base / "crash-on-create").write_text("")
+                crashed = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
+                    capture_output=True, text=True, env=os.environ.copy())
+                self.assertEqual(crashed.returncode, -9, crashed.stdout + crashed.stderr)
+                self.restore_land_script(previous)
+                previous = None
+                opened = self.land("land")
+            finally:
+                if previous is not None:
+                    self.restore_land_script(previous)
+            calls = (self.base / "gh-calls").read_text().splitlines()
+            heads = [line.split("--head ", 1)[1].split(" ", 1)[0]
+                     for line in calls if line.startswith("pr create ")]
+            self.assertEqual(heads, ["landing/q1"], opened)
+            remote = self.base / "origin.git"
+            self.assertFalse(self.ref_exists("refs/heads/landing/e1", remote))
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+            status = self.land("status", "E1")
+            self.assertTrue(
+                status.startswith("E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9"),
+                status)
+
+    def test_human_mode_adopts_the_pr_a_crashed_landing_q_create_left(self):
+        self.adopt_pr_left_on_landing_q("human")
+
+    def test_merge_mode_adopts_the_pr_a_crashed_landing_q_create_left(self):
+        self.adopt_pr_left_on_landing_q("merge")
 
     def test_human_mode_opens_a_pr_and_marks_landed_when_it_merges(self):
         with self.fake_gh():
