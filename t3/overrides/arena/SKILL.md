@@ -25,15 +25,16 @@ The N candidates will receive the same prompt, so the prompt is the contract.
 
 1. State the artifact each candidate is producing.
 2. Derive the rubric. State what success looks like for *this* task, then turn it into 3-6 concrete gradeable criteria. The rubric is the picker's tool in Phase D. Candidates only see the task.
-3. Pick the runners. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc.
+3. Pick the runners. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
 
-   ```bash
-   python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "arena runners" <<'JSON'
-   <the orchestrator_capabilities JSON>
-   JSON
-   ```
+```bash
+python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "arena runners" <<'JSON'
+<the orchestrator_capabilities JSON>
+JSON
+```
 
-   The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `arena runners` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One candidate per seat. The seat count is the panel size. An `inherit` seat means the parent model, so omit `target` for it. A seat that falls back follows the runtime's fallback, and the synthesis note says which seat fell back and whether the models actually differed. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
+The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `arena runners` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One candidate per seat. The seat count is the panel size. An `inherit` seat means the parent model, so omit `target` for it. A seat that falls back follows the runtime's fallback, and the synthesis note says which seat fell back and whether the models actually differed. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
+
 4. Assign output paths. Each candidate writes to its own location (a git worktree where possible, per [the runtime's Isolation section](../pstack-runtime/SKILL.md#isolation), otherwise `/tmp/arena-<slug>/candidate-<n>/`), per the **separate-before-serializing-shared-state** principle skill.
 
 ## Phase B: Fan out

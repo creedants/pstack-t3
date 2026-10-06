@@ -38,15 +38,15 @@ It calls `orchestrator_capabilities` first. That tool must be in the thread's to
 
 | Budget | Effect |
 | --- | --- |
-| `default` | Each model's own default reasoning |
+| `default` | Built-in Opus and Grok seats stay at xhigh. A configured seat keeps its level. |
 | `small` | Medium reasoning everywhere. The cheapest. |
 | `medium` | High reasoning |
 | `large` | Extra-high reasoning |
-| `unlimited` | The highest each model offers |
+| `unlimited` | The highest level at or below max, or the lowest level when none is |
 
-Then it proposes a provider and model for each role. Fast coding models get the code roles, your strongest reasoning model gets judgment and prose, and review panels get one seat per model family. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
+Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. Arena, architect, and interrogate panels are those two seats. `verifiers` is this thread's model plus one seat per other model family you can run. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
 
-You can skip setup entirely. Single-worker roles then use the thread's own model, and panels use one seat per model family T3 can run.
+You can skip setup entirely. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. Arena, architect, and interrogate panels are those two seats. `verifiers` is this thread's model plus one seat per other model family you can run. A seat whose model you cannot run falls back, and the report names each replacement.
 
 ## 3. Your first rigorous task
 

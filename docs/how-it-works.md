@@ -11,10 +11,9 @@ flowchart TD
     runtime --> roles["roles.py<br/>role to seats, budget, fallbacks"]
     caps --> roles
     roles --> fan{"one delegate_task per seat"}
-    fan --> a["Reviewer A<br/>this thread's model"]
-    fan --> b["Reviewer B<br/>another model family"]
-    fan --> c["Reviewer C<br/>another model family"]
-    a & b & c -->|completion wakes the lead| synth["Lead verifies each claim,<br/>weighs cross-family agreement,<br/>writes one verdict"]
+    fan --> a["Reviewer A<br/>Claude Opus"]
+    fan --> b["Reviewer B<br/>Grok"]
+    a & b -->|completion wakes the lead| synth["Lead verifies each claim,<br/>weighs cross-family agreement,<br/>writes one verdict"]
 ```
 
 ## The layers
@@ -31,10 +30,11 @@ pstack never hard-codes a model. Each step names a role, and `roles.py` resolves
 
 | Role kind | Default |
 | --- | --- |
-| Single seat (`bug-fix`, `judgment and prose`, `swarm workers`, ...) | The lead thread's own model. `skill tests` is the exception. It prefers a model from another family for a fresh-child skill test. |
-| Panel (`interrogate reviewers`, `arena runners`, `verifiers`, ...) | The lead thread, then one seat per other model family you can run |
+| Single seat (`bug-fix`, `judgment and prose`, `swarm workers`, ...) | Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a model from another family for a fresh-child skill test. |
+| `arena runners`, `architect runners`, `interrogate reviewers` | Those two seats, Claude Opus then Grok |
+| `verifiers` | This thread's model plus one seat per other model family you can run |
 
-`$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. If a provider is signed out or a model disappears, the seat falls back and the skill says so.
+`$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. A seat whose model you cannot run falls back, and the report names each replacement.
 
 Diversity is counted by model family, not by provider, because one provider can serve another's models. Cursor can run Claude, for example.
 

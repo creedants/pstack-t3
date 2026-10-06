@@ -155,7 +155,7 @@ T3 Code gives every provider the same orchestration tools: `delegate_task` for c
 <details>
 <summary><b>Do I need every provider?</b></summary>
 
-No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. A seat whose model you cannot run falls back to this thread's model, and the report says the panel lost a distinct model. `verifiers` is this thread's model plus one seat per other model family you can run. Signing in to a provider does not add a seat to the other three panels. Add Codex or another model in a roles file.
+No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. A seat whose model you cannot run falls back, and the report names each replacement. `verifiers` is this thread's model plus one seat per other model family you can run. Signing in to a provider does not add a seat to the other three panels. Add Codex or another model in a roles file.
 </details>
 
 <details>

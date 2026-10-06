@@ -39,7 +39,7 @@ This prints every role with its seats and `source` (`default`, the user file, or
 - `medium — high reasoning`
 - `small — medium reasoning`
 
-The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`). A seat at or below the cap keeps its level. A seat above the cap drops to the cap, or the closest lower level the model offers. A seat that names no level receives the cap. `default` leaves a built-in or configured level as it is. The ladder stops at max. `unlimited` raises a built-in preferred seat to the model's highest level at or below max. The default Opus seat moves from xhigh to max. Grok's ladder tops out at xhigh, so the default Grok seat stays at xhigh. A level above max, such as Codex `ultra`, is outside the cap. A configured seat that names its own level keeps that level when it is at or below the cap. A model without such an option is unaffected. `ultracode` and `ultrathink` are never set by a budget.
+The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`). A seat at or below the cap keeps its level. A seat above the cap drops to the cap, or the closest lower level the model offers. A seat that names no level receives the cap. `default` leaves a built-in or configured level as it is. The ladder stops at max. `unlimited` raises a built-in preferred seat to the model's highest level at or below max. The default Opus seat moves from xhigh to max. Grok's ladder tops out at xhigh, so the default Grok seat stays at xhigh. `unlimited` lowers a configured `ultra` seat to max when the model offers a level at or below max. `default` keeps a configured `ultra` seat. When every offered level is above the cap, the seat gets the lowest level. A configured seat that names its own level keeps that level when it is at or below the cap. A model without such an option is unaffected. `ultracode` and `ultrathink` are never set by a budget.
 
 **(b) Propose roles.** The built-in defaults are Claude Opus (`claude-opus-5-5`) at xhigh for judgment roles and Grok (`grok-4.7`) at xhigh for code roles. Under `unlimited`, those seats rise as step 3(a) describes. Opus moves to max, and Grok stays at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats, judgment first. `skill tests` and `verifiers` stay on their catalog rules. Start from `roles.py show` in step 2. Keep configured roles unless the user changes them. Use the built-in seats for roles with `source: "default"`. Offer `large` for a new setup. It matches the built-in xhigh ceiling. Show each fallback note beside its role and seat. Codex and every other runnable configured provider remain available as user choices. Leave `skill tests` unset so its adaptive default stays.
 
@@ -69,7 +69,7 @@ Run `python3 <runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedPr
 
 ### 6. Confirm
 
-Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, any provider they could enable in T3 settings to widen the panels, and that new sessions pick it up immediately. Re-running this skill updates it.
+Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, any provider they could enable in T3 settings to widen `verifiers`, and that new sessions pick it up immediately. Re-running this skill updates it.
 
 ### 7. Offer a verification skill (optional)
 
