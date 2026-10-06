@@ -279,11 +279,13 @@ def report(restaurant, write=True):
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
     text = "\n".join(lines)
+    path = None
     if write:
-        write_atomic(restaurant.dir / "closeouts" / f"{stamp[:26].replace(':', '')}.md", text)
+        path = restaurant.dir / "closeouts" / f"{stamp[:26].replace(':', '')}.md"
+        write_atomic(path, text)
         meta["lastReportAt"] = stamp
         restaurant.save_meta(meta)
-    return text
+    return text, path
 
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
@@ -499,7 +501,10 @@ def parser():
 
     sub.add_parser("status", help="one line of counts")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
-    p.add_argument("--dry-run", action="store_true")
+    output = p.add_mutually_exclusive_group()
+    output.add_argument("--dry-run", action="store_true")
+    output.add_argument("--to-file", action="store_true",
+                        help="print only the path of the written report, not its text")
     p = sub.add_parser("walk", help="every restaurant's counts and open decisions")
     p.add_argument("--stale-hours", type=float, default=24)
     return top
@@ -683,7 +688,10 @@ def run(argv):
             return level
         return f"{level}, {counts_text}"
     if args.command == "close":
-        return report(restaurant, write=not args.dry_run)
+        text, path = report(restaurant, write=not args.dry_run)
+        if args.to_file:
+            return str(path.resolve())
+        return text
     raise BrigadeError(f"unknown command {args.command}")
 
 

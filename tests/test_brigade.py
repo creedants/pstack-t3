@@ -121,6 +121,27 @@ class BrigadeTest(unittest.TestCase):
             "## Dropped", "", "- T2: UI",
         ]))
 
+    def test_close_to_file_prints_the_written_path_and_advances_the_report(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "s")
+        self.brigade("ticket", "add", "--summary", "UI", "--source", "user")
+        self.brigade("ticket", "set", "T2", "--state", "dropped")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", "grok/grok-4.7", "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "merged")
+        written = self.brigade("close", "--to-file")
+        files = list((self.at / "closeouts").glob("*.md"))
+        self.assertEqual(len(files), 1)
+        self.assertEqual(written, str(files[0].resolve()))
+        self.assertIn("## Merged\n\n- D1 (T1): Fix s", files[0].read_text())
+        self.assertIn("Nothing new.", self.brigade("close"))
+
+    def test_close_to_file_with_dry_run_writes_no_closeout(self):
+        self.open()
+        self.brigade("close", "--to-file", "--dry-run", ok=False)
+        self.assertEqual(list((self.at / "closeouts").glob("*.md")), [])
+
     def test_status_and_walk_speak_plain_engineering_prose(self):
         self.open()
         self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
