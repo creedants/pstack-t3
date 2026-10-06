@@ -451,12 +451,13 @@ def parser():
 
     p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
-    p.add_argument("--goal", required=True, help="one sentence: the outcome")
+    p.add_argument("--fields", help="JSON file of brief fields, or - for stdin")
+    p.add_argument("--goal", default=None, help="one sentence: the outcome")
     p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
-    p.add_argument("--verify", required=True, help="exact commands that prove it, plus known gotchas")
-    p.add_argument("--paths", default="", help="leased paths, when fire did not claim them")
-    p.add_argument("--lease", default="", help="the landing lease id, when fire did not claim it")
-    p.add_argument("--base", required=True, help="the trunk ref the worker's branch starts from, such as origin/main")
+    p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
+    p.add_argument("--paths", default=None, help="leased paths, when fire did not claim them")
+    p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
+    p.add_argument("--base", default=None, help="the trunk ref the worker's branch starts from, such as origin/main")
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
@@ -502,6 +503,64 @@ def parser():
     p = sub.add_parser("walk", help="every restaurant's counts and open decisions")
     p.add_argument("--stale-hours", type=float, default=24)
     return top
+
+
+def _brief_fields(args):
+    flagged = any(getattr(args, name) is not None for name in ("goal", "verify", "base", "paths", "lease")) or args.acceptance or args.context
+    if args.fields is not None:
+        if flagged:
+            raise BrigadeError("use either --fields or the field flags, not both")
+        if args.fields == "-":
+            if sys.stdin.isatty():
+                raise BrigadeError("brief fields: --fields - reads JSON from stdin")
+            raw = sys.stdin.read()
+        else:
+            try:
+                raw = Path(args.fields).read_text(encoding="utf-8")
+            except OSError as error:
+                raise BrigadeError(f"brief fields: {error}") from error
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise BrigadeError(f"brief fields: {error}") from error
+        if not isinstance(payload, dict):
+            raise BrigadeError("brief fields: JSON must be an object")
+        allowed = {"goal", "acceptance", "verify", "base", "context", "paths", "lease"}
+        lists = {"acceptance", "context"}
+        unknown = [key for key in payload if key not in allowed]
+        if unknown:
+            raise BrigadeError(f"brief fields: unknown key {unknown[0]}")
+        for key in ("goal", "acceptance", "verify", "base"):
+            if key not in payload:
+                raise BrigadeError(f"brief fields: missing {key}")
+        for key, value in payload.items():
+            if value is None:
+                raise BrigadeError(f"brief fields: {key} is null")
+            if key in lists:
+                if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                    raise BrigadeError(f"brief fields: {key} must be a list of strings")
+            elif not isinstance(value, str):
+                raise BrigadeError(f"brief fields: {key} must be a string")
+        return {
+            "goal": payload["goal"],
+            "acceptance": payload["acceptance"],
+            "verify": payload["verify"],
+            "paths": payload["paths"] if "paths" in payload else "",
+            "lease": payload["lease"] if "lease" in payload else "",
+            "base": payload["base"],
+            "context": payload["context"] if "context" in payload else [],
+        }
+    if args.goal is None or args.verify is None or args.base is None:
+        raise BrigadeError("brief needs --fields, or --goal, --verify, and --base")
+    return {
+        "goal": args.goal,
+        "acceptance": args.acceptance,
+        "verify": args.verify,
+        "paths": args.paths or "",
+        "lease": args.lease or "",
+        "base": args.base,
+        "context": args.context,
+    }
 
 
 def run(argv):
@@ -614,7 +673,7 @@ def run(argv):
         return "\n".join(f"{q['id']}: {q['question']} Options: {q['options']}. Default: {q['default']}." for q in rows) or "no open decisions"
 
     if args.command == "brief":
-        return brief(restaurant, args.id, args.goal, args.acceptance, args.verify, args.paths, args.lease, args.base, args.context)
+        return brief(restaurant, args.id, **_brief_fields(args))
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "status":
