@@ -150,6 +150,8 @@ A batch has drained when `brigade.py status` shows none of `in progress`, `in re
 
 Every level sends the scheduled 18:00 report. The 09:00 run is not a report. A message from you gets at least one line, and a direct question gets an answer. [How a coordinator reports](how-it-works.md#how-a-coordinator-reports) is the same rule from the coordinator's side.
 
+`brigade.py close` runs on the 18:00 report, on a reply that raises a decision for you, at the end of a turn begun by your message, and on the reply that closes the coordinator. At `digest` it also runs on the summary sent when a batch drains. Every other reply stays plain and does not run `close`. `close` writes that report and records its time. The next report starts from that time, so it omits what this run already listed.
+
 The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice> --reporting <level>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase. Each run of characters other than a-z and 0-9 becomes one hyphen, and leading or trailing hyphens are dropped.
 
 The store holds these files.
@@ -182,7 +184,7 @@ It wakes on your messages, on a worker's report-back, on a reviewer finishing, a
 - **Cross-family review.** It reads the worker's report and diff. One reviewer from another model family checks that exact commit. A pass is recorded against that commit. A reviewer from the author's family is used only when no other family can run, and the verdict says so.
 - **Landing.** On a pass it submits that commit to the queue and runs `land.py land`. Workers never merge. In `merge` and `human` mode the PR title and body go with the submit. A conflict or a changed rebase goes to a fresh worker and needs a new review.
 - **Cleanup.** After a unit merges, is dropped, or is sent back, it removes that unit's worktree and branch. It deletes `landing/q<n>` after that PR merges or closes. It deletes only branches it created. It fast-forwards your checkout with `git merge --ff-only` only when that checkout is clean and on trunk.
-- **Reports.** The reporting level decides which wakes get a reply. `brigade.py close` runs on the replies that level names, including the 18:00 report. Its output lists each request and unit once, under its latest state since the last report, with PR links. Any other reply stays plain and does not run `close`.
+- **Reports.** The reporting level decides which wakes get a reply. `brigade.py close` runs only on the occasions named under [Reporting levels](#reporting-levels). Its output lists each request and unit once, under its latest state since the last report, with PR links. Any other reply stays plain and does not run `close`.
 
 To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. If your checkout is not `~/pstack-t3`, use that checkout's `skills/brigade/scripts/brigade.py`. It prints the reporting level, the counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
 
