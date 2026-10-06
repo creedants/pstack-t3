@@ -18,7 +18,9 @@ python3 scripts/build.py
 python3 -m unittest discover -s tests -v
 ```
 
-Commit the regenerated `skills/` with your change. Add a line under Unreleased in `CHANGELOG.md` for any user-facing change. CI fails if `skills/` does not match what the build produces.
+Commit the regenerated `skills/` with your change. For a user-facing change, add one fragment under `changes/`. The file name is the branch name with `%` encoded as `%25` and `/` encoded as `%2F`, then `.md`. Encode `%` before `/`. Branch `pstack-t3/d50` writes `changes/pstack-t3%2Fd50.md`. The file holds markdown bullets only. Each bullet is one line that starts with `- `. A branch reused before the release adds its next bullet to the same file. CI fails if `skills/` does not match what the build produces.
+
+Edit `README.md` or `docs/guide.md` only when the ticket is about those files, or when the change removes or renames something they name. Otherwise list the doc edit under follow-ups. Those notes become one docs change. When one coordinator owns those files, that coordinator takes the change. When none does, each coordinator's notes are one batch.
 
 If you changed a skill's behavior, run it in a real T3 thread and say in the PR which provider led and what it did.
 
@@ -32,8 +34,15 @@ The build then lists each override whose upstream file changed. Re-port each one
 
 ## Releasing
 
-1. Rename Unreleased in `CHANGELOG.md` to the new version.
-2. Commit, tag `vX.Y.Z`, and push the tag.
-3. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
+1. List the fragments in the order they were added.
+
+```bash
+git log --reverse --diff-filter=A --format= --name-only -- changes/
+```
+
+2. Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it. Read that file once. Under a new version heading in `CHANGELOG.md`, write those bullets in that order. The new section must match the bullets the fragments hold.
+3. Delete those fragment files in that same commit.
+4. Commit, tag `vX.Y.Z`, and push the tag.
+5. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
 
 Cut a release after each upstream sync and any user-facing fix.

@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- `scripts/check.py` checks a catalog heredoc only between `<<'JSON'` and a closer line that is `JSON` and nothing else. It rejects an indented closer and a closer with trailing whitespace. `$interrogate`, `$arena`, `$architect`, and `$swarm` pass a large catalog in that quoted heredoc.
-
 ## 0.2.0 (2026-10-06)
 
 - Landing queue entries are `E<n>`, and their pull request branches are `landing/e<n>`. `land.py status` accepts `E<n>`, and for one release it also accepts `Q<n>` for that same entry. Decisions stay `Q<n>`. An entry already pushed as `landing/q<n>` still settles. A merged pull request on that branch settles on any remote. An open pull request on `landing/q<n>` is adopted, and the queue does not open a second one. An entry pushed there with no pull request yet gets its pull request on `landing/e<n>`.
