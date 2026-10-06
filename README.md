@@ -23,7 +23,7 @@ It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), 
 
 ## A standing coordinator
 
-`$brigade` pins one coordinator thread to a project, or to one focus area inside a project. You send it requests. It groups related requests into one unit, hands that unit to a poteto-mode playbook in the unit's own worktree thread, asks another model family to review the change, and lands what passes through the landing queue.
+`$brigade` pins one coordinator thread to a project, or to one focus area inside a project. You send it requests. It groups related requests into one unit and launches that unit in its own worktree thread. A poteto-mode playbook runs in that thread. Another model family reviews the change. The landing queue lands what passes.
 
 The landing mode belongs to the repository. Four modes decide what reaches trunk.
 
