@@ -43,7 +43,7 @@ EFFORT_IDS = ("effort", "reasoningEffort", "reasoning_effort", "reasoning")
 LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "extra-high": 5, "extra_high": 5, "max": 6, "ultra": 7}
 SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
-SMALL_TIER = frozenset({"haiku", "mini", "nano", "flash", "lite", "fast", "small"})
+SMALL_TIER = frozenset({"haiku", "mini", "nano", "flash", "lite", "fast", "small", "luna"})
 
 
 class RolesError(Exception):

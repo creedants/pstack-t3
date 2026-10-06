@@ -31,11 +31,35 @@ class RolesTest(unittest.TestCase):
     def test_skill_tests_default_is_one_other_family_seat(self):
         entry = roles.resolve(config(), CATALOG, ["skill tests"])["roles"]["skill tests"]
         self.assertEqual(entry["source"], "default")
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "codex", "model": "gpt-6-luna"}])
 
     def test_skill_tests_small_budget_caps_the_seat(self):
         seats = roles.resolve(config("small"), CATALOG, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}}])
+        self.assertEqual(seats, [{"providerInstanceId": "codex", "model": "gpt-6-luna", "options": {"reasoningEffort": "medium"}}])
+
+    def test_skill_tests_falls_back_to_another_family_flagship_when_no_small_tier_exists(self):
+        catalog = {
+            "inheritedProviderInstanceId": "claudeAgent",
+            "inheritedModel": "claude-opus-5-5",
+            "providers": [
+                {"providerInstanceId": "claudeAgent", "canRunChildTask": True, "constraints": [],
+                 "models": [{"id": "claude-opus-5-5", "options": []}]},
+                {"providerInstanceId": "codex", "canRunChildTask": True, "constraints": [],
+                 "models": [
+                     {"id": "gpt-6-terra", "options": [{"id": "reasoningEffort", "type": "select", "options": [{"id": "medium", "isDefault": True}, {"id": "high"}]}]},
+                     {"id": "gpt-6.1-sol", "options": [{"id": "reasoningEffort", "type": "select", "options": [{"id": "low", "isDefault": True}, {"id": "medium"}, {"id": "high"}]}]},
+                 ]},
+            ],
+        }
+        seats = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
+        self.assertEqual(seats, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+
+    def test_runtime_lists_the_same_small_tier_tokens(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        match = re.search(r"prefer an id token in (.+?), then the lowest", text)
+        self.assertIsNotNone(match)
+        named = re.findall(r"`([a-z]+)`", match.group(1))
+        self.assertEqual(set(named), set(roles.SMALL_TIER))
 
     def test_skill_tests_uses_a_small_model_inside_the_only_family(self):
         catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
