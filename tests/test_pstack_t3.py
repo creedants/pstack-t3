@@ -1007,6 +1007,16 @@ class ChangelogTest(unittest.TestCase):
             nested.rmdir()
             (root / "changes" / "note.md").write_text("- First.\n- Second.\n")
             self.assertEqual(changelog_findings(root), [])
+            (root / "changes" / "note.md").write_text(
+                "- A user-facing change spans\n  two lines in the same bullet.\n"
+            )
+            self.assertEqual(changelog_findings(root), [])
+            (root / "changes" / "note.md").write_text(
+                "- A user-facing change spans\nthen prose on its own line.\n"
+            )
+            self.assertEqual(changelog_findings(root), [
+                "changes/note.md holds a line that is not a bullet.",
+            ])
             (root / "changes" / "note.md").unlink()
             self.assertEqual(changelog_findings(root), [])
             shutil.rmtree(root / "changes")
@@ -1021,6 +1031,8 @@ class ChangelogTest(unittest.TestCase):
             contributing,
         )
         self.assertNotIn("Add a line under Unreleased", contributing)
+        self.assertNotIn("Each bullet is one line", contributing)
+        self.assertIn("Indent a continuation line under that bullet.", contributing)
         self.assertIn("docs/guide.md", contributing)
         self.assertIn("one docs change", contributing)
 
@@ -1037,15 +1049,51 @@ class ChangelogTest(unittest.TestCase):
             _git(repo, "commit", "-qm", "second")
             _git(repo, "rm", "-q", "changes/first.md")
             _git(repo, "commit", "-qm", "cut")
-            (repo / "changes" / "first.md").write_text("- alpha again\n")
+            (repo / "changes" / "first.md").write_text(
+                "- alpha again\n  kept on the next line.\n"
+            )
             _git(repo, "add", "changes")
             _git(repo, "commit", "-qm", "first again")
             bullets = release_bullets(repo)
-            self.assertEqual(bullets, ["- beta", "- alpha again"])
+            self.assertEqual(bullets, [
+                "- beta",
+                "- alpha again",
+                "  kept on the next line.",
+            ])
             section = "## 0.3.0 (2026-10-06)\n\n" + "\n".join(bullets) + "\n"
-            held = "".join((repo / name).read_text() for name in ("changes/second.md", "changes/first.md"))
+            held = "".join(
+                (repo / name).read_text()
+                for name in ("changes/second.md", "changes/first.md")
+            )
             self.assertEqual(section, "## 0.3.0 (2026-10-06)\n\n" + held)
             self.assertNotIn("- alpha\n", section)
+            self.assertIn("  kept on the next line.\n", section)
+            (repo / "CHANGELOG.md").write_text("# Changelog\n\n" + section)
+            _git(repo, "add", "CHANGELOG.md")
+            _git(repo, "rm", "-q", "changes/first.md", "changes/second.md")
+            _git(repo, "commit", "-qm", "0.3.0")
+            self.assertEqual(
+                _git(repo, "show", "HEAD^:changes/first.md"),
+                "- alpha again\n  kept on the next line.\n",
+            )
+            self.assertEqual(
+                _git(repo, "show", "HEAD:CHANGELOG.md"),
+                "# Changelog\n\n## 0.3.0 (2026-10-06)\n\n"
+                "- beta\n- alpha again\n  kept on the next line.\n",
+            )
+            names = [
+                line for line in _git(
+                    repo, "diff-tree", "--no-commit-id", "--name-status",
+                    "--no-renames", "-r", "HEAD",
+                ).splitlines()
+                if line
+            ]
+            self.assertEqual(names, [
+                "A\tCHANGELOG.md",
+                "D\tchanges/first.md",
+                "D\tchanges/second.md",
+            ])
+            self.assertEqual(release_bullets(repo), [])
 
 
 if __name__ == "__main__":
