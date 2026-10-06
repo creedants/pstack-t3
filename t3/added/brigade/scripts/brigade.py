@@ -400,7 +400,6 @@ def watch(restaurant):
 
 
 def record_hang(restaurant, ident, provider, minutes):
-    """One open run after report-back, once per attempt. The provider string is stored as given."""
     if not clean(provider):
         raise BrigadeError("hang needs a provider")
     if minutes < 0:
