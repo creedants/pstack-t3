@@ -8,7 +8,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Skill | What it does |
 | --- | --- |
-| [`poteto-help`](../skills/poteto-help/SKILL.md) | Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question. Use for $poteto-help, or when the user asks how to install, set up, or use pstack, or which pstack skill fits. Not for requests to do work, even ones that name pstack. |
+| [`poteto-help`](../skills/poteto-help/SKILL.md) | Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question. |
 | [`poteto-mode`](../skills/poteto-mode/SKILL.md) | poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style. |
 
 ## Multi-model workflows

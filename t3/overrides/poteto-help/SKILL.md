@@ -1,6 +1,7 @@
 ---
 name: poteto-help
-description: "Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question. Use for $poteto-help, or when the user asks how to install, set up, or use pstack, or which pstack skill fits. Not for requests to do work, even ones that name pstack."
+description: "Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question."
+disable-model-invocation: true
 ---
 
 # Poteto help
@@ -37,7 +38,7 @@ When no roles file exists and it matters, ask whether the user wants to pick a m
 2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles.
 3. Start a real task with `$poteto-mode`, a goal, and a check that can pass or fail.
 
-Typing `$name` loads a skill, and any skill can also load when its description matches. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them, per [`references/prompting.md`](references/prompting.md).
+Typing `$name` loads a skill. Only `$setup-pstack` loads from the user's words. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them, per [`references/prompting.md`](references/prompting.md).
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `$setup-pstack` and pick a smaller budget or cheaper models. A role set to `inherit` runs on the chat's model, which saves tokens when the chat runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `$poteto-mode` for work that needs rigor.
 
@@ -135,7 +136,7 @@ Principles are one-rule skills that `$poteto-mode` reads and cites in its replie
 | A question got treated as the next step of the last task | Say "new task", or say the turn doesn't need the mode. |
 | A new model choice had no effect | A project `.pstack/t3-roles.json` overrides the same role from the user file. Run `roles.py show` to see which file won. [Where roles live](../pstack-runtime/SKILL.md#where-roles-live). |
 | Runs cost more than expected | See the cost paragraph under Get set up. |
-| A skill didn't load on its own | Typing `$name` loads a skill, and any skill can also load when its description matches. `$poteto-mode` doesn't run every skill. |
+| A skill didn't load on its own | Only `$setup-pstack` loads from the user's words. The others load when the user types them or when `$poteto-mode` runs them, and it doesn't run every skill. |
 | Parallel agents overwrote each other | Give each writer its own git worktree. For several agents on one repo, use [`$landing`](../landing/SKILL.md) so each claims paths before it writes. |
 | An overnight run moved but finished nothing | `schedule_task` needs a check that can pass or fail, not a duration. See [Leave it running](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#6-leave-it-running). |
 | The reply claims success from a green build | Ask for the real command, flow, stored value, or profile. That's the prove-it-works principle. |
