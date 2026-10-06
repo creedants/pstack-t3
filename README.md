@@ -21,13 +21,30 @@
 
 It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), ported from Cursor to [T3 Code](https://t3.codes). Lauren built pstack around one idea: AI writes too much slop, and the fix is depth, not speed. pstack makes an agent reproduce a bug before fixing it, settle the design before writing code, prove the change works before calling it done, and send its diff to other models to break it. pstack-t3 runs those workflows on T3's orchestrator, so a Claude, Codex, Grok, or Cursor thread can lead, and the work fans out across all of them.
 
+## A standing coordinator
+
+`$brigade` pins one thread to a project, or to one focus area inside a project. You send it requests. It hands each request to a poteto-mode playbook in that request's own worktree thread, asks another model family to review the change, and lands what passes through the landing queue.
+
+The landing mode belongs to the repository. Four modes decide what reaches trunk.
+
+- `merge` opens a pull request and merges it after the checks pass.
+- `human` opens the same pull request and leaves the merge to you.
+- `push` pushes trunk after the checks pass, and opens no pull request.
+- `local` lands on `refs/landing/<trunk>` and does not change the remote.
+
+You pick a reporting level when you open the coordinator. `every-turn` sends a short reply after every wake. `milestones` replies when work merges, a review sends work back or blocks it, a decision needs you, something fails, or the queue pauses. `digest` replies for a decision or a failure, and sends one summary when nothing is left in progress, in review, passed review, or waiting to land. The [guide](docs/guide.md#8-open-a-standing-coordinator) describes each level and how to change it.
+
+```
+$brigade open a standing coordinator for bridgekit focused on startup performance.
+```
+
 ## What it does
 
 - **Picks the right workflow for your request.** `$poteto-mode` matches your task to one of 23 playbooks, such as bug fix, feature, refactor, perf, investigation, ship a PR stack, or run overnight. It follows the playbook's steps in a visible todo list.
 - **Makes different models check each other's work.** `$interrogate` sends your diff to reviewers on different model families at once. You get one verdict, with claims the lead has verified and agreement mapped across families.
 - **Runs work in parallel without collisions.** `$swarm` splits work across workers or races them. `$arena` runs several attempts and grafts the best parts into one. Workers that write get their own git worktree.
 - **Proves the change works.** It reproduces bugs on the real surface, including driving a web UI through T3's preview tools, and verifies against the real artifact rather than "it compiles".
-- **Gives each project its own standing coordinator.** `$brigade` opens a head chef thread per project or focus area, the way Lauren runs one coordinator per area. You move between them and review what landed.
+- **Gives each project its own standing coordinator.** `$brigade` opens one pinned thread per project or focus area, the way Lauren runs one coordinator per area. You move between them and review what landed.
 - **Lets many agents write to one repo at once.** `$landing` gives each repository one trunk, path leases claimed before work starts, and a single queue that rebases, checks, and lands reviewed commits. Writers never merge. Builds and tests share a machine-wide slot limit.
 - **Keeps going while you're away.** Overnight runs use child agents, separate worktree threads, and an hourly scheduled check. It still stops for anything irreversible you didn't authorize.
 - **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so.
@@ -72,7 +89,7 @@ $swarm audit stats.py: one read-only worker per public function.
 
 ## Quick start
 
-You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and the pull request watching pstack-t3 relies on (`0.0.46-nightly.20261005.2702` or later), git, and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
+You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) `0.0.46-nightly.20261005.2702` or later, the minimum this project accepts for `watch_pull_request`, plus git and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
 
 ```bash
 git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3
@@ -103,7 +120,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log. It waits on each pull request with `watch_pull_request`, uses `schedule_task` as the merge heartbeat, and verifies each pull request before merge. |
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
-| `$brigade open a head chef for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
+| `$brigade open a standing coordinator for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
