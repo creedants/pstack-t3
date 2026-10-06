@@ -19,7 +19,7 @@
 
 **pstack-t3 turns a T3 Code thread into a careful engineering team that runs on every model you have.**
 
-It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), ported from Cursor to [T3 Code](https://t3.codes). Lauren built pstack around one idea: AI writes too much slop, and the fix is depth, not speed. pstack makes an agent reproduce a bug before fixing it, settle the design before writing code, prove the change works before calling it done, and send its diff to other models to break it. pstack-t3 runs those workflows on T3's orchestrator, so a Claude, Codex, Grok, or Cursor thread can lead, and the work fans out across all of them.
+It's [Lauren Tan's pstack](https://github.com/cursor/plugins/tree/main/pstack), ported from Cursor to [T3 Code](https://t3.codes). Lauren built pstack around one idea: AI writes too much slop, and the fix is depth, not speed. pstack makes an agent reproduce a bug before fixing it, settle the design before writing code, prove the change works before calling it done, and send its diff to other models to break it. pstack-t3 runs those workflows on T3's orchestrator, so a Claude, Codex, Grok, or Cursor thread can lead, and review fans out across them.
 
 ## A standing coordinator
 
@@ -74,7 +74,7 @@ $interrogate review the last commit, "Fix median for even-length input".
 >
 > **Dismissed.** Grok's claim that `-3` is a full unit below `-2.5` is incorrect. The difference is `0.5`. Its flooring finding remains valid.
 
-**A Grok thread runs a coverage swarm.**
+**A Grok thread ran a coverage swarm.**
 
 ```
 $swarm audit stats.py: one read-only worker per public function.
@@ -144,7 +144,7 @@ flowchart LR
     a & b -->|completion wakes the lead| verdict["One verified verdict"]
 ```
 
-The default panel is Claude Opus and Grok. A roles file can name Codex or another model. `verifiers` adds one seat per other runnable provider.
+The default panel is Claude Opus and Grok. A roles file can name Codex or another model. `verifiers` is this thread's model plus one seat per other model family you can run.
 
 T3 Code gives every provider the same orchestration tools: `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. Details are in [How it works](docs/how-it-works.md).
 
@@ -155,7 +155,7 @@ T3 Code gives every provider the same orchestration tools: `delegate_task` for c
 <details>
 <summary><b>Do I need every provider?</b></summary>
 
-No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. `verifiers` adds one seat per other runnable provider, and the report says when the reviewers did not differ. Add Codex or another model in a roles file. Signing in to a provider does not add a seat to those three panels.
+No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. A seat whose model you cannot run falls back to this thread's model, and the report says the panel lost a distinct model. `verifiers` is this thread's model plus one seat per other model family you can run. Signing in to a provider does not add a seat to the other three panels. Add Codex or another model in a roles file.
 </details>
 
 <details>
@@ -207,7 +207,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
 | A Cursor rule file of model names | `roles.json` resolved against T3's live catalog |
-| A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` adds one seat per other runnable provider |
+| A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` is this thread's model plus one seat per other model family you can run. |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |
