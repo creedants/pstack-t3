@@ -1,6 +1,7 @@
 import json
 import os
 import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -114,10 +115,40 @@ class BrigadeTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def brigade(self, *args, ok=True, stdin=None):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
+        return self.run_at(self.at, *args, ok=ok, stdin=stdin)
+
+    def run_at(self, directory, *args, ok=True, stdin=None):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(directory), *args],
                                 capture_output=True, text=True, input=stdin)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
+
+    def table_row(self, directory, table, ident):
+        lines = [line for line in (directory / table).read_text().splitlines() if line]
+        keys = lines[0].split("\t")
+        for line in lines[1:]:
+            row = dict(zip(keys, line.split("\t")))
+            if row["id"] == ident:
+                return row
+        self.fail(f"no {ident} in {directory / table}")
+
+    def blocked_note(self, directory, ident):
+        lines = [line for line in (directory / "log.tsv").read_text().splitlines() if line]
+        keys = lines[0].split("\t")
+        note = None
+        for line in lines[1:]:
+            row = dict(zip(keys, line.split("\t")))
+            if row["kind"] == "ticket" and row["id"] == ident and row["state"] == "blocked":
+                note = json.loads(row["note"])
+        self.assertIsNotNone(note, ident)
+        return note
+
+    def bash_unblocked(self, directory, line):
+        command = line.split("run ", 1)[1]
+        invocation = " ".join([shlex.quote(sys.executable), shlex.quote(str(SCRIPT)),
+                               "--store", shlex.quote(str(self.store)), "--at", shlex.quote(str(directory)),
+                               command])
+        return subprocess.run(["bash", "-c", invocation], capture_output=True, text=True, env=self.land_env())
 
     def open(self):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge")
@@ -872,7 +903,6 @@ class BrigadeTest(unittest.TestCase):
 
     def test_a_refused_fire_stays_blocked_until_the_lease_is_free(self):
         from unittest import mock
-        import shlex
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
@@ -887,11 +917,132 @@ class BrigadeTest(unittest.TestCase):
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
             self.assertEqual(self.brigade("watch"), "T1: waiting on L2 (engine/D1)")
             self.land("lease", "release", "L2")
-            line = "T1: unblocked; run fire --tickets T1 --station bug-fix --summary 'Fix the gate' --paths src,changes/perf%2Fd1.md --timebox 60"
+            line = "T1: unblocked; run fire --tickets T1 --station bug-fix --summary 'Fix the gate' --paths src --timebox 60"
             self.assertEqual(self.brigade("watch"), line)
             started = self.brigade(*shlex.split(line.split("run ", 1)[1]))
             self.assertEqual(started, "D1 (lease L3 held by perf/D1)")
+            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src,changes/perf%2Fd1.md")
             self.assertEqual(self.brigade("ticket", "list"), "T1 assigned [user] Fix the gate")
+
+    def test_an_unblocked_command_round_trips_through_bash(self):
+        from unittest import mock
+        marker = Path(self.temporary.name) / "shell-marker"
+        summary = f"Fix O'Reilly; touch {marker}; # $(touch {marker}) & spaces"
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--summary", "quoted")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src/app.py")
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", summary,
+                                   "--branch", "docs/gate", "--paths", "src/app.py", "--timebox", "45", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
+            self.land("lease", "release", "L1")
+            line = self.brigade("watch")
+            ran = self.bash_unblocked(self.at, line)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertFalse(marker.exists(), ran.stdout + ran.stderr)
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["summary"], summary)
+        self.assertEqual(row["paths"], "src/app.py,changes/docs%2Fgate.md")
+        self.assertEqual(row["timebox"], "45")
+        self.assertEqual(row["branch"], "docs/gate")
+
+    def test_a_later_fire_does_not_keep_the_refused_attempts_fragment(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            directory = self.store / "bridge-kit" / "review-more"
+            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review more", "--landing", "merge")
+            self.assertEqual(opened, f"opened {directory}")
+            self.run_at(directory, "ticket", "add", "--summary", "Blocked on src")
+            self.run_at(directory, "ticket", "add", "--summary", "Takes the first id")
+            self.land("lease", "claim", "--holder", "engine/D9", "--paths", "src")
+            refused = self.run_at(directory, "fire", "--tickets", "T1", "--station", "bug-fix",
+                                  "--summary", "Blocked on src", "--paths", "src", "--timebox", "30", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D9", refused)
+            note = self.blocked_note(directory, "T1")
+            self.assertEqual(note["paths"], "src")
+            self.assertNotIn("branch", note)
+            started = self.run_at(directory, "fire", "--tickets", "T2", "--station", "bug-fix",
+                                  "--summary", "Takes the first id", "--paths", "other")
+            self.assertEqual(started, "D1 (lease L2 held by review-more/D1)")
+            self.assertEqual(self.table_row(directory, "dishes.tsv", "D1")["paths"], "other,changes/review-more%2Fd1.md")
+            self.land("lease", "release", "L1")
+            line = self.run_at(directory, "watch")
+            self.assertNotIn("waiting on", line)
+            self.assertIn("--paths src --timebox 30", line)
+            self.assertNotIn("changes/review-more%2Fd1.md", line)
+            ran = self.bash_unblocked(directory, line)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        row = self.table_row(directory, "dishes.tsv", "D2")
+        self.assertEqual(row["paths"], "src,changes/review-more%2Fd2.md")
+        self.assertEqual(row["branch"], "")
+        self.assertEqual(row["timebox"], "30")
+        self.assertEqual(row["summary"], "Blocked on src")
+
+    def test_a_refused_fire_keeps_an_explicit_branch(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            directory = self.store / "bridge-kit" / "review"
+            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review", "--landing", "merge")
+            self.assertEqual(opened, f"opened {directory}")
+            self.run_at(directory, "ticket", "add", "--summary", "Explicit branch")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            refused = self.run_at(directory, "fire", "--tickets", "T1", "--station", "bug-fix",
+                                  "--summary", "Explicit branch", "--branch", "docs/a%b/c",
+                                  "--paths", "src,changes/docs%2Fa%25b%2Fc.md", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
+            note = self.blocked_note(directory, "T1")
+            self.assertEqual(note["paths"], "src,changes/docs%2Fa%25b%2Fc.md")
+            self.assertEqual(note.get("branch"), "docs/a%b/c")
+            self.land("lease", "release", "L1")
+            line = self.run_at(directory, "watch")
+            self.assertIn("--branch", line)
+            self.assertIn("docs/a%b/c", line)
+            ran = self.bash_unblocked(directory, line)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        row = self.table_row(directory, "dishes.tsv", "D1")
+        self.assertEqual(row["branch"], "docs/a%b/c")
+        self.assertEqual(row["paths"], "src,changes/docs%2Fa%25b%2Fc.md")
+        self.assertEqual(row["summary"], "Explicit branch")
+        self.assertNotIn("changes/review%2Fd1.md", row["paths"])
+
+    def test_a_worker_refusal_prints_the_running_count(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge", "--workers", "3")
+        for number, summary in enumerate(("one", "two", "three"), start=1):
+            self.brigade("ticket", "add", "--summary", summary)
+            self.brigade("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", summary)
+        self.brigade("ticket", "add", "--summary", "four")
+        self.brigade("set", "--workers", "1")
+        refused = self.brigade("fire", "--tickets", "T4", "--station", "bug-fix", "--summary", "four", ok=False)
+        self.assertIn("nothing fired: 3 of 1 workers running", refused)
+        self.assertIn("T4: waiting for a worker (3 of 1 running)", self.brigade("watch"))
+
+    def test_a_failed_lease_check_keeps_the_landing_diagnostic(self):
+        case = Path(self.temporary.name)
+        (case / "land.py").write_text(
+            "import sys\n"
+            "action = sys.argv[4]\n"
+            "if action == 'claim':\n"
+            "    print('paths overlap L1 held by engine/D1 on src', file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "if action == 'check':\n"
+            "    print('queue database is locked', file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "sys.exit(0)\n")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "one")
+        refused = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                  "--store", str(self.store), "--at", str(self.at),
+                                  "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
+                                 capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        watched = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                  "--store", str(self.store), "--at", str(self.at), "watch"],
+                                 capture_output=True, text=True)
+        self.assertEqual(watched.returncode, 0, watched.stderr)
+        self.assertEqual(watched.stdout.strip(), "T1: waiting on the landing queue (queue database is locked)")
 
     def test_a_repository_cap_refusal_prints_the_repository_line(self):
         from unittest import mock
