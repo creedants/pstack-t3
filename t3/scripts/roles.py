@@ -40,7 +40,7 @@ PANEL_ROLES = [
     "verifiers",
 ]
 ROLES = SINGLE_ROLES + PANEL_ROLES
-BUDGETS = {"default": None, "small": "medium", "medium": "high", "large": "xhigh", "unlimited": "max-available"}
+BUDGETS = {"default": None, "small": "medium", "medium": "high", "large": "xhigh", "unlimited": "max"}
 EFFORT_IDS = ("effort", "reasoningEffort", "reasoning_effort", "reasoning")
 LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "extra-high": 5, "extra_high": 5, "max": 6, "ultra": 7}
 SPECIAL = {"ultracode", "ultrathink"}
@@ -260,27 +260,10 @@ def apply_budget(seat, model, budget):
     values = [choice["id"] for choice in option.get("options") or [] if choice["id"] not in SPECIAL and rank(choice["id"]) is not None]
     if not values:
         return seat
-    # unlimited stops at max. ultra ranks above max.
-    ceiling = rank("max") if cap == "max-available" else rank(cap)
-    allowed = [value for value in values if rank(value) <= ceiling]
-    if not allowed:
-        if cap != "max-available":
-            allowed = [min(values, key=rank)]
-        else:
-            options = dict(seat.get("options") or {})
-            current = options.get(option["id"])
-            if rank(current) is None or rank(current) <= ceiling:
-                return seat
-            options.pop(option["id"], None)
-            updated = {key: value for key, value in seat.items() if key != "options"}
-            if options:
-                updated["options"] = options
-            return updated
+    # unlimited caps at max, below ultra. A model with nothing at or below the cap gets its lowest level.
+    allowed = [value for value in values if rank(value) <= rank(cap)] or [min(values, key=rank)]
     current = (seat.get("options") or {}).get(option["id"])
-    if current in values and rank(current) <= ceiling:
-        chosen = current
-    else:
-        chosen = max(allowed, key=rank)
+    chosen = current if current in allowed else max(allowed, key=rank)
     return {**seat, "options": {**(seat.get("options") or {}), option["id"]: chosen}}
 
 
