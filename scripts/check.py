@@ -23,7 +23,7 @@ FORBIDDEN = [
     (r"cursor-team-kit|Cursor's built-in", "Cursor plugin dependency"),
     (r"agent-transcripts", "Cursor transcript store; use t3_thread_search and t3_thread_read"),
     (r"inherit-parent", "Cursor alias; use inherit"),
-    (r"\b(?:claude-opus-5-5-max|claude-fable-5-1-thinking-\w+|gpt-5\.6-sol-max|grok-4\.7-xhigh-fast|claude-opus-5-thinking-\w+)\b", "hard-coded Cursor model slug; resolve a role"),
+    (r"\b(?:claude-opus-5-5-max|claude-opus-5-5-xhigh|claude-fable-5-1-thinking-\w+|gpt-5\.6-sol-max|grok-4\.7-xhigh-fast|claude-opus-5-thinking-\w+)\b", "hard-coded Cursor model slug; resolve a role"),
     (r"cursor\.com/agents|cloud agent", "Cursor cloud agents; T3 child tasks or threads"),
 ]
 FRONTMATTER_REQUIRED = ("name", "description")
@@ -38,6 +38,7 @@ REQUIRED_TOOLS = {
     "poteto-mode/playbooks/orchestrate.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-full.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-stack.md": ("watch_pull_request",),
+    "setup-pstack/SKILL.md": ("watch_pull_request", "0.0.46-nightly.20261005.2702"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
 

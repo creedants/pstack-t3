@@ -42,7 +42,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
      "title": "<role>: <slice>",
      "role": "review",
      "mode": "async",
-     "target": {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+     "target": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
      "clientRequestId": "<skill>-<slug>-<seat>"
    }
    ```
@@ -90,9 +90,9 @@ Print the merged roles for the current project with:
 python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>"
 ```
 
-Pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so without `--parent` the default panels treat no seat as this thread's own.
+Pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so without `--parent` the verifier panel treats no seat as this thread's own.
 
-`<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A panel role that shows `"seats": "default-panel"` has no config and no snapshot. Expand it yourself from the `orchestrator_capabilities` result per the defaults below.
+`<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A role that reports `"seats": "catalog-required"`, or an adaptive panel that reports `"seats": "default-panel"`, needs a catalog. Call `orchestrator_capabilities`, save the result to a temporary file, and rerun `roles.py show --catalog <file>`. Do not reconstruct role defaults in the calling skill.
 
 ### Role names
 
@@ -120,26 +120,37 @@ Pass `--parent` with the values from `orchestrator_capabilities`. The saved cata
 
 ### Built-in defaults
 
-The defaults depend on nothing but the live catalog, so they never name a model the user lacks.
+`roles.py show` owns this mapping. A skill must not rebuild it.
 
-- Single-seat roles default to `["inherit"]`, except `skill tests`.
-- `skill tests` is one catalog seat. Prefer a runnable model whose family differs from this thread's model. A family is the leading word of the model id. In that pool, prefer an id token in `haiku`, `mini`, `nano`, `flash`, `lite`, `fast`, `small`, or `luna`, then the lowest default reasoning level, then earlier in the catalog. If every runnable model shares this thread's family, apply the same rule inside the family. No catalog, or no runnable model, leaves `["inherit"]`. The seat names no reasoning option. The budget cap still applies.
-- Panel roles (`arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, `verifiers`) default to `"inherit"` for this thread's seat, then one seat per runnable provider (`canRunChildTask: true`), using that provider's first listed model with its default options, skipping a provider whose first model belongs to a family already seated.
-- A model family is the leading word of the model ID: `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, `grok-4.7` is `grok`. Diversity rules in pstack compare families, never providers, because one provider can serve another's models. With only one runnable provider, the panel is three `"inherit"` seats, and the report must say the models did not differ.
+Code roles (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `swarm workers`, `how explorer`, `why investigators`, `reflect tooling`) use `grok-4.7` at xhigh. Judgment roles (`judgment and prose`, `hardest tasks`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer`) use `claude-opus-5-5` at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats in that order. Grok sets `fastMode` only when the chosen model declares that boolean option.
+
+`skill tests` is one catalog seat. Prefer a runnable model whose family differs from this thread's model. A family is the leading word of the model id. In that pool, prefer an id token in `haiku`, `mini`, `nano`, `flash`, `lite`, `fast`, `small`, or `luna`, then the lowest default reasoning level, then earlier in the catalog. If every runnable model shares this thread's family, apply the same rule inside the family. No catalog, or no runnable model, leaves `["inherit"]`. The seat names no reasoning option. The budget cap still applies.
+
+`verifiers` starts with `"inherit"` when this thread's provider can run children, then adds one seat per other runnable provider (`canRunChildTask: true`), using that provider's first listed model and skipping a family already seated. With only one runnable provider, `verifiers` is three `"inherit"` seats, and the report must say the models did not differ. The other panel roles do not use that three-seat rule.
+
+A model family is the leading word of the model ID: `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, `grok-4.7` is `grok`. Diversity rules compare families, never providers, because one provider can serve another's models.
+
+A preferred seat that matches this thread stays an explicit target. It does not become `"inherit"`.
+
+When the preferred model is missing, the seat stays and a numbered note names the role, the seat number, the wanted model, and the replacement. The replacement is the first runnable model of that family, then this thread's model when its provider can run children, then the first runnable model in the catalog. No runnable provider is an error. The panel keeps every seat. When two seats land on the same model, the note says the panel lost a distinct model.
+
+Without a catalog, a preferred role reports `"seats": "catalog-required"`. `skill tests` reports `["inherit"]`. `verifiers` reports `"seats": "default-panel"`.
 
 Agreement between seats on the same model is weak evidence. It shows the prompt is stable, not that the finding is right. Weigh consensus only across seats on different models, and say which kind you have.
 
 ### Budget
 
-The config may carry `"budget"`: `default`, `small`, `medium`, `large`, or `unlimited`. It sets the reasoning option of every seat that has one (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`) to `medium`, `high`, `xhigh`, or the highest non-special value, or the closest lower value the model offers. A seat that names its own reasoning level keeps it when it is at or below the budget level, and is lowered to the budget level otherwise. `default` leaves options alone. `ultracode` and `ultrathink` are never chosen by a budget. Under any budget other than `default`, an `inherit` seat becomes an explicit target on this thread's provider and model with the budgeted option, because an omitted `target` would pass the parent's reasoning level through. `roles.py show` reports the budgeted seats.
+The config may carry `"budget"`: `default`, `small`, `medium`, `large`, or `unlimited`. It caps the reasoning option of every seat that has one (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`) at `medium`, `high`, `xhigh`, or the highest non-special value, or the closest lower value the model offers. A seat that names its own reasoning level keeps it when it is at or below the budget level, and is lowered to the budget level otherwise. `default` leaves options alone. Built-in preferred seats already name xhigh, so `default` leaves that level in place and `unlimited` does not raise it to max. `ultracode` and `ultrathink` are never chosen by a budget. Under any budget other than `default`, an `inherit` seat becomes an explicit target on this thread's provider and model with the budgeted option, because an omitted `target` would pass the parent's reasoning level through. `roles.py show` reports the budgeted seats.
 
 ### Fallback
 
-When a seat's provider is not runnable or its model is not in the catalog:
+A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. This path is separate from the built-in order above.
 
 1. Use the same provider's first listed model.
 2. If the provider is not runnable, use `"inherit"`.
 3. Say which seat changed and why. Never silently drop a seat, because the seat count is the panel size.
+
+Built-in preferred seats use the numbered notes from [Built-in defaults](#built-in-defaults). Those notes name each replacement, and the panel size never shrinks.
 
 `roles.py validate --catalog <file>` checks a config against a saved catalog.
 
@@ -162,7 +173,7 @@ Create top-level threads only when the user asked for separate threads or invoke
   "title": "PR owner: <slug>",
   "workspaceStrategy": {"type": "worktree", "baseRef": "main", "branch": "pstack/<slug>", "startFromOrigin": false},
   "message": "<brief>",
-  "modelSelection": {"instanceId": "codex", "model": "gpt-6.1-sol"}
+  "modelSelection": {"instanceId": "claudeAgent", "model": "claude-opus-5-5"}
 }
 ```
 

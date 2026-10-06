@@ -12,6 +12,8 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 SINGLE_ROLES = [
@@ -44,10 +46,56 @@ LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5,
 SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
 SMALL_TIER = frozenset({"haiku", "mini", "nano", "flash", "lite", "fast", "small", "luna"})
+CATALOG_REQUIRED = "catalog-required"
+DEFAULT_PANEL = "default-panel"
 
 
 class RolesError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class PreferredSeat:
+    model_id: str
+    effort_ceiling: str = "xhigh"
+    prefer_fast: bool = False
+
+
+class AdaptiveDefault(Enum):
+    SKILL_TESTS = "skill-tests"
+    VERIFIERS = "verifiers"
+
+
+OPUS = PreferredSeat("claude-opus-5-5")
+GROK = PreferredSeat("grok-4.7", prefer_fast=True)
+
+ROLE_DEFAULTS = {
+    "feature, refactoring": (GROK,),
+    "bug-fix": (GROK,),
+    "perf-issue": (GROK,),
+    "hillclimb": (GROK,),
+    "judgment and prose": (OPUS,),
+    "hardest tasks": (OPUS,),
+    "how explorer": (GROK,),
+    "how explainer": (OPUS,),
+    "why investigators": (GROK,),
+    "why synthesizer": (OPUS,),
+    "reflect tooling": (GROK,),
+    "reflect judgment, divergent, synthesizer": (OPUS,),
+    "swarm workers": (GROK,),
+    "arena runners": (OPUS, GROK),
+    "arena cross-judge pool": (OPUS, GROK),
+    "architect runners": (OPUS, GROK),
+    "interrogate reviewers": (OPUS, GROK),
+    "skill tests": AdaptiveDefault.SKILL_TESTS,
+    "verifiers": AdaptiveDefault.VERIFIERS,
+}
+
+
+@dataclass(frozen=True)
+class DefaultSelection:
+    seats: object
+    notes: tuple = ()
 
 
 def user_config_path():
@@ -253,12 +301,69 @@ def skill_tests_seat(catalog):
     return {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
 
 
-def default_seats(name, catalog):
-    """One seat per runnable provider whose first model is a family not yet seated."""
-    if name == "skill tests":
-        return [skill_tests_seat(catalog)]
-    if name in SINGLE_ROLES:
-        return [INHERIT]
+def _runnable_rows(catalog):
+    rows = []
+    for provider in catalog["providers"]:
+        if not runnable(provider):
+            continue
+        for model in models_of(provider):
+            rows.append((provider, model))
+    return rows
+
+
+def _provider_for_exact(matches, wanted_family):
+    """Prefer a provider whose first model shares the family. Otherwise catalog order."""
+    fallback = None
+    for provider, model in matches:
+        if fallback is None:
+            fallback = (provider, model)
+        if family(models_of(provider)[0]["id"]) == wanted_family:
+            return provider, model
+    return fallback
+
+
+def _preferred_seat(preference, catalog):
+    """Return a concrete runnable target and explanations of changed intent."""
+    rows = _runnable_rows(catalog)
+    if not rows:
+        raise RolesError("no provider in the catalog can run child tasks")
+    wanted = preference.model_id
+    wanted_family = family(wanted)
+    exact = [(provider, model) for provider, model in rows if model["id"] == wanted]
+    cause = None
+    if exact:
+        provider, model = _provider_for_exact(exact, wanted_family)
+    else:
+        same_family = [(provider, model) for provider, model in rows if family(model["id"]) == wanted_family]
+        if same_family:
+            provider, model = same_family[0]
+            cause = "missing model"
+        else:
+            parent_id = catalog.get("inheritedProviderInstanceId")
+            parent_model_id = catalog.get("inheritedModel")
+            parent = providers_by_id(catalog).get(parent_id) if parent_id else None
+            parent_model = find_model(parent, parent_model_id) if runnable(parent) and parent_model_id else None
+            if parent_model is not None:
+                provider, model = parent, parent_model
+            else:
+                provider, model = rows[0]
+            cause = "missing family"
+    seat = apply_budget({"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, model, "large")
+    notes = []
+    if cause is not None:
+        notes.append(f"wanted {wanted}, using {provider['providerInstanceId']}/{model['id']} ({cause})")
+    option = effort_option(model)
+    chosen = (seat.get("options") or {}).get(option["id"]) if option else None
+    if chosen is not None and rank(chosen) is not None and rank(preference.effort_ceiling) is not None and rank(chosen) < rank(preference.effort_ceiling):
+        notes.append(f"wanted {preference.effort_ceiling}, using {chosen}")
+    declares_fast = any(item.get("id") == "fastMode" and item.get("type") == "boolean" for item in options_of(model))
+    if preference.prefer_fast and declares_fast:
+        seat = {**seat, "options": {**(seat.get("options") or {}), "fastMode": True}}
+    return seat, tuple(notes)
+
+
+def _verifier_seats(catalog):
+    """One inherit seat for this thread, then one seat per new family. One seat is repeated to three."""
     parent = catalog.get("inheritedProviderInstanceId")
     parent_model = catalog.get("inheritedModel")
     parent_runs = runnable(providers_by_id(catalog).get(parent)) if parent else False
@@ -279,6 +384,47 @@ def default_seats(name, catalog):
     if not seats:
         raise RolesError("no provider in the catalog can run child tasks")
     return seats
+
+
+def _lost_diversity(name, seats):
+    groups = {}
+    for number, seat in enumerate(seats, 1):
+        if not isinstance(seat, dict):
+            continue
+        groups.setdefault((seat["providerInstanceId"], seat["model"]), []).append(str(number))
+    for (provider, model), numbers in groups.items():
+        if len(numbers) > 1:
+            joined = " and ".join(numbers)
+            return f"{name}: seats {joined} both use {provider}/{model}, so the panel lost a distinct model"
+    return None
+
+
+def default_seats(name, catalog):
+    """Resolve exactly the policy seats for this role from the live catalog."""
+    policy = ROLE_DEFAULTS[name]
+    if catalog is None:
+        if policy is AdaptiveDefault.SKILL_TESTS:
+            return DefaultSelection((INHERIT,))
+        if policy is AdaptiveDefault.VERIFIERS:
+            return DefaultSelection(DEFAULT_PANEL, (
+                "expand from orchestrator_capabilities: this thread inherits, then one seat per runnable provider whose first model is a new model family",
+            ))
+        return DefaultSelection(CATALOG_REQUIRED, (
+            "call orchestrator_capabilities and rerun roles.py show --catalog",
+        ))
+    if policy is AdaptiveDefault.SKILL_TESTS:
+        return DefaultSelection((skill_tests_seat(catalog),))
+    if policy is AdaptiveDefault.VERIFIERS:
+        return DefaultSelection(tuple(_verifier_seats(catalog)))
+    seats, notes = [], []
+    for number, preference in enumerate(policy, 1):
+        seat, seat_notes = _preferred_seat(preference, catalog)
+        seats.append(seat)
+        notes.extend(f"{name} seat {number}: {note}" for note in seat_notes)
+    diversity = _lost_diversity(name, seats)
+    if diversity:
+        notes.append(diversity)
+    return DefaultSelection(tuple(seats), tuple(notes))
 
 
 def inherit_with_budget(catalog, budget):
@@ -339,16 +485,22 @@ def resolve(config, catalog=None, names=None):
             raise RolesError(f"unknown role {name!r}")
         configured = config["roles"].get(name)
         entry = {"source": config["sources"].get(name, "default")}
-        if catalog is None:
-            if configured is not None:
-                entry["seats"] = configured
-            elif name in SINGLE_ROLES:
-                entry["seats"] = [INHERIT]
-            else:
-                entry["seats"] = "default-panel"
-                entry["note"] = "expand from orchestrator_capabilities: this thread inherits, then one seat per runnable provider whose first model is a new model family"
+        if configured is None:
+            selection = default_seats(name, catalog)
+            if isinstance(selection.seats, str):
+                entry["seats"] = selection.seats
+                if selection.notes:
+                    entry["note"] = selection.notes[0]
+                result["roles"][name] = entry
+                continue
+            seats = list(selection.seats)
+            selection_notes = list(selection.notes)
         else:
-            seats = configured if configured is not None else default_seats(name, catalog)
+            seats = configured
+            selection_notes = []
+        if catalog is None:
+            entry["seats"] = seats
+        else:
             resolved, notes = [], []
             for seat in seats:
                 value, seat_notes, _ = resolve_seat(seat, catalog, config["budget"])
@@ -356,7 +508,7 @@ def resolve(config, catalog=None, names=None):
                 notes.extend(seat_notes)
             entry["seats"] = resolved
             info = [note["info"] for note in notes if isinstance(note, dict)]
-            problems = [note for note in notes if not isinstance(note, dict)]
+            problems = selection_notes + [note for note in notes if not isinstance(note, dict)]
             if problems:
                 entry["notes"] = problems
             if info:
