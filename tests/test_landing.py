@@ -240,6 +240,80 @@ exit 0
         self.assertEqual(self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", fixed, "--lease", "L2", "--reviewer", REVIEWER), "Q3")
         self.assertEqual(self.land("land"), "landed Q3 (r/D2)")
 
+    def use_non_english_locale(self):
+        """Set LANG and LC_ALL to de_DE.UTF-8 for the rest of this test.
+
+        Returns whether git on this machine prints German under that locale.
+        When it does not, git on PATH hides the English conflict strings unless
+        that process has LC_ALL=C, and records each cherry-pick environment.
+        """
+        self.git_locale_log = self.base / "git-locale.log"
+        translated = False
+        try:
+            locpath = self.base / "locales"
+            locpath.mkdir()
+            compiled = subprocess.run(
+                ["localedef", "-f", "UTF-8", "-i", "de_DE", str(locpath / "de_DE.UTF-8")],
+                capture_output=True)
+        except OSError:
+            compiled = None
+        if compiled is not None and compiled.returncode == 0:
+            os.environ["LOCPATH"] = str(locpath)
+            env = os.environ.copy()
+            env["LANG"] = "de_DE.UTF-8"
+            env["LC_ALL"] = "de_DE.UTF-8"
+            probe = subprocess.run(["git", "status"], cwd=self.work, capture_output=True, text=True, env=env)
+            translated = "Auf Branch" in probe.stdout
+        os.environ["LANG"] = "de_DE.UTF-8"
+        os.environ["LC_ALL"] = "de_DE.UTF-8"
+        if not translated:
+            self.install_c_locale_gate()
+        return translated
+
+    def install_c_locale_gate(self):
+        """Hide English conflict text unless this git process has LC_ALL=C."""
+        current = shutil.which("git")
+        bindir = self.base / "locale-gate"
+        bindir.mkdir()
+        script = bindir / "git"
+        script.write_text(
+            "#!" + sys.executable + "\n"
+            "import os, subprocess, sys\n"
+            f"real = {current!r}\n"
+            f"log = {str(self.git_locale_log)!r}\n"
+            "args = sys.argv[1:]\n"
+            "if 'cherry-pick' in args:\n"
+            "    with open(log, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('cherry-pick LC_ALL=%s\\n' % os.environ.get('LC_ALL', ''))\n"
+            "proc = subprocess.run([real, *args], capture_output=True)\n"
+            "out, err = proc.stdout, proc.stderr\n"
+            "if os.environ.get('LC_ALL') != 'C':\n"
+            "    out = out.replace(b'CONFLICT', b'KONFLIKT').replace(b'could not apply', b'nicht anwenden')\n"
+            "    err = err.replace(b'CONFLICT', b'KONFLIKT').replace(b'could not apply', b'nicht anwenden')\n"
+            "sys.stdout.buffer.write(out)\n"
+            "sys.stderr.buffer.write(err)\n"
+            "raise SystemExit(proc.returncode)\n"
+        )
+        script.chmod(0o755)
+        os.environ["PATH"] = str(bindir) + os.pathsep + os.environ["PATH"]
+
+    def test_a_conflict_under_a_non_english_locale_bounces(self):
+        translated = self.use_non_english_locale()
+        self.init()
+        first = self.worker("w1", {"a.txt": "one\n"})
+        second = self.worker("w2", {"a.txt": "two\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", first, "--lease", "L1", "--reviewer", REVIEWER)
+        self.land("land")
+        self.land("lease", "claim", "--holder", "r/D2", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", second, "--lease", "L2", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "bounced Q2 (r/D2): conflict with trunk")
+        if not translated:
+            recorded = self.git_locale_log.read_text().splitlines()
+            self.assertTrue(recorded)
+            for line in recorded:
+                self.assertEqual(line, "cherry-pick LC_ALL=C")
+
     def test_a_conflict_rerere_resolved_to_trunk_bounces(self):
         self.init()
         sha = self.worker("w1", {"a.txt": "worker\n"})
