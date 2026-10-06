@@ -88,32 +88,29 @@ def check_lock(update):
     return problems
 
 
+def copy_file(source, target):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    shutil.copymode(source, target)
+
+
 def render(destination):
     removed = removed_paths()
     skills = VENDOR / "skills"
     for rel in relative_files(skills):
         if rel in removed or any(parent in removed for parent in rel.parents):
             continue
-        target = destination / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(skills / rel, target)
+        copy_file(skills / rel, destination / rel)
     for layer in ("overrides", "added"):
         base = T3 / layer
         for rel in relative_files(base):
-            target = destination / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(base / rel, target)
+            copy_file(base / rel, destination / rel)
     runtime = destination / "pstack-runtime"
-    runtime.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(T3 / "runtime.md", runtime / "SKILL.md")
-    (runtime / "scripts").mkdir(exist_ok=True)
-    shutil.copyfile(T3 / "scripts/roles.py", runtime / "scripts/roles.py")
-    (runtime / "agents").mkdir(exist_ok=True)
+    copy_file(T3 / "runtime.md", runtime / "SKILL.md")
+    copy_file(T3 / "scripts/roles.py", runtime / "scripts/roles.py")
     for persona in sorted((T3 / "agents").glob("*.md")):
-        shutil.copyfile(persona, runtime / "agents" / persona.name)
-    setup = destination / "setup-pstack"
-    setup.mkdir(exist_ok=True)
-    shutil.copyfile(T3 / "setup.md", setup / "SKILL.md")
+        copy_file(persona, runtime / "agents" / persona.name)
+    copy_file(T3 / "setup.md", destination / "setup-pstack" / "SKILL.md")
     for skill_md in sorted(destination.glob("*/SKILL.md")):
         skill = skill_md.parent.name
         skill_md.write_text(normalize_skill(skill_md.read_text(), skill))
