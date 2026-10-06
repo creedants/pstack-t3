@@ -55,6 +55,21 @@ This record stops at 12:22 UTC, 99 minutes after launch, at the end of the obser
 
 The run had launched 61 threads by then. That count is the root, 4 owners, 40 verifier children in 10 rounds, and 16 children the owners started. The root cancelled one round of verifiers when its head went stale. The owner children were 5 Comment Sicko reviews, 3 trail reviews, 1 explanation, 5 design runners, 1 design judge, and 1 implementation child.
 
+### How the run finished
+
+This part is after the 12:22 UTC cutoff. The run continued. The observer left it alone.
+
+PR #8 merged at 12:32:53 UTC, 109 minutes after the 10:43 UTC launch. The squash commit on `main` is `486a5b7`, subject `feat(stats): add python -m stats (#8)`. The `test` check on that commit succeeded at 12:33:05 UTC.
+
+#4 took 5 review rounds. The first four are the rounds in the cutoff record. Round 5 started at 12:23 UTC on head `5306f0a`, after the owner fixed whole numbers written in non-ASCII digits. Gates, live and regression, spec, and robustness all passed. The root sent a clean verdict for `5306f0a` at 12:32:10 UTC. The rebase onto `main` changed nothing. The owner squash-merged at 12:32:53 UTC.
+
+The root deleted its hourly audit tick at 12:35:32 UTC, after the four PRs merged. The sandbox project has no scheduled task.
+
+The root removed its two verification worktrees, `verify/4-cli-5306f0a` and `verify/trunk-3bdc46c`, at 12:33:50 UTC. The `verify/` directory remains, and it is empty. The root left the four owner worktrees in place. Its closing note says T3 still links them to the owner threads, and none has unsaved work. A listing on 2026-10-06 shows `pstack-median-even`, `pstack-mode-empty`, `pstack-variance-stdev`, and `pstack-cli` under `~/.t3/worktrees/pstack-t3-sandbox/`, each with a clean status. GitHub lists one remote branch, `main`. The #4 owner recorded that the remote branch was deleted with the squash merge.
+
+- `main` is at `486a5b7`. The `test` check passed.
+- Issues #1, #2, #3, and #4 are closed. Issue #4 closed at 12:32:54 UTC.
+
 ### Defects found
 
 1. **Autopilot-full names no channel between owners and the root.** Steps 2, 4, and 5 of `t3/overrides/poteto-mode/playbooks/autopilot-full.md` have owners report the code-ready head, merge-ready, and the merge, and have the root send verdicts. They do not say how. An owner is a top-level thread with no parent, so its finished turn never wakes the root. The runtime's Top-level threads section (`t3/runtime.md`, lines 175 to 193) does not say so either. The root invented a protocol of one-line `CODE-READY`, `MERGE-READY`, `MERGE-PREP`, and `MERGED` messages, sent with `t3_thread_send` and `mode: "queue"`. It sent verdicts the same way with `mode: "auto"`. That protocol worked, but another root may not invent it. **Fix.** Write that protocol into step 2 with the root's thread ID in each owner brief. State in the runtime that a launched thread's turns do not wake the launcher.
