@@ -222,16 +222,27 @@ def sibling_lines(restaurant):
     return blocks
 
 
+def _read_meta(path):
+    try:
+        text = path.read_text()
+    except OSError:
+        return None, "missing"
+    try:
+        return json.loads(text), "ok"
+    except json.JSONDecodeError:
+        return None, "invalid"
+
+
 def wait_for_meta(directory):
     path = directory / "restaurant.json"
     deadline = time.monotonic() + CLAIM_WAIT_SECONDS
     while True:
-        if path.is_file():
-            try:
-                return json.loads(path.read_text())
-            except json.JSONDecodeError:
-                pass
+        meta, state = _read_meta(path)
+        if state == "ok":
+            return meta
         if time.monotonic() >= deadline:
+            if state == "invalid":
+                raise BrigadeError(f"{path} is not valid JSON")
             raise BrigadeError(f"{directory} has no restaurant.json after one second")
         time.sleep(0.01)
 
@@ -248,24 +259,22 @@ def open_restaurant(root, project_root, name, landing, reporting="milestones"):
         created = False
     else:
         created = True
-    if created:
-        meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
-                "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
-                "lastReportAt": None, "thread": None, "schedules": {}}
-        write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
-    else:
+    if not created:
         meta = wait_for_meta(directory)
         if meta.get("projectRoot") != str(project_root):
             other = meta.get("projectRoot")
             raise BrigadeError(f"{directory} already holds a coordinator for {other}; pick another --name")
+        return Restaurant(directory), False
     for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
-        if not (directory / filename).exists():
-            write_atomic(directory / filename, template.format(restaurant=meta["restaurant"]))
-    restaurant = Restaurant(directory)
+        write_atomic(directory / filename, template.format(restaurant=name))
     for table in TABLES:
-        if not (directory / table).exists():
-            restaurant.save_rows(table, [])
-    return restaurant, created
+        header = TABLES[table]
+        write_atomic(directory / table, "\t".join(header) + "\n")
+    meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
+            "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
+            "lastReportAt": None, "thread": None, "schedules": {}}
+    write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
+    return Restaurant(directory), True
 
 
 def counts(restaurant):
