@@ -695,19 +695,24 @@ def publish_absent_branch(store, entry, branch):
 
 
 def ensure_pr(store, entry):
-    """Store this entry's PR. Open one on landing/e<n> only when none exists.
+    """Store this entry's PR. Open one on landing/e<n> when that name has none.
 
-    Look at landing/e<n> first, then at landing/q<n> from an older queue.
-    A crash after gh pr create and before the URL is stored is safe to rerun.
-    Push landing/e<n> only when neither name already has a PR."""
+    Look at landing/e<n> first, in any state. Then adopt an OPEN pull request
+    on landing/q<n> from an older queue. A closed or merged pull request on
+    that old name is not this entry's, so this run publishes landing/e<n> and
+    opens the pull request there. A crash after gh pr create and before the
+    URL is stored is safe to rerun. Returns "adopted" when an existing pull
+    request was stored, and "created" when this run opened one."""
     contract = store.contract
     branch = human_branch(entry)
-    url = ""
-    for name in (branch, f"landing/q{entry['id']}"):
-        view = gh("pr", "view", name, "--json", "url", "-q", ".url", cwd=store.repo)
-        if view.returncode == 0 and view.stdout.strip():
-            url = view.stdout.strip()
-            break
+    found = gh("pr", "view", branch, "--json", "url", "-q", ".url", cwd=store.repo)
+    url = found.stdout.strip() if found.returncode == 0 else ""
+    adopted = bool(url)
+    if not url:
+        legacy = f"landing/q{entry['id']}"
+        found = gh("pr", "view", legacy, "--json", "url,state", "-q", 'select(.state == "OPEN") | .url', cwd=store.repo)
+        url = found.stdout.strip() if found.returncode == 0 else ""
+        adopted = bool(url)
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
@@ -717,11 +722,12 @@ def ensure_pr(store, entry):
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())
         url = created.stdout.strip().splitlines()[-1]
+        adopted = False
     with store.tx() as db:
         store.set_entry(db, entry["id"], "awaiting-merge", pr=url, note="")
     if contract["mode"] == "merge":
         request_merge(store, entry["id"], url)
-    return True
+    return "adopted" if adopted else "created"
 
 
 MERGE_REQUESTED = "merge requested by the queue"
@@ -1065,10 +1071,11 @@ def take_pr(store, entry, landed, bounced):
 
 
 def poll_human(store):
-    landed, bounced = [], []
+    landed, bounced, adopted = [], [], []
     for entry in store.entries("awaiting-merge"):
         if not entry["pr"]:
-            ensure_pr(store, entry)
+            if ensure_pr(store, entry) == "adopted":
+                adopted.append(entry["id"])
             entry = entry_row(store, entry["id"])
         if take_pr(store, entry, landed, bounced):
             continue
@@ -1100,7 +1107,7 @@ def poll_human(store):
             if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
                 break
             time.sleep(0.5)
-    return landed, bounced
+    return landed, bounced, adopted
 
 
 def land(store):
@@ -1115,23 +1122,23 @@ def land(store):
             return f"queue paused: {store.contract['paused']}"
         reconcile(store)
         integration = Integration(store)
-        landed, bounced, opened = [], [], []
+        landed, bounced, opened, adopted = [], [], [], []
         if store.contract["mode"] in ("human", "merge"):
             git("fetch", store.contract["remote"], store.contract["trunk"], cwd=store.repo)
             if rewound(store, git("rev-parse", trunk_ref(store.contract), cwd=store.repo).stdout.strip()):
                 return report(store, [], [], [])
             if store.contract["mode"] == "merge":
                 advance_drain(store)
-            landed, bounced = poll_human(store)
+            landed, bounced, adopted = poll_human(store)
             for entry in store.entries("queued"):
                 (opened if land_human(store, integration, entry) else bounced).append(entry["id"])
             if store.contract["mode"] == "merge" and opened:
-                more_landed, more_bounced = poll_human(store)
-                landed, bounced = landed + more_landed, bounced + more_bounced
+                more_landed, more_bounced, more_adopted = poll_human(store)
+                landed, bounced, adopted = landed + more_landed, bounced + more_bounced, adopted + more_adopted
             states = {row["id"]: row["state"] for row in store.db.execute("SELECT id, state FROM entry")}
             bounced += [ident for ident in opened if states[ident] == "bounced" and ident not in bounced]
             opened = [ident for ident in opened if states[ident] == "awaiting-merge"]
-            return report(store, landed, bounced, opened)
+            return report(store, landed, bounced, opened, adopted)
         single, rounds = False, 0
         while (queued := store.entries("queued")) and not store.contract.get("paused"):
             rounds += 1
@@ -1153,7 +1160,7 @@ def land(store):
         handle.close()
 
 
-def report(store, landed, bounced, opened):
+def report(store, landed, bounced, opened, adopted=()):
     rows = {row["id"]: row for row in store.db.execute("SELECT * FROM entry")}
     lines = []
     if landed:
@@ -1167,6 +1174,7 @@ def report(store, landed, bounced, opened):
     if opened:
         lead = "opened PRs that merge when their checks pass: " if store.contract["mode"] == "merge" else "opened PRs for "
         lines.append(lead + ", ".join(f"{entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
+    lines += [f"adopted {entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in adopted]
     lines += [f"bounced {entry_label(i)} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
     waiting = [entry_label(row["id"]) for row in rows.values() if row["state"] in ("queued", "landing")]
     if waiting:
