@@ -225,6 +225,8 @@ class RolesTest(unittest.TestCase):
         self.assertNotIn("ultra", json.dumps(verifiers))
         full = roles.resolve(config("unlimited"), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
         self.assertEqual(full[1]["options"]["reasoningEffort"], "max")
+
+    def test_show_writes_ultra_under_every_budget_when_it_is_the_only_level(self):
         only_ultra = {
             "inheritedProviderInstanceId": "codex",
             "inheritedModel": "gpt-6.1-sol",
@@ -235,10 +237,26 @@ class RolesTest(unittest.TestCase):
                 ]}],
             }],
         }
-        bare = roles.resolve(config("unlimited"), only_ultra, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(bare, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
-        stripped = roles.resolve(config("unlimited", **{"bug-fix": [explicit]}), only_ultra, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(stripped, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+        ultra = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "ultra"}}
+        codex_max = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "max"}}
+
+        def show(budget, catalog, seat=None):
+            with tempfile.TemporaryDirectory() as directory:
+                roles_file = Path(directory) / "pstack-t3" / "roles.json"
+                roles_file.parent.mkdir()
+                roles_file.write_text(json.dumps({"version": 1, "budget": budget, "roles": {"bug-fix": [seat]} if seat else {}}))
+                completed = subprocess.run(
+                    [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory,
+                     "--catalog", "-", "--parent", "codex/gpt-6.1-sol", "--role", "bug-fix"],
+                    input=json.dumps(catalog), env={**os.environ, "XDG_CONFIG_HOME": directory},
+                    capture_output=True, text=True, check=True)
+            return json.loads(completed.stdout)["roles"]["bug-fix"]["seats"]
+
+        for budget in ("default", "small", "medium", "large", "unlimited"):
+            self.assertEqual(show(budget, only_ultra), [ultra], budget)
+            self.assertEqual(show(budget, only_ultra, ultra), [ultra], budget)
+        self.assertEqual(show("default", CATALOG, ultra), [ultra])
+        self.assertEqual(show("unlimited", CATALOG, ultra), [codex_max])
 
     def test_catalog_stdin_matches_the_file_error_and_accepts_json(self):
         script = [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--role", "bug-fix", "--parent", "claudeAgent/claude-opus-5-5"]
