@@ -916,6 +916,18 @@ def fragment_name(branch):
     return branch.replace("%", "%25").replace("/", "%2F") + ".md"
 
 
+def fragment_holds_bullets(lines):
+    open_bullet = False
+    for line in lines:
+        if line.startswith("- ") and line[2:].strip():
+            open_bullet = True
+            continue
+        if open_bullet and (line.startswith(" ") or line.startswith("\t")) and line.strip():
+            continue
+        return False
+    return open_bullet
+
+
 def changelog_findings(root):
     findings = []
     changelog = root / "CHANGELOG.md"
@@ -934,8 +946,7 @@ def changelog_findings(root):
         if "/" in relative:
             findings.append(f"changes/{relative} sits in a subdirectory. changes/ is flat.")
             continue
-        lines = path.read_text().splitlines()
-        if not lines or any(not line.startswith("- ") or not line[2:].strip() for line in lines):
+        if not fragment_holds_bullets(path.read_text().splitlines()):
             findings.append(f"changes/{relative} holds a line that is not a bullet.")
     return findings
 

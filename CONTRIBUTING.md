@@ -18,7 +18,7 @@ python3 scripts/build.py
 python3 -m unittest discover -s tests -v
 ```
 
-Commit the regenerated `skills/` with your change. For a user-facing change, add one fragment under `changes/`. The file name is the branch name with `%` encoded as `%25` and `/` encoded as `%2F`, then `.md`. Encode `%` before `/`. Branch `pstack-t3/d50` writes `changes/pstack-t3%2Fd50.md`. The file holds markdown bullets only. Each bullet is one line that starts with `- `. A branch reused before the release adds its next bullet to the same file. CI fails if `skills/` does not match what the build produces.
+Commit the regenerated `skills/` with your change. For a user-facing change, add one fragment under `changes/`. The file name is the branch name with `%` encoded as `%25` and `/` encoded as `%2F`, then `.md`. Encode `%` before `/`. Branch `pstack-t3/d50` writes `changes/pstack-t3%2Fd50.md`. The file holds markdown bullets only. A bullet starts with `- `. Indent a continuation line under that bullet. A branch reused before the release adds its next bullet to the same file. CI fails if `skills/` does not match what the build produces.
 
 Edit `README.md` or `docs/guide.md` only when the ticket is about those files, or when the change removes or renames something they name. Otherwise list the doc edit under follow-ups. Those notes become one docs change. When one coordinator owns those files, that coordinator takes the change. When none does, each coordinator's notes are one batch.
 
