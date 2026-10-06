@@ -21,6 +21,7 @@ from pathlib import Path
 TICKET_STATES = ("waiting", "assigned", "done", "dropped")
 DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "queued", "merged", "dropped")
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
+OPEN_RUN_MINUTES = 10
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
@@ -385,7 +386,10 @@ def watch(restaurant):
         if written and written >= start:
             if dish.get("reported") == "yes":
                 ago = int((moment - written).total_seconds() // 60)
-                lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
+                if ago > OPEN_RUN_MINUTES:
+                    lines.append(f"{dish['id']}: reported, run still open {ago}m ({where})")
+                else:
+                    lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
             else:
                 lines.append(f"{dish['id']}: report written, no report-back ({where})")
         elif minutes > timebox:
@@ -393,6 +397,23 @@ def watch(restaurant):
         else:
             lines.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
     return "\n".join(lines) or "no work in progress"
+
+
+def record_hang(restaurant, ident, provider, minutes):
+    """One open run after report-back, once per attempt. The provider string is stored as given."""
+    if not clean(provider):
+        raise BrigadeError("hang needs a provider")
+    if minutes < 0:
+        raise BrigadeError("minutes must be 0 or more")
+    _, dish = restaurant.find("dishes.tsv", ident)
+    if dish.get("reported") != "yes":
+        raise BrigadeError("no report-back on this attempt")
+    start = started_at(restaurant, ident) or datetime.fromisoformat(dish["at"])
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "hang" and row["id"] == ident and datetime.fromisoformat(row["at"]) >= start:
+            return f"{ident}: hang already recorded"
+    restaurant.log("hang", ident, "open", f"{provider} {minutes}m")
+    return f"{ident}: {provider} open {minutes}m"
 
 
 def walk(root, stale_hours=24):
@@ -463,6 +484,11 @@ def parser():
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
+
+    p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
+    p.add_argument("id")
+    p.add_argument("--provider", required=True)
+    p.add_argument("--minutes", type=int, required=True)
 
     p = sub.add_parser("dish", help="update a dish")
     p.add_argument("id")
@@ -681,6 +707,8 @@ def run(argv):
         return brief(restaurant, args.id, **_brief_fields(args))
     if args.command == "watch":
         return watch(restaurant)
+    if args.command == "hang":
+        return record_hang(restaurant, args.id, args.provider, args.minutes)
     if args.command == "status":
         level = f"reporting: {reporting_of(restaurant.meta)}"
         counts_text = status_line(restaurant)
