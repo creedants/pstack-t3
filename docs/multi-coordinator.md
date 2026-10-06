@@ -21,7 +21,7 @@ In this document a coordinator is one standing coordinator thread and its store 
 | 11 | Store collision | Two repositories with the same directory name share a store directory. `open` returns the other repository's coordinator | 3 |
 | 12 | Renew breaks the lease invariant | `lease renew` revives an expired lease after a sibling claimed the same paths, leaving two active leases on one file | 2 |
 
-Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 10 are listed in landing order under [Changes](#changes). Changes 8 and 9 add the optional [executive admin](#the-executive-admin) the user asked for, an assistant that keeps the user up to date across every coordinator and coordinates between them on the user's behalf.
+Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 are listed in landing order under [Changes](#changes). Changes 8 to 10 add the optional [executive admin](#the-executive-admin) the user asked for. It keeps the user up to date across every coordinator, and settles conflicts between coordinators by published rules, logging every ruling for the user to review and overrule.
 
 ## Method
 
@@ -98,23 +98,64 @@ Observed. `docs/D9` claimed `README.md` as L6 with a short TTL. After it expired
 
 ## The executive admin
 
-The user stays in charge of every coordinator, as brigade's skill already says. The executive admin is the user's assistant. It keeps the user up to date across every coordinator, and it coordinates between coordinators on the user's behalf. It is not a boss over them. The user stays the one who decides, and each coordinator keeps owning its own work, its reviews, its queue entries, and its `menu.md`. The admin does the clerical work a person running many coordinators would otherwise do by hand. It forwards requests to the right coordinator, files shared intake once, notices caps and conflicts, and writes one plain-language update.
+The user stays in charge of every coordinator, as brigade's skill already says. The executive admin works for the user in two ways. As an assistant, it keeps the user up to date across every coordinator, forwards requests, files shared intake once, and writes one plain-language update. As a coordinator of coordinators, it settles conflicts between them on its own authority, by published rules, and logs every ruling so the user can review and overrule it. It escalates only what the rules cannot settle. Each coordinator keeps owning its own work, its reviews, its queue entries, and its `menu.md`.
 
-### The scripts enforce, the user decides, the admin carries it out
+### Who decides what
 
-Every guard stays in the scripts. The repository cap stays in `land.py` (change 2), path exclusion stays in leases, and duplicate intake is prevented by intake ownership (change 4). A thread cannot enforce a cap against two coordinators starting work at once. Every choice stays with the user, including the cap, the landing mode, which coordinator goes first in a conflict, and every answer to a decision. The admin applies the user's answers, and the standing instructions the user wrote in its `menu.md`, and reports each time it did. A coordinator treats a request from the admin as a message from the user. It can decline with a reason, which the admin passes on to the user. When the admin's thread is gone, every coordinator keeps working and falls back to replying to the user itself. The admin is optional. Changes 1 to 7 work without it.
+- **The scripts enforce.** The repository cap stays in `land.py` (change 2), path exclusion stays in leases, and duplicate intake is prevented by intake ownership (change 4). A thread cannot enforce a cap against two coordinators starting work at once, so every ruling is carried out through a script wherever one exists.
+- **The admin rules on conflicts between coordinators.** It decides contested paths, ownership of a request that fits two purposes, the split of the repository cap, and queue order between two coordinators' work, by the rules in [Rulings](#rulings). A coordinator must comply, and may appeal.
+- **The user sets the rules' inputs and has the last word.** The user sets the repository cap, the landing mode, every purpose, and the priorities the rules read. The user answers every decision, and can overrule any ruling.
+- **Each coordinator keeps its own work.** What it builds, how it reviews, and when it submits, absent a conflict, stay its own. A `from-user` request is a message from the user, and a coordinator can decline one with a reason, which the admin passes on. A ruling is not a request. When the admin's thread is gone, every coordinator keeps working and falls back to replying to the user itself. The admin is optional. Changes 1 to 7 work without it.
 
 ### What it does
 
 | Duty | How |
 | --- | --- |
-| Routing requests | A request the user sends to the admin goes to the coordinator whose purpose fits, by `ticket move` and the `ticket` line. When no purpose fits, or two fit, it asks the user. A coordinator that finds a routed ticket off its purpose moves it back and sends `misrouted`. |
+| Routing requests | A request the user sends to the admin goes to the coordinator whose purpose fits, by `ticket move` and the `ticket` line. When two fit, an ownership ruling decides. When none fits, it asks the user. A coordinator that finds a routed ticket off its purpose moves it back and sends `misrouted`. |
 | Shared intake | For a repository where several coordinators would read the same source, such as its GitHub issues, the admin is the intake owner from change 4. It files each issue once and routes it. It starts nothing. |
-| Watching the cap | It reads `land.py status` and each coordinator's `status`. When a repository sits at its cap while tickets wait for an hour, or one coordinator holds most of the cap, it tells the user and proposes a change with a default. It runs `land.py cap` only when the user asks. It passes a new worker share to a coordinator as a request from the user. |
-| Watching conflicts | When a coordinator reports a ticket blocked by another coordinator's lease for an hour, it tells the user which work waits on which, with a default. The default comes from the user's standing instructions when they cover the case. Otherwise the default is to wait. It passes the user's answer to the coordinators involved as a request. It never takes a lease away. |
+| Splitting the cap | It splits the repository cap the user set among coordinators by the worker-share rules, and sends a `ruling` when a share changes. When a repository sits at its cap while tickets wait for an hour, it tells the user and proposes a new cap with a default. It runs `land.py cap` only when the user asks. |
+| Ruling on conflicts | It rules on contested paths, including hot shared files, and on queue order between coordinators, by [Rulings](#rulings). It finds conflicts in `blocked` rows older than an hour, in `contest` lines, and while routing. It never takes a lease away. |
 | The landing mode | It runs `land.py mode` only when the user asks, and then tells every coordinator on that repository. |
 | One update | It writes one plain-language update across all coordinators, at the user's reporting level. |
 | Opening coordinators | When the user asks it to open a coordinator, it runs the opening steps, asks the user the opening questions, shows any overlap with the purposes of coordinators already on that repository, and launches the new thread once the user agrees. |
+
+### Rulings
+
+The admin rules on four kinds of conflict between coordinators, on its own authority. It decides by the rules below, applied in order, and the first rule that separates the parties decides. A ruling binds the coordinators involved until it is carried out, expires, or the user overrules it.
+
+The rules read three inputs.
+
+- Each coordinator's `menu.md`, its purpose and its `## Off the menu` exclusions.
+- The user's priorities, a ranked list under `## Priorities` in the admin's own `menu.md`, highest first. An entry names a coordinator or a kind of work. Only the user changes it.
+- Age, meaning how long the waiting work has waited. For a blocked ticket it counts from its first `blocked` row. For queue order it counts from its `submit`.
+
+| Kind | Question | Rules, in order |
+| --- | --- | --- |
+| Contested paths | Which coordinator claims a contested path next, including a hot shared file such as `README.md` | 1. A path that one coordinator's purpose names and the other's `## Off the menu` excludes goes to the first. 2. The user's priorities. 3. The older waiting work. |
+| Ownership | Which coordinator owns a request that fits two purposes | 1. A coordinator whose `## Off the menu` excludes it loses. 2. The user's priorities. 3. The coordinator whose open work already touches the request's paths or ref. |
+| Worker shares | How the repository cap the user set is split | 1. Every coordinator with waiting work gets one worker while the cap allows. 2. The rest goes by the user's priorities, highest first, up to each coordinator's waiting work. 3. A tie goes to the coordinator whose oldest waiting ticket is older. |
+| Queue order | Which of two coordinators' passed items lands first when one would break or conflict with the other | 1. An item the other depends on lands first, as either coordinator or its verifier stated. 2. The user's priorities. 3. The older `submit`, which is the queue's own order. |
+
+A live lease is never taken away. A contested-path ruling decides who claims next when the lease frees, and whether the holder may start new work on those paths while older or higher-ranked work waits. Worker shares are recomputed every service and sent only when one changes.
+
+Each ruling is carried out by a mechanism the scripts enforce wherever one exists.
+
+- Contested paths. The admin runs `land.py lease reserve --for <winner>/ --paths <paths> --ruling R<n>` (change 8). While the reservation stands, `lease claim` refuses any other holder's claim that overlaps it. The reservation ends when the winner claims those paths, when the admin lifts it after an overrule, or after 2 hours, so a winner that never claims blocks no one for long.
+- Ownership. `ticket move` to the winner.
+- Worker shares. A `ruling` line. The coordinator runs `set --workers <n>`.
+- Queue order. A `ruling` line. The coordinator whose item goes second runs `land.py order E<its entry> --after E<other entry> --holder <its holder>` on its own entry (change 8), and `land` skips that entry until the other lands or bounces.
+
+**The ruling log.** Before it carries a ruling out, the admin records it with `brigade.py rule add` in `rulings.tsv` in its own store. Each row holds an id `R<n>`, the time, the kind, the parties, the question, the rule that decided (`purpose`, `priority`, `age`, `related-work`, `dependency`, `floor`, or `user`), the decision, and a state (`in-force`, `done`, `expired`, or `overruled`). Recording comes first, so a crash never leaves a ruling carried out but unlogged. Carrying one out is safe to repeat. `lease reserve` with the same ruling id returns the same reservation, and `ticket move`, `set --workers`, and `land.py order` give the same result when rerun.
+
+**Review and overrule.** Every update lists the rulings made since the last one, each with the rule that decided it, in plain words. The user can overrule any ruling by describing it. The admin runs `rule overrule R<n> --decision "<the user's words>"`, which marks it `overruled` and records a new ruling decided by `user`. Then it carries the new ruling out. It lifts or replaces the reservation, moves the ticket back, resends the shares, or asks the second coordinator to reorder. An overrule changes what happens next. It cannot undo what the old ruling already caused, such as a lease already claimed or work already landed, and the admin says so. When the overrule states a general preference, the admin asks whether to add it to `## Priorities`, and adds it only when the user says yes.
+
+**What it escalates.** The admin asks the user only what the rules cannot settle. It parks each as a decision with `86 add`, with options and a default, and acts on that conflict only after the answer.
+
+- A real priority call. No rule separates the parties, such as an ownership case where no exclusion, priority, or related work decides. Or the rules keep ruling against one coordinator, which lost three rulings in a row on the same paths, or whose work has waited on rulings for more than 24 hours. Those thresholds are starting guesses for the live run to tune.
+- A change to a purpose. The same two purposes collided in more than three rulings in a week, or a request fits no purpose. The admin proposes new wording. It never edits a coordinator's `menu.md`.
+- Anything irreversible. That covers dropping or closing another coordinator's work, deleting a branch, and changing the repository cap or the landing mode, which belong to the user.
+
+**Coordinators comply, and can appeal.** A coordinator carries out a ruling for its own side. When it disagrees, it still complies and sends `appeal`. The admin rechecks the ruling with the appeal's facts, such as a dependency it did not know. When the rules now decide differently, it issues a new ruling. Otherwise it keeps the ruling and lists the appeal in the next update for the user to review. When compliance would be irreversible, the coordinator holds instead of complying, and the admin escalates.
 
 ### One admin for the user, across all projects
 
@@ -143,6 +184,8 @@ Coordinator to admin:
 | `blocked <coordinator> T<n>: waiting on L<n> held by <holder> since <time>` | a ticket has been blocked for more than an hour |
 | `misrouted <coordinator> T<n>: <why>` | a routed ticket is off its purpose, after it moved the ticket back |
 | `reply <coordinator>: <one line>` | its answer to a request from the user, including a decline and its reason |
+| `contest <coordinator> D<n>: <one line>` | its passed item and another coordinator's would conflict in the queue, naming which depends on which |
+| `appeal <coordinator> R<n>: <why>` | it disagrees with a ruling, after it complied, or instead of complying when compliance would be irreversible |
 
 Admin to coordinator:
 
@@ -152,22 +195,23 @@ Admin to coordinator:
 | `from-user <coordinator>: <the user's words>` | treats it as a message from the user, and answers with `reply` |
 | `answer <coordinator> Q<n>: <answer>` | records the user's answer with `86 answer`, then acts on it |
 | `reports-to <coordinator> <thread>` | runs `set --reports-to <thread>` |
+| `ruling <coordinator> R<n>: <decision>` | carries out its side of the ruling, which means waiting, running `set --workers`, or running `land.py order` on its own entry |
 
-A worker share, a conflict resolution, and a mode change all travel as `from-user`, with the user's words quoted, or with the standing instruction the admin applied named in the line.
+Worker shares, contested paths, ownership, and queue order travel as `ruling` lines. A mode change and any other instruction from the user travel as `from-user`, with the user's words quoted.
 
-Every admin line is durable. Before it sends, the admin writes the line as a request file in the coordinator's `inbox/`, named by the `note` id. A coordinator's `inbox take` files routed tickets, as `ticket take` does, and prints each request file's line. The coordinator acts on it as the table says, then runs `inbox done <id>`, which deletes the file. A crash between acting and `inbox done` replays the request, so every action is keyed by the request id. A `from-user` request becomes work only through `ticket add --request <id>`, which refuses a second ticket for the same request id, and work starts only from tickets, which `fire` refuses once they are no longer waiting. Setting a value and recording an answer give the same result when repeated. So a replayed request repeats nothing.
+Every admin line is durable. Before it sends, the admin writes the line as a request file in the coordinator's `inbox/`, named by the `note` id. A coordinator's `inbox take` files routed tickets, as `ticket take` does, and prints each request file's line. The coordinator acts on it as the table says, then runs `inbox done <id>`, which deletes the file. A crash between acting and `inbox done` replays the request, so every action is keyed by the request id. A `from-user` request becomes work only through `ticket add --request <id>`, which refuses a second ticket for the same request id, and work starts only from tickets, which `fire` refuses once they are no longer waiting. Setting a value, recording an answer, and carrying out a ruling give the same result when repeated. So a replayed request repeats nothing.
 
 Every coordinator event is durable too, because it is a row in the coordinator's own `log.tsv`. The admin's service reads those rows past its cursor and acts on them. A decision is an open row in `86.tsv`. A blocked ticket is a `blocked` row from change 5 with no later start. A merge and a send-back are state rows. A drain is a status with no work in progress. The message lines in the table above only wake the admin sooner. When a coordinator's send fails, it also falls back to replying to the user at its own reporting level, so the user still hears.
 
 ### What it never does
 
-- Decide for the user. It sets no cap, mode, priority, or share on its own, and never answers a decision. It applies only the user's answers and the standing instructions in its `menu.md`, and its update says when it applied one.
-- Direct a coordinator. It sends requests on the user's behalf, and a coordinator may decline with a reason.
+- Decide what belongs to the user. It sets no repository cap, landing mode, priority, or purpose, and never answers a coordinator's decision. It rules only on the four kinds of conflict, by the rules, and logs every ruling.
+- Direct a coordinator's own work. Rulings settle conflicts between coordinators. What a coordinator builds, how it reviews, and when it submits, absent a conflict, stay its own.
 - Write code, or edit any file in a repository.
 - Land work. It never runs `land.py submit` or `land.py land`, and never merges or deletes a branch. Each coordinator owns its queue entries, PRs, and watches (change 6).
-- Touch a review. It never records or changes a verdict, never asks a coordinator to submit work that did not pass, and never messages a worker. When the user disagrees with a verdict, the user's words go to that coordinator as `from-user`.
+- Override a review. It never records or changes a verdict, never asks a coordinator to submit work that did not pass, and never messages a worker. When the user disagrees with a verdict, the user's words go to that coordinator as `from-user`.
 - Write into a coordinator's store, except new files in its `inbox/`, which are routed tickets and request files. `Restaurant.log` in `brigade.py` rewrites `restaurant.json` on every event, so a second writer there would lose updates.
-- Release, renew, or claim a lease, or start work. The admin store refuses `fire`, `brief`, `dish`, `pass`, and `watch`.
+- Release, renew, or claim a lease, or start work. It only reserves contested paths for the winner of a ruling. The admin store refuses `fire`, `brief`, `dish`, `pass`, and `watch`.
 
 ### How the user opens it
 
@@ -175,7 +219,7 @@ The user asks any thread for an executive admin, through the brigade skill.
 
 1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`, because the admin exists so the user hears less.
 2. `python3 <skills>/brigade/scripts/brigade.py open --admin --reporting <level>`. It creates `<store>/.admin/` with `mkdir` and no `exist_ok`, so there is one per store. A second open prints `exists`, and only the caller that got `opened` launches a thread. It prints every coordinator, grouped by repository, as `walk` does.
-3. Write the user's standing instructions into its `menu.md` with the user. They say which coordinator goes first when two conflict, what the admin may apply without asking, and which repositories' intake it should own.
+3. Write the user's priorities under `## Priorities` in its `menu.md`, with the user, highest first. Add which repositories' intake it should own. The rules read the priorities. Without them, the rules fall back to purposes and age.
 4. Move shared intake. For each repository the user names, each coordinator that lists the shared source runs `set --intake` without it. Change 4 refuses that while it still has waiting or assigned tickets from the source, so it finishes them first or moves them to the admin with `ticket move`. Then the admin store runs `set --intake <root>=<source>`.
 5. Launch the thread with `t3_thread_launch` in the project the user picks, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade skill. You are the executive admin for the store at `<store>/.admin`. Wait for the start message." Record it with `set --thread`. Then send it "Run your first service." with `t3_thread_send` and mode `"auto"`. Recording the thread before its first service lets that service pass the fence below.
 6. The admin's first service sends each coordinator the `reports-to` line.
@@ -190,7 +234,7 @@ Every wake, whether a schedule, a message, or a user message, runs one service.
 2. Read its `menu.md`, `status`, `86 list`, and `walk --stale-hours 3`.
 3. `inbox take`, for tickets moved back. Then intake from its owned sources with `ticket add --repo <root>`.
 4. Route each waiting ticket with `ticket move` and the `ticket` line. A ticket no purpose fits, or two fit, becomes a question for the user with `86 add`.
-5. Run `sync`, which reads each coordinator's `log.tsv` rows past its cursor, records them in the admin's own `log.tsv`, and advances the cursor. Pass decisions and blocks older than an hour to the user, with a default. Apply a standing instruction only where the user wrote one, and say so in the update.
+5. Run `sync`, which reads each coordinator's `log.tsv` rows past its cursor, records them in the admin's own `log.tsv`, and advances the cursor. Rule on each conflict it finds, such as a block older than an hour, a `contest` or `appeal` line, or a changed share, per [Rulings](#rulings). Record each ruling with `rule add` before carrying it out. Pass coordinators' decisions, and whatever the rules cannot settle, to the user.
 6. A coordinator that `walk` marks idle while it holds leases becomes a question for the user, before its 6-hour leases lapse.
 7. Reply per the user's reporting level.
 
@@ -204,7 +248,7 @@ Retiring the admin routes or drops its waiting tickets, then clears its intake w
 
 The user hears from one thread. A coordinator whose `restaurant.json` has `reportsTo` replies to the user only when the user writes to it directly. Its own reporting level stops mattering. It sends every event in the table above, whatever its level, because the admin's level filters replies, and it cannot filter events it never received. Its `close --to-file` still writes its full report into its own store.
 
-The admin's level uses the same three values as a coordinator's. At `every-turn` it replies after each of its own wakes, and each message is a wake. A coordinator's routine wake sends no line, so the user stops hearing about routine wakes. At `milestones` it replies when any coordinator's work merges, when a review sends work back or blocks it, when the user has a decision to make, or when a failure arrives. At `digest` it replies for a decision, a failure that no coordinator can fix itself, one summary when every coordinator has drained, and the evening update.
+The admin's level uses the same three values as a coordinator's. At `every-turn` it replies after each of its own wakes, and each message is a wake. A coordinator's routine wake sends no line, so the user stops hearing about routine wakes. At `milestones` it replies when any coordinator's work merges, when a review sends work back or blocks it, when the user has a decision to make, or when a failure arrives. At `digest` it replies for a decision, a failure that no coordinator can fix itself, one summary when every coordinator has drained, and the evening update. A ruling is never a reply occasion on its own at `milestones` or `digest`. Each update lists the rulings made since the last one in plain words, with the rule that decided each, and says that the user can overrule any of them by describing it. The full update file holds each ruling's id.
 
 Every admin reply is plain language at every level, written as brigade's Digest messages rules say. A few sentences say what changed for each purpose, what is next, and what the user must decide, each decision with its default. It leaves out work ids, SHAs, paths, branch names, and tool names. It names a coordinator by its purpose, not its store name. Merged PRs may follow as plain titles linked to their URLs. It ends with one line naming the full update, which `close --to-file` writes in its store. Because the service copies each coordinator's events into the admin's own `log.tsv`, that update is the admin's ordinary report of its own log, plus the newest report path of each coordinator. A message from the user gets at least a one-line acknowledgment at every level, and a direct question gets an answer, as for any coordinator. A coordinator's decision keeps its home in that coordinator's `86.tsv`, and the user's answer goes back as an `answer` line. The admin's own questions, such as a ticket no purpose fits, live in its own `86.tsv`.
 
@@ -213,17 +257,19 @@ Every admin reply is plain language at every level, written as brigade's Digest 
 | # | Gap | With an executive admin |
 | --- | --- | --- |
 | 1 | Duplicate intake | Replaces the owner. For a repository the user names, the admin owns the shared source, so no coordinator does. Change 4's mechanism is unchanged. |
-| 2 | No cap across coordinators | Adds. `land.py cap` still enforces. The admin watches the counts and proposes changes, and the user picks the cap and the shares. |
-| 3 | No handoff | Adds. `ticket move` stays the mechanism, and coordinators keep moving tickets to siblings themselves (change 4). The admin also routes the user's requests and shared intake. |
+| 2 | No cap across coordinators | Replaces each coordinator choosing its own share. `land.py cap` still enforces the total the user sets, and the admin rules each coordinator's share. |
+| 3 | No handoff | Adds. `ticket move` stays the mechanism, and coordinators keep moving tickets to siblings themselves (change 4). The admin also routes the user's requests and shared intake, and rules ownership when a request fits two purposes. |
 | 4 | Overlapping purposes | Adds. `open` still prints siblings. The admin shows the user any overlap before a new coordinator launches. |
-| 5 | Blocked tickets | Adds. `watch` still reports, and each coordinator still retries. After an hour, the admin tells the user who waits on whom, and passes on the user's answer. |
+| 5 | Blocked tickets | Replaces the race. `watch` still reports. When a block lasts an hour, the admin rules who claims next and reserves the paths for the winner, so when the lease frees only the winner's `fire` succeeds. |
 | 6 | Mode drift | Replaces one step. Change 7's coordinator running `land.py mode` and telling each sibling becomes the admin, acting when the user asks. |
-| 7 | Hot shared files | Replaces "each coordinator batches its own". Doc follow-ups go to the admin, which routes them to the one coordinator the user's standing instructions name, or asks. |
+| 7 | Hot shared files | Replaces "each coordinator batches its own". Hot shared files get the contested-path rules. Doc follow-ups go to the admin, which routes them by the ownership rules. |
 | 8 | No combined view | Replaces the user-facing part. The admin's update is the combined view across every project. Grouped `walk` (change 7) stays as its data source. |
 | 9 | Work landed by a sibling | Neither. Each coordinator settles its own entries (change 6). |
 | 10 | Lease expiry | Adds a little. `walk --stale-hours 3` shows a coordinator idle for 3 hours, and the admin asks the user before that coordinator's 6-hour leases lapse. |
 | 11 | Store collision | Neither. |
 | 12 | Renew breaks the lease invariant | Neither. |
+
+Queue order between two coordinators' work is a conflict the gap list did not name. The admin rules it, and `land.py order` (change 8) enforces it.
 
 ## Changes
 
@@ -341,9 +387,18 @@ Closes gaps 6 and 8.
 - **Files.** Same as change 3, plus `docs/guide.md` and `docs/brigade-plan.md`.
 - **Tests.** `status` and `walk` print the contract mode after `land.py mode` changes it, with no brigade command run in between. `walk` groups two siblings under one header and a third coordinator under another, with the literal lines. `set --landing` exits 2.
 
-### Change 8. The executive admin's store and commands
+### Change 8. Reservations and entry order in `land.py`
 
-Adds the code the admin needs. It lands after change 7, because it reuses intake ownership and `ticket move` (change 4) and the grouped `walk` (change 7).
+Adds the two script mechanisms that carry out the admin's rulings. It lands after change 2, which edits the same files.
+
+- **`lease reserve --for <holder prefix> --paths <paths> --ruling R<n> [--ttl-hours 2]`** prints `S<n>`. Reservations live in a new `reservation` table, because the `lease` table's state check cannot be altered in place. Inside the claim transaction, `lease claim` refuses a claim that overlaps a standing reservation for another holder prefix, with `paths reserved for docs/ by ruling R4 until <time>`. A claim by a holder under the reserved prefix succeeds and ends the reservation. A reservation counts toward no cap. A second `reserve` with the same ruling returns the same `S<n>`. A reservation that overlaps another standing reservation is refused. `lease unreserve S<n>` lifts one, and `lease list` and `lease check` show them.
+- **`land.py order E<n> --after E<m> --holder <holder>`** records that entry `E<n>` lands after `E<m>`. It refuses unless `--holder` is the holder of `E<n>`, so a coordinator orders only its own entry. It refuses a cycle and an entry that is not queued. `land` skips a queued entry while its `after` entry is queued, landing, or awaiting merge. The order ends when that entry lands or bounces. The column joins `entry` the way `title` and `body` did, with `ALTER TABLE` when it is missing.
+- **Files.** `t3/added/landing/scripts/land.py`, `t3/added/landing/SKILL.md`, `tests/test_landing.py`, generated `skills/landing/`, its fragment.
+- **Tests.** A reservation for `docs/` refuses `engine/D3`'s overlapping claim with the literal message and admits `docs/D7`'s, which ends it. Two processes claiming reserved paths at once, one from each coordinator, leave only the winner's lease. A reservation expires after its TTL. `reserve` twice with one ruling id prints one `S<n>`. `order` makes `land` skip `E5` until `E3` lands, refuses `E3 --after E5` once `E5 --after E3` exists, and refuses another holder.
+
+### Change 9. The executive admin's store and commands
+
+Adds the code the admin needs. It lands after change 7, because it reuses intake ownership and `ticket move` (change 4) and the grouped `walk` (change 7), and after change 8, whose reservations and order its rulings use.
 
 - **`open --admin`.** It takes no `--project-root` or `--name`. It claims `<store>/.admin/` with change 3's `mkdir`, so two opens at once produce one store and one `opened`. It writes `role: "admin"` into `restaurant.json`.
 - **The admin store refuses work commands.** `fire`, `brief`, `dish`, `pass`, and `watch` exit 1 with `brigade: the executive admin routes work and never runs it`. `ticket add`, `ticket move`, `ticket take`, `86`, `note`, `status`, `close`, and `set` work.
@@ -353,24 +408,25 @@ Adds the code the admin needs. It lands after change 7, because it reuses intake
 - **`ticket add --request <id>`** records the request id with the ticket and refuses a second ticket for that id.
 - **`inbox take`** files routed tickets as `ticket take` does, and prints each request file's line. **`inbox done <id>`** deletes one request file. `ticket take` stays as the name for the ticket half. `status` adds `requests from the user: N` while request files wait.
 - **`set --thread <id> --replace --expect <old>`** replaces the recorded thread only when it is still `<old>`, and prints the schedule ids recorded at that moment. It applies to every coordinator, not only the admin. The lock is `fcntl` on a sidecar file, `restaurant.lock`, that is never replaced. A lock on `restaurant.json` itself would not hold, because `write_atomic` replaces that file's inode on every write. Every other write of `restaurant.json` in `brigade.py`, including the `lastActivityAt` update in `Restaurant.log` and the cursor update in `close`, takes the same lock and rereads the file before it changes only its own fields. A write that read the file before a replacement can no longer restore the old thread.
+- **`rule add --kind <kind> --parties <a,b> --question "..." --rule <rule> --decision "..."`** records a ruling in `rulings.tsv` in the admin store and prints `R<n>`. **`rule overrule R<n> --decision "..."`** marks it `overruled` and records the user's ruling. **`rule list [--state in-force]`** prints them. `rule` works only in the admin store. The admin's `close` lists the rulings recorded since its last update.
 - **`note "<line>"`** and **`note --delivered <id>`** record message sends in `log.tsv` and print the `clientRequestId`, per Messages.
 - **`set --reports-to <thread>`** records `reportsTo` in a coordinator's `restaurant.json`. `set --reports-to ""` clears it.
 - **`status`** prints `thread <id>` first, or `thread not recorded`, so the fence step can compare it, and `reports to <thread>` when that is set.
 - **`walk`** prints the admin's line first, above every repository. **`sync`** in the admin store copies every coordinator's `log.tsv` rows past that coordinator's byte-offset cursor into the admin's own `log.tsv`, as `relay` rows whose note names the coordinator's store path and the row's byte offset, then advances the cursor. Before copying, it advances the cursor past any row the admin's log already holds a `relay` row for, so a crash between the copy and the cursor update copies nothing twice. The admin's service runs it in step 5. The admin's `close` reports its own log as any coordinator's does, with `relay` rows grouped by coordinator, and names each coordinator's newest file in `closeouts/`.
 - **Files.** `t3/added/brigade/scripts/brigade.py`, `tests/test_brigade.py`, generated `skills/brigade/`, its fragment.
-- **Tests.** Two processes running `open --admin` at once print one `opened` and one `exists`, and leave one store. Two projects that each have a `docs` coordinator with a T1 move both into the admin, and both arrive as separate tickets. An admin ticket for one root cannot move to a coordinator on another root. A request file survives a failed send, and `inbox take` prints it until `inbox done`. A `from-user` request replayed after its ticket was added files no second ticket. A `sync` killed after its copy and before its cursor update copies nothing twice on the next run. `fire` in the admin store exits 1. Two processes running `set --thread --replace --expect` with the same old id leave one new thread and one exit 1. A `log` write that read `restaurant.json` before a replacement leaves the new thread recorded. A ticket moved from a coordinator to the admin and on to a coordinator in another project frees its ref at every step once the last ticket is `done`. So does a misroute moved back to the admin and on to a third coordinator. `sync` copies a coordinator event appended while the previous `sync` ran, including a row whose timestamp is older than the previous one, exactly once. `note` returns the same id for a retry and a new id for the same line after `--delivered`.
+- **Tests.** Two processes running `open --admin` at once print one `opened` and one `exists`, and leave one store. Two projects that each have a `docs` coordinator with a T1 move both into the admin, and both arrive as separate tickets. An admin ticket for one root cannot move to a coordinator on another root. A request file survives a failed send, and `inbox take` prints it until `inbox done`. A `from-user` request replayed after its ticket was added files no second ticket. `rule add` then `rule overrule` leaves one `overruled` row and one `user` row, and the next `close` lists both. A `sync` killed after its copy and before its cursor update copies nothing twice on the next run. `fire` in the admin store exits 1. Two processes running `set --thread --replace --expect` with the same old id leave one new thread and one exit 1. A `log` write that read `restaurant.json` before a replacement leaves the new thread recorded. A ticket moved from a coordinator to the admin and on to a coordinator in another project frees its ref at every step once the last ticket is `done`. So does a misroute moved back to the admin and on to a third coordinator. `sync` copies a coordinator event appended while the previous `sync` ran, including a row whose timestamp is older than the previous one, exactly once. `note` returns the same id for a retry and a new id for the same line after `--delivered`.
 
-### Change 9. The executive admin in the brigade skill
+### Change 10. The executive admin in the brigade skill
 
-- **Content.** A new section of the brigade skill, "Executive admin", with the opening steps, the services, the message tables, the never-do list, and the rules for what the user hears, from [The executive admin](#the-executive-admin). Run a service step 9 gains the rule for a coordinator with `reportsTo`, including the fallback to replying directly when a send fails. First service gives every coordinator with `reportsTo` a schedule that runs a service at least hourly, whether or not it owns intake, and Run a service step 2 begins with `inbox take`. A coordinator treats `from-user` as a message from the user and answers with `reply`. The liveness check sends the `blocked` line after an hour. Change 4's handoff message becomes the `ticket` line. The skill keeps the user in charge. `docs/brigade-plan.md` gains a row for the executive admin, and its sentence that brigade has no overall coordinator gains that the admin serves the user and coordinates nothing on its own authority.
+- **Content.** A new section of the brigade skill, "Executive admin", with the opening steps, the services, the message tables, the ruling rules and escalation list, the never-do list, and the rules for what the user hears, from [The executive admin](#the-executive-admin). A coordinator carries out a `ruling` for its own side and may `appeal`. It sends `contest` when its passed item and another coordinator's would conflict in the queue. Run a service step 9 gains the rule for a coordinator with `reportsTo`, including the fallback to replying directly when a send fails. First service gives every coordinator with `reportsTo` a schedule that runs a service at least hourly, whether or not it owns intake, and Run a service step 2 begins with `inbox take`. A coordinator treats `from-user` as a message from the user and answers with `reply`. The liveness check sends the `blocked` line after an hour. Change 4's handoff message becomes the `ticket` line. The skill keeps the user in charge. `docs/brigade-plan.md` gains a row for the executive admin, and its sentence that brigade has no overall coordinator gains that the admin serves the user and coordinates nothing on its own authority.
 - **Files.** `t3/added/brigade/SKILL.md`, generated `skills/brigade/`, `docs/brigade-plan.md`, its fragment.
-- **Test.** This changes skill behavior, so it needs a fresh-child test per the `pstack-author-skill` skill. A child acting as a coordinator with `reportsTo` set, and given a merge, must send the `merged` line with `mode: "queue"` and send the user nothing. A child acting as the admin, given a `blocked` line and no standing instruction that covers it, must ask the user with a default of waiting, and must send no request to either coordinator before the user answers. Given a `decision` line, it must not answer it.
+- **Test.** This changes skill behavior, so it needs a fresh-child test per the `pstack-author-skill` skill. A child acting as a coordinator with `reportsTo` set, and given a merge, must send the `merged` line with `mode: "queue"` and send the user nothing. Given a `decision` line, it must not answer it. Given a block older than an hour where the user's priorities rank one side higher, it must record a ruling decided by `priority`, reserve the paths for that side, and send no question to the user. Given a block that no rule separates, it must escalate with a default.
 
-### Change 10. User docs for several coordinators
+### Change 11. User docs for several coordinators
 
-- **Content.** A "Several coordinators on one repository" section in `docs/guide.md`, covering the caps, intake ownership, handoff, blocked tickets, the grouped `walk`, and the executive admin. A row in `docs/how-it-works.md`. This change is the docs batch that change 1's rule asks for, so changes 2 to 6, 8, and 9 leave these files alone.
+- **Content.** A "Several coordinators on one repository" section in `docs/guide.md`, covering the caps, intake ownership, handoff, blocked tickets, the grouped `walk`, and the executive admin with its rulings. A row in `docs/how-it-works.md`. This change is the docs batch that change 1's rule asks for, so changes 2 to 6 and 8 to 10 leave these files alone.
 - **Files.** `docs/guide.md`, `docs/how-it-works.md`, its fragment.
-- **Test.** `python3 scripts/build.py` passes. Every command the section shows appears in a unit test from changes 2 to 8.
+- **Test.** `python3 scripts/build.py` passes. Every command the section shows appears in a unit test from changes 2 to 9.
 
 ## Lease plan
 
@@ -383,11 +439,12 @@ Adds the code the admin needs. It lands after change 7, because it reuses intake
 | 5 | same as 3, with its own fragment | 2 |
 | 6 | same as 3, plus `t3/added/landing/SKILL.md`, `skills/landing`, with its own fragment | none |
 | 7 | same as 3, plus `docs/guide.md`, `docs/brigade-plan.md`, with its own fragment | none |
-| 8 | same as 3, with its own fragment | none |
-| 9 | `t3/added/brigade/SKILL.md`, `skills/brigade`, `docs/brigade-plan.md`, its fragment | none |
-| 10 | `docs/guide.md`, `docs/how-it-works.md`, its fragment | none |
+| 8 | same as 2, with its own fragment | 7 |
+| 9 | same as 3, with its own fragment | none |
+| 10 | `t3/added/brigade/SKILL.md`, `skills/brigade`, `docs/brigade-plan.md`, its fragment | none |
+| 11 | `docs/guide.md`, `docs/how-it-works.md`, its fragment | none |
 
-A fragment path is unique to its branch, so fragments never overlap. Changes 2 and 3 can run beside change 1 because they write a fragment and never touch `CHANGELOG.md`. If one lands first, its fragment waits in `changes/` for change 1's release step. Changes 3 to 7 all edit `brigade.py`, the brigade skill, and its tests, so they land one after another. Splitting `brigade.py` into modules to allow parallel leases would cost more than the sequencing does. Change 6 needs change 2's renew rule and `status --holder`, so 2 lands before 6. Change 5's repository-cap line reads the count change 2 adds to `land.py status`, so 2 also lands before 5. Changes 8 and 9 add the executive admin on top of changes 4 and 7, and edit the same brigade files, so they follow 7. Change 7 edits `docs/guide.md`, so it lands before change 10. A coordinator running this plan uses `fire --paths` with exactly the paths in this table.
+A fragment path is unique to its branch, so fragments never overlap. Changes 2 and 3 can run beside change 1 because they write a fragment and never touch `CHANGELOG.md`. If one lands first, its fragment waits in `changes/` for change 1's release step. Changes 3 to 7 all edit `brigade.py`, the brigade skill, and its tests, so they land one after another. Splitting `brigade.py` into modules to allow parallel leases would cost more than the sequencing does. Change 6 needs change 2's renew rule and `status --holder`, so 2 lands before 6. Change 5's repository-cap line reads the count change 2 adds to `land.py status`, so 2 also lands before 5. Change 8 edits `land.py` and the landing skill like changes 2 and 6, so it follows 6, and it can run beside change 7. Changes 9 and 10 add the executive admin on top of changes 4, 7, and 8, and edit the same brigade files, so they follow 7. Change 7 edits `docs/guide.md`, so it lands before change 11. A coordinator running this plan uses `fire --paths` with exactly the paths in this table.
 
 ## Live two-coordinator run
 
@@ -409,14 +466,16 @@ Record four numbers.
 - Minutes from a lease release to the retry. The target is at most one liveness interval, 10 minutes at `milestones`.
 - `fire` refusals, counted by kind (`lease`, `repository`, `workers`).
 
-After change 9 lands, the same run continues with an executive admin.
+After change 10 lands, the same run continues with an executive admin.
 
 1. `core` drops `github` from its intake. Open the admin with `open --admin`, give it `--intake <sandbox root>=github`, launch its thread in another T3 project than the sandbox's, and have `core` and `docs` run `set --reports-to <its thread>`. The first send between the two projects settles whether T3 delivers messages across projects.
 2. The user sends one request to the admin. It moves the ticket to `pstack-t3-sandbox/docs` and sends the `ticket` line, and `docs` takes it.
 3. When `docs`'s item merges, `docs` sends the `merged` line and sends the user nothing. The admin replies at the user's level, in plain language.
-4. `core` sends a `blocked` line, by hand if no conflict lasts an hour. The admin asks the user, with waiting as the default, and sends nothing to either coordinator until the user answers. `lease list` is unchanged by it.
+4. With `## Priorities` empty, `core` and `docs` both wait for `README.md` past an hour. Shorten the threshold for the run if no conflict lasts that long. The admin rules by age, records the ruling, and reserves the paths for the older side. When the lease frees, the other side's `fire` is refused with the reservation message, and the winner's succeeds. `lease list` shows no lease taken away.
+5. The user overrules that ruling in plain words. The admin records the overrule, lifts the reservation, and reserves for the other side. Its next update lists both rulings.
+6. Two passed items, one depending on the other, get a `contest` line. The admin rules by dependency, and `land` lands the dependency first.
 
-That part records two more numbers. Replies to the user from coordinator threads that the user did not write to first, with a target of 0 while sends deliver. A failed send expects the coordinator's direct reply instead, and the run checks that case once by sending to a thread id that does not exist. The second number is requests the admin sent that the user had not answered or covered with a standing instruction, with a target of 0.
+That part records two more numbers. Replies to the user from coordinator threads that the user did not write to first, with a target of 0 while sends deliver. A failed send expects the coordinator's direct reply instead, and the run checks that case once by sending to a thread id that does not exist. The second number is rulings made, by kind and by deciding rule, and the third is escalations, each with the reason the rules could not settle it.
 
 ## Out of scope
 
