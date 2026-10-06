@@ -822,6 +822,64 @@ class BuildTest(unittest.TestCase):
             findings = check.check_tree(directory)
         self.assertTrue(any("claude-opus-5-5-xhigh" in finding for finding in findings))
 
+    def test_check_rejects_an_indented_catalog_heredoc_closer(self):
+        bad = "\n".join([
+            "---",
+            "name: demo",
+            "description: d",
+            "---",
+            "",
+            "```bash",
+            "python3 tool <<'JSON'",
+            '{"ok": true}',
+            "  JSON",
+            "```",
+            "",
+        ])
+        good = "\n".join([
+            "---",
+            "name: demo",
+            "description: d",
+            "---",
+            "",
+            "```bash",
+            "python3 tool <<'JSON'",
+            '{"ok": true}',
+            "JSON",
+            "```",
+            "",
+        ])
+        plain = "\n".join([
+            "---",
+            "name: demo",
+            "description: d",
+            "---",
+            "",
+            "  JSON",
+            "",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(bad)
+            findings = check.check_tree(directory)
+        self.assertIn(
+            "demo/SKILL.md:9: catalog heredoc closer JSON is indented. Put JSON at column 0",
+            findings,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(good)
+            findings = check.check_tree(directory)
+        self.assertFalse(any("heredoc closer" in finding for finding in findings))
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(plain)
+            findings = check.check_tree(directory)
+        self.assertFalse(any("heredoc closer" in finding for finding in findings))
+
 
 if __name__ == "__main__":
     unittest.main()
