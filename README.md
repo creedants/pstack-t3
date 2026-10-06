@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.10-555.svg" alt="upstream pstack 0.15.10"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.15-555.svg" alt="upstream pstack 0.15.15"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
@@ -52,9 +52,9 @@ $brigade open a standing coordinator for bridgekit focused on startup performanc
 
 ## See it in action
 
-Both of these are real runs in T3 Code, against a small repository with a planted bug that its own tests passed. Replies are excerpted and trimmed.
+Both of these are real runs in T3 Code, against a small repository with a planted bug that its own tests passed. Replies are excerpted and trimmed. They predate the current defaults. The default `$interrogate` panel is Claude Opus and Grok.
 
-**A Codex thread runs a four-family code review.**
+**A Codex thread ran a four-family review.**
 
 ```
 $interrogate review the last commit, "Fix median for even-length input".
@@ -107,7 +107,7 @@ python3 scripts/install.py doctor    # confirm each provider sees them
 
 Keep the checkout on disk, because the install links to it. Then open a new T3 thread.
 
-1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional, and the defaults are sensible.
+1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional. Unset roles use Claude Opus at xhigh for judgment and Grok at xhigh for code. `unlimited` raises those default seats to max. The Opus seat moves from xhigh to max.
 2. Start any real task with `$poteto-mode`.
 
 The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which skill fits? Ask `$poteto-help`. It answers and hands you a prompt. It does not start the work.
@@ -139,11 +139,12 @@ See [all 55 skills and every playbook](docs/skills.md).
 flowchart LR
     you["$interrogate"] --> lead["Lead thread<br/>any provider"]
     lead --> runtime["pstack-runtime<br/>+ roles.py"]
-    runtime -->|delegate_task| a["Claude"]
-    runtime -->|delegate_task| b["Codex"]
-    runtime -->|delegate_task| c["Grok"]
-    a & b & c -->|completion wakes the lead| verdict["One verified verdict"]
+    runtime -->|delegate_task| a["Claude Opus"]
+    runtime -->|delegate_task| b["Grok"]
+    a & b -->|completion wakes the lead| verdict["One verified verdict"]
 ```
+
+The default panel is Claude Opus and Grok. A roles file can name Codex or another model. `verifiers` adds one seat per other runnable provider.
 
 T3 Code gives every provider the same orchestration tools: `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. Details are in [How it works](docs/how-it-works.md).
 
@@ -154,7 +155,7 @@ T3 Code gives every provider the same orchestration tools: `delegate_task` for c
 <details>
 <summary><b>Do I need every provider?</b></summary>
 
-No. Everything works with one. Review panels then run on the same model, and the report says the reviewers didn't differ. Each provider you sign in to in T3 widens the panels automatically.
+No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. `verifiers` adds one seat per other runnable provider, and the report says when the reviewers did not differ. Add Codex or another model in a roles file. Signing in to a provider does not add a seat to those three panels.
 </details>
 
 <details>
@@ -166,7 +167,7 @@ The engineering content is the same: the playbooks, principles, rubrics, and the
 <details>
 <summary><b>Does it cost more?</b></summary>
 
-Multi-model steps run several models, so a three-reviewer `$interrogate` costs about three reviews. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work.
+The default `$interrogate` panel is two seats, Claude Opus and Grok, so that review costs about two reviews. A roles file can add seats. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work.
 </details>
 
 <details>
@@ -206,7 +207,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
 | A Cursor rule file of model names | `roles.json` resolved against T3's live catalog |
-| A fixed default panel of four Cursor models | One seat per model family you can run |
+| A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` adds one seat per other runnable provider |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |
