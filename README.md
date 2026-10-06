@@ -26,7 +26,7 @@
 
 **A coordinator runs the project.** `$brigade`, pstack-t3's own addition, pins one coordinator thread to a project. You send it requests. It runs each unit of work as a pstack playbook in its own git worktree. A second model, from another family when you have one, reviews the exact commit, and one queue lands what passes. You choose who merges and how often you hear about it.
 
-**It has run unattended.** In the [first live Autopilot run](docs/live-runs.md), Grok wrote four changes, four other model families verified each one, and three merged within 30 minutes with no question to the operator.
+**It has run unattended.** In the [first live Autopilot run](docs/live-runs.md), Grok wrote four changes, four other model families verified each one, and all four merged, three within 30 minutes, with no question to the operator.
 
 **Try it.** Get a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases). The [Quick start](#quick-start) lists the other prerequisites and the two-command install.
 
@@ -97,7 +97,7 @@ These are real runs in T3 Code.
 | Fix `median` for even-length input | 1 | 13 |
 | Raise a clear error from `mode` on empty input | 1 | 16 |
 | Add `variance` and `stdev` | 3 | 30 |
-| Add a `python -m stats` command line | 4 so far | Open when the record stops at 99 minutes |
+| Add a `python -m stats` command line | 5 | 109 |
 
 The verifiers caught real defects before merge. Three verifiers on three models each found that `variance` raised `TypeError` on a generator. One round later only the Claude Opus verifier found that the fix relabelled errors raised by the caller's own generator. The Gemini verifier had passed that commit. The run also exposed four defects in pstack-t3's own skills. Pull requests #42, #44, #45, and #46 fixed them after the run. The [full record](docs/live-runs.md) lists every round, and describes each defect as the run found it.
 
