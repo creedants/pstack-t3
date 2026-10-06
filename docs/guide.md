@@ -4,7 +4,7 @@ This walks through installing pstack-t3, choosing models, and running real work 
 
 ## 1. Install (two minutes)
 
-You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 (`0.0.46-nightly.20261003.2610` or later). The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship.
+You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and the pull request watching pstack-t3 relies on (`0.0.46-nightly.20261005.2702` or later). The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship.
 
 ```bash
 git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3
