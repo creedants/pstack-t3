@@ -642,6 +642,50 @@ elif args[:2] == ["pr", "view"]:
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
+    def test_merge_mode_leaves_the_entry_when_a_hidden_ref_refuses_deletion(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            sh("git", "config", "receive.denyDeletes", "true", cwd=remote)
+            sh("git", "config", "uploadpack.hideRefs", "refs/heads/landing/q1", cwd=remote)
+            listed = subprocess.run(["git", "ls-remote", "origin", "refs/heads/landing/q1"],
+                                    cwd=self.work, capture_output=True, text=True)
+            self.assertEqual((listed.returncode, listed.stdout.strip()), (0, ""))
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
+    def test_merge_mode_leaves_the_entry_when_a_hidden_ref_is_locked(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            sh("git", "config", "uploadpack.hideRefs", "refs/heads/landing/q1", cwd=remote)
+            (remote / "refs/heads/landing/q1.lock").write_text("x")
+            listed = subprocess.run(["git", "ls-remote", "origin", "refs/heads/landing/q1"],
+                                    cwd=self.work, capture_output=True, text=True)
+            self.assertEqual((listed.returncode, listed.stdout.strip()), (0, ""))
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
+    def test_merge_mode_leaves_the_entry_when_receive_pack_hides_the_queue_branch(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            sh("git", "config", "receive.hideRefs", "refs/heads/landing/q1", cwd=remote)
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
     def test_merge_mode_lands_in_the_run_whose_plain_merge_succeeds(self):
         with self.fake_gh():
             (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
