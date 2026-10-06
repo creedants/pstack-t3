@@ -697,12 +697,14 @@ def publish_absent_branch(store, entry, branch):
 def ensure_pr(store, entry):
     """Store this entry's PR. Open one on landing/e<n> when that name has none.
 
-    Look at landing/e<n> first, in any state. Then adopt an OPEN pull request
-    on landing/q<n> from an older queue. A closed or merged pull request on
-    that old name is not this entry's, so this run publishes landing/e<n> and
-    opens the pull request there. A crash after gh pr create and before the
-    URL is stored is safe to rerun. Returns "adopted" when an existing pull
-    request was stored, and "created" when this run opened one."""
+    Look at landing/e<n> first, in any state. Then adopt a pull request on
+    landing/q<n> when it is open, or when its head is this entry's stored
+    candidate. A closed or merged pull request at another head is a reused
+    id, so this run publishes landing/e<n> and opens the pull request there.
+    With no stored candidate, only an open pull request on the old name is
+    adopted. A crash after gh pr create and before the URL is stored is safe
+    to rerun. Returns "adopted" when an existing pull request was stored, and
+    "created" when this run opened one."""
     contract = store.contract
     branch = human_branch(entry)
     found = gh("pr", "view", branch, "--json", "url", "-q", ".url", cwd=store.repo)
@@ -710,7 +712,14 @@ def ensure_pr(store, entry):
     adopted = bool(url)
     if not url:
         legacy = f"landing/q{entry['id']}"
-        found = gh("pr", "view", legacy, "--json", "url,state", "-q", 'select(.state == "OPEN") | .url', cwd=store.repo)
+        candidate = (entry["candidate"] or "").strip()
+        if candidate:
+            fields = "url,state,headRefOid"
+            query = f'select(.state == "OPEN" or .headRefOid == "{candidate}") | .url'
+        else:
+            fields = "url,state"
+            query = 'select(.state == "OPEN") | .url'
+        found = gh("pr", "view", legacy, "--json", fields, "-q", query, cwd=store.repo)
         url = found.stdout.strip() if found.returncode == 0 else ""
         adopted = bool(url)
     if not url:
