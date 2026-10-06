@@ -845,6 +845,29 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
 
+    def test_merge_mode_leaves_the_entry_when_the_other_push_url_keeps_the_branch(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            origin = self.base / "origin.git"
+            backup = self.base / "backup.git"
+            ref = "refs/heads/landing/q1"
+            sha = self.merged_queue_branch()
+            sh("git", "checkout", "--detach", "-q", sha, cwd=self.work)
+            sh("git", "clone", "--bare", "-q", str(origin), str(backup), cwd=self.base)
+            sh("git", "update-ref", "-d", ref, cwd=origin)
+            lock = backup / "refs/heads/landing/q1.lock"
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_text("x")
+            sh("git", "config", "--add", "remote.origin.pushurl", str(origin), cwd=self.work)
+            sh("git", "config", "--add", "remote.origin.pushurl", str(backup), cwd=self.work)
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertFalse(self.ref_exists(ref, origin))
+            self.assertTrue(self.ref_exists(ref, backup))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
     def test_push_mode_settles_a_missing_branch_only_from_gits_absent_line(self):
         with self.fake_gh():
             self.init(mode="merge")
