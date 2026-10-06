@@ -843,6 +843,13 @@ class HandoffTest(unittest.TestCase):
                                       "--landing", "merge", "--intake", "github", ok=False),
                          "brigade: docs already owns intake from github; move tickets to it instead")
         self.assertFalse(self.dir("release").exists())
+        self.assertEqual(self.brigade("engine", "open", "--project-root", str(self.project), "--name", "engine",
+                                      "--landing", "merge", "--intake", "github"),
+                         "\n".join([f"exists {self.dir('engine')}",
+                                    "intake stays empty; change it with set --intake",
+                                    f"sibling docs ({self.dir('docs')}), thread not recorded",
+                                    "  purpose: not written yet",
+                                    "  off the menu: not written yet"]))
         self.assertEqual(json.loads((self.dir("engine") / "restaurant.json").read_text())["intake"], [])
 
     def test_two_owners_of_one_source_both_refuse_to_file(self):
@@ -906,6 +913,8 @@ class HandoffTest(unittest.TestCase):
         self.assertIn("## Handed to another coordinator\n\n- T1: Fix the cache (to engine)",
                       self.brigade("core", "close", "--dry-run"))
         self.assertEqual(self.brigade("engine", "ticket", "take"), "nothing handed to you")
+        (self.dir("engine") / "inbox" / "app~core~T1.json").write_text("{}")
+        self.assertEqual(self.brigade("core", "watch"), "no work in progress")
 
     def test_a_moved_ref_stays_live_through_each_move_until_the_end_of_the_chain_finishes(self):
         ref = "R7"
@@ -1036,6 +1045,8 @@ class HandoffTest(unittest.TestCase):
         log.write_text(log.read_text() + f"{stamp[:19]}\tticket")
         self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
         log.write_text(log.read_text() + f"{stamp}\tticket\tT8\twaiting\tnote\n")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+        log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
 
     def test_two_processes_appending_200_rows_each_leave_400_rows(self):

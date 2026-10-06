@@ -123,7 +123,7 @@ def is_timestamp(value):
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    return True
+    return "T" in value
 
 
 class Restaurant:
@@ -475,7 +475,6 @@ def handed_count(restaurant):
 def open_restaurant(root, project_root, name, landing, reporting="milestones", intake=()):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
-    refuse_owned_intake(directory, str(project_root), intake)
     # The project directory is shared by every coordinator on this path slug.
     # The coordinator directory is the claim, so mkdir must fail when it exists.
     directory.parent.mkdir(parents=True, exist_ok=True)
@@ -491,6 +490,11 @@ def open_restaurant(root, project_root, name, landing, reporting="milestones", i
             other = meta.get("projectRoot")
             raise BrigadeError(f"{directory} already holds a coordinator for {other}; pick another --name")
         return Restaurant(directory), False
+    try:
+        refuse_owned_intake(directory, str(project_root), intake)
+    except BrigadeError:
+        directory.rmdir()
+        raise
     for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
         write_atomic(directory / filename, template.format(restaurant=name))
     for table in TABLES:
@@ -707,7 +711,8 @@ def watch(restaurant):
         handoff = handoff_id(restaurant.dir, ticket["id"])
         # take writes the ticket before it deletes the file, so a missing file with no ticket was never delivered.
         if inbox_file(target, handoff).exists():
-            lines.append(f"{ticket['id']}: moved to {name}, waiting for ticket take")
+            if taken_row(target, handoff) is None:
+                lines.append(f"{ticket['id']}: moved to {name}, waiting for ticket take")
         elif taken_row(target, handoff) is None:
             lines.append(f"{ticket['id']}: moved to {name}, not delivered; run ticket move {ticket['id']} --to {name} again")
     handed = handed_count(restaurant)
@@ -924,9 +929,13 @@ def run(argv):
         restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting,
                                               intake_list(args.intake))
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
-        thread = (restaurant.meta.get("thread") or "").strip()
+        meta = restaurant.meta
+        thread = (meta.get("thread") or "").strip()
         if not created and thread:
             lines.append(f"thread {thread} already recorded")
+        intake = meta.get("intake") or []
+        if not created and args.intake and intake_list(args.intake) != intake:
+            lines.append(f"intake stays {', '.join(intake) or 'empty'}; change it with set --intake")
         lines.extend(sibling_lines(restaurant))
         return "\n".join(lines)
     if args.command == "walk":
