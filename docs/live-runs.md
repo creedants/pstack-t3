@@ -50,7 +50,7 @@ This record stops at 12:22 UTC, 99 minutes after launch, at the end of the obser
 
 - `main` is at `3bdc46c` with #1, #2, and #3. CI passed on it.
 - Issues #1, #2, and #3 are closed by their PRs. Issue #4 is open.
-- PR #8 is open at its round 4 head. The root had reproduced a precision regression there and was waiting for the last reviewers before it sent the owner a fifth fix request.
+- PR #8 is open at its round 4 head. At 12:21 the root sent the owner round 4's verdict, not clean, with a precision finding on whole numbers in non-ASCII digits. The owner was fixing it for round 5.
 - The only remote branches are `main` and the #4 branch.
 
 The run had launched 61 threads by then. That count is the root, 4 owners, 40 verifier children in 10 rounds, and 16 children the owners started. The root cancelled one round of verifiers when its head went stale. The owner children were 5 Comment Sicko reviews, 3 trail reviews, 1 explanation, 5 design runners, 1 design judge, and 1 implementation child.
@@ -65,6 +65,6 @@ The run had launched 61 threads by then. That count is the root, 4 owners, 40 ve
 ### Observations that are not pstack-t3 defects
 
 - **Fix rounds have no bound.** On #4 each round's live lane found a new, narrower edge case in number parsing, and the playbook sends every proven finding back to the owner. Nothing in step 4 weighs a finding against the issue's scope, so a small command line had taken four rounds by the end of the record. The rule is upstream's.
-- **The design pass costs more than the change.** poteto-mode sends any code that crosses a function boundary to the architect skill. The #4 owner ran five architect runners for a 69-line command line. The slowest runner held the owner for about 20 minutes. Three owners noted the tension with the 15-minute deadline for a first PR. The rule is upstream's, so a change belongs upstream.
+- **The design pass costs more than the change.** poteto-mode sends any code that crosses a function boundary to the architect skill. The #4 owner ran five architect runners for a 69-line command line. The slowest runner ran for about 12 minutes, from 11:19:52 to 11:31:52 UTC. The design pass, from that runner's start to the owner's launch of its implementation child at 11:36:41 UTC, took about 17 minutes. Three owners noted the tension with the 15-minute deadline for a first PR. The rule is upstream's, so a change belongs upstream.
 - **A watch wake does not name the head.** The stored wake text is `#5: checks passed`. One wake arrived after a rebase, and the owner read it as news about the old head. The runtime's rule that a wake is news held, because the owner re-read the PR before merging.
 - **The root settled between turns.** T3 settled the idle root after it launched the last owner. The next `t3_thread_send` and the hourly tick both still woke it. The root held no watch, so settling cost nothing.
