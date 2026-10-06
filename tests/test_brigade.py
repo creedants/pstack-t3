@@ -361,10 +361,10 @@ class BrigadeTest(unittest.TestCase):
                              "D1 (lease L1 held by perf/D1)")
             self.assertIn("nothing fired: paths overlap L1 held by perf/D1",
                           self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s", "--paths", "src/x.py", ok=False))
-            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] two")
+            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] two blocked: lease")
             self.brigade("set", "--thread", "thread-coord")
             text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
-            self.assertIn("leased to you as L1: src.", text)
+            self.assertIn("leased to you as L1: src,changes/perf%2Fd1.md.", text)
             self.assertIn("branch `perf/d1`", text)
 
     def test_fire_claims_outside_the_store_lock_and_rechecks_before_it_writes(self):
@@ -400,7 +400,8 @@ class BrigadeTest(unittest.TestCase):
             firing.kill()
         self.assertEqual(firing.returncode, 1)
         self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
-        self.assertEqual(calls.read_text().splitlines(), ["lease claim --holder perf/D1 --paths src", "lease release L7"])
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
         self.assertEqual(self.brigade("status"), "reporting: milestones, in progress: 1")
 
     def test_tabs_and_newlines_in_input_cannot_break_a_table(self):
