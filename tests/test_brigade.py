@@ -846,6 +846,224 @@ class BrigadeTest(unittest.TestCase):
         self.assertTrue(out.startswith(f"exists {self.at}"))
 
 
+    def git_project(self):
+        if (self.project / ".git").exists():
+            return
+        run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
+        run("git", "init", "-q", "-b", "main")
+        (self.project / "a.txt").write_text("a\n")
+        run("git", "add", "-A")
+        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    def land_env(self):
+        return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
+
+    def land(self, *args, ok=True):
+        result = subprocess.run([sys.executable, str(ROOT / "t3/added/landing/scripts/land.py"),
+                                 "--repo", str(self.project), *args],
+                                capture_output=True, text=True, env=self.land_env())
+        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+        return (result.stdout if ok else result.stderr).strip()
+
+    def init_landing(self, *args):
+        self.git_project()
+        return self.land("init", "--trunk", "lane", "--mode", "local", "--base", "main", *args)
+
+    def test_a_refused_fire_stays_blocked_until_the_lease_is_free(self):
+        from unittest import mock
+        import shlex
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--summary", "Fix the gate")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
+                                   "--paths", "src", "--timebox", "60", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the gate blocked: lease")
+            self.assertEqual(self.brigade("watch"), "T1: waiting on L1 (engine/D1)")
+            self.land("lease", "release", "L1")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            self.assertEqual(self.brigade("watch"), "T1: waiting on L2 (engine/D1)")
+            self.land("lease", "release", "L2")
+            line = "T1: unblocked; run fire --tickets T1 --station bug-fix --summary 'Fix the gate' --paths src,changes/perf%2Fd1.md --timebox 60"
+            self.assertEqual(self.brigade("watch"), line)
+            started = self.brigade(*shlex.split(line.split("run ", 1)[1]))
+            self.assertEqual(started, "D1 (lease L3 held by perf/D1)")
+            self.assertEqual(self.brigade("ticket", "list"), "T1 assigned [user] Fix the gate")
+
+    def test_a_repository_cap_refusal_prints_the_repository_line(self):
+        from unittest import mock
+        self.init_landing("--cap", "1")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--summary", "Room")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "other.txt")
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Room",
+                                   "--paths", "src", ok=False)
+            self.assertIn("nothing fired: repository at its cap: 1 of 1 changes in flight", refused)
+            self.assertIn("blocked: repository", self.brigade("ticket", "list"))
+            self.assertEqual(self.brigade("watch"), "T1: waiting for room in the repository (1 of 1 changes in flight)")
+
+    def test_the_worker_cap_defaults_to_two_and_a_later_fire_clears_the_block(self):
+        self.open()
+        self.assertNotIn("workers", json.loads((self.at / "restaurant.json").read_text()))
+        for summary in ("one", "two", "three"):
+            self.brigade("ticket", "add", "--summary", summary)
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "a"), "D1")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b"), "D2")
+        refused = self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "c", ok=False)
+        self.assertIn("nothing fired: 2 of 2 workers running", refused)
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"),
+                         "T3 waiting [user] three blocked: workers")
+        self.assertIn("T3: waiting for a worker (2 of 2 running)", self.brigade("watch"))
+        self.brigade("set", "--workers", "3")
+        self.assertEqual(self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "c"), "D3")
+        self.assertNotIn("blocked:", self.brigade("ticket", "list"))
+
+    def test_workers_one_refuses_fire_and_a_dish_that_is_not_already_counted(self):
+        opened = self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                              "--landing", "merge", "--workers", "1")
+        self.assertEqual(opened, f"opened {self.at}")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["workers"], 1)
+        for summary in ("one", "two", "three"):
+            self.brigade("ticket", "add", "--summary", summary)
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "a"), "D1")
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b", ok=False)
+        self.assertIn("nothing fired: 1 of 1 workers running", refused)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b"), "D2")
+        self.brigade("dish", "D2", "--state", "blocked")
+        self.assertEqual(self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "c"), "D3")
+        sent = self.brigade("dish", "D1", "--state", "in-progress", ok=False)
+        review = self.brigade("dish", "D2", "--state", "in-review", ok=False)
+        self.assertIn("1 of 1 workers running", sent)
+        self.assertIn("1 of 1 workers running", review)
+        self.assertEqual(self.brigade("dish", "D3", "--state", "in-review"), "D3 in-review")
+        self.assertEqual(self.brigade("dish", "D3", "--state", "in-progress", "--thread", "worker-2"), "D3 in-progress")
+        before = (self.at / "restaurant.json").read_text()
+        error = self.brigade("set", "--workers", "0", ok=False)
+        self.assertIn("workers must be 1 or more", error)
+        self.assertEqual((self.at / "restaurant.json").read_text(), before)
+        missing = self.brigade("open", "--project-root", str(self.project), "--name", "Nope",
+                               "--landing", "merge", "--workers", "0", ok=False)
+        self.assertIn("workers must be 1 or more", missing)
+        self.assertFalse((self.store / "bridge-kit" / "nope").exists())
+
+    def test_open_warns_when_workers_meet_the_repository_cap_and_a_sibling_exists(self):
+        from unittest import mock
+        self.init_landing("--cap", "2")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            first = self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                                 "--landing", "merge", "--workers", "4")
+            self.assertNotIn("warning:", first)
+            second = self.brigade("open", "--project-root", str(self.project), "--name", "Docs",
+                                  "--landing", "merge", "--workers", "2")
+            self.assertIn("warning: workers 2 is at or above the repository cap of 2 while a sibling exists", second)
+            third = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
+                                 "--landing", "merge", "--workers", "1")
+            self.assertNotIn("warning:", third)
+
+    def test_fire_leases_the_branch_changelog_fragment_and_dish_records_a_new_lease(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
+            self.brigade("set", "--thread", "thread-coord")
+            self.brigade("ticket", "add", "--summary", "one")
+            self.brigade("ticket", "add", "--summary", "two")
+            self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                         "--branch", "docs/a", "--paths", "src/a.py")
+            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            self.assertIn("leased to you as L1: src/a.py,changes/docs%2Fa.md.", text)
+            self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s",
+                         "--branch", "docs/a%b", "--paths", "src/b.py")
+            text = self.brigade("brief", "D2", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            self.assertIn("leased to you as L2: src/b.py,changes/docs%2Fa%25b.md.", text)
+            self.assertEqual(text.count("changes/docs%2Fa%25b.md"), 1)
+            self.brigade("dish", "D1", "--lease", "L9", "--paths", "src/a.py,changes/docs%2Fa.md")
+            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            self.assertIn("leased to you as L9: src/a.py,changes/docs%2Fa.md.", text)
+
+    def test_fire_warns_when_releasing_a_conflicting_lease_fails(self):
+        case = Path(self.temporary.name)
+        (case / "land.py").write_text(
+            "import sys, time\nfrom pathlib import Path\n"
+            f"case = Path({str(case)!r})\n"
+            "with open(case / 'land-calls', 'a') as handle:\n    handle.write(' '.join(sys.argv[3:]) + '\\n')\n"
+            "if sys.argv[4] == 'claim':\n"
+            "    (case / 'claiming').touch()\n"
+            "    end = time.monotonic() + 30\n"
+            "    while not (case / 'claim-proceed').exists() and time.monotonic() < end:\n        time.sleep(0.01)\n"
+            "    print('L7')\n"
+            "else:\n"
+            "    print('lease L7 is held elsewhere', file=sys.stderr)\n"
+            "    sys.exit(1)\n")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "one")
+        firing = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                   "--store", str(self.store), "--at", str(self.at),
+                                   "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        try:
+            _wait_for_path(case / "claiming")
+            other = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
+                                   capture_output=True, text=True, timeout=10)
+            self.assertEqual(other.stdout.strip(), "D1", other.stderr)
+            (case / "claim-proceed").touch()
+            _, err = firing.communicate(timeout=10)
+        finally:
+            firing.kill()
+        self.assertEqual(firing.returncode, 1)
+        self.assertIn("nothing fired: T1 is assigned, not waiting", err)
+        self.assertIn("L7", err)
+        self.assertIn("lease L7 is held elsewhere", err)
+
+    def test_watch_rechecks_a_lease_outside_the_store_lock(self):
+        case = Path(self.temporary.name)
+        (case / "land.py").write_text(
+            "import sys, time\nfrom pathlib import Path\n"
+            f"case = Path({str(case)!r})\n"
+            "action = sys.argv[4]\n"
+            "if action == 'claim':\n"
+            "    print('paths overlap L1 held by engine/D1 on src', file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "if action == 'check':\n"
+            "    (case / 'checking').touch()\n"
+            "    end = time.monotonic() + 30\n"
+            "    while not (case / 'check-proceed').exists() and time.monotonic() < end:\n        time.sleep(0.01)\n"
+            "    print('L1 held by engine/D1 on src')\n"
+            "    sys.exit(1)\n"
+            "print('ok')\n")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "one")
+        refused = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                  "--store", str(self.store), "--at", str(self.at),
+                                  "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
+                                 capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        self.assertIn("blocked: lease", self.brigade("ticket", "list"))
+        watching = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                     "--store", str(self.store), "--at", str(self.at), "watch"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        try:
+            _wait_for_path(case / "checking")
+            added = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    "ticket", "add", "--summary", "two"],
+                                   capture_output=True, text=True, timeout=10)
+            self.assertEqual(added.stdout.strip(), "T2", added.stderr)
+            (case / "check-proceed").touch()
+            out, err = watching.communicate(timeout=10)
+        finally:
+            watching.kill()
+        self.assertEqual(watching.returncode, 0, err)
+        self.assertEqual(out.strip(), "T1: waiting on L1 (engine/D1)")
+
+
 class HandoffTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""
 
@@ -1145,7 +1363,6 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(sorted(row[4] for row in rows),
                          sorted(f"{label} row {number}" for label in "ab" for number in range(200)))
         self.assertEqual(self.brigade("core", "ticket", "list"), "")
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--race-child":
