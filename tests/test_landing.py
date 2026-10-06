@@ -18,8 +18,10 @@ REVIEWER = "codex/gpt-6.1-sol"
 
 
 def git_env():
+    """Identity for fixture commits. LC_ALL=C keeps git diagnostics in English."""
     return {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+            "LC_ALL": "C"}
 
 
 def sh(*args, cwd):
