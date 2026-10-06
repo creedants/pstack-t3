@@ -28,6 +28,7 @@ SINGLE_ROLES = [
     "reflect tooling",
     "reflect judgment, divergent, synthesizer",
     "swarm workers",
+    "skill tests",
 ]
 PANEL_ROLES = [
     "arena runners",
@@ -42,6 +43,7 @@ EFFORT_IDS = ("effort", "reasoningEffort", "reasoning_effort", "reasoning")
 LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "extra-high": 5, "extra_high": 5, "max": 6, "ultra": 7}
 SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
+SMALL_TIER = frozenset({"haiku", "mini", "nano", "flash", "lite", "fast", "small"})
 
 
 class RolesError(Exception):
@@ -214,8 +216,47 @@ def apply_budget(seat, model, budget):
     return {**seat, "options": {**(seat.get("options") or {}), option["id"]: chosen}}
 
 
+def model_tokens(model_id):
+    return re.split(r"[-_.]", model_id.lower())
+
+
+def default_effort_rank(model):
+    """Rank of the model's default reasoning level. No effort select sorts first."""
+    option = effort_option(model)
+    if option is None:
+        return -1
+    choices = [choice for choice in option.get("options") or [] if choice["id"] not in SPECIAL and rank(choice["id"]) is not None]
+    if not choices:
+        return -1
+    default = next((choice for choice in choices if choice.get("isDefault")), None)
+    if default is None:
+        return min(rank(choice["id"]) for choice in choices)
+    return rank(default["id"])
+
+
+def skill_tests_seat(catalog):
+    """One bare seat. Prefer another family, then a small-tier id, then a lower default effort."""
+    parent = catalog.get("inheritedModel")
+    parent_family = family(parent) if parent else None
+    rows = []
+    for provider_index, provider in enumerate(catalog["providers"]):
+        if not runnable(provider):
+            continue
+        for model_index, model in enumerate(models_of(provider)):
+            model_id = model["id"]
+            other = parent_family is None or family(model_id) != parent_family
+            small = bool(set(model_tokens(model_id)) & SMALL_TIER)
+            rows.append((0 if other else 1, 0 if small else 1, default_effort_rank(model), provider_index, model_index, provider, model))
+    if not rows:
+        return INHERIT
+    *_, provider, model = min(rows)
+    return {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
+
+
 def default_seats(name, catalog):
     """One seat per runnable provider whose first model is a family not yet seated."""
+    if name == "skill tests":
+        return [skill_tests_seat(catalog)]
     if name in SINGLE_ROLES:
         return [INHERIT]
     parent = catalog.get("inheritedProviderInstanceId")

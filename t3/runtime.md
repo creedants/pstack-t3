@@ -113,6 +113,7 @@ Pass `--parent` with the values from `orchestrator_capabilities`. The saved cata
 | `arena runners` | N | arena, one candidate per seat |
 | `arena cross-judge pool` | N | arena, pick one seat whose model family differs from the parent's |
 | `swarm workers` | 1 | swarm, default model for every worker |
+| `skill tests` | 1 | pstack-author-skill fresh-child test and description eval |
 | `architect runners` | N | architect, one runner per seat |
 | `interrogate reviewers` | N | interrogate, one reviewer per seat |
 | `verifiers` | N | swarm-verify, autopilot, shipping, orchestrate verification |
@@ -121,7 +122,8 @@ Pass `--parent` with the values from `orchestrator_capabilities`. The saved cata
 
 The defaults depend on nothing but the live catalog, so they never name a model the user lacks.
 
-- Single-seat roles default to `["inherit"]`.
+- Single-seat roles default to `["inherit"]`, except `skill tests`.
+- `skill tests` is one catalog seat. Prefer a runnable model whose family differs from this thread's model. A family is the leading word of the model id. In that pool, prefer an id token in `haiku`, `mini`, `nano`, `flash`, `lite`, `fast`, or `small`, then the lowest default reasoning level, then earlier in the catalog. If every runnable model shares this thread's family, apply the same rule inside the family. No catalog, or no runnable model, leaves `["inherit"]`. The seat names no reasoning option. The budget cap still applies.
 - Panel roles (`arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, `verifiers`) default to `"inherit"` for this thread's seat, then one seat per runnable provider (`canRunChildTask: true`), using that provider's first listed model with its default options, skipping a provider whose first model belongs to a family already seated.
 - A model family is the leading word of the model ID: `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, `grok-4.7` is `grok`. Diversity rules in pstack compare families, never providers, because one provider can serve another's models. With only one runnable provider, the panel is three `"inherit"` seats, and the report must say the models did not differ.
 

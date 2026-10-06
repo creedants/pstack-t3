@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,35 @@ class RolesTest(unittest.TestCase):
     def test_single_roles_default_to_inherit(self):
         result = roles.resolve(config(), CATALOG, ["swarm workers"])
         self.assertEqual(result["roles"]["swarm workers"]["seats"], ["inherit"])
+        self.assertEqual(roles.resolve(config(), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"], ["inherit"])
+
+    def test_skill_tests_default_is_one_other_family_seat(self):
+        entry = roles.resolve(config(), CATALOG, ["skill tests"])["roles"]["skill tests"]
+        self.assertEqual(entry["source"], "default")
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+
+    def test_skill_tests_small_budget_caps_the_seat(self):
+        seats = roles.resolve(config("small"), CATALOG, ["skill tests"])["roles"]["skill tests"]["seats"]
+        self.assertEqual(seats, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}}])
+
+    def test_skill_tests_uses_a_small_model_inside_the_only_family(self):
+        catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
+        seats = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
+        self.assertEqual(seats, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"}])
+        capped = roles.resolve(config("small"), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
+        self.assertEqual(capped, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"}])
+
+    def test_skill_tests_without_a_catalog_inherits(self):
+        self.assertEqual(roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]["seats"], ["inherit"])
+
+    def test_runtime_role_table_lists_the_same_names_as_the_role_list(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        section = text.split("### Role names", 1)[1].split("### Built-in defaults", 1)[0]
+        names = re.findall(r"\| `([^`]+)` \|", section)
+        self.assertEqual(sorted(names), sorted(roles.ROLES))
+        self.assertEqual(len(names), len(set(names)))
+        proposals = (ROOT / "t3/setup.md").read_text().split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
+        self.assertIn("`skill tests`", proposals)
 
     def test_panel_default_is_one_seat_per_runnable_provider_with_parent_inheriting(self):
         seats = roles.resolve(config(), CATALOG, ["interrogate reviewers"])["roles"]["interrogate reviewers"]["seats"]

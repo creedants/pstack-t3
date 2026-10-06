@@ -45,6 +45,7 @@ The budget sets the reasoning option (`effort`, `reasoningEffort`, `reasoning_ef
 - Judgment roles (`judgment and prose`, `hardest tasks`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer`): the strongest reasoning model.
 - `reflect tooling`: a model from a different model family than the judgment model.
 - Panel roles (`arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, `verifiers`): one seat per model family (Claude, GPT, Grok, Gemini, and so on), each on a runnable provider. One provider can serve several families, and two providers can serve the same one, so count families, not providers.
+- `skill tests`: one cheap fast model from a family other than the thread writing the skill, when the catalog has one. Leave the role unset so the built-in default stays.
 
 Say which model you picked for each tier and why, in one line each. Marking a role `inherit` means it runs on whatever model the calling thread uses.
 
