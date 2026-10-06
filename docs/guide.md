@@ -6,6 +6,13 @@ This walks through installing pstack-t3, choosing models, and running real work 
 
 You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and the pull request watching pstack-t3 relies on (`0.0.46-nightly.20261005.2702` or later). The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship.
 
+Do each of these before the feature in that line.
+
+- Install the GitHub CLI and run `gh auth login`. Brigade intake and landing in `merge` and `human` modes need `gh`.
+- Set `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`. `land.py init --base` needs a commit, and a fresh machine cannot make one without that identity.
+- Run `pip install pyyaml` before the test suite. `scripts/check.py` skips YAML frontmatter validation when PyYAML is missing.
+- Confirm `orchestrator_capabilities` is in the T3 thread's tool list. `$setup-pstack` calls it first.
+
 ```bash
 git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3
 cd ~/pstack-t3
@@ -27,7 +34,7 @@ In any thread, run:
 $setup-pstack
 ```
 
-It reads which providers and models T3 can run right now, then asks for a reasoning budget:
+It calls `orchestrator_capabilities` first. That tool must be in the thread's tool list. It reads which providers and models T3 can run right now, then asks for a reasoning budget:
 
 | Budget | Effect |
 | --- | --- |
