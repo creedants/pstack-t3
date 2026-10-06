@@ -22,9 +22,9 @@ class BrigadeTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def brigade(self, *args, ok=True):
+    def brigade(self, *args, ok=True, stdin=None):
         result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, input=stdin)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
 
@@ -309,6 +309,102 @@ class BrigadeTest(unittest.TestCase):
         for level in ("every-turn", "milestones", "digest"):
             self.assertIn(level, opened)
         self.assertFalse((self.store / "bridge-kit" / "loud").exists())
+
+    def literal_brief_fields(self):
+        return {
+            "goal": "Run `$B status` and `$B close` before $(touch sentinel).",
+            "acceptance": ["Median cold start below 400 ms"],
+            "verify": "npm run perf",
+            "paths": "src/boot.ts",
+            "lease": "L4",
+            "base": "origin/main",
+            "context": ["notes/startup.md"],
+        }
+
+    def brief_from_flags(self, fields):
+        return self.brigade("brief", "D1", "--goal", fields["goal"], "--acceptance", fields["acceptance"][0],
+                            "--verify", fields["verify"], "--paths", fields["paths"], "--lease", fields["lease"],
+                            "--base", fields["base"], "--context", fields["context"][0])
+
+    def test_brief_fields_file_matches_flags_and_keeps_shell_text_literal(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        fields = self.literal_brief_fields()
+        flagged = self.brief_from_flags(fields)
+        path = self.at / "brief-fields.json"
+        path.write_text(json.dumps(fields), encoding="utf-8")
+        filed = self.brigade("brief", "D1", "--fields", str(path))
+        self.assertEqual(filed, flagged)
+        goal = fields["goal"]
+        self.assertIn(goal, filed)
+        for part in ("`", "$B status", "$B close", "$(touch sentinel)"):
+            self.assertIn(part, filed)
+        self.assertIsNone(json.loads((self.at / "restaurant.json").read_text())["lastReportAt"])
+        self.assertEqual(list((self.at / "closeouts").glob("*")), [])
+
+    def test_brief_fields_stdin_matches_the_file(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        fields = self.literal_brief_fields()
+        raw = json.dumps(fields)
+        path = self.at / "brief-fields.json"
+        path.write_text(raw, encoding="utf-8")
+        filed = self.brigade("brief", "D1", "--fields", str(path))
+        piped = self.brigade("brief", "D1", "--fields", "-", stdin=raw)
+        self.assertEqual(piped, filed)
+        self.assertIn("$(touch sentinel)", piped)
+
+    def test_a_shell_reads_brief_fields_without_running_them(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        fields = self.literal_brief_fields()
+        flagged = self.brief_from_flags(fields)
+        work = Path(self.temporary.name) / "shell"
+        work.mkdir()
+        script = (
+            f"FIELDS='{work / 'fields.json'}'\n"
+            f"B='{sys.executable} {SCRIPT} --store {self.store} --at {self.at}'\n"
+            "cat > \"$FIELDS\" <<'JSON'\n"
+            + json.dumps(fields) + "\n"
+            "JSON\n"
+            "$B brief D1 --fields \"$FIELDS\"\n"
+        )
+        result = subprocess.run(["bash", "-c", script], cwd=work, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), flagged)
+        self.assertFalse((work / "sentinel").exists())
+        self.assertIsNone(json.loads((self.at / "restaurant.json").read_text())["lastReportAt"])
+
+    def test_brief_fields_rejects_a_mix_and_bad_json(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        brief = self.at / "briefs" / "D1.md"
+        fields = self.at / "brief-fields.json"
+        error = self.brigade("brief", "D1", "--fields", str(fields), "--goal", "g", ok=False)
+        self.assertIn("use either --fields or the field flags, not both", error)
+        self.assertFalse(brief.exists())
+        missing = self.at / "no-such-fields.json"
+        error = self.brigade("brief", "D1", "--fields", str(missing), ok=False)
+        self.assertIn("brief fields:", error)
+        self.assertIn("no-such-fields.json", error)
+        self.assertFalse(brief.exists())
+        fields.write_text("[]\n", encoding="utf-8")
+        error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
+        self.assertIn("JSON must be an object", error)
+        self.assertFalse(brief.exists())
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "main", "nope": "x"}),
+                          encoding="utf-8")
+        error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
+        self.assertIn("unknown key nope", error)
+        self.assertFalse(brief.exists())
+        fields.write_text(json.dumps({"goal": "g", "acceptance": "a", "verify": "v", "base": "main"}), encoding="utf-8")
+        error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
+        self.assertIn("acceptance must be a list of strings", error)
+        self.assertFalse(brief.exists())
 
     def test_a_restaurant_file_without_reporting_reads_as_milestones(self):
         self.open()
