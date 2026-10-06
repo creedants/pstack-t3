@@ -791,20 +791,65 @@ def request_merge(store, ident, url):
     return True
 
 
+def receive_pack_lacks(repo, remote, ref):
+    """True when a dry-run push would create ref.
+
+    receive-pack still advertises a ref that upload-pack hides, so this is not
+    fooled by uploadpack.hideRefs. An empty ls-remote is not evidence. A failed
+    probe returns False, and the caller leaves the entry for the next run."""
+    head = git("rev-parse", "--verify", "HEAD", cwd=repo, check=False)
+    sha = head.stdout.strip()
+    if head.returncode != 0 or not sha:
+        return False
+    probe = git("push", "--dry-run", "--porcelain", remote, f"{sha}:{ref}", cwd=repo, check=False)
+    if probe.returncode != 0:
+        return False
+    for line in probe.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        dest = parts[1].split(":", 1)[-1]
+        if dest == ref and parts[2] == "[new branch]":
+            return True
+    return False
+
+
+def hidden_ref_rejected(repo, remote, ref):
+    """True when the server refuses a full-refspec delete because ref is hidden.
+
+    `git push --delete <name>` stops in the client when the name was not
+    advertised. That message is the same when the ref is gone and when
+    receive.hideRefs hides it. The full refspec is what the server answers."""
+    confirm = git("push", remote, f":{ref}", cwd=repo, check=False)
+    return confirm.returncode != 0 and "deny deleting a hidden ref" in (confirm.stderr or "")
+
+
 def delete_queue_branch(store, entry):
     """Drop landing/q<n> after the PR has merged.
 
-    Returns (deleted, warning). A missing remote ref counts as deleted. That includes
-    a failed git push --delete whose error text does not say the ref is missing, once
-    git ls-remote shows the ref gone. A real remote delete failure, or an unreadable
-    remote, returns deleted False so the next land retries. A local branch that exists
-    and cannot be deleted is named in warning. The entry still lands."""
+    Returns (deleted, warning). The delete counts as done when the server
+    accepts it. A failed delete counts as done when the server tried to lock
+    the ref and receive-pack no longer advertises it. It also counts as done
+    when the client says the remote ref does not exist, unless a full-refspec
+    delete is rejected because the ref is hidden. An empty git ls-remote does
+    not count. upload-pack can hide a ref that receive-pack still advertises.
+    A policy refusal leaves the entry for the next run. A local branch that
+    exists and cannot be deleted is named in warning. The entry still lands
+    when the remote ref is gone."""
     branch = human_branch(entry)
     remote = store.contract["remote"]
+    ref = f"refs/heads/{branch}"
     pushed = git("push", remote, "--delete", branch, cwd=store.repo, check=False)
-    if pushed.returncode != 0 and "does not exist" not in pushed.stderr:
-        listed = git("ls-remote", remote, f"refs/heads/{branch}", cwd=store.repo, check=False)
-        if listed.returncode != 0 or listed.stdout.strip():
+    if pushed.returncode != 0:
+        stderr = pushed.stderr or ""
+        raced = "cannot lock ref" in stderr or "reference already exists" in stderr
+        if raced:
+            if not receive_pack_lacks(store.repo, remote, ref):
+                return False, ""
+        elif "does not exist" in stderr:
+            if hidden_ref_rejected(store.repo, remote, ref):
+                return False, ""
+        else:
             return False, ""
     git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
     warning = ""
