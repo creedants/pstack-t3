@@ -61,7 +61,7 @@ This part is after the 12:22 UTC cutoff. The run continued. The observer left it
 
 PR #8 merged at 12:32:53 UTC, 109 minutes after the 10:43 UTC launch. The squash commit on `main` is `486a5b7`, subject `feat(stats): add python -m stats (#8)`. The `test` check on that commit succeeded at 12:33:05 UTC.
 
-#4 took 5 review rounds. The first four are the rounds in the cutoff record. Round 5 started at 12:23 UTC on head `5306f0a`, after the owner fixed whole numbers written in non-ASCII digits. Gates, live and regression, spec, and robustness all passed. The root sent a clean verdict for `5306f0a` at 12:32:10 UTC. The rebase onto `main` changed nothing. The owner squash-merged at 12:32:53 UTC.
+#4 took 5 review rounds. The first four are the rounds in the cutoff record. Round 5 started at 12:23 UTC on head `5306f0a`, after the owner fixed whole numbers written in non-ASCII digits. Gates, live and regression, spec, and robustness all passed. The root sent a clean verdict for `5306f0a` at 12:32:02 UTC. The rebase onto `main` changed nothing. The owner squash-merged at 12:32:53 UTC.
 
 The root deleted its hourly audit tick at 12:35:32 UTC, after the four PRs merged. The sandbox project has no scheduled task.
 
