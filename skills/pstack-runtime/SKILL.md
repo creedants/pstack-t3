@@ -185,7 +185,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
 - Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
 - Do not schedule a tick to wait for a child task. Child completions already wake this thread.
-- Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event, and as a fallback heartbeat of at least an hour beside a watch.
+- Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. A required heartbeat whose job is to notice a merge may use `900000`, as that section states.
 
 ## Local state
 
@@ -224,13 +224,15 @@ A wake is news, not a merge decision. Read the PR and decide yourself before you
 
 A subagent cannot watch. The parent thread owns the PR. The child finishes and reports back. The thread that owns the PR calls `watch_pull_request`.
 
-Call `unwatch_pull_request` before you hand the work back to the user. The PR stays linked. While T3 watches, the thread stays in the user's Working list. Unwatching returns the thread to their inbox.
+Call `unwatch_pull_request` when this thread stops driving the PR and hands that work back to the user. An interim status reply keeps the watch. The PR stays linked. While T3 watches, the thread stays in the user's Working list. Unwatching returns the thread to their inbox.
 
-Watching ends when the PR merges or closes, when its thread settles or is archived, when the user stops this thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. Unsettle the thread before you start a new watch.
+A merge ends the watch and does not wake the thread. A close ends the watch and does wake the thread. Watching also ends when the thread settles or is archived, when the user stops the thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. A watch ends after 10 wakes in a row that bring only comments, and that end posts a wake. Call `watch_pull_request` again after that wake when the loop is still running.
+
+If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` first. A settled thread's new watch ends on the next pass and posts no wake. A pinned thread does not auto-settle. A pinned coordinator runs that action only when someone settled the thread by hand.
 
 pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick that waits for CI, a review, or a conflict all become this call. The forge commands that classify a verdict stay. Run them after a wake. They are not the wait.
 
-`schedule_task` stays for a cadence that has no PR event, such as an hourly audit, a morning report, or a soak. Beside a watch, a `schedule_task` interval is only a fallback heartbeat, and that interval is at least an hour (`everyMs` at least `3600000`).
+`schedule_task` stays for a cadence that has no PR event, such as an hourly audit, a morning report, or a soak. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. When the event you are waiting for is the merge itself, create a `schedule_task` heartbeat beside the watch. That heartbeat is required. A merge never wakes the thread, so the heartbeat is how you learn that the PR merged. The required heartbeat may use `everyMs` `900000`. Use `900000` while a landing entry is awaiting merge in human mode, while the PR is behind a merge queue, and for any other wait whose predicate is the merge. In merge mode on a repository with required checks, when the PR is not behind a merge queue, the landing drain stays at `3600000`. The required-checks wake runs `land`. The hour covers a merge that finishes after that run, and a PR that never posts a check.
 
 ## Pending requests
 
