@@ -91,10 +91,10 @@ $swarm audit stats.py: one read-only worker per public function.
 
 You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) `0.0.46-nightly.20261005.2702` or later, the minimum this project accepts for `watch_pull_request`, plus git and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
 
-Do each of these before the feature in that line.
+Complete each prerequisite before using the feature it names.
 
-- Install the GitHub CLI and run `gh auth login`. Brigade intake and landing in `merge` and `human` modes need `gh`.
-- Set `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`. `land.py init --base` needs a commit, and a fresh machine cannot make one without that identity.
+- Install the GitHub CLI and run `gh auth login`. GitHub intake sources named in the house rules, `gh issue list` and `gh pr list`, need `gh`. Landing in `merge` and `human` modes needs `gh` too. User requests need no `gh`.
+- To make the first commit in a new repository, run `git config --local user.name "Your Name"` and `git config --local user.email "you@example.com"` in that repository. `land.py init --base` needs an existing commit, and a clone already has one. A global identity is optional.
 - Run `pip install pyyaml` before the test suite. `scripts/check.py` skips YAML frontmatter validation when PyYAML is missing.
 - Confirm `orchestrator_capabilities` is in the T3 thread's tool list. `$setup-pstack` calls it first.
 
