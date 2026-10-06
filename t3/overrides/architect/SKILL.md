@@ -30,7 +30,15 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 Run the **arena** skill with the design-sketch task and the Phase A grounding artifacts. Pass `references/runner-prompt.md` as each runner's prompt. Each candidate produces a design package shaped per `references/rationale-template.md`.
 
-Take the runners from the `architect runners` role in place of the `arena runners` role. Call `orchestrator_capabilities` and pipe its JSON to `python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "architect runners"`. Stdin is that call's catalog, so parallel children do not share a path and the JSON is not written into the repository. That command resolves the `architect runners` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One runner per seat. The seat count is the panel size. `inherit` seats, fallbacks, and the report of which seats fell back and whether the models actually differed follow the runner rules in the **arena** skill's Phase A.
+Take the runners from the `architect runners` role in place of the `arena runners` role. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc.
+
+```bash
+python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "architect runners" <<'JSON'
+<the orchestrator_capabilities JSON>
+JSON
+```
+
+The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `architect runners` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One runner per seat. The seat count is the panel size. `inherit` seats, fallbacks, and the report of which seats fell back and whether the models actually differed follow the runner rules in the **arena** skill's Phase A.
 
 Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
 

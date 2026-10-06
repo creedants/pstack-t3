@@ -33,7 +33,15 @@ Write one clear paragraph. If you're unsure about the intent, ask the user befor
 
 ## Step 3, Spawn Reviewers
 
-Call `orchestrator_capabilities` and pipe its JSON to `python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "interrogate reviewers"`. Stdin is that call's catalog, so parallel children do not share a path and the JSON is not written into the repository. That command resolves the `interrogate reviewers` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One reviewer per seat, labeled Reviewer A, B, and onward. The seat count is the panel size.
+Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc.
+
+```bash
+python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "interrogate reviewers" <<'JSON'
+<the orchestrator_capabilities JSON>
+JSON
+```
+
+The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `interrogate reviewers` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). One reviewer per seat, labeled Reviewer A, B, and onward. The seat count is the panel size.
 
 Launch all reviewers in a single message, one `delegate_task` call per seat:
 - `mode`: `"async"`

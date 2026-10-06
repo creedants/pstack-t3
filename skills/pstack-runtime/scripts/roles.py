@@ -118,17 +118,23 @@ def project_config_path(cwd):
     return current / ".pstack" / "t3-roles.json"
 
 
+def parse_json(text, origin):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RolesError(f"{origin}: invalid JSON: {error}") from error
+
+
 def load_json(path):
     try:
-        return json.loads(Path(path).read_text())
+        text = Path(path).read_text()
     except FileNotFoundError:
         return None
-    except json.JSONDecodeError as error:
-        raise RolesError(f"{path}: invalid JSON: {error}") from error
+    return parse_json(text, path)
 
 
 def load_catalog(path):
-    data = json.load(sys.stdin) if str(path) == "-" else load_json(path)
+    data = parse_json(sys.stdin.read(), "-") if str(path) == "-" else load_json(path)
     if data is None:
         raise RolesError(f"{path}: catalog not found")
     if "providers" not in data:
@@ -254,8 +260,22 @@ def apply_budget(seat, model, budget):
     values = [choice["id"] for choice in option.get("options") or [] if choice["id"] not in SPECIAL and rank(choice["id"]) is not None]
     if not values:
         return seat
-    ceiling = max(rank(value) for value in values) if cap == "max-available" else rank(cap)
-    allowed = [value for value in values if rank(value) <= ceiling] or [min(values, key=rank)]
+    # unlimited stops at max. ultra ranks above max.
+    ceiling = rank("max") if cap == "max-available" else rank(cap)
+    allowed = [value for value in values if rank(value) <= ceiling]
+    if not allowed:
+        if cap != "max-available":
+            allowed = [min(values, key=rank)]
+        else:
+            options = dict(seat.get("options") or {})
+            current = options.get(option["id"])
+            if rank(current) is None or rank(current) <= ceiling:
+                return seat
+            options.pop(option["id"], None)
+            updated = {key: value for key, value in seat.items() if key != "options"}
+            if options:
+                updated["options"] = options
+            return updated
     current = (seat.get("options") or {}).get(option["id"])
     if current in values and rank(current) <= ceiling:
         chosen = current
@@ -348,7 +368,7 @@ def _preferred_seat(preference, catalog, budget="default"):
             else:
                 provider, model = rows[0]
             cause = "missing family"
-    # xhigh is the built-in ceiling. unlimited replaces it with the model's highest non-special level.
+    # xhigh is the built-in ceiling. unlimited replaces it with the highest level at or below max.
     stamp = "unlimited" if budget == "unlimited" else "large"
     seat = apply_budget({"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, model, stamp)
     notes = []
