@@ -24,13 +24,16 @@ The rules:
 
 ```bash
 L="python3 <skills>/landing/scripts/land.py --repo <checkout>"
-$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>]
+$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4]
 $L mode merge [--merge-method squash]   # switch between human, merge, and push while nothing is in flight
-$L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json   # prints L<n>, or who holds the overlap
-$L lease renew L3 ; $L lease release L3 ; $L lease list
+$L cap 4                     # most changes in flight on the repository at once; 0 clears it
+$L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json   # prints L<n>, who holds the overlap, or the cap and its holders
+$L lease check --holder <restaurant>/<dish> --paths src/engine   # the claim's test without claiming: free, the overlapping leases, or the cap
+$L lease renew L3 [--if-live] ; $L lease release L3 ; $L lease list
 $L submit --holder <restaurant>/<dish> --branch <b> --sha <reviewed sha> --lease L3 --reviewer <provider/model> [--title "..." --body-file pr.md]   # prints E<n>
 $L land                      # drain the queue; prints what landed, bounced, or is still queued
 $L status [E3] ; $L resume
+$L status --holder <restaurant>/<dish>   # that holder's entries with their SHAs; a value ending in / matches every holder under it
 $L slot -- npm test          # run a heavy command under a governor slot
 $L slot --exclusive -- npm run bench   # hold every slot: nothing else heavy runs while it measures
 ```
@@ -40,6 +43,8 @@ Every command takes `--help`.
 ## Set up a repository once
 
 Run `init` the first time any coordinator writes to a repository. The mode decides whether the user stays a gate on landing, so it is the user's choice. brigade asks it when a restaurant opens. Any other coordinator asks once per repository with the host's question tool, unless the user already said.
+
+The cap belongs to the repository like the mode does. It bounds changes in flight: every submitted lease and every active lease that has not expired, whichever coordinator holds it. The coordinator that opens first sets it with the mode, as `init --trunk main --mode merge --cap 4`, and `land.py cap N` changes it later. A claim at the cap is refused with `repository at its cap: 4 of 4 changes in flight (<holders>)`. `status` shows `changes in flight: 3 of 4` while a cap is set.
 
 | Mode | Landing does | The user |
 | --- | --- | --- |
@@ -56,7 +61,7 @@ Checks are the repository's own gates: test, type check, lint. `--setup` install
 
 For every unit of writing work:
 
-1. **Claim.** `lease claim` the files and directories the unit will change, before delegating. When the claim is refused, fold the unit into the holder's work or hold it until that lease is released. Never claim `.` unless the unit really touches everything.
+1. **Claim.** `lease claim` the files and directories the unit will change, before delegating. When the claim is refused, fold the unit into the holder's work or hold it until that lease is released. A cap refusal names every holder in flight. Hold the unit until one of them releases. Never claim `.` unless the unit really touches everything. `lease renew` extends a live lease. Renewing an expired lease is a new claim on its paths. It is refused when another holder's lease now overlaps or the cap is full, and the refusal names which. `--if-live` refuses an expired lease instead, so admitting it again is always a separate step taken after the old worker stopped.
 2. **Brief.** A writer is a worktree thread from `t3_thread_launch` when it runs long or the user should see it, and a `delegate_task` child otherwise. Tell the worker: work only in its own worktree branched from `<remote>/<trunk>` (or `refs/landing/<trunk>` in local mode), change only the leased paths, keep history linear with no merge commits, run builds and tests through `land.py slot --` and every benchmark or timing measurement through `land.py slot --exclusive --`, commit, and report the branch and head SHA. It does not push to trunk or merge.
 3. **Review** the exact SHA with a verifier from another model family, per the coordinator's own review step.
 4. **Submit** that SHA with the lease and the reviewer. In `merge` and `human` mode, pass `--title` and `--body-file` so the PR says what changed and how it was verified. The queue appends the reviewer and SHA. A submit that changes paths outside the lease is refused. Widen the lease or split the change.

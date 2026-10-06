@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +16,10 @@ sys.path.insert(0, str(SCRIPT.parent))
 import land  # noqa: E402
 
 REVIEWER = "codex/gpt-6.1-sol"
+
+
+def stamp_in(hours):
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
 def git_env():
@@ -195,6 +200,145 @@ exit 0
         self.assertIn("L1 held by perf/D1", self.land("lease", "claim", "--holder", "bugs/D1", "--paths", ".", ok=False))
         self.assertIn("leaves the repository", self.land("lease", "claim", "--holder", "bugs/D1", "--paths", "../etc", ok=False))
         self.assertEqual(self.land("lease", "claim", "--holder", "bugs/D1", "--paths", "lib2,a.txt"), "L2")
+
+    def claim(self, holder, paths, *extra, ok=True):
+        return self.land("lease", "claim", "--holder", holder, "--paths", paths, *extra, ok=ok)
+
+    def test_the_cap_refuses_a_claim_naming_the_holders_and_frees_on_release(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--cap", "2")
+        self.assertEqual(self.claim("a/D1", "a.txt"), "L1")
+        self.assertEqual(self.claim("b/D1", "b.txt"), "L2")
+        self.assertEqual(self.claim("c/D1", "lib", ok=False), "land: repository at its cap: 2 of 2 changes in flight (a/D1, b/D1)")
+        self.assertEqual(self.land("lease", "release", "L1"), "L1 released")
+        self.assertEqual(self.claim("c/D1", "lib"), "L3")
+
+    def test_the_cap_is_set_and_cleared_on_its_own_and_shown_in_status(self):
+        self.init()
+        self.assertNotIn("changes in flight", self.land("status"))
+        self.assertEqual(self.land("cap", "4"), "repository cap is now 4 changes in flight")
+        self.claim("a/D1", "a.txt")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 4.")
+        self.assertEqual(self.land("cap", "0"), "repository cap cleared")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1.")
+        self.assertIn("negative", self.land("cap", "-1", ok=False))
+
+    def test_ten_concurrent_claims_under_a_cap_of_three_make_exactly_three_leases(self):
+        self.init()
+        self.land("cap", "3")
+        claims = [subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "claim",
+                                    "--holder", f"r/D{n}", "--paths", f"p{n}.txt"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+                  for n in range(10)]
+        results = [(claim.wait(), *claim.communicate()) for claim in claims]
+        self.assertEqual(sorted(out.strip() for code, out, _ in results if code == 0), ["L1", "L2", "L3"])
+        refused = [err for code, _, err in results if code != 0]
+        self.assertEqual(len(refused), 7)
+        self.assertTrue(all("repository at its cap: 3 of 3 changes in flight" in err for err in refused), refused)
+        self.assertEqual(len(self.land("lease", "list").splitlines()), 3)
+
+    def test_a_submitted_lease_counts_toward_the_cap_and_a_bounce_keeps_the_count(self):
+        self.init()
+        self.land("cap", "2")
+        self.assertEqual(self.queue_one(text="BROKEN\n"), "E1")
+        self.assertEqual(self.claim("r/D2", "b.txt"), "L2")
+        self.assertIn("changes in flight: 2 of 2", self.land("status"))
+        self.assertEqual(self.claim("r/D3", "lib", ok=False), "land: repository at its cap: 2 of 2 changes in flight (r/D1, r/D2)")
+        self.assertIn("bounced E1 (r/D1)", self.land("land"))
+        self.assertIn("changes in flight: 2 of 2", self.land("status"))
+        self.assertIn("at its cap", self.claim("r/D3", "lib", ok=False))
+
+    def test_an_expired_lease_does_not_count_toward_the_cap(self):
+        self.init()
+        self.land("cap", "1")
+        self.assertEqual(self.claim("a/D1", "a.txt", "--ttl-hours", "0"), "L1")
+        self.assertEqual(self.claim("b/D1", "b.txt"), "L2")
+
+    def test_renewing_an_expired_lease_refuses_an_overlap_another_holder_now_has(self):
+        self.init()
+        self.claim("docs/D9", "a.txt", "--ttl-hours", "0")
+        self.assertEqual(self.claim("engine/D9", "a.txt"), "L2")
+        self.assertEqual(self.land("lease", "renew", "L1", ok=False),
+                         "land: L1 expired and L2 held by engine/D9 now covers a.txt; claim again after it is released")
+        listed = self.land("lease", "list").splitlines()
+        self.assertEqual([line.split(" until ")[0] for line in listed], ["L2 active engine/D9"])
+
+    def test_renewing_an_expired_lease_refuses_when_the_cap_filled(self):
+        self.init()
+        self.land("cap", "2")
+        self.claim("a/D1", "a.txt", "--ttl-hours", "0")
+        self.claim("b/D1", "b.txt")
+        self.claim("c/D1", "lib")
+        self.assertEqual(self.land("lease", "renew", "L1", ok=False), "land: repository at its cap: 2 of 2 changes in flight (b/D1, c/D1)")
+        self.land("lease", "release", "L3")
+        self.assertEqual(self.land("lease", "renew", "L1"), "L1 renewed")
+        self.assertEqual([line.split(" until ")[0] for line in self.land("lease", "list").splitlines()], ["L1 active a/D1", "L2 active b/D1"])
+
+    def test_renew_if_live_refuses_an_expired_lease_and_renews_a_live_one(self):
+        self.init()
+        self.claim("a/D1", "a.txt", "--ttl-hours", "0")
+        self.claim("b/D1", "b.txt")
+        self.assertRegex(self.land("lease", "renew", "L1", "--if-live", ok=False), r"^land: L1 expired at \d{4}-\d\d-\d\dT\d\d:\d\d$")
+        self.assertEqual(self.land("lease", "renew", "L2", "--if-live", "--ttl-hours", "48"), "L2 renewed")
+        self.assertEqual(self.land("lease", "list").split(" until ")[1][:10], stamp_in(48)[:10])
+
+    def test_renew_names_a_submitted_a_released_and_a_missing_lease(self):
+        self.init()
+        self.queue_one()
+        self.claim("r/D2", "b.txt")
+        self.land("lease", "release", "L2")
+        self.assertEqual(self.land("lease", "renew", "L1", ok=False), "land: L1 is submitted; the queue holds it")
+        self.assertEqual(self.land("lease", "renew", "L2", ok=False), "land: L2 is released")
+        self.assertEqual(self.land("lease", "renew", "L9", ok=False), "land: no L9")
+
+    def lease_check(self, holder, paths):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "check", "--holder", holder, "--paths", paths],
+                                capture_output=True, text=True, env=os.environ.copy())
+        return result.returncode, result.stdout.strip()
+
+    def test_lease_check_runs_admission_without_claiming(self):
+        self.init()
+        self.claim("a/D1", "a.txt")
+        self.land("lease", "release", "L1")
+        self.assertEqual(self.land("lease", "check", "--holder", "b/D1", "--paths", "a.txt"), "free")
+        self.claim("c/D1", "a.txt,b.txt")
+        self.assertEqual(self.lease_check("b/D1", "a.txt"), (1, "L2 held by c/D1 on a.txt, b.txt"))
+        self.land("cap", "1")
+        self.assertEqual(self.lease_check("b/D1", "lib"), (1, "repository at its cap: 1 of 1 changes in flight (c/D1)"))
+        self.assertEqual(len(self.land("lease", "list").splitlines()), 1)
+
+    def test_status_holder_lists_one_holder_or_a_prefix(self):
+        self.init()
+        sha1 = self.worker("w1", {"a.txt": "one\n"})
+        sha2 = self.worker("w2", {"b.txt": "two\n"})
+        sha3 = self.worker("w3", {"lib/x.py": "three\n"})
+        for holder, branch, sha, path in [("engine/D1", "w1", sha1, "a.txt"), ("engine/D2", "w2", sha2, "b.txt"), ("enginex/D1", "w3", sha3, "lib")]:
+            lease = self.claim(holder, path)
+            self.land("submit", "--holder", holder, "--branch", branch, "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
+        self.assertEqual(self.land("status", "--holder", "engine/D2"), f"E2 queued (engine/D2, {sha2[:12]})")
+        self.land("land")
+        landed = sh("git", "rev-parse", "main~2", cwd=self.base / "origin.git")
+        self.assertEqual(self.land("status", "--holder", "engine/").splitlines(),
+                         [f"E1 landed (engine/D1, {sha1[:12]}) as {landed[:12]}",
+                          f"E2 landed (engine/D2, {sha2[:12]}) as {sh('git', 'rev-parse', 'main~1', cwd=self.base / 'origin.git')[:12]}"])
+        self.assertEqual(self.land("status", "--holder", "docs/D1"), "no entries held by docs/D1")
+
+    def test_status_holder_shows_a_bounce_reason(self):
+        self.init()
+        self.queue_one(text="BROKEN\n")
+        self.land("land")
+        line = self.land("status", "--holder", "r/D1")
+        self.assertRegex(line, r"^E1 bounced \(r/D1, [0-9a-f]{12}\): checks failed: `./check.sh` exited 1")
+
+    def test_the_mode_line_names_the_holders_of_unreleased_leases(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.claim("engine/D3", "a.txt")
+            self.claim("docs/D1", "b.txt")
+            self.claim("old/D1", "lib", "--ttl-hours", "0")
+            self.assertEqual(self.land("mode", "merge"), "landing mode is now merge; leases held by docs/D1, engine/D3")
+            self.land("lease", "release", "L1")
+            self.land("lease", "release", "L2")
+            self.assertEqual(self.land("mode", "push"), "landing mode is now push")
 
     def test_submit_requires_the_holders_own_lease_covering_every_changed_path(self):
         self.init()

@@ -294,7 +294,7 @@ def trunk_ref(contract):
     return f"refs/remotes/{contract['remote']}/{contract['trunk']}"
 
 
-def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method="merge"):
+def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method="merge", cap=None):
     mode = LEGACY_MODES.get(mode, mode)
     common = common_dir(path)
     repo = common.parent if common.name == ".git" else Path(git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
@@ -323,11 +323,29 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         for key, value in wanted.items():
             if key != "paused" or key not in current:
                 db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
+        if cap is not None:
+            set_cap(db, cap)
     if mode == "local" and git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
         if not base:
             raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
         git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
     return f"{'updated' if current else 'created'} {directory}"
+
+
+def set_cap(db, cap):
+    if cap < 0:
+        raise LandError(f"cap {cap} is negative; pass 0 to clear it")
+    if cap:
+        db.execute("INSERT OR REPLACE INTO contract VALUES ('cap', ?)", (json.dumps(cap),))
+    else:
+        db.execute("DELETE FROM contract WHERE key = 'cap'")
+
+
+def change_cap(store, cap):
+    with store.tx() as db:
+        set_cap(db, cap)
+        store.log(db, "queue", 0, f"cap {cap}")
+    return f"repository cap is now {cap} changes in flight" if cap else "repository cap cleared"
 
 
 def change_mode(store, mode, merge_method):
@@ -344,21 +362,90 @@ def change_mode(store, mode, merge_method):
         if merge_method:
             db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(merge_method),))
         store.log(db, "queue", 0, f"mode {mode}", f"was {current}")
-    return f"landing mode is now {mode}" + (f", merging with --{merge_method}" if merge_method else "")
+        holders = holders_of(in_flight(db))
+    return (f"landing mode is now {mode}" + (f", merging with --{merge_method}" if merge_method else "")
+            + (f"; leases held by {holders}" if holders else ""))
+
+
+def in_flight(db):
+    """Leases not yet released: every submitted lease and every active lease that has not expired."""
+    return db.execute("SELECT * FROM lease WHERE state = 'submitted' OR (state = 'active' AND expires > ?) ORDER BY id",
+                      (stamp(),)).fetchall()
+
+
+def holders_of(rows):
+    return ", ".join(sorted({row["holder"] for row in rows}))
+
+
+def lease_paths(row):
+    return row["paths"].replace("\n", ", ") or "(whole repo)"
+
+
+def held_on(row):
+    return f"L{row['id']} held by {row['holder']} on {lease_paths(row)}"
+
+
+def admission(store, db, holder, wanted):
+    """The leases a new lease on these paths would overlap, and the cap refusal when there are none.
+
+    Run it inside the transaction that writes the lease, so two claims cannot both pass.
+    """
+    held = in_flight(db)
+    clash = [row for row in held if row["holder"] != holder and overlaps(wanted, row["paths"].split("\n"))]
+    cap = store.contract.get("cap")
+    full = (f"repository at its cap: {len(held)} of {cap} changes in flight ({holders_of(held)})"
+            if not clash and cap and len(held) >= cap else "")
+    return clash, full
+
+
+def wanted_paths(paths):
+    return sorted({canonical(p) for p in paths.split(",")})
 
 
 def lease_claim(store, holder, paths, ttl_hours):
-    wanted = sorted({canonical(p) for p in paths.split(",")})
+    wanted = wanted_paths(paths)
     with store.tx() as db:
-        rows = db.execute("SELECT * FROM lease WHERE state != 'released' AND holder != ? AND (state = 'submitted' OR expires > ?)",
-                          (holder, stamp())).fetchall()
-        clash = [row for row in rows if overlaps(wanted, row["paths"].split("\n"))]
+        clash, full = admission(store, db, holder, wanted)
         if clash:
-            raise LandError("paths overlap " + "; ".join(f"L{row['id']} held by {row['holder']} on {row['paths'].replace(chr(10), ', ') or '(whole repo)'}" for row in clash))
+            raise LandError("paths overlap " + "; ".join(held_on(row) for row in clash))
+        if full:
+            raise LandError(full)
         cursor = db.execute("INSERT INTO lease (at, holder, paths, state, expires) VALUES (?, ?, ?, 'active', ?)",
                             (stamp(), holder, "\n".join(wanted), stamp(now() + timedelta(hours=ttl_hours))))
         store.log(db, "lease", cursor.lastrowid, "active", holder)
     return f"L{cursor.lastrowid}"
+
+
+def lease_check(store, holder, paths):
+    clash, full = admission(store, store.db, holder, wanted_paths(paths))
+    if clash or full:
+        return "\n".join(held_on(row) for row in clash) or full, 1
+    return "free", 0
+
+
+def lease_renew(store, number, ttl_hours, if_live):
+    """Extend a live lease. An expired lease is admitted again, as a new claim on its paths would be."""
+    with store.tx() as db:
+        row = db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone()
+        if not row:
+            raise LandError(f"no L{number}")
+        if row["state"] == "submitted":
+            raise LandError(f"L{number} is submitted; the queue holds it")
+        if row["state"] == "released":
+            raise LandError(f"L{number} is released")
+        expired = row["expires"] <= stamp()
+        if expired and if_live:
+            raise LandError(f"L{number} expired at {row['expires'][:16]}")
+        if expired:
+            clash, full = admission(store, db, row["holder"], row["paths"].split("\n"))
+            if clash:
+                covers = " and ".join(f"L{c['id']} held by {c['holder']} now covers {lease_paths(c)}" for c in clash)
+                raise LandError(f"L{number} expired and {covers}; claim again after {'it is' if len(clash) == 1 else 'they are'} released")
+            if full:
+                raise LandError(full)
+        db.execute("UPDATE lease SET expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=ttl_hours)), number))
+        store.log(db, "lease", number, "renewed", "after it expired" if expired else "")
+    return f"L{number} renewed"
 
 
 def lease_id(text):
@@ -1193,6 +1280,23 @@ def report(store, landed, bounced, opened, adopted=()):
     return "\n".join(lines) or "nothing to land"
 
 
+def holder_status(store, holder):
+    """Entries of one holder, or of every holder under a prefix that ends in /."""
+    lines = []
+    for row in store.db.execute("SELECT * FROM entry ORDER BY id"):
+        if row["holder"] != holder and not (holder.endswith("/") and row["holder"].startswith(holder)):
+            continue
+        line = f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['sha'][:12]})"
+        if row["state"] == "landed" and row["landed"]:
+            line += f" as {row['landed'][:12]}"
+        elif row["state"] == "awaiting-merge" and row["pr"]:
+            line += f" {row['pr']}"
+        elif row["state"] == "bounced":
+            line += f": {row['note']}"
+        lines.append(line)
+    return "\n".join(lines) or f"no entries held by {holder}"
+
+
 def status(store, ident=None):
     if ident:
         number = entry_id(ident)
@@ -1202,9 +1306,11 @@ def status(store, ident=None):
         detail = [f"landed as {row['landed'][:12]}" if row["landed"] else "", row["pr"], row["note"]]
         return f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['branch']})" + "".join(f". {part}" for part in detail if part)
     counts = dict(store.db.execute("SELECT state, count(*) FROM entry GROUP BY state").fetchall())
-    leases = store.db.execute("SELECT count(*) FROM lease WHERE state = 'submitted' OR (state = 'active' AND expires > ?)", (stamp(),)).fetchone()[0]
+    leases = len(in_flight(store.db))
     contract = store.contract
     parts = [f"{state}: {count}" for state, count in counts.items()] + ([f"leases held: {leases}"] if leases else [])
+    if contract.get("cap"):
+        parts.append(f"changes in flight: {leases} of {contract['cap']}")
     paused = f" Paused: {contract['paused']}" if contract.get("paused") else ""
     return f"{contract['mode']} mode onto {trunk_ref(contract)}. " + (", ".join(parts) or "empty") + "." + paused
 
@@ -1225,6 +1331,10 @@ def parser():
     p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
     p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
     p.add_argument("--merge-method", choices=MERGE_METHODS, default="merge", help="merge mode: how the queue merges its PRs")
+    p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
+
+    p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
+    p.add_argument("count", type=int)
 
     p = sub.add_parser("mode", help="switch between human, merge, and push while nothing is in flight")
     p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
@@ -1239,9 +1349,13 @@ def parser():
     a = t.add_parser("renew")
     a.add_argument("id")
     a.add_argument("--ttl-hours", type=float, default=6)
+    a.add_argument("--if-live", action="store_true", help="refuse when the lease has expired instead of admitting it again")
     a = t.add_parser("release")
     a.add_argument("id")
     t.add_parser("list")
+    a = t.add_parser("check", help="run the claim's admission test without claiming")
+    a.add_argument("--holder", required=True)
+    a.add_argument("--paths", required=True)
 
     p = sub.add_parser("submit", help="queue a reviewed commit for landing")
     p.add_argument("--holder", required=True)
@@ -1256,6 +1370,7 @@ def parser():
     sub.add_parser("resume", help="clear a pause after you checked trunk")
     p = sub.add_parser("status")
     p.add_argument("id", nargs="?")
+    p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
@@ -1272,25 +1387,27 @@ def run(argv):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method), 0
+                    args.merge_method, args.cap), 0
     store = Store.for_repo(args.repo)
+    if args.command == "cap":
+        return change_cap(store, args.count), 0
     if args.command == "lease":
         if args.action == "claim":
             return lease_claim(store, args.holder, args.paths, args.ttl_hours), 0
+        if args.action == "check":
+            return lease_check(store, args.holder, args.paths)
         if args.action == "list":
-            rows = store.db.execute("SELECT * FROM lease WHERE state = 'submitted' OR (state = 'active' AND expires > ?) ORDER BY id", (stamp(),))
-            return "\n".join(f"L{r['id']} {r['state']} {r['holder']} until {r['expires'][:16]}: {r['paths'].replace(chr(10), ', ') or '(whole repo)'}" for r in rows) or "no leases held", 0
+            return "\n".join(f"L{r['id']} {r['state']} {r['holder']} until {r['expires'][:16]}: {lease_paths(r)}" for r in in_flight(store.db)) or "no leases held", 0
         number = lease_id(args.id)
+        if args.action == "renew":
+            return lease_renew(store, number, args.ttl_hours, args.if_live), 0
         with store.tx() as db:
             row = db.execute("SELECT state FROM lease WHERE id = ?", (number,)).fetchone()
             if not row or row["state"] != "active":
                 raise LandError(f"L{number} is not active; a submitted lease is released when its entry lands or bounces")
-            if args.action == "renew":
-                db.execute("UPDATE lease SET expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=args.ttl_hours)), number))
-            else:
-                db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (number,))
-            store.log(db, "lease", number, "renewed" if args.action == "renew" else "released")
-        return f"L{number} {'renewed' if args.action == 'renew' else 'released'}", 0
+            db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (number,))
+            store.log(db, "lease", number, "released")
+        return f"L{number} released", 0
     if args.command == "mode":
         return change_mode(store, args.mode, args.merge_method), 0
     if args.command == "submit":
@@ -1304,6 +1421,10 @@ def run(argv):
             db.execute("DELETE FROM contract WHERE key = 'tip'")
             store.log(db, "queue", 0, "resumed")
         return "queue resumed", 0
+    if args.holder:
+        if args.id:
+            raise LandError("status takes an entry id or --holder, not both")
+        return holder_status(store, args.holder), 0
     return status(store, args.id), 0
 
 
