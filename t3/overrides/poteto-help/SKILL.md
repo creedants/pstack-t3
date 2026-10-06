@@ -1,6 +1,6 @@
 ---
 name: poteto-help
-description: "Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Use for $poteto-help, or when the user asks how to install, set up, or use pstack, or which pstack skill fits. Not for requests to do work, even ones that name pstack."
+description: "Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question. Use for $poteto-help, or when the user asks how to install, set up, or use pstack, or which pstack skill fits. Not for requests to do work, even ones that name pstack."
 ---
 
 # Poteto help
@@ -26,13 +26,18 @@ Check the state that changes the answer, and mention it only when it does:
 - No `.pstack/t3-roles.json`, and no `~/.config/pstack-t3/roles.json` or `$XDG_CONFIG_HOME/pstack-t3/roles.json`, means `$setup-pstack` hasn't run for this user, so every role uses its default model. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) lists them.
 - No `verify-*` skill or other app harness in the project means agents have no scripted way to drive the app. Mention `$create-verification-skill` when the question is about proving a change works.
 
+When no roles file exists and it matters, ask whether the user wants to pick a model for each role and a reasoning budget now. It matters when the user is new, the question is about setup or cost, or the answer depends on which models run. Ask at most once per chat. If the need is also unclear, ask both questions together. Offer two choices:
+
+- Now: give them `$setup-pstack` to type, and answer their question too.
+- Later: answer their question, and add one line saying every role keeps its default model until they run `$setup-pstack`.
+
 ## Get set up
 
 1. `git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3`, then run `python3 scripts/install.py` in that directory. Then run `python3 scripts/install.py doctor`. Each provider should show the same count on both sides of `N/N pstack-t3`.
 2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles.
 3. Start a real task with `$poteto-mode`, a goal, and a check that can pass or fail.
 
-Typing `$name` loads a skill, and any skill can also load when its description matches. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them.
+Typing `$name` loads a skill, and any skill can also load when its description matches. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them, per [`references/prompting.md`](references/prompting.md).
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `$setup-pstack` and pick a smaller budget or cheaper models. A role set to `inherit` runs on the chat's model, which saves tokens when the chat runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `$poteto-mode` for work that needs rigor.
 
@@ -40,7 +45,7 @@ pstack-t3 runs in T3 Code. [Outside T3](../pstack-runtime/SKILL.md#outside-t3) c
 
 ## Start a task with `$poteto-mode`
 
-`$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
+`$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. Read [`references/prompting.md`](references/prompting.md) before you help word one. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
 
 Whether `$poteto-mode` stays on:
 
@@ -65,7 +70,7 @@ The default answer is `$poteto-mode`, which runs most of the others when its ste
 | Get several attempts at one brief, merged into the best one | [`$arena`](../arena/SKILL.md) |
 | Run parallel checks over slices, or race workers | [`$swarm`](../swarm/SKILL.md) |
 | Let many agents write one repo without colliding | [`$landing`](../landing/SKILL.md) |
-| Have several models review a diff and try to break it | [`$interrogate`](../interrogate/SKILL.md) |
+| Have different models review a diff and try to break it | [`$interrogate`](../interrogate/SKILL.md) |
 | Fix a bug test-first when a cheap local test exists | [`$tdd`](../tdd/SKILL.md) |
 | Apply TypeScript rules to `.ts` or `.tsx` work | [`$typescript-best-practices`](../typescript-best-practices/SKILL.md) |
 | Strip comments before review, using a reviewer that didn't write them | [`$no-comments`](../no-comments/SKILL.md) |
@@ -135,7 +140,7 @@ Principles are one-rule skills that `$poteto-mode` reads and cites in its replie
 | An overnight run moved but finished nothing | `schedule_task` needs a check that can pass or fail, not a duration. See [Leave it running](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#6-leave-it-running). |
 | The reply claims success from a green build | Ask for the real command, flow, stored value, or profile. That's the prove-it-works principle. |
 
-[Tips and pitfalls](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#tips-and-pitfalls) has more.
+For a run that drifts, [`references/prompting.md`](references/prompting.md) has one-line steers. [Tips and pitfalls](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#tips-and-pitfalls) has more.
 
 ## Make pstack my own
 
@@ -146,4 +151,4 @@ Principles are one-rule skills that `$poteto-mode` reads and cites in its replie
 
 ## Reply
 
-Lead with the answer. Give at most one example prompt in a code block, then the link to that file. Keep it short unless the user asked for the whole map.
+Lead with the answer. Give at most one example prompt in a code block, adapted from [`references/recipes.md`](references/recipes.md) when one fits, then the link to that file. Keep it short unless the user asked for the whole map.
