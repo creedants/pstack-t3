@@ -351,7 +351,10 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
 
 
 def started_at(restaurant, ident):
-    """When the dish's current attempt started: its last move to in-progress."""
+    """When the current attempt started: the last in-progress log row.
+
+    Replacing the worker appends that row again without leaving in-progress.
+    """
     moves = [row["at"] for row in restaurant.rows("log.tsv") if row["kind"] == "dish" and row["id"] == ident and row["state"] == "in-progress"]
     return datetime.fromisoformat(moves[-1]) if moves else None
 
@@ -560,10 +563,14 @@ def run(argv):
             ok, why = pass_check(restaurant, args.id, args.sha or current["sha"])
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
-        new_attempt = args.state == "in-progress" and current["state"] != "in-progress"
-        reported = "" if new_attempt else ("yes" if args.reported else None)
+        entering = args.state == "in-progress" and current["state"] != "in-progress"
+        replacing = (bool(args.thread) and args.thread != current.get("thread", "")
+                     and current["state"] == "in-progress" and args.state in (None, "in-progress"))
+        reported = "" if entering or replacing else ("yes" if args.reported else None)
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=args.thread,
                                 branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox, reported=reported)
+        if replacing:
+            restaurant.log("dish", args.id, "in-progress", row.get("summary", ""))
         if args.state == "merged":
             for ticket in filter(None, row["tickets"].split(",")):
                 restaurant.update("rail.tsv", ticket, "ticket", state="done")

@@ -64,7 +64,7 @@ L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases an
 
 Every command takes `--help`. Workers write their reports to `<restaurant dir>/reports/<dish>.md`, and verifiers write findings to `<restaurant dir>/reports/<dish>-review.md`.
 
-`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family. `$B dish <id> --reported` records that this attempt's report-back arrived. `$B dish <id> --state in-progress` clears that mark when the attempt is new.
+`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family. `$B dish <id> --reported` records that this attempt's report-back arrived. A new attempt clears that mark. The attempt is new when the dish enters in progress, and when `$B dish <id> --thread <id>` records a different worker while the dish stays in progress. That command logs a new start. `$B watch` compares the report file to that start. Recording the same thread again leaves the attempt alone.
 
 ## Open a restaurant
 
@@ -139,7 +139,7 @@ Run on the liveness schedule, and at the start of any service while work is in p
 1. `$B watch`. It prints one line per dish in progress.
 2. "report written, no report-back" is a defect. The report file exists and the dish is not marked reported. Read the worker thread with `t3_thread_read` and `view` set to "activity". Find why the message never arrived. The brief lacked the send step, the worker skipped it, `t3_thread_send` failed or went to the wrong thread, or the timebox ran out. Fire a fix at that cause, in the brief template, the skill text the worker followed, or `brigade.py`, using the **correct** skill.
 3. A "report written" line that does not say "no report-back" means the worker reported back and is done, even if its run never closed. Run `t3_thread_interrupt` on the thread if its run is still active, then review per Run a service step 6.
-4. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it.
+4. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it. Recording the fresh worker's thread with `$B dish <id> --thread <thread id>` starts its attempt while the dish stays in progress. The previous report and report-back mark belong to the worker you replaced. `$B watch` compares the report file to this new start.
 5. "running": nothing to do.
 6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`.
 

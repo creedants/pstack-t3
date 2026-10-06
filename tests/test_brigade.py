@@ -204,6 +204,30 @@ class BrigadeTest(unittest.TestCase):
         (self.at / "reports/D1.md").write_text("second attempt")
         self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
 
+    def test_replacing_an_in_progress_worker_starts_a_new_attempt(self):
+        self.open()
+        self.fire_one(timebox="60")
+        log = self.at / "log.tsv"
+        log.write_text(log.read_text().replace(f"{__import__('datetime').date.today().year}-", "2020-"))
+        report = self.at / "reports" / "D1.md"
+        report.parent.mkdir()
+        report.write_text("partial from the overdue worker")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker"), "D1 in-progress")
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread fresh-worker)")
+        report.write_text("partial from the fresh worker")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.brigade("dish", "D1", "--timebox", "90", "--task", "t-2")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.brigade("dish", "D1", "--reported")
+        self.assertEqual(self.brigade("watch"), "D1: report written 0m ago; review it even if the worker's run is still open (thread fresh-worker)")
+        self.brigade("dish", "D1", "--thread", "worker-3")
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 90m (thread worker-3)")
+        report.write_text("partial from worker-3")
+        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread worker-3)")
+
     def test_fire_claims_the_lease_and_a_refused_claim_fires_nothing(self):
         import os
         from unittest import mock
