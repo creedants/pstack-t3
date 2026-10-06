@@ -24,7 +24,7 @@ VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
-    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths"),
+    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
@@ -313,6 +313,9 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         raise BrigadeError("a brief needs at least one --acceptance criterion")
     if dish["state"] not in ("in-progress", "sent-back"):
         raise BrigadeError(f"{ident} is {dish['state']}; brief a dish that is in progress or sent back")
+    thread = (restaurant.meta.get("thread") or "").strip()
+    if not thread:
+        raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -338,7 +341,8 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. At the limit, write the report with what you have and stop.",
         "", "REPORT:",
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
-        "- Then end your turn with one line naming the report path. Writing the report is how the coordinator knows you are done.",
+        f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
+        "- Then end your turn with one line naming the report path.",
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
     ]
     text = "\n".join(lines) + "\n"
@@ -365,8 +369,11 @@ def watch(restaurant):
         where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
         written = datetime.fromtimestamp(report.stat().st_mtime, timezone.utc) if report.exists() else None
         if written and written >= start:
-            ago = int((moment - written).total_seconds() // 60)
-            lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
+            if dish.get("reported") == "yes":
+                ago = int((moment - written).total_seconds() // 60)
+                lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
+            else:
+                lines.append(f"{dish['id']}: report written, no report-back ({where})")
         elif minutes > timebox:
             lines.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
         else:
@@ -427,7 +434,7 @@ def parser():
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
     p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
 
-    p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field is missing")
+    p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
     p.add_argument("--goal", required=True, help="one sentence: the outcome")
     p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
@@ -445,6 +452,7 @@ def parser():
     for field in ("task", "thread", "branch", "pr", "sha"):
         p.add_argument(f"--{field}")
     p.add_argument("--timebox", type=int, help="minutes; raise it once for a worker that is still making progress")
+    p.add_argument("--reported", action="store_true", help="record that this attempt's report-back arrived")
 
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
@@ -547,13 +555,15 @@ def run(argv):
         return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
 
     if args.command == "dish":
+        _, current = restaurant.find("dishes.tsv", args.id)
         if args.state in ("queued", "merged"):
-            _, current = restaurant.find("dishes.tsv", args.id)
             ok, why = pass_check(restaurant, args.id, args.sha or current["sha"])
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
+        new_attempt = args.state == "in-progress" and current["state"] != "in-progress"
+        reported = "" if new_attempt else ("yes" if args.reported else None)
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=args.thread,
-                                branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox)
+                                branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox, reported=reported)
         if args.state == "merged":
             for ticket in filter(None, row["tickets"].split(",")):
                 restaurant.update("rail.tsv", ticket, "ticket", state="done")

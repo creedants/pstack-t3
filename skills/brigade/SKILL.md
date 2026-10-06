@@ -52,7 +52,7 @@ $B ticket set T3 --state dropped
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60]   # claims the lease, prints D<n>
 $B brief D2 --goal "..." --acceptance "..." [--acceptance ...] --verify "..." --base main [--context ...]   # writes briefs/D2.md
 $B watch                                     # liveness of every dish in progress
-$B dish D2 --state in-progress|in-review|queued|merged|dropped [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>]
+$B dish D2 --state in-progress|in-review|queued|merged|dropped [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>] [--reported]
 $B pass record D2 --sha <head> --verdict pass|send-back|blocked --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family]
 $B pass check D2 --sha <head>                # exits 1 unless that SHA passed
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
@@ -64,7 +64,7 @@ L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases an
 
 Every command takes `--help`. Workers write their reports to `<restaurant dir>/reports/<dish>.md`, and verifiers write findings to `<restaurant dir>/reports/<dish>-review.md`.
 
-`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family.
+`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family. `$B dish <id> --reported` records that this attempt's report-back arrived. `$B dish <id> --state in-progress` clears that mark when the attempt is new.
 
 ## Open a restaurant
 
@@ -100,17 +100,17 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
 
 ## Run a service
 
-Every wake runs this: a user message, a verifier's completion, a schedule, or a `watch_pull_request` wake.
+Every wake runs this: a user message, a worker's report-back, a verifier's completion, a schedule, or a `watch_pull_request` wake.
 
 1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. It is the purpose every decision answers to.
 2. **Take tickets.** Each user request or supplier finding becomes `$B ticket add`. Fetch supplier sources (`gh issue list`, `gh pr list`, notifications) only when the house rules name them. Drop a ticket that is off the menu with `$B ticket set <id> --state dropped` and say why in the report.
 3. **Group before firing.** Read the waiting tickets together. Several reports of one cause are one dish. Fire a ticket alone only when it is urgent or unrelated to the rest. A ticket that is a whole program with a done predicate runs as one dish whose station is poteto-mode's Orchestrate playbook.
 4. **Fire.** Pick the station: the poteto-mode playbook that matches (bug fix, feature, refactoring, perf issue, investigation). Keep in-flight dishes under the house-rules cap. Then:
    1. `$B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minutes> --paths <files and directories the dish will change>`. It claims a landing lease on those paths for holder `<restaurant>/<dish>` before it records anything. A refused claim names the holder and fires nothing. Fold the tickets into the holder's dish when it is this restaurant's, or leave them waiting until that lease is released. Never pass `.` for a dish that touches a few files. Size the timebox to the work, 30 to 90 minutes.
-   2. `$B brief <dish> --goal ... --acceptance ... --verify ... --base <trunk>`. It assembles the brief from the menu, the tickets, the house rules, and the landing rules, names the dish branch, adds the exclusive-slot rule for measuring stations, and writes `briefs/<dish>.md`. It refuses when a field is missing. Fix the field. Never hand-write a brief.
+   2. `$B brief <dish> --goal ... --acceptance ... --verify ... --base <trunk>`. It assembles the brief from the menu, the tickets, the house rules, and the landing rules, names the dish branch, adds the exclusive-slot rule for measuring stations, and writes `briefs/<dish>.md`. The report section tells the worker to call `t3_thread_send` on the coordinator thread after the report file is written. It refuses when a field is missing, and when no coordinator thread is recorded. Run `$B set --thread` first. Fix the field. Never hand-write a brief.
    3. Launch the worker with `t3_thread_launch`: title `<restaurant> <dish>: <summary>`, `workspaceStrategy: {"type": "worktree", "baseRef": "<trunk>", "branch": "<dish branch from the brief>", "startFromOrigin": true}` (local landing mode: `baseRef` `refs/landing/<trunk>` and `startFromOrigin` false), a `modelSelection` from the station's role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles) (omit it for an `inherit` seat), and the brief file's contents as `message`.
    4. `$B dish <dish> --thread <threadId>`.
-5. **End the turn** while dishes run. Worker threads do not send completion notices. The liveness schedule finds finished and stuck work.
+5. **End the turn** while dishes run. A worker's report-back message wakes the coordinator, which marks the dish reported with `$B dish <id> --reported` and reviews it per step 6. The 10-minute liveness schedule stays as the backstop for a worker that hangs or never sends the message.
 6. **Review.** When a worker is done, read its report and diff yourself. A worker's "done" is a claim. `t3_thread_read` on the worker thread returns its `worktreePath` and branch. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from the `verifiers` role on a model family other than the author's. Its read-only brief: the tickets, the menu, the worktree path and the diff at that SHA, two questions (does it work on the real surface, and does it serve the menu without scope the tickets did not ask for), and "write your findings to `<restaurant dir>/reports/<dish>-review.md`". Record the verdict with `$B pass record`.
 7. **Act on the verdict.**
    - `pass`: write the PR title and body (what changed, the measured effect, how it was verified) to `<restaurant dir>/prs/<dish>.md`, then `$L submit --holder <restaurant>/<dish> --branch <b> --sha <head> --lease L<n> --reviewer <provider/model> --title "..." --body-file <restaurant dir>/prs/<dish>.md`, then `$B dish <id> --state queued`, then `$L land`. When it lands, `$B dish <id> --state merged`. In `merge` and `human` mode it opens a PR first. Record it with `$B dish <id> --pr <url>`, link it with `link_pull_request`, and call `watch_pull_request` on it per [Pull request watching](../pstack-runtime/SKILL.md#pull-request-watching). This head chef thread owns the PR. On each wake, run `$L land`. Keep the watch while the dish is queued or awaiting merge. A service reply and a status report keep the watch. Call `unwatch_pull_request` only when this thread stops driving that PR. Driving stops when the dish is dropped, when its PR closes, when the queue bounces it and leaves the PR open, or when the restaurant closes. If this thread is settled, call `t3_thread_organize` with `action: "unsettle"` before the next `watch_pull_request`. This thread is pinned, so a merge does not auto-settle it. Mark the dish merged when a later `land` reports it landed.
@@ -137,10 +137,11 @@ The head chef owns every git and PR chore its work creates. In `merge` and `push
 Run on the liveness schedule, and at the start of any service while work is in progress.
 
 1. `$B watch`. It prints one line per dish in progress.
-2. "report written": the worker is done, even if its run never closed. `t3_thread_interrupt` the thread if its run is still active, then review per Run a service step 6.
-3. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it.
-4. "running": nothing to do.
-5. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`.
+2. "report written, no report-back" is a defect. The report file exists and the dish is not marked reported. Read the worker thread with `t3_thread_read` and `view` set to "activity". Find why the message never arrived. The brief lacked the send step, the worker skipped it, `t3_thread_send` failed or went to the wrong thread, or the timebox ran out. Fire a fix at that cause, in the brief template, the skill text the worker followed, or `brigade.py`, using the **correct** skill.
+3. A "report written" line that does not say "no report-back" means the worker reported back and is done, even if its run never closed. Run `t3_thread_interrupt` on the thread if its run is still active, then review per Run a service step 6.
+4. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it.
+5. "running": nothing to do.
+6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`.
 
 ## Executive chef's view
 
