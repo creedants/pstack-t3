@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -640,8 +641,9 @@ def running_workers(restaurant):
 
 def workers_full(restaurant):
     cap = worker_cap(restaurant.meta)
-    if running_workers(restaurant) >= cap:
-        return f"{cap} of {cap} workers running"
+    running = running_workers(restaurant)
+    if running >= cap:
+        return f"{running} of {cap} workers running"
     return None
 
 
@@ -666,14 +668,17 @@ def refusal_kind(message):
     return "lease"
 
 
-def block_note(kind, ids, station, summary, paths, timebox):
-    return json.dumps({"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
-                       "paths": paths, "timebox": timebox}, separators=(",", ":"))
+def block_note(kind, ids, station, summary, paths, timebox, branch=""):
+    note = {"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
+            "paths": paths, "timebox": timebox}
+    if branch:
+        note["branch"] = branch
+    return json.dumps(note, separators=(",", ":"))
 
 
-def record_blocked(restaurant, ids, kind, station, summary, paths, timebox):
+def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch=""):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
-    note = block_note(kind, ids, station, summary, paths, timebox)
+    note = block_note(kind, ids, station, summary, paths, timebox, branch)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -743,13 +748,28 @@ def release_lease(restaurant, lease):
 
 def lease_check(project_root, holder_name, paths):
     result = land_result(project_root, "lease", "check", "--holder", holder_name, "--paths", paths)
-    return result.returncode, result.stdout.strip()
+    diagnostic = result.stderr.strip().removeprefix("land: ")
+    return result.returncode, result.stdout.strip(), diagnostic
 
 
-def blocked_watch_line(project_root, prefix, ident, note, running, cap):
-    paths = note.get("paths") or ""
-    if paths:
-        code, out = lease_check(project_root, f"{prefix}/{ident}", paths)
+def fire_command(ident, note):
+    tickets = ",".join(note.get("tickets") or [ident])
+    tokens = ["fire", "--tickets", tickets, "--station", note.get("station", ""),
+              "--summary", note.get("summary", "")]
+    if note.get("branch"):
+        tokens.extend(["--branch", note["branch"]])
+    if note.get("paths"):
+        tokens.extend(["--paths", note["paths"]])
+    tokens.extend(["--timebox", str(note.get("timebox", 60))])
+    return " ".join(shlex.quote(str(token)) for token in tokens)
+
+
+def blocked_watch_line(project_root, prefix, ident, note, running, cap, next_dish):
+    requested = note.get("paths") or ""
+    known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
+    checking = with_fragment(requested, known) if requested else ""
+    if checking:
+        code, out, err = lease_check(project_root, f"{prefix}/{ident}", checking)
         if code != 0:
             overlap = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
             if len(overlap) == 1:
@@ -761,16 +781,10 @@ def blocked_watch_line(project_root, prefix, ident, note, running, cap):
             room = re.search(r"(\d+ of \d+ changes in flight)", out)
             if room:
                 return f"{ident}: waiting for room in the repository ({room.group(1)})"
-            return f"{ident}: waiting on the landing queue ({out or 'lease check failed'})"
+            return f"{ident}: waiting on the landing queue ({out or err or 'lease check failed'})"
     if running >= cap:
-        return f"{ident}: waiting for a worker ({cap} of {cap} running)"
-    tickets = ",".join(note.get("tickets") or [ident])
-    summary = note.get("summary", "")
-    station = note.get("station", "")
-    timebox = note.get("timebox", 60)
-    path_flag = f" --paths {paths}" if paths else ""
-    return (f"{ident}: unblocked; run fire --tickets {tickets} --station {station} "
-            f"--summary '{summary}'{path_flag} --timebox {timebox}")
+        return f"{ident}: waiting for a worker ({running} of {cap} running)"
+    return f"{ident}: unblocked; run {fire_command(ident, note)}"
 
 
 def unfireable(restaurant, ids):
@@ -792,7 +806,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             leased = with_fragment(paths, known) if paths else ""
             full = workers_full(restaurant)
             if full:
-                record_blocked(restaurant, ids, "workers", station, summary, leased, timebox)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch)
                 raise BrigadeError(f"nothing fired: {full}")
         # land.py can wait on the landing database, so the claim runs outside the store lock.
         # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
@@ -800,7 +814,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             lease = claim_lease(restaurant, dish, leased) if leased else ""
         except ClaimError as error:
             with restaurant.checked():
-                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, leased, timebox)
+                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch)
             raise BrigadeError(f"nothing fired: {error}") from error
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
@@ -822,7 +836,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
                 return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
             if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, leased, timebox)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch)
                 refusal = full
         if lease:
             release_lease(restaurant, lease)
@@ -941,9 +955,10 @@ def watch(restaurant):
         running = running_workers(restaurant)
         root = restaurant.meta["projectRoot"]
         prefix = slug(restaurant.meta["restaurant"])
+        next_dish = restaurant.next_id("dishes.tsv")
     # lease check waits on the landing database, so it runs outside the store lock.
     for ident, note in blocked:
-        lines.append(blocked_watch_line(root, prefix, ident, note, running, cap))
+        lines.append(blocked_watch_line(root, prefix, ident, note, running, cap, next_dish))
     return "\n".join(lines) or "no work in progress"
 
 
