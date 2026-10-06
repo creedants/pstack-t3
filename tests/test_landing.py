@@ -264,6 +264,34 @@ exit 0
         self.land("resume")
         self.assertEqual(self.land("land"), "landed Q2 (r/D2)")
 
+    def test_a_patch_already_on_trunk_lands_without_replaying_it(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "agent\n"})
+        (self.work / "a.txt").write_text("agent\n")
+        self.commit("human")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+        self.assertEqual(self.origin_log(), ["human", "init"])
+        self.assertIn("already in trunk", self.land("status", "Q1"))
+
+    def test_a_commit_that_started_empty_pauses_instead_of_landing(self):
+        self.init()
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "a.txt").write_text("agent\n")
+        self.commit("w1", cwd=path)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "empty", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        paused = self.land("land")
+        self.assertIn("queue paused", paused)
+        self.assertIn("cherry-pick failed", paused)
+        self.assertNotIn("landed", paused)
+        self.assertEqual(self.origin_log(), ["init"])
+
     def test_a_crash_after_the_push_is_recovered_as_landed_without_pushing_again(self):
         self.init()
         sha = self.worker("w1", {"a.txt": "agent\n"})

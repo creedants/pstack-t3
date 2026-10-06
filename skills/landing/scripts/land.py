@@ -423,7 +423,29 @@ class Integration:
     def apply(self, entry):
         """Replay the pinned commits onto HEAD. Returns None, or why the entry cannot land."""
         before = self.head()
-        result = self.git(*committer(self.path), "cherry-pick", "--empty=drop", f"{entry['base']}..{pin_ref(entry['sha'])}", check=False)
+        spec = f"{entry['base']}..{pin_ref(entry['sha'])}"
+        identity = committer(self.path)
+        result = self.git(*identity, "cherry-pick", spec, check=False)
+        # git 2.43 has no cherry-pick --empty=drop. Git added it in 2.45. Drop a commit that
+        # became empty, and stop on a commit that started empty. That matches --empty=drop.
+        if result.returncode != 0:
+            counted = self.git("rev-list", "--count", spec, check=False)
+            remaining = int(counted.stdout.strip() or "0") if counted.returncode == 0 else 0
+            while result.returncode != 0 and remaining > 0:
+                picked = self.git("rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD", check=False)
+                if picked.returncode != 0:
+                    break
+                sha = picked.stdout.strip()
+                parent_tree = self.git("rev-parse", "-q", "--verify", f"{sha}^^{{tree}}", check=False)
+                own_tree = self.git("rev-parse", "-q", "--verify", f"{sha}^{{tree}}", check=False)
+                started_empty = parent_tree.returncode == 0 and parent_tree.stdout.strip() == own_tree.stdout.strip()
+                dirty = (self.git("diff", "--quiet", check=False).returncode != 0
+                         or self.git("diff", "--cached", "--quiet", check=False).returncode != 0)
+                unmerged = bool(self.git("ls-files", "-u", check=False).stdout.strip())
+                if started_empty or dirty or unmerged:
+                    break
+                result = self.git(*identity, "cherry-pick", "--skip", check=False)
+                remaining -= 1
         if result.returncode != 0:
             self.git("cherry-pick", "--abort", check=False)
             self.git("reset", "--hard", before)
