@@ -222,7 +222,7 @@ Call `watch_pull_request` after `link_pull_request`, when this thread is waiting
 
 T3 checks the open PR every two minutes. It wakes this thread when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
 
-One thread may hold several watches. Threads in a project that watch the same pull request share one check. On GitHub, that check first asks whether anything changed and reads the pull request only when it did. Settling or archiving the thread ends all of its watches. Comments from the user's own account do not wake a watch, so a review left from that account is noticed only on another wake or on the heartbeat. T3 documents these rules in [source control](https://github.com/pingdotgg/t3code/blob/main/docs/user/source-control.md).
+One thread may hold several watches. Comments from the user's own account do not wake a watch, so a review left from that account needs another wake or the heartbeat. T3 documents both in [source control](https://github.com/pingdotgg/t3code/blob/main/docs/user/source-control.md).
 
 A wake is news, not a merge decision. Read the PR and decide yourself before you merge.
 
