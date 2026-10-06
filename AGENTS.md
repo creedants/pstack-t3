@@ -25,6 +25,7 @@ Start from the upstream file and change only what T3 changes. Upstream's rules, 
    - `inherit-parent` or `auto` becomes `inherit`.
    - `/loop`, automations, hourly ticks, and scheduled wakeups become `schedule_task` when they are a cadence with no pull request event.
    - A wait on a pull request's checks, reviews, or conflicts, including `scripts/watch-pr` and a poll loop, becomes `watch_pull_request` on the thread that owns the pull request.
+   - A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires.
    - Cloud agents become child tasks. Long-lived PR owners and coordinator-visible owners become `t3_thread_launch` threads with a worktree strategy.
    - Transcripts and cloud-agent URLs become T3 threads read with `t3_thread_search` and `t3_thread_read`.
    - `control-ui` becomes T3 preview tools. `control-cli` becomes driving the CLI in the terminal.

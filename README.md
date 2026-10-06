@@ -72,7 +72,7 @@ $swarm audit stats.py: one read-only worker per public function.
 
 ## Quick start
 
-You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and `watch_pull_request` (`0.0.46-nightly.20261005.2702` or later), git, and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
+You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and the pull request watching pstack-t3 relies on (`0.0.46-nightly.20261005.2702` or later), git, and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
 
 ```bash
 git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3
@@ -183,7 +183,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
 | A Cursor rule file of model names | `roles.json` resolved against T3's live catalog |
 | A fixed default panel of four Cursor models | One seat per model family you can run |
-| `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. |
+| `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |
 | Cursor's built-in `create-skill` | `pstack-author-skill`, for every provider |
