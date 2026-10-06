@@ -695,11 +695,19 @@ def publish_absent_branch(store, entry, branch):
 
 
 def ensure_pr(store, entry):
-    """Adopt the PR for the entry's branch, or open it. A crash between push and PR creation is safe to rerun."""
+    """Store this entry's PR. Open one on landing/e<n> only when none exists.
+
+    Look at landing/e<n> first, then at landing/q<n> from an older queue.
+    A crash after gh pr create and before the URL is stored is safe to rerun.
+    Push landing/e<n> only when neither name already has a PR."""
     contract = store.contract
     branch = human_branch(entry)
-    view = gh("pr", "view", branch, "--json", "url", "-q", ".url", cwd=store.repo)
-    url = view.stdout.strip() if view.returncode == 0 else ""
+    url = ""
+    for name in (branch, f"landing/q{entry['id']}"):
+        view = gh("pr", "view", name, "--json", "url", "-q", ".url", cwd=store.repo)
+        if view.returncode == 0 and view.stdout.strip():
+            url = view.stdout.strip()
+            break
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
