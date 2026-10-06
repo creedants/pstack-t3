@@ -29,7 +29,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ## Operating stance
 
-- Run to the next real blocker. "Should I continue" is never a question. Progress updates wait for the report or the next real decision.
+- Run to the next real blocker. "Should I continue" is never a question. Reply as Run a service step 9 says for this restaurant's reporting level.
 - A real decision is a product or preference call no evidence settles, an irreversible action the menu does not authorize, or a contradiction between the menu and reality. Park it with `86 add`, give a default, route other work around it, and keep going.
 - Raise a decision once, in the reply where you park it. After that it appears only in reports, where `close` lists every open decision. Never repeat it as "still open" in other replies.
 - Delete only what this restaurant created: its dish branches, its worktrees, and the queue's `landing/q<n>` branches. Ask before deleting any other branch, even one fully merged.
@@ -42,8 +42,9 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>"
-$B status                                    # one line of counts
+$B status                                    # reporting level, then counts
 $B set --thread <id> --schedule <name>=<id>
+$B set --reporting every-turn|milestones|digest
 $B set --schedule <name>= drops that name from restaurant.json. A name that is not recorded is already absent, and the command still succeeds. Other names stay.
 $B set --landing human|merge|push|local      # after every $L mode, so restaurant.json records it
 $B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>]   # prints T<n>
@@ -72,13 +73,19 @@ Run from any thread.
 
 1. Name the target project and focus. List projects with `t3_project_list`. A restaurant lives in exactly one T3 project, because a head chef can only read and steer threads in its own project.
 2. Draft the menu from evidence: the repo's README and AGENTS.md, open issues (`gh issue list`), and recent threads via the **recall** skill. Ask the user only for what the evidence cannot settle, normally the purpose itself. Use the **grilling** skill when the purpose is vague.
-3. Ask the user who lands work, with the host's question tool, unless they already said. This is the one question opening always asks, because it decides whether the user stays a gate on PRs and git. Offer:
-   - `merge` (recommended for a repository with a remote): every change still gets a PR as its record, and the queue merges it once the checks pass. The user reviews what landed afterward and does no PR or git work.
-   - `human`: every change gets a PR, and the user merges it.
-   - `push`: no PRs. The queue pushes trunk after the checks pass.
-   - `local`: nothing leaves the machine. Changes land on a lane ref the user merges.
-   Say that `merge` and `push` put reviewed changes on trunk with no human gate. When the repository already has a landing contract (`$L status`), its mode applies to every restaurant on that repository. Say so before changing it.
-4. Run `python3 <skills>/brigade/scripts/brigade.py open --project-root <root> --name "<restaurant>" --landing <choice>`. It prints the restaurant directory. Fill `menu.md`. Append house rules: forbidden paths, verification bar, intake sources, worker cap.
+3. Ask the user two things with the host's question tool, unless they already said each one. Ask both in one call.
+   - Who lands work. This decides whether the user stays a gate on PRs and git. Offer:
+     - `merge` (recommended for a repository with a remote): every change still gets a PR as its record, and the queue merges it once the checks pass. The user reviews what landed afterward and does no PR or git work.
+     - `human`: every change gets a PR, and the user merges it.
+     - `push`: no PRs. The queue pushes trunk after the checks pass.
+     - `local`: nothing leaves the machine. Changes land on a lane ref the user merges.
+     Say that `merge` and `push` put reviewed changes on trunk with no human gate. When the repository already has a landing contract (`$L status`), its mode applies to every restaurant on that repository. Say so before changing it.
+   - How often the head chef replies. Recommend `milestones`. The three levels are:
+     - `every-turn`. Send a short reply after every wake.
+     - `milestones`. Reply only when work merges, when a review sends work back or blocks it, when a decision needs the user, when something fails or the queue pauses, or when the user sends a message. A routine wake ends with no reply, or with a single line when the host requires text. A liveness check with nothing new, a review starting, and a worker launching are routine wakes.
+     - `digest`. Stay silent except for a decision or a failure. Also send one brief summary when a batch drains, meaning nothing is in progress, queued, or awaiting merge. Send the scheduled morning and evening reports.
+     A direct question from the user is answered at every level.
+4. Run `python3 <skills>/brigade/scripts/brigade.py open --project-root <root> --name "<restaurant>" --landing <choice> --reporting <level>`. It prints the restaurant directory. Fill `menu.md`. Append house rules: forbidden paths, verification bar, intake sources, worker cap. The default level is `milestones` when `--reporting` is omitted. Opening an existing restaurant does not change its level. Change it later with `$B set --reporting <level>`.
 5. Set the repository's landing contract to the choice. When `$L status` shows no contract, run `$L init --mode <choice>` per the [landing skill](../landing/SKILL.md#set-up-a-repository-once), with the repository's own test and type-check commands as checks. When it shows another mode, run `$L mode <choice>`, then `$B set --landing <choice>`.
 6. Launch the head chef with `t3_thread_launch`: `projectId` of the target, `workspaceStrategy: {"type": "root"}`, title `Head chef: <restaurant>`, and a `message` that says "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run your first service." Record the returned `threadId` with `$B set --thread <id>`.
 7. Tell the user where the thread is and which landing mode the repository uses. If it is in another project, you cannot read or message it after launch. That is expected.
@@ -89,12 +96,12 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
 
 1. `t3_thread_organize` with `action: "pin"` and no `threadId`.
 2. Call `orchestrator_capabilities` and resolve roles per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). Apply the menu's budget.
-3. Create three schedules with `schedule_task`, bound to this thread, each with a self-contained prompt: "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run a service." Add the purpose of the run to each.
-   - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`.
-   - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source.
-   - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report."
-   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. After the queue opens a PR, that section has this thread call `watch_pull_request` and run `land` on each wake. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
-   - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`.
+3. Create three schedules with `schedule_task`, bound to this thread, each with a self-contained prompt: "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Reporting level: `<level>`. Follow Run a service step 9. Run a service." Read `<level>` from `restaurant.json` (`every-turn`, `milestones`, or `digest`). A missing `reporting` field is `milestones`. Add the purpose of the run to each. A later `$B set --reporting` changes the level, and the next service reads `restaurant.json` rather than the level copied into an older prompt.
+   - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`. The prompt carries the reporting level.
+   - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source. The prompt carries the reporting level.
+   - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report." The prompt carries the reporting level.
+   - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Name the reporting level in that prompt, and say to follow Run a service step 9. After the queue opens a PR, that section has this thread call `watch_pull_request` and run `land` on each wake. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
+   - While any dish is in progress, keep a liveness schedule: `{"type": "interval", "everyMs": 600000}`, prompt "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Reporting level: `<level>`. Follow Run a service step 9. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`.
    - Record each ID with `$B set --schedule <name>=<id>` and report each `nextRunAt`. When the landing drain schedule is recreated, record the new id with `$B set --schedule drain=<id>`.
 4. Run a service.
 
@@ -119,7 +126,10 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
    - After a dish merges, is dropped, or is sent back, clean up per [Git and PR housekeeping](#git-and-pr-housekeeping).
    - `blocked`: `86 add` if only the user can unblock it. Otherwise fix the environment and run the pass again.
 8. **Fix the recipe.** When two dishes repeat the same mistake, fire a dish that runs the **correct** skill to make it impossible (lint, type, test, or skill). Run the **reflect** skill over this restaurant's threads once a week.
-9. **Report** when the schedule says so, when an 86 needs the user, or at the end of a service the user started. Run `$B close`. Your reply is at most three sentences on what the changes mean for the menu, then the `close` output verbatim. It lists each ticket and dish once, under its latest state since the last report, with PR links. Write no other report file.
+9. **Report.** Read `reporting` from `restaurant.json`. A missing field means `milestones`. A direct question from the user is always answered, at every level. When you do reply with what changed, run `$B close`. Keep that reply to at most three sentences on what the changes mean for the menu, then the `close` output verbatim. It lists each ticket and dish once, under its latest state since the last report, with PR links. Write no other report file.
+   - `every-turn`. Send a short reply after every wake. Use `$B close` when the wake is a scheduled report, an open decision, or the end of a service the user started.
+   - `milestones`. Reply only when work merges, when a review sends work back or blocks it, when a decision needs the user, when something fails or the queue pauses, or when the user sends a message. A routine wake ends with no reply, or with a single line when the host requires text. A liveness check with nothing new, a review starting, and a worker launching are routine wakes.
+   - `digest`. Stay silent except for a decision or a failure. When a batch drains, and nothing is in progress, queued, or awaiting merge, send one brief summary. Send the scheduled morning and evening reports.
 
 ## Git and PR housekeeping
 
@@ -140,12 +150,12 @@ Run on the liveness schedule, and at the start of any service while work is in p
 2. "report written, no report-back" is a defect. The report file exists and the dish is not marked reported. Read the worker thread with `t3_thread_read` and `view` set to "activity". Find why the message never arrived. The brief lacked the send step, the worker skipped it, `t3_thread_send` failed or went to the wrong thread, or the timebox ran out. Fire a fix at that cause, in the brief template, the skill text the worker followed, or `brigade.py`, using the **correct** skill.
 3. A "report written" line that does not say "no report-back" means the worker reported back and is done, even if its run never closed. Run `t3_thread_interrupt` on the thread if its run is still active, then review per Run a service step 6.
 4. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it. Recording the fresh worker's thread with `$B dish <id> --thread <thread id>` starts its attempt while the dish stays in progress. The previous report and report-back mark belong to the worker you replaced. `$B watch` compares the report file to this new start.
-5. "running": nothing to do.
-6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`.
+5. "running": nothing new. Reply per Run a service step 9. At `milestones` this is a routine wake, so end with no reply, or with a single line when the host requires text. At `digest`, stay silent. At `every-turn`, send a short reply.
+6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`. If nothing is queued or awaiting merge either, the batch has drained. Reply per step 9.
 
 ## Executive chef's view
 
-`python3 <skills>/brigade/scripts/brigade.py walk` prints every restaurant's counts, open decisions, thread ID, and store path. A restaurant idle past 24 hours is marked, so a stalled head chef shows.
+`python3 <skills>/brigade/scripts/brigade.py walk` prints every restaurant's reporting level, counts, open decisions, thread ID, and store path. A restaurant idle past 24 hours is marked, so a stalled head chef shows. `$B status` prints the reporting level, then the counts. A `restaurant.json` with no `reporting` field reads as `milestones`.
 
 ## Close a restaurant
 
