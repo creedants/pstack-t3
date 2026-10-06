@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -171,6 +172,9 @@ class Restaurant:
 
 LANDING = ("human", "merge", "push", "local")
 REPORTING = ("every-turn", "milestones", "digest")
+CLAIM_WAIT_SECONDS = 1.0
+PURPOSE_TEMPLATE = "What this restaurant exists to achieve"
+OFF_MENU_TEMPLATE = "Work this restaurant does not take"
 
 
 def reporting_of(meta):
@@ -180,17 +184,80 @@ def reporting_of(meta):
     return value
 
 
+def menu_section(text, heading):
+    match = re.search(rf"^## {re.escape(heading)}\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return match.group(1).strip() if match else ""
+
+
+def sibling_lines(restaurant):
+    project_root = restaurant.meta.get("projectRoot")
+    blocks = []
+    for meta_path in sorted(restaurant.dir.parent.glob("*/restaurant.json")):
+        if meta_path.parent == restaurant.dir:
+            continue
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("projectRoot") != project_root:
+            continue
+        menu_path = meta_path.parent / "menu.md"
+        menu = menu_path.read_text() if menu_path.is_file() else ""
+        purpose = menu_section(menu, "Purpose")
+        if not purpose or purpose.startswith(PURPOSE_TEMPLATE):
+            purpose = "not written yet"
+        else:
+            purpose = " ".join(purpose.split())
+        off = menu_section(menu, "Off the menu")
+        if not off or off.startswith(OFF_MENU_TEMPLATE):
+            off_line = "not written yet"
+        else:
+            off_line = "; ".join(line.strip() for line in off.splitlines() if line.strip())
+        thread = (meta.get("thread") or "").strip() or "not recorded"
+        name = meta.get("restaurant") or meta_path.parent.name
+        blocks.append(
+            f"sibling {name} ({meta_path.parent}), thread {thread}\n"
+            f"  purpose: {purpose}\n"
+            f"  off the menu: {off_line}")
+    return blocks
+
+
+def wait_for_meta(directory):
+    path = directory / "restaurant.json"
+    deadline = time.monotonic() + CLAIM_WAIT_SECONDS
+    while True:
+        if path.is_file():
+            try:
+                return json.loads(path.read_text())
+            except json.JSONDecodeError:
+                pass
+        if time.monotonic() >= deadline:
+            raise BrigadeError(f"{directory} has no restaurant.json after one second")
+        time.sleep(0.01)
+
+
 def open_restaurant(root, project_root, name, landing, reporting="milestones"):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
-    created = not (directory / "restaurant.json").exists()
+    # The project directory is shared by every coordinator on this path slug.
+    # The coordinator directory is the claim, so mkdir must fail when it exists.
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        directory.mkdir()
+    except FileExistsError:
+        created = False
+    else:
+        created = True
     if created:
-        directory.mkdir(parents=True, exist_ok=True)
         meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
                 "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
                 "lastReportAt": None, "thread": None, "schedules": {}}
         write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
-    meta = json.loads((directory / "restaurant.json").read_text())
+    else:
+        meta = wait_for_meta(directory)
+        if meta.get("projectRoot") != str(project_root):
+            other = meta.get("projectRoot")
+            raise BrigadeError(f"{directory} already holds a coordinator for {other}; pick another --name")
     for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
         if not (directory / filename).exists():
             write_atomic(directory / filename, template.format(restaurant=meta["restaurant"]))
@@ -446,6 +513,7 @@ def parser():
 
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
+    p.add_argument("--replace", action="store_true", help="replace a recorded coordinator thread")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
     p.add_argument("--landing", choices=LANDING, help="record a landing mode changed with land.py mode")
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
@@ -598,7 +666,12 @@ def run(argv):
     root = store_root(args.store)
     if args.command == "open":
         restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting)
-        return f"{'opened' if created else 'exists'} {restaurant.dir}"
+        lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
+        thread = (restaurant.meta.get("thread") or "").strip()
+        if not created and thread:
+            lines.append(f"thread {thread} already recorded")
+        lines.extend(sibling_lines(restaurant))
+        return "\n".join(lines)
     if args.command == "walk":
         return walk(root, args.stale_hours)
     if not args.at:
@@ -608,6 +681,9 @@ def run(argv):
     if args.command == "set":
         meta = restaurant.meta
         if args.thread:
+            current = (meta.get("thread") or "").strip()
+            if current and args.thread != current and not args.replace:
+                raise BrigadeError(f"thread {current} already recorded")
             meta["thread"] = args.thread
         if args.landing:
             meta["landing"] = args.landing
