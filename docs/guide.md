@@ -119,6 +119,8 @@ $brigade open a standing coordinator for <project> focused on <goal>.
 
 The opener asks who lands the work, unless you already named a mode. It recommends `merge` when the repository has a remote. The mode belongs to the repository. Every coordinator on that repository shares it. If the repository already has a landing contract, the opener tells you its mode. Choosing another mode switches it for every coordinator on that repository.
 
+The opener also asks how often the coordinator replies, unless you already named a level. It recommends `milestones`.
+
 ### Landing modes
 
 | Mode | What reaches trunk | Are you a gate? |
@@ -128,13 +130,27 @@ The opener asks who lands the work, unless you already named a mode. It recommen
 | `push` | Rebased commits that passed the checks, pushed to trunk with `git push --force-with-lease` only while the remote is still at the tested base. There is no PR. | No. You review the history afterward. |
 | `local` | Nothing on the real trunk. The queue moves `refs/landing/<trunk>`. The remote does not change. | Yes, for the real trunk. You merge that ref into a branch when you are ready. |
 
-In `merge` mode, `land` reads posted checks before any `gh pr merge`, including `--auto`. A pending posted check waits. A failed posted check bounces. The first `land` run that sees no posted checks records that run and waits. A later `land` merges when checks are still absent. With no posted check, the entry waits and the queue does not pause when `gh pr merge` is refused because the base branch policy prohibits the merge, and when `--auto` fails because auto-merge is disabled. A failed or unreadable check read pauses the queue and does not merge. A later `land` reads the PR state before it acts on a failed check. A PR already merged at the candidate head is landed, and its queue branch is deleted, even when a check fails afterward. An open PR noted `merge requested by the queue` bounces when a check fails, and the lease becomes active. After the PR merges, `land` deletes remote `landing/q<n>`. It deletes a local `landing/q<n>` when git can. When that local delete fails, the entry still counts as landed and `land` prints the branch it left.
+In `merge` mode, `land` reads posted checks before any `gh pr merge`, including `--auto`. A pending posted check waits. A failed posted check bounces. The first `land` run that sees no posted checks records that run and waits. A later `land` merges when checks are still absent. With no posted check, the entry waits, and the queue does not pause when `gh pr merge` is refused because the base branch policy prohibits the merge. A plain merge that fails for any other reason pauses the queue, including when `--auto` reports that auto-merge is disabled. A failed or unreadable check read pauses the queue and does not merge. A later `land` reads the PR state before it acts on a failed check. A PR already merged at the candidate head is landed in that same run, and its queue branch is deleted, even when a check fails afterward. An open PR noted `merge requested by the queue` bounces when a check fails, and the lease becomes active. After the PR merges, `land` deletes remote `landing/q<n>`. When that delete fails, `land` asks the forge whether the branch is gone. HTTP 404 records the merge in that run only when the contract remote has one push URL and that URL names the same owner and repository that `gh repo view --json nameWithOwner` resolves. Any other result leaves the entry for the next run. It deletes a local `landing/q<n>` when git can. When that local delete fails, the entry still counts as landed and `land` prints the branch it left.
 
 `push` is the name to use. `auto` is an older alias of `push`.
 
 `land.py mode` switches among `merge`, `human`, and `push` only while nothing is queued, landing, or awaiting merge. A move to or from `local` needs a new contract. [How work lands](how-it-works.md#how-work-lands) describes the queue those modes share.
 
-The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase. Each run of characters other than a-z and 0-9 becomes one hyphen, and leading or trailing hyphens are dropped.
+### Reporting levels
+
+The level is stored for that coordinator. `brigade.py open --reporting` sets it. The default is `milestones` when you omit the flag. Opening an existing coordinator does not change its level. Change it later with `brigade.py set --reporting` and one of `every-turn`, `milestones`, or `digest`.
+
+| Level | What the coordinator sends |
+| --- | --- |
+| `every-turn` | A short reply after every wake. |
+| `milestones` | A reply when work merges, a review sends work back or blocks it, a decision needs you, something fails or the queue pauses, or you send a message. A routine wake ends with no reply, or with one line when the host requires text. A liveness check with nothing new, a liveness check while a review is pending, a review starting, and a worker launching are routine. |
+| `digest` | A reply for a decision or a failure, and one summary when a batch drains. A merge that does not drain the batch gets no reply. A send-back is not a failure and stays silent. A blocked verdict that needs you is a decision. |
+
+A batch has drained when `brigade.py status` shows none of `in progress`, `in review`, `passed review`, or `waiting to land`. Status omits a count of zero, so a missing label is a count of zero. `waiting to land` includes a pull request that awaits merge.
+
+Every level sends the scheduled 18:00 report. The 09:00 run is not a report. A message from you gets at least one line, and a direct question gets an answer. [How a coordinator reports](how-it-works.md#how-a-coordinator-reports) is the same rule from the coordinator's side.
+
+The opener runs `brigade.py open --project-root <root> --name "<name>" --landing <choice> --reporting <level>`. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase. Each run of characters other than a-z and 0-9 becomes one hyphen, and leading or trailing hyphens are dropped.
 
 The store holds these files.
 
@@ -159,16 +175,16 @@ It records the request and groups related requests into one unit of work.
 
 ### What the coordinator does without you
 
-It wakes on your messages, on a reviewer finishing, and on its schedules. A morning run is every day at 09:00. A report is every day at 18:00. When `menu.md` names a source, intake also runs on an interval of at least one hour, matched to the sources in `house-rules.md`. A landing drain runs every 15 minutes while work is queued or awaiting merge. A liveness check runs every 10 minutes while work is in progress, because those worktree threads send no completion notice.
+It wakes on your messages, on a worker's report-back, on a reviewer finishing, and on its schedules. Each worker calls `t3_thread_send` on the coordinator thread as its last step, after it writes the report. That message wakes the coordinator, which marks the attempt reported and reviews the work. A morning run is every day at 09:00. A report is every day at 18:00. When `menu.md` names a source, intake also runs on an interval of at least one hour, matched to the sources in `house-rules.md`. A landing drain runs while work is queued or awaiting merge. In `merge` mode, when the repository has required checks and the pull request is not in a merge queue, that drain is hourly. While an entry is awaiting merge in `human` mode, or the pull request is in a merge queue, the drain is every 15 minutes. A liveness check runs every 10 minutes while work is in progress. `brigade.py watch` prints `report written, no report-back` when the report file exists and this attempt is not marked reported. That line is a defect. The check reads the worker thread, finds why the message never arrived, and fires a fix at that cause. The 10-minute check remains the backstop when a worker hangs or never sends the message.
 
 - **Intake.** It reads `menu.md` and `house-rules.md` and records each request. It runs `gh issue list` and `gh pr list` only when the standing orders name those sources.
 - **Delegation.** It groups related requests, claims a path lease, writes the brief with `brigade.py brief`, and launches one worktree thread per unit. In-flight work stays under the worker cap in `house-rules.md`.
 - **Cross-family review.** It reads the worker's report and diff. One reviewer from another model family checks that exact commit. A pass is recorded against that commit. A reviewer from the author's family is used only when no other family can run, and the verdict says so.
 - **Landing.** On a pass it submits that commit to the queue and runs `land.py land`. Workers never merge. In `merge` and `human` mode the PR title and body go with the submit. A conflict or a changed rebase goes to a fresh worker and needs a new review.
 - **Cleanup.** After a unit merges, is dropped, or is sent back, it removes that unit's worktree and branch. It deletes `landing/q<n>` after that PR merges or closes. It deletes only branches it created. It fast-forwards your checkout with `git merge --ff-only` only when that checkout is clean and on trunk.
-- **Reports.** The reply is short, then the output of `brigade.py close`. That output lists each request and unit once, under its latest state since the last report, with PR links.
+- **Reports.** The reporting level decides which wakes get a reply. `brigade.py close` runs on the replies that level names, including the 18:00 report. Its output lists each request and unit once, under its latest state since the last report, with PR links. Any other reply stays plain and does not run `close`.
 
-To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. If your checkout is not `~/pstack-t3`, use that checkout's `skills/brigade/scripts/brigade.py`. It prints counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
+To list every coordinator on this machine, run `python3 ~/pstack-t3/skills/brigade/scripts/brigade.py walk`. If your checkout is not `~/pstack-t3`, use that checkout's `skills/brigade/scripts/brigade.py`. It prints the reporting level, the counts, the landing mode, open decisions, the thread id, and the store path. A coordinator idle for more than 24 hours is marked.
 
 To stop one, ask it to close. It deletes its schedules, writes a last report, and unpins its thread. The store stays.
 
