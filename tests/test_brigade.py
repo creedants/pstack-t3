@@ -1,8 +1,10 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -436,6 +438,68 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("status"), "reporting: milestones")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
+
+    def log_rows(self):
+        lines = (self.at / "log.tsv").read_text().splitlines()
+        header = lines[0].split("\t")
+        return [dict(zip(header, line.split("\t"))) for line in lines[1:] if line]
+
+    def test_watch_flags_a_reported_run_still_open_past_ten_minutes(self):
+        self.open()
+        self.fire_one()
+        report = self.at / "reports" / "D1.md"
+        report.parent.mkdir()
+        report.write_text("done")
+        self.brigade("dish", "D1", "--reported")
+        self.assertEqual(self.brigade("watch"),
+                         "D1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
+        start = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(timespec="microseconds")
+        log = self.at / "log.tsv"
+        lines = log.read_text().splitlines()
+        rewritten = [lines[0]]
+        for line in lines[1:]:
+            fields = line.split("\t")
+            if fields[1:4] == ["dish", "D1", "in-progress"]:
+                fields[0] = start
+                line = "\t".join(fields)
+            rewritten.append(line)
+        log.write_text("\n".join(rewritten) + "\n")
+        moment = datetime.now(timezone.utc) - timedelta(minutes=12, seconds=30)
+        os.utime(report, (moment.timestamp(), moment.timestamp()))
+        self.assertEqual(self.brigade("watch"), "D1: reported, run still open 12m (thread thread-9)")
+        moment = datetime.now(timezone.utc) - timedelta(minutes=10, seconds=10)
+        os.utime(report, (moment.timestamp(), moment.timestamp()))
+        self.assertEqual(self.brigade("watch"),
+                         "D1: report written 10m ago; review it even if the worker's run is still open (thread thread-9)")
+
+    def test_hang_records_one_open_run_per_attempt(self):
+        self.open()
+        self.fire_one()
+        error = self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "20", ok=False)
+        self.assertIn("no report-back on this attempt", error)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "hang"], [])
+        report = self.at / "reports" / "D1.md"
+        report.parent.mkdir()
+        report.write_text("done")
+        self.brigade("dish", "D1", "--reported")
+        self.assertEqual(self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "20"),
+                         "D1: grok/grok-4.7 open 20m")
+        hangs = [row for row in self.log_rows() if row["kind"] == "hang"]
+        self.assertEqual([(row["kind"], row["id"], row["state"], row["note"]) for row in hangs],
+                         [("hang", "D1", "open", "grok/grok-4.7 20m")])
+        self.assertEqual(self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "5"),
+                         "D1: hang already recorded")
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "hang"]), 1)
+        closed = self.brigade("close", "--dry-run")
+        self.assertIn("Cut startup", closed)
+        self.assertNotIn("grok/grok-4.7 20m", closed)
+        self.brigade("dish", "D1", "--thread", "worker-3")
+        error = self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "20", ok=False)
+        self.assertIn("no report-back", error)
+        report.write_text("done again")
+        self.brigade("dish", "D1", "--reported")
+        self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "20")
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "hang"]), 2)
 
 
 if __name__ == "__main__":
