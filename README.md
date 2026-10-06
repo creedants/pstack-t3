@@ -28,7 +28,7 @@
 
 **It has run unattended.** In the [first live Autopilot run](docs/live-runs.md), Grok wrote four changes, four other model families verified each one, and three merged within 30 minutes with no question to the operator.
 
-**Try it.** The [Quick start](#quick-start) is one clone and one install command on a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases).
+**Try it.** Get a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases). The [Quick start](#quick-start) lists the other prerequisites and the two-command install.
 
 ## What the workflows do
 
@@ -53,7 +53,7 @@ flowchart LR
     review -->|sent back to a fresh worker| worker
 ```
 
-1. **Intake.** The coordinator records the request and groups related requests into one unit of work. When its standing orders name a source, such as the repository's open issues, it reads that source on a schedule too.
+1. **Intake.** The coordinator records the request and groups related requests into one unit of work. When the project's purpose names a source of work, intake also runs on a schedule. The coordinator reads the repository's open issues and pull requests only when the project's standing orders name them.
 2. **Build.** It claims a lease on the paths the unit will change, then launches a worker thread in its own git worktree. The worker runs the matching poteto-mode playbook, such as bug fix, feature, or perf issue, and reports back.
 3. **Review.** The coordinator reads the report and the diff itself. Then a reviewer from another model family checks that exact commit. The reviewer asks whether the change works on the real surface, and whether it serves the project's purpose without scope the request did not ask for. When no other family can run, the reviewer shares the author's family and the verdict says so. Work that the review sends back goes to a fresh worker.
 4. **Land.** A change that passes goes to the landing queue. The queue rebases it onto trunk, runs your checks in a clean worktree, and lands it. If the rebased change differs from the reviewed one, the queue refuses it.
@@ -62,18 +62,18 @@ flowchart LR
 
 **You choose who merges.** The landing mode belongs to the repository. Four modes decide what reaches trunk.
 
-- `merge` opens a pull request and merges it after the checks pass. You review what landed.
+- `merge` opens a pull request and merges it after the checks pass. You review what landed. A pull request that requires an approving review pauses the queue until you relax that rule or switch to `human`.
 - `human` opens the same pull request and leaves the merge to you.
-- `push` pushes trunk after the checks pass, and opens no pull request.
+- `push` pushes trunk after the checks pass, only while the remote is still at the tested base. It opens no pull request.
 - `local` lands on `refs/landing/<trunk>` and does not change the remote.
 
-**You choose how often it reports.** You pick a reporting level when you open the coordinator.
+**You choose how often it reports.** The coordinator wakes on your messages, a worker's report, a finished review, a pull request event, and its schedules. The reporting level you pick when you open it decides which wakes get a reply.
 
 - `every-turn` sends a short reply after every wake.
-- `milestones` replies when work merges, when a review sends work back or blocks it, when a decision needs you, when something fails, or when the queue pauses.
-- `digest` replies only for a decision you must make or a failure the coordinator cannot fix itself. It sends one plain-language summary when nothing is left in progress, in review, passed review, or waiting to land.
+- `milestones` replies when work merges, a review sends work back or blocks it, a decision needs you, something fails or the queue pauses, or you send a message. A routine wake ends with no reply, or with one line when the host requires text.
+- `digest` replies only for a decision you must make, a failure or a paused queue the coordinator cannot fix itself, one summary when a batch drains, the 18:00 report, and a message from you. Every other wake ends with no reply text at all. A batch has drained when nothing is in progress, in review, passed review, or waiting to land. A `digest` message is a few plain sentences on what got done, what comes next, and what you must decide.
 
-A decision only you can make is raised once, with its options and a default, and other work continues around it. The [guide](docs/guide.md#reporting-levels) describes each level and how to change it.
+Every level sends the 18:00 report. A message from you gets at least one line, and a direct question gets an answer. A decision only you can make is raised once, with its options and a default, and other work continues around it. The [guide](docs/guide.md#reporting-levels) describes each level and how to change it.
 
 ```
 $brigade open a standing coordinator for bridgekit focused on startup performance.
@@ -99,7 +99,7 @@ These are real runs in T3 Code.
 | Add `variance` and `stdev` | 3 | 30 |
 | Add a `python -m stats` command line | 4 so far | Open when the record stops at 99 minutes |
 
-The verifiers caught real defects before merge. Three verifiers on three models each found that `variance` raised `TypeError` on a generator. One round later only the Claude Opus verifier found that the fix relabelled errors raised by the caller's own generator. The Gemini verifier had passed that commit. The run also exposed four defects in pstack-t3's own skills, and each is now fixed. The [full record](docs/live-runs.md) lists every round and every defect.
+The verifiers caught real defects before merge. Three verifiers on three models each found that `variance` raised `TypeError` on a generator. One round later only the Claude Opus verifier found that the fix relabelled errors raised by the caller's own generator. The Gemini verifier had passed that commit. The run also exposed four defects in pstack-t3's own skills. Pull requests #42, #44, #45, and #46 fixed them after the run. The [full record](docs/live-runs.md) lists every round, and describes each defect as the run found it.
 
 The next two runs are against a small repository with a planted bug that its own tests passed. Replies are excerpted and trimmed. They predate the current defaults. The default `$interrogate` panel is Claude Opus and Grok.
 
@@ -176,7 +176,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log. It waits on each pull request with `watch_pull_request`, uses `schedule_task` as the merge heartbeat, and verifies each pull request before merge. |
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
-| `$brigade open a standing coordinator for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
+| `$brigade open a standing coordinator for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has a reviewer, from another model family when one can run, check every result against the goal, and reports what landed. |
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
@@ -195,7 +195,7 @@ flowchart LR
 
 The default panel is Claude Opus and Grok. A roles file can name Codex or another model. `verifiers` is this thread's model plus one seat per other model family you can run.
 
-T3 Code gives every provider the same orchestration tools: `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. pstack-t3 adds three of its own, `brigade`, `landing`, and `pstack-author-skill`. Details are in [How it works](docs/how-it-works.md).
+T3 Code gives every provider the same orchestration tools. They are `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. pstack-t3 adds three of its own, `brigade`, `landing`, and `pstack-author-skill`. Details are in [How it works](docs/how-it-works.md).
 
 **Why skills, not an MCP server or a plugin?** T3 already gives every provider its orchestration server, so pstack-t3 needs no server of its own. T3's `$` picker lists each provider's native skills, which is why `$poteto-mode` appears whichever model you pick. A Claude Code plugin would namespace the skills and hide them from that picker, and the other providers have no plugin format.
 
@@ -210,7 +210,7 @@ No. Everything works with one provider. The default arena, architect, and interr
 <details>
 <summary><b>How is this different from pstack?</b></summary>
 
-The engineering content is the same: the playbooks, principles, rubrics, and their wording. The plumbing is different. Upstream uses Cursor's subagents, cloud agents, `/loop`, and a fixed list of Cursor model names. pstack-t3 uses T3's `delegate_task`, worktree threads, `schedule_task`, and roles resolved against T3's live model list. pstack-t3 also adds `$brigade` and `$landing`, which upstream does not have. The full mapping is under [What changed from upstream](#what-changed-from-upstream).
+The playbooks, principles, rubrics, and their wording are the same. The plumbing is different. Upstream uses Cursor's subagents, cloud agents, `/loop`, and a fixed list of Cursor model names. pstack-t3 uses T3's `delegate_task`, worktree threads, `schedule_task`, and roles resolved against T3's live model list. pstack-t3 also adds `$brigade`, `$landing`, and `pstack-author-skill`, which upstream does not have. The full mapping is under [What changed from upstream](#what-changed-from-upstream).
 </details>
 
 <details>
@@ -300,6 +300,6 @@ python3 -m unittest discover -s tests -v
 
 ## Credits and license
 
-pstack is by [Lauren Tan (poteto)](https://x.com/poteto), who built it from her work on React and at Meta, Netflix, and Cursor. The skills, playbooks, principles, and their wording are hers. pstack-t3 changes how they reach models, not what they ask of them. `$brigade` and `$landing` are pstack-t3's own. `$brigade` copies the setup Lauren runs, with one coordinator per area that delegates and never does the work itself.
+pstack is by [Lauren Tan (poteto)](https://x.com/poteto), who built it from her work on React and at Meta, Netflix, and Cursor. The skills, playbooks, principles, and their wording are hers. pstack-t3 changes how they reach models, not what they ask of them. `$brigade`, `$landing`, and `pstack-author-skill` are pstack-t3's own. `$brigade` copies the setup Lauren runs, with one coordinator per area that delegates and never does the work itself.
 
 MIT licensed. See [LICENSE](LICENSE). The upstream license is preserved in [`vendor/pstack/LICENSE`](vendor/pstack/LICENSE).
