@@ -547,7 +547,7 @@ def command_show(args):
         # A saved snapshot records whichever thread ran setup, not this one.
         provider, _, model = (args.parent or "").partition("/")
         catalog = {**catalog, "inheritedProviderInstanceId": provider or None, "inheritedModel": model or None}
-    print(json.dumps(resolve(config, catalog, [args.role] if args.role else None), indent=2))
+    print(json.dumps(resolve(config, catalog, args.role), indent=2))
 
 
 def command_validate(args):
@@ -597,7 +597,7 @@ def main(argv=None):
         if name != "write":
             command.add_argument("--project-config", help="project roles file (default <repo>/.pstack/t3-roles.json)")
         command.add_argument("--catalog", required=name != "show", help="saved orchestrator_capabilities JSON, or - for stdin")
-    sub.choices["show"].add_argument("--role")
+    sub.choices["show"].add_argument("--role", action="append")
     sub.choices["show"].add_argument("--parent", help="this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel)")
     write = sub.choices["write"]
     write.add_argument("--budget", choices=list(BUDGETS))
