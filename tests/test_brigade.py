@@ -917,7 +917,7 @@ class BrigadeTest(unittest.TestCase):
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
             self.assertEqual(self.brigade("watch"), "T1: waiting on L2 (engine/D1)")
             self.land("lease", "release", "L2")
-            line = "T1: unblocked; run fire --tickets T1 --station bug-fix --summary 'Fix the gate' --paths src --timebox 60"
+            line = "T1: unblocked; run fire --tickets=T1 --station=bug-fix '--summary=Fix the gate' --paths=src --timebox=60"
             self.assertEqual(self.brigade("watch"), line)
             started = self.brigade(*shlex.split(line.split("run ", 1)[1]))
             self.assertEqual(started, "D1 (lease L3 held by perf/D1)")
@@ -992,7 +992,7 @@ class BrigadeTest(unittest.TestCase):
             self.land("lease", "release", "L1")
             line = self.run_at(directory, "watch")
             self.assertNotIn("waiting on", line)
-            self.assertIn("--paths src --timebox 30", line)
+            self.assertIn("--paths=src --timebox=30", line)
             self.assertNotIn("changes/review-more%2Fd1.md", line)
             ran = self.bash_unblocked(directory, line)
         self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)

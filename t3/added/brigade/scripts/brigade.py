@@ -753,15 +753,20 @@ def lease_check(project_root, holder_name, paths):
 
 
 def fire_command(ident, note):
+    """Shell-quoted fire line. Each option is one --name=value word so a value that starts with - stays the value."""
     tickets = ",".join(note.get("tickets") or [ident])
-    tokens = ["fire", "--tickets", tickets, "--station", note.get("station", ""),
-              "--summary", note.get("summary", "")]
+    pairs = [
+        ("tickets", tickets),
+        ("station", note.get("station", "")),
+        ("summary", note.get("summary", "")),
+    ]
     if note.get("branch"):
-        tokens.extend(["--branch", note["branch"]])
+        pairs.append(("branch", note["branch"]))
     if note.get("paths"):
-        tokens.extend(["--paths", note["paths"]])
-    tokens.extend(["--timebox", str(note.get("timebox", 60))])
-    return " ".join(shlex.quote(str(token)) for token in tokens)
+        pairs.append(("paths", note["paths"]))
+    pairs.append(("timebox", note.get("timebox", 60)))
+    words = ["fire", *(f"--{name}={value}" for name, value in pairs)]
+    return " ".join(shlex.quote(str(word)) for word in words)
 
 
 def blocked_watch_line(project_root, prefix, ident, note, running, cap, next_dish):
