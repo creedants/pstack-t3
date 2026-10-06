@@ -229,7 +229,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 
 ## Roadmap
 
-- Live end-to-end runs of the longest playbooks (Orchestrate, Autopilot) on real multi-PR projects.
+- More live end-to-end runs of the longest playbooks on real multi-PR projects. Autopilot has run once, on a four-PR scratch queue. Orchestrate has not run yet. See [Live runs](docs/live-runs.md) for what merged and the defects each run found.
 - Testing on macOS, and on T3's other providers (OpenCode, Antigravity, ACP agents).
 - A T3-native port of Lauren's long-form guide.
 - Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. Today syncing is a manual `scripts/sync_upstream.py` run.
