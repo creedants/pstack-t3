@@ -72,7 +72,7 @@ $swarm audit stats.py: one read-only worker per public function.
 
 ## Quick start
 
-You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 (`0.0.46-nightly.20261003.2610` or later), git, and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
+You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and `watch_pull_request` (`0.0.46-nightly.20261005.2702` or later), git, and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
 
 ```bash
 git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3
@@ -99,8 +99,8 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$swarm check every API route for missing auth.` | One worker per slice, with a single report of PASS, ISSUES, or BLOCKED. |
 | `$how does session refresh work?` | An explorer agent maps the code, then an explainer agent turns it into a walkthrough. |
 | `$why did we pick Postgres here?` | A cited answer from git history and whatever doc and issue tools are connected. |
-| `$poteto-mode babysit PR 482 until it's green.` | It watches CI and review threads, fixes what it can, and reports. |
-| `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log, scheduled checks, and per-PR verification before merge. |
+| `$poteto-mode babysit PR 482 until it's green.` | It calls `watch_pull_request` and waits on CI, reviews, and conflicts. It fixes what it can and reports. |
+| `$poteto-mode i'm going to bed. land the stack. everything merged by morning.` | An autonomous run with a decision log. It waits on each pull request with `watch_pull_request`, uses `schedule_task` as the merge heartbeat, and verifies each pull request before merge. |
 | `$recall where did I leave off on the billing migration?` | A current-state brief rebuilt from your past T3 threads, git, and PRs. |
 | `$correct` | A census of the mistakes agents repeat here, each fixed at the highest level that holds, from architecture through types, lint, and tests, plus a rule table. |
 | `$brigade open a head chef for bridgekit focused on startup performance.` | A pinned thread that owns that goal. It groups incoming requests, hands each to a pstack playbook, has another model family review every result against the goal, and reports what landed. |
@@ -121,7 +121,7 @@ flowchart LR
     a & b & c -->|completion wakes the lead| verdict["One verified verdict"]
 ```
 
-T3 Code gives every provider the same orchestration tools: `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for recurring work, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. Details are in [How it works](docs/how-it-works.md).
+T3 Code gives every provider the same orchestration tools: `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. Details are in [How it works](docs/how-it-works.md).
 
 **Why skills, not an MCP server or a plugin?** T3 already gives every provider its orchestration server, so pstack-t3 needs no server of its own. T3's `$` picker lists each provider's native skills, which is why `$poteto-mode` appears whichever model you pick. A Claude Code plugin would namespace the skills and hide them from that picker, and the other providers have no plugin format.
 
@@ -183,7 +183,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
 | A Cursor rule file of model names | `roles.json` resolved against T3's live catalog |
 | A fixed default panel of four Cursor models | One seat per model family you can run |
-| `/loop`, automations, hourly ticks | `schedule_task` |
+| `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |
 | Cursor's built-in `create-skill` | `pstack-author-skill`, for every provider |
