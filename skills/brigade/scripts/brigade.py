@@ -169,16 +169,25 @@ class Restaurant:
 
 
 LANDING = ("human", "merge", "push", "local")
+REPORTING = ("every-turn", "milestones", "digest")
 
 
-def open_restaurant(root, project_root, name, landing):
+def reporting_of(meta):
+    value = meta.get("reporting")
+    if value in (None, ""):
+        return "milestones"
+    return value
+
+
+def open_restaurant(root, project_root, name, landing, reporting="milestones"):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
     created = not (directory / "restaurant.json").exists()
     if created:
         directory.mkdir(parents=True, exist_ok=True)
         meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
-                "openedAt": now(), "lastActivityAt": now(), "lastReportAt": None, "thread": None, "schedules": {}}
+                "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
+                "lastReportAt": None, "thread": None, "schedules": {}}
         write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     meta = json.loads((directory / "restaurant.json").read_text())
     for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
@@ -392,7 +401,7 @@ def walk(root, stale_hours=24):
         age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
         idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
         landing = f", lands by {meta['landing']}" if meta.get("landing") else ""
-        lines.append(f"{meta['restaurant']} ({meta['projectRoot']}{landing}){idle}: {status_line(restaurant)}")
+        lines.append(f"{meta['restaurant']} ({meta['projectRoot']}{landing}, reports {reporting_of(meta)}){idle}: {status_line(restaurant)}")
         lines.append(f"  thread {meta.get('thread') or 'not recorded'}, store {restaurant.dir}")
         for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
             lines.append(f"  {question['id']}: {question['question']}")
@@ -410,11 +419,14 @@ def parser():
     p.add_argument("--name", required=True)
     p.add_argument("--landing", choices=LANDING, required=True,
                    help="who lands work: human (PRs you merge), merge (PRs the queue merges), push (no PRs), local (a lane ref)")
+    p.add_argument("--reporting", choices=REPORTING, default="milestones",
+                   help="how often the coordinator replies (default: milestones)")
 
-    p = sub.add_parser("set", help="record the head chef thread or a schedule id")
+    p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
     p.add_argument("--landing", choices=LANDING, help="record a landing mode changed with land.py mode")
+    p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
 
     p = sub.add_parser("ticket", help="add, list, or update tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -496,7 +508,7 @@ def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
     if args.command == "open":
-        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing)
+        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting)
         return f"{'opened' if created else 'exists'} {restaurant.dir}"
     if args.command == "walk":
         return walk(root, args.stale_hours)
@@ -510,6 +522,8 @@ def run(argv):
             meta["thread"] = args.thread
         if args.landing:
             meta["landing"] = args.landing
+        if args.reporting:
+            meta["reporting"] = args.reporting
         for pair in args.schedule:
             if "=" not in pair:
                 raise BrigadeError(f"--schedule takes NAME=ID, got {pair!r}")
@@ -604,7 +618,11 @@ def run(argv):
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "status":
-        return status_line(restaurant)
+        level = f"reporting: {reporting_of(restaurant.meta)}"
+        counts_text = status_line(restaurant)
+        if counts_text == "nothing on record":
+            return level
+        return f"{level}, {counts_text}"
     if args.command == "close":
         return report(restaurant, write=not args.dry_run)
     raise BrigadeError(f"unknown command {args.command}")

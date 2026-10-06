@@ -68,7 +68,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued", "--sha", "def", ok=False),
                          "brigade: only reviewed work lands: D1 has no review verdict for def")
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
-        self.assertEqual(self.brigade("status"), "waiting to land: 1")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting to land: 1")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
         self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done [user] s")
 
@@ -126,9 +126,9 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
-        self.assertEqual(self.brigade("status"), "waiting tickets: 1, decisions for you: 1")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting tickets: 1, decisions for you: 1")
         walked = self.brigade("walk")
-        self.assertIn(", lands by merge): ", walked)
+        self.assertIn(", lands by merge, reports milestones): ", walked)
         self.assertIn("thread thread-1", walked)
         self.assertIn("Q1: Ship it?", walked)
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"], {"report": "s-1"})
@@ -276,6 +276,49 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("NAME=ID", error)
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"],
                          {"drain": "sched-5", "morning": "sched-1"})
+
+    def test_open_records_reporting_and_defaults_to_milestones(self):
+        self.open()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        self.assertEqual(meta["reporting"], "milestones")
+        self.assertEqual(self.brigade("status"), "reporting: milestones")
+        self.assertIn("reports milestones", self.brigade("walk"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                                      "--landing", "merge", "--reporting", "every-turn"), f"exists {self.at}")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "milestones")
+        other = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
+                             "--landing", "local", "--reporting", "digest")
+        quiet = self.store / "bridge-kit" / "quiet"
+        self.assertEqual(other, f"opened {quiet}")
+        self.assertEqual(json.loads((quiet / "restaurant.json").read_text())["reporting"], "digest")
+        self.assertIn("reports digest", self.brigade("walk"))
+
+    def test_set_reporting_changes_the_level_and_rejects_an_unknown_one(self):
+        self.open()
+        self.brigade("set", "--reporting", "every-turn")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "every-turn")
+        self.assertEqual(self.brigade("status"), "reporting: every-turn")
+        self.brigade("set", "--reporting", "digest")
+        before = (self.at / "restaurant.json").read_text()
+        error = self.brigade("set", "--reporting", "hourly", ok=False)
+        for level in ("every-turn", "milestones", "digest"):
+            self.assertIn(level, error)
+        self.assertEqual((self.at / "restaurant.json").read_text(), before)
+        opened = self.brigade("open", "--project-root", str(self.project), "--name", "Loud",
+                              "--landing", "merge", "--reporting", "hourly", ok=False)
+        for level in ("every-turn", "milestones", "digest"):
+            self.assertIn(level, opened)
+        self.assertFalse((self.store / "bridge-kit" / "loud").exists())
+
+    def test_a_restaurant_file_without_reporting_reads_as_milestones(self):
+        self.open()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        del meta["reporting"]
+        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
+        self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertEqual(self.brigade("status"), "reporting: milestones")
+        self.assertIn("reports milestones", self.brigade("walk"))
+        self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
 
 
 if __name__ == "__main__":
