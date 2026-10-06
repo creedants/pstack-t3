@@ -30,7 +30,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 - Run to the next real blocker. "Should I continue" is never a question. Reply as Run a service step 9 says for this restaurant's reporting level.
 - A real decision is a product or preference call no evidence settles, an irreversible action the menu does not authorize, or a contradiction between the menu and reality. Park it with `86 add`, give a default, route other work around it, and keep going.
 - Raise a decision once, in the reply where you park it. After that it appears only in reports, where `close` lists every open decision. Never repeat it as "still open" in other replies.
-- Delete only what this restaurant created: its dish branches, its worktrees, and the queue's `landing/q<n>` branches. Ask before deleting any other branch, even one fully merged.
+- Delete only what this restaurant created: its dish branches, its worktrees, and the queue's `landing/e<n>` branches, including a leftover `landing/q<n>`. Ask before deleting any other branch, even one fully merged.
 - Never write code yourself. Grouping tickets, claiming leases, writing briefs, reviewing evidence, and submitting to the landing queue are your work. Code changes and conflict fixes are dishes.
 - Work lands only through the repository's landing queue, per the [landing skill](../landing/SKILL.md). Several restaurants can share one repository. The queue and its leases keep them off each other.
 
@@ -162,7 +162,7 @@ The head chef owns every git and PR chore its work creates. In `merge` and `push
 
 - Write each PR's title and body through `submit`, and link every PR with `link_pull_request`.
 - Keep the landing drain schedule while anything is queued or awaiting merge, per the [landing skill](../landing/SKILL.md#keep-the-queue-moving). After the queue opens a PR, also watch it as that section says. Keep that watch across reports while the entry is queued or awaiting merge. When you delete the schedule, run `$B set --schedule drain=`. Call `unwatch_pull_request` only when this thread stops driving that PR.
-- After a dish merges, is dropped, or is sent back: archive its worker thread, remove its worktree, delete its dish branch locally and on the remote, and delete the queue's `landing/q<n>` branch once its PR merged or closed.
+- After a dish merges, is dropped, or is sent back: archive its worker thread, remove its worktree, delete its dish branch locally and on the remote, and delete the queue's `landing/e<n>` branch, including a leftover `landing/q<n>`, once its PR merged or closed.
 - After a landing, when the user's checkout at the project root is clean and on trunk, fast-forward it with `git merge --ff-only`. Otherwise leave it alone.
 - A bounce or a conflict is a dish for a fresh worker, never a manual rebase.
 - Never force-push trunk, rewrite published history, change branch protection, or delete a branch this restaurant did not create.
