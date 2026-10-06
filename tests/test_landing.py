@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,37 @@ class LandingTest(unittest.TestCase):
         (self.work / "check.sh").chmod(0o755)
         self.commit("init")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.install_github_remote()
+
+    def install_github_remote(self):
+        """Point origin at https://github.com/o/r.git and send transport commands to the bare repo.
+
+        git remote get-url still prints the GitHub URL. push, fetch, ls-remote, and pull
+        rewrite that URL to origin.git, so a test never contacts GitHub.
+        """
+        real = shutil.which("git")
+        bindir = self.base / "git-wrap"
+        bindir.mkdir()
+        origin = str(self.base / "origin.git")
+        script = bindir / "git"
+        script.write_text(
+            "#!" + sys.executable + "\n"
+            "import os, subprocess, sys\n"
+            f"real = {real!r}\n"
+            f"origin = {origin!r}\n"
+            "args = sys.argv[1:]\n"
+            "if len(args) >= 2 and args[0] == 'remote' and args[1] == 'get-url':\n"
+            "    os.execv(real, [real, *args])\n"
+            "if args and args[0] in ('push', 'fetch', 'ls-remote', 'pull'):\n"
+            "    probed = subprocess.run([real, 'remote', 'get-url', 'origin'], capture_output=True, text=True)\n"
+            "    url = probed.stdout.strip()\n"
+            "    if probed.returncode == 0 and url.startswith('https://github.com/'):\n"
+            "        os.execv(real, [real, '-c', 'url.' + origin + '/.insteadOf=' + url, *args])\n"
+            "os.execv(real, [real, *args])\n"
+        )
+        script.chmod(0o755)
+        os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
+        sh("git", "remote", "set-url", "origin", "https://github.com/o/r.git", cwd=self.work)
 
     def tearDown(self):
         self.env.stop()
@@ -281,9 +313,21 @@ base = Path({str(self.base)!r})
 args = sys.argv[1:]
 with open(base / "gh-calls", "a") as calls:
     print(" ".join(args), file=calls)
+if args[:2] == ["repo", "view"]:
+    if (base / "repo-view-fails").exists():
+        print("repo view failed", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({{"nameWithOwner": "o/r"}}))
+    sys.exit(0)
 if args[:1] == ["api"] and any("/branches/" in arg for arg in args):
     endpoint = next(arg for arg in args if "/branches/" in arg)
     branch = endpoint.split("/branches/", 1)[1]
+    if (base / "forge-says-missing").exists():
+        print("branch-status 404", file=open(base / "gh-calls", "a"))
+        print("HTTP/2.0 404 Not Found")
+        print()
+        print(json.dumps({{"message": "Branch not found", "status": "404"}}))
+        sys.exit(1)
     if (base / "branch-query-fails").exists():
         print("branch-status 500", file=open(base / "gh-calls", "a"))
         print("HTTP/2.0 500 Internal Server Error")
@@ -841,7 +885,7 @@ elif args[:2] == ["pr", "view"]:
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertTrue(self.ref_exists(ref, remote))
             self.assertFalse(self.ref_exists(ref, backup))
-            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
+            self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
 
@@ -865,6 +909,36 @@ elif args[:2] == ["pr", "view"]:
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertFalse(self.ref_exists(ref, origin))
             self.assertTrue(self.ref_exists(ref, backup))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
+    def test_merge_mode_leaves_the_entry_when_the_push_url_names_another_repo(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            self.merged_queue_branch()
+            sh("git", "remote", "set-url", "origin", "https://github.com/else/where.git", cwd=self.work)
+            sh("git", "config", "receive.denyDeletes", "true", cwd=remote)
+            (self.base / "forge-says-missing").write_text("x")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
+
+    def test_merge_mode_leaves_the_entry_when_the_forge_repo_cannot_be_read(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            self.merged_queue_branch()
+            sh("git", "update-ref", "-d", "refs/heads/landing/q1", cwd=remote)
+            (self.base / "repo-view-fails").write_text("x")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
 
