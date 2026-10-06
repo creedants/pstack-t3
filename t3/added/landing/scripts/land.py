@@ -367,6 +367,17 @@ def lease_id(text):
     return int(text.lstrip("L"))
 
 
+def entry_label(ident):
+    return f"E{ident}"
+
+
+def entry_id(text):
+    """E<n> names an entry. Q<n> is that same entry for one release. A bare number is the id."""
+    if not re.fullmatch(r"[EQ]?\d+", text or ""):
+        raise LandError(f"{text!r} is not an entry id such as E3")
+    return int(text.lstrip("EQ"))
+
+
 def submit(store, holder, branch, sha, lease, reviewer, title="", body=""):
     contract, repo = store.contract, store.repo
     lease_number = lease_id(lease)
@@ -384,7 +395,7 @@ def submit(store, holder, branch, sha, lease, reviewer, title="", body=""):
     with store.tx() as db:
         existing = db.execute("SELECT id, state FROM entry WHERE sha = ? AND holder = ?", (sha, holder)).fetchone()
         if existing and existing["state"] != "bounced":
-            return f"Q{existing['id']} already {existing['state']}"
+            return f"{entry_label(existing['id'])} already {existing['state']}"
         row = db.execute("SELECT * FROM lease WHERE id = ?", (lease_number,)).fetchone()
         if not row or row["holder"] != holder or row["state"] != "active" or row["expires"] <= stamp():
             raise LandError(f"L{lease_number} is not an active lease held by {holder}; claim one before submitting")
@@ -398,7 +409,7 @@ def submit(store, holder, branch, sha, lease, reviewer, title="", body=""):
                             (stamp(), holder, branch, sha, base, print_, lease_number, reviewer, title, body))
         db.execute("UPDATE lease SET state = 'submitted' WHERE id = ?", (lease_number,))
         store.log(db, "entry", cursor.lastrowid, "queued", f"{holder}: {branch}")
-    return f"Q{cursor.lastrowid}"
+    return entry_label(cursor.lastrowid)
 
 
 def cherry_pick_stopped_for_conflict(result):
@@ -537,7 +548,7 @@ def settle_landed(store, db, ident, landed, note=""):
     lease = db.execute("SELECT lease FROM entry WHERE id = ?", (ident,)).fetchone()["lease"]
     store.set_entry(db, ident, "landed", landed=landed, note=note)
     db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (lease,))
-    store.log(db, "lease", lease, "released", f"Q{ident} landed")
+    store.log(db, "lease", lease, "released", f"{entry_label(ident)} landed")
 
 
 def settle_bounced(store, db, ident, reason):
@@ -546,7 +557,7 @@ def settle_bounced(store, db, ident, reason):
     lease = db.execute("SELECT lease FROM entry WHERE id = ?", (ident,)).fetchone()["lease"]
     store.set_entry(db, ident, "bounced", note=reason, candidate="")
     db.execute("UPDATE lease SET state = 'active', expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=6)), lease))
-    store.log(db, "lease", lease, "active", f"Q{ident} bounced; the lease is back for the fix")
+    store.log(db, "lease", lease, "active", f"{entry_label(ident)} bounced; the lease is back for the fix")
 
 
 def reconcile(store):
@@ -661,7 +672,7 @@ def land_human(store, integration, entry):
 
 
 def human_branch(entry):
-    return f"landing/q{entry['id']}"
+    return f"landing/e{entry['id']}"
 
 
 def ensure_pr(store, entry):
@@ -924,18 +935,18 @@ def remote_branch_is_gone(store, branch, stderr):
     return _CLIENT_ABSENT_REF.search(stderr or "") is not None
 
 
-def delete_queue_branch(store, entry):
-    """Drop landing/q<n> after the PR has merged.
+def delete_named_branch(store, branch, missing_ok):
+    """Drop one queue branch. Returns (deleted, warning).
 
-    Returns (deleted, warning). The delete counts as done when the server
-    accepts it, or when remote_branch_is_gone says the branch is gone.
-    A local branch that exists and cannot be deleted is named in warning.
-    The entry still lands when the remote ref is gone."""
-    branch = human_branch(entry)
+    missing_ok treats git's exact absent line as nothing to delete, and does
+    not ask the forge. A branch that was never created must not block settle.
+    Any other failure uses remote_branch_is_gone."""
     remote = store.contract["remote"]
     pushed = git_push(remote, "--delete", branch, cwd=store.repo, check=False)
-    if pushed.returncode != 0 and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
-        return False, ""
+    if pushed.returncode != 0:
+        absent = _CLIENT_ABSENT_REF.search(pushed.stderr or "") is not None
+        if not (missing_ok and absent) and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
+            return False, ""
     git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
     warning = ""
     if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", cwd=store.repo, check=False).returncode == 0:
@@ -943,6 +954,23 @@ def delete_queue_branch(store, entry):
         if local.returncode != 0:
             warning = f"left local {branch}: {git_reason(local.stderr)}"
     return True, warning
+
+
+def delete_queue_branch(store, entry):
+    """Drop landing/e<n> after the PR has merged, and a leftover landing/q<n>.
+
+    Returns (deleted, warning). The delete counts as done when the server
+    accepts it, or when remote_branch_is_gone says the branch is gone.
+    A missing landing/q<n> does not block. A local branch that exists and
+    cannot be deleted is named in warning. The entry still lands when the
+    remote ref is gone."""
+    deleted, warning = delete_named_branch(store, human_branch(entry), missing_ok=False)
+    if not deleted:
+        return False, ""
+    legacy_deleted, legacy_warning = delete_named_branch(store, f"landing/q{entry['id']}", missing_ok=True)
+    if not legacy_deleted:
+        return False, ""
+    return True, " ".join(part for part in (warning, legacy_warning) if part)
 
 
 def entry_row(store, ident):
@@ -1082,16 +1110,16 @@ def report(store, landed, bounced, opened):
     if landed:
         parts = []
         for i in landed:
-            text = f"Q{i} ({rows[i]['holder']})"
+            text = f"{entry_label(i)} ({rows[i]['holder']})"
             if rows[i]["note"].startswith("left local "):
                 text += f": {rows[i]['note']}"
             parts.append(text)
         lines.append("landed " + ", ".join(parts))
     if opened:
         lead = "opened PRs that merge when their checks pass: " if store.contract["mode"] == "merge" else "opened PRs for "
-        lines.append(lead + ", ".join(f"Q{i} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
-    lines += [f"bounced Q{i} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
-    waiting = [f"Q{row['id']}" for row in rows.values() if row["state"] in ("queued", "landing")]
+        lines.append(lead + ", ".join(f"{entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
+    lines += [f"bounced {entry_label(i)} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
+    waiting = [entry_label(row["id"]) for row in rows.values() if row["state"] in ("queued", "landing")]
     if waiting:
         lines.append("still queued: " + ", ".join(waiting))
     if store.contract.get("paused"):
@@ -1101,11 +1129,12 @@ def report(store, landed, bounced, opened):
 
 def status(store, ident=None):
     if ident:
-        row = store.db.execute("SELECT * FROM entry WHERE id = ?", (int(ident.lstrip("Q")),)).fetchone()
+        number = entry_id(ident)
+        row = store.db.execute("SELECT * FROM entry WHERE id = ?", (number,)).fetchone()
         if not row:
-            raise LandError(f"no {ident}")
+            raise LandError(f"no {entry_label(number)}")
         detail = [f"landed as {row['landed'][:12]}" if row["landed"] else "", row["pr"], row["note"]]
-        return f"Q{row['id']} {row['state']} ({row['holder']}, {row['branch']})" + "".join(f". {part}" for part in detail if part)
+        return f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['branch']})" + "".join(f". {part}" for part in detail if part)
     counts = dict(store.db.execute("SELECT state, count(*) FROM entry GROUP BY state").fetchall())
     leases = store.db.execute("SELECT count(*) FROM lease WHERE state = 'submitted' OR (state = 'active' AND expires > ?)", (stamp(),)).fetchone()[0]
     contract = store.contract
