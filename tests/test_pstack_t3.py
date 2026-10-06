@@ -203,6 +203,79 @@ class RolesTest(unittest.TestCase):
         kept = roles.resolve(config("unlimited", **{"judgment and prose": [named]}), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
         self.assertEqual(kept, [named])
 
+    def test_unlimited_with_no_grok_stops_at_max_on_a_codex_parent(self):
+        providers = [provider for provider in CATALOG["providers"] if provider["providerInstanceId"] != "grok"]
+        catalog = {
+            **CATALOG,
+            "providers": providers,
+            "inheritedProviderInstanceId": "codex",
+            "inheritedModel": "gpt-6.1-sol",
+        }
+        codex_max = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "max"}}
+        for name in CODE_ROLES:
+            seats = roles.resolve(config("unlimited"), catalog, [name])["roles"][name]["seats"]
+            self.assertEqual(seats, [codex_max], name)
+        panel = roles.resolve(config("unlimited"), catalog, ["interrogate reviewers"])["roles"]["interrogate reviewers"]["seats"]
+        self.assertEqual(panel[1], codex_max)
+        explicit = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "ultra"}}
+        capped = roles.resolve(config("unlimited", **{"bug-fix": [explicit]}), catalog, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(capped, [codex_max])
+        verifiers = roles.resolve(config("unlimited"), catalog, ["verifiers"])["roles"]["verifiers"]["seats"]
+        self.assertEqual(verifiers[0], codex_max)
+        self.assertNotIn("ultra", json.dumps(verifiers))
+        full = roles.resolve(config("unlimited"), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
+        self.assertEqual(full[1]["options"]["reasoningEffort"], "max")
+        only_ultra = {
+            "inheritedProviderInstanceId": "codex",
+            "inheritedModel": "gpt-6.1-sol",
+            "providers": [{
+                "providerInstanceId": "codex", "canRunChildTask": True, "constraints": [],
+                "models": [{"id": "gpt-6.1-sol", "options": [
+                    {"id": "reasoningEffort", "type": "select", "options": [{"id": "ultra"}]},
+                ]}],
+            }],
+        }
+        bare = roles.resolve(config("unlimited"), only_ultra, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(bare, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+        stripped = roles.resolve(config("unlimited", **{"bug-fix": [explicit]}), only_ultra, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(stripped, [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}])
+
+    def test_catalog_stdin_matches_the_file_error_and_accepts_json(self):
+        script = [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--role", "bug-fix", "--parent", "claudeAgent/claude-opus-5-5"]
+        catalog_text = (ROOT / "tests/fixtures/catalog.json").read_text()
+
+        def detail(stderr):
+            line = stderr.strip().splitlines()[-1]
+            self.assertTrue(line.startswith("error: "), stderr)
+            self.assertIn("invalid JSON: ", line)
+            return line.split("invalid JSON: ", 1)[1]
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_CONFIG_HOME": directory}
+            base = [*script, "--cwd", directory]
+
+            def run(catalog_arg, stdin=""):
+                return subprocess.run([*base, "--catalog", catalog_arg], input=stdin, capture_output=True, text=True, env=env)
+
+            valid_stdin = run("-", catalog_text)
+            self.assertEqual(valid_stdin.returncode, 0, valid_stdin.stderr)
+            valid_file = run(str(ROOT / "tests/fixtures/catalog.json"))
+            self.assertEqual(valid_file.returncode, 0, valid_file.stderr)
+            self.assertEqual(valid_stdin.stdout, valid_file.stdout)
+            self.assertEqual(json.loads(valid_stdin.stdout)["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+
+            bad = Path(directory) / "bad.json"
+            empty = Path(directory) / "empty.json"
+            bad.write_text("{not json")
+            empty.write_text("")
+            for stdin_text, file_path in (("", empty), ("{not json", bad)):
+                from_stdin = run("-", stdin_text)
+                from_file = run(str(file_path))
+                self.assertEqual(from_stdin.returncode, 2, from_stdin.stderr)
+                self.assertEqual(from_file.returncode, 2, from_file.stderr)
+                self.assertNotIn("Traceback", from_stdin.stderr)
+                self.assertEqual(detail(from_stdin.stderr), detail(from_file.stderr))
+
     def test_budget_understands_extra_high_and_keeps_none(self):
         model = {"id": "m", "options": [{"id": "reasoning_effort", "type": "select", "options": [{"id": "none"}, {"id": "low"}, {"id": "high"}, {"id": "extra-high"}]}]}
         self.assertEqual(roles.apply_budget({"model": "m"}, model, "unlimited")["options"], {"reasoning_effort": "extra-high"})
