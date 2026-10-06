@@ -103,6 +103,44 @@ exit 0
 """)
         hook.chmod(0o755)
 
+    def record_pushes(self):
+        """Log each git push while later commands run. The real git stays behind the wrapper."""
+        log = self.base / "git-pushes"
+        bindir = self.base / "bin"
+        bindir.mkdir(exist_ok=True)
+        real = subprocess.run(["which", "git"], capture_output=True, text=True, check=True).stdout.strip()
+        script = bindir / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = push ]; then\n"
+            f"  printf '%s\\n' \"$*\" >> '{log}'\n"
+            "fi\n"
+            f"exec '{real}' \"$@\"\n"
+        )
+        script.chmod(0o755)
+        self._push_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(bindir) + os.pathsep + self._push_path
+        return log
+
+    def stop_recording_pushes(self):
+        os.environ["PATH"] = self._push_path
+
+    def assert_pushes_stay_on_their_refs(self, log):
+        lines = log.read_text().splitlines()
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertTrue(line.startswith("push --no-follow-tags "), line)
+            self.assertNotIn("--dry-run", line)
+            self.assertFalse(any(part.startswith(":") for part in line.split()), line)
+
+    def merged_queue_branch(self):
+        """Save the queue head, then mark the PR merged at that head."""
+        remote = self.base / "origin.git"
+        sha = sh("git", "rev-parse", "refs/heads/landing/q1", cwd=remote)
+        (self.base / "pr-state").write_text(
+            f"MERGED {sha} 1111111111111111111111111111111111111111")
+        return sha
+
     def test_leases_refuse_overlap_including_aliases_and_the_whole_repo(self):
         self.init()
         self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", "lib"), "L1")
@@ -243,6 +281,28 @@ base = Path({str(self.base)!r})
 args = sys.argv[1:]
 with open(base / "gh-calls", "a") as calls:
     print(" ".join(args), file=calls)
+if args[:1] == ["api"] and any("/branches/" in arg for arg in args):
+    endpoint = next(arg for arg in args if "/branches/" in arg)
+    branch = endpoint.split("/branches/", 1)[1]
+    if (base / "branch-query-fails").exists():
+        print("branch-status 500", file=open(base / "gh-calls", "a"))
+        print("HTTP/2.0 500 Internal Server Error")
+        print()
+        print(json.dumps({{"message": "unavailable"}}))
+        sys.exit(1)
+    ref = "refs/heads/" + branch
+    exists = subprocess.run(
+        ["git", "--git-dir", str(base / "origin.git"), "rev-parse", "--verify", "--quiet", ref],
+        capture_output=True).returncode == 0
+    status = "200" if exists else "404"
+    print("branch-status " + status, file=open(base / "gh-calls", "a"))
+    print("HTTP/2.0 " + ("200 OK" if exists else "404 Not Found"))
+    print()
+    if exists:
+        print(json.dumps({{"name": branch}}))
+        sys.exit(0)
+    print(json.dumps({{"message": "Branch not found", "status": "404"}}))
+    sys.exit(1)
 if args[:2] == ["pr", "create"]:
     (base / "pr-url").write_text("https://github.com/o/r/pull/9")
     if (base / "crash-on-create").exists():
@@ -627,6 +687,7 @@ elif args[:2] == ["pr", "view"]:
             self.assertEqual(self.land("lease", "list"), "no leases held")
             self.assertFalse(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
             self.assertFalse(self.ref_exists("refs/remotes/origin/landing/q1", self.work))
+            self.assertIn("branch-status 404", (self.base / "gh-calls").read_text())
 
     def test_merge_mode_leaves_the_entry_when_the_queue_branch_delete_fails(self):
         with self.fake_gh():
@@ -638,6 +699,7 @@ elif args[:2] == ["pr", "view"]:
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
             self.assertIn("merge requested by the queue", self.land("status", "Q1"))
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", self.base / "origin.git"))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
             sh("git", "config", "--unset", "receive.denyDeletes", cwd=self.base / "origin.git")
             self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
             self.assertEqual(self.land("lease", "list"), "no leases held")
@@ -657,6 +719,7 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
 
     def test_merge_mode_leaves_the_entry_when_a_hidden_ref_is_locked(self):
         with self.fake_gh():
@@ -673,6 +736,7 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
 
     def test_merge_mode_leaves_the_entry_when_receive_pack_hides_the_queue_branch(self):
         with self.fake_gh():
@@ -685,6 +749,134 @@ elif args[:2] == ["pr", "view"]:
             self.assertTrue(self.ref_exists("refs/heads/landing/q1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
+
+    def test_an_annotated_tag_stays_local_when_the_queue_pushes(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+            sh("git", "config", "push.followTags", "true", cwd=self.work)
+            log = self.record_pushes()
+            try:
+                self.assertIn("opened PRs that merge when their checks pass: Q1 (r/D1)", self.land("land"))
+                self.merged_queue_branch()
+                self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            finally:
+                self.stop_recording_pushes()
+            remote = self.base / "origin.git"
+            self.assert_pushes_stay_on_their_refs(log)
+            self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
+            self.assertNotIn("branch-status", (self.base / "gh-calls").read_text())
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_push_mode_keeps_an_annotated_tag_local(self):
+        self.init(mode="push")
+        self.queue_one()
+        sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+        sh("git", "config", "push.followTags", "true", cwd=self.work)
+        log = self.record_pushes()
+        try:
+            self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+        finally:
+            self.stop_recording_pushes()
+        self.assert_pushes_stay_on_their_refs(log)
+        self.assertFalse(self.ref_exists("refs/tags/private-local-tag", self.base / "origin.git"))
+
+    def test_merge_mode_settles_when_the_forge_reports_the_branch_gone(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            self.merged_queue_branch()
+            sh("git", "update-ref", "-d", "refs/heads/landing/q1", cwd=remote)
+            sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+            sh("git", "config", "push.followTags", "true", cwd=self.work)
+            log = self.record_pushes()
+            try:
+                self.assertEqual(self.land("land"), "landed Q1 (r/D1)")
+            finally:
+                self.stop_recording_pushes()
+            self.assertEqual(
+                log.read_text().splitlines(),
+                ["push --no-follow-tags origin --delete landing/q1"])
+            self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
+            self.assertIn("branch-status 404", (self.base / "gh-calls").read_text())
+            self.assertIn(
+                "api --include repos/{owner}/{repo}/branches/landing/q1",
+                (self.base / "gh-calls").read_text())
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_leaves_the_entry_when_the_branch_query_fails(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            self.merged_queue_branch()
+            sh("git", "update-ref", "-d", "refs/heads/landing/q1", cwd=remote)
+            (self.base / "branch-query-fails").write_text("x")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertIn("branch-status 500", (self.base / "gh-calls").read_text())
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertFalse(self.ref_exists("refs/heads/landing/q1", remote))
+
+    def test_merge_mode_leaves_the_entry_when_another_push_url_dropped_the_branch(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            remote = self.base / "origin.git"
+            backup = self.base / "backup.git"
+            ref = "refs/heads/landing/q1"
+            sha = self.merged_queue_branch()
+            sh("git", "checkout", "--detach", "-q", sha, cwd=self.work)
+            sh("git", "clone", "--bare", "-q", str(remote), str(backup), cwd=self.base)
+            sh("git", "update-ref", "-d", ref, cwd=backup)
+            (remote / "refs/heads/landing/q1.lock").write_text("x")
+            sh("git", "config", "--add", "remote.origin.pushurl", str(remote), cwd=self.work)
+            sh("git", "config", "--add", "remote.origin.pushurl", str(backup), cwd=self.work)
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists(ref, remote))
+            self.assertFalse(self.ref_exists(ref, backup))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("awaiting-merge", self.land("status", "Q1"))
+
+    def test_push_mode_settles_a_missing_branch_only_from_gits_absent_line(self):
+        with self.fake_gh():
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            store = land.Store.for_repo(self.work)
+            with store.tx() as db:
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps("push"),))
+            store = land.Store.for_repo(self.work)
+            self.assertEqual(store.contract["mode"], "push")
+            remote = self.base / "origin.git"
+            self.merged_queue_branch()
+            sh("git", "update-ref", "-d", "refs/heads/landing/q1", cwd=remote)
+            sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+            sh("git", "config", "push.followTags", "true", cwd=self.work)
+            (self.base / "branch-query-fails").write_text("x")
+            entry = store.entries("awaiting-merge")[0]
+            log = self.record_pushes()
+            try:
+                landed, bounced = [], []
+                self.assertTrue(land.take_pr(store, entry, landed, bounced))
+            finally:
+                self.stop_recording_pushes()
+            self.assertEqual(landed, [entry["id"]])
+            self.assertEqual(bounced, [])
+            self.assertEqual(
+                log.read_text().splitlines(),
+                ["push --no-follow-tags origin --delete landing/q1"])
+            self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
+            self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
+            self.assertEqual(self.land("status", "Q1").splitlines()[0].split(". ")[0], "Q1 landed (r/D1, w1)")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_merge_mode_lands_in_the_run_whose_plain_merge_succeeds(self):
         with self.fake_gh():
