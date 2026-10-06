@@ -312,7 +312,12 @@ class BrigadeTest(unittest.TestCase):
         other = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
                              "--landing", "local", "--reporting", "digest")
         quiet = self.store / "bridge-kit" / "quiet"
-        self.assertEqual(other, f"opened {quiet}")
+        self.assertEqual(other, "\n".join([
+            f"opened {quiet}",
+            f"sibling Perf ({self.at}), thread not recorded",
+            "  purpose: not written yet",
+            "  off the menu: not written yet",
+        ]))
         self.assertEqual(json.loads((quiet / "restaurant.json").read_text())["reporting"], "digest")
         self.assertIn("reports digest", self.brigade("walk"))
 
@@ -500,6 +505,91 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--reported")
         self.brigade("hang", "D1", "--provider", "grok/grok-4.7", "--minutes", "20")
         self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "hang"]), 2)
+
+    def test_open_prints_the_sibling_on_the_same_project_root(self):
+        self.open()
+        menu = (self.at / "menu.md").read_text()
+        menu = menu.replace(
+            "What this restaurant exists to achieve, in one or two sentences.",
+            "Keep startup under 400 ms.")
+        menu = menu.replace(
+            "Work this restaurant does not take, even when asked.",
+            "Docs and release notes\nVendor upgrades")
+        (self.at / "menu.md").write_text(menu)
+        self.brigade("set", "--thread", "thread-perf")
+        docs_dir = self.store / "bridge-kit" / "docs"
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(self.project), "--name", "Docs", "--landing", "merge"),
+            "\n".join([
+                f"opened {docs_dir}",
+                f"sibling Perf ({self.at}), thread thread-perf",
+                "  purpose: Keep startup under 400 ms.",
+                "  off the menu: Docs and release notes; Vendor upgrades",
+            ]))
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge"),
+            "\n".join([
+                f"exists {self.at}",
+                "thread thread-perf already recorded",
+                f"sibling Docs ({docs_dir}), thread not recorded",
+                "  purpose: not written yet",
+                "  off the menu: not written yet",
+            ]))
+
+    def test_open_refuses_a_directory_that_holds_another_project_root(self):
+        first = (Path(self.temporary.name) / "left" / "app").resolve()
+        second = (Path(self.temporary.name) / "right" / "app").resolve()
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        directory = self.store / "app" / "docs"
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(first), "--name", "Docs", "--landing", "merge"),
+            f"opened {directory}")
+        before = (directory / "restaurant.json").read_bytes()
+        error = self.brigade("open", "--project-root", str(second), "--name", "Docs", "--landing", "local", ok=False)
+        self.assertEqual(
+            error,
+            f"brigade: {directory} already holds a coordinator for {first}; pick another --name")
+        self.assertEqual((directory / "restaurant.json").read_bytes(), before)
+
+    def test_two_processes_opening_one_name_on_different_roots_leave_one_store(self):
+        roots = []
+        for label in ("left", "right"):
+            path = (Path(self.temporary.name) / label / "app").resolve()
+            path.mkdir(parents=True)
+            roots.append(path)
+        directory = self.store / "app" / "docs"
+        procs = [
+            subprocess.Popen(
+                [sys.executable, str(SCRIPT), "--store", str(self.store),
+                 "open", "--project-root", str(root), "--name", "Docs", "--landing", "merge"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for root in roots
+        ]
+        finished = []
+        for proc in procs:
+            out, err = proc.communicate(timeout=15)
+            finished.append((proc.returncode, out, err))
+        self.assertEqual(sorted(code for code, _, _ in finished), [0, 1])
+        self.assertEqual(len(list((directory.parent).glob("*/restaurant.json"))), 1)
+        meta = json.loads((directory / "restaurant.json").read_text())
+        winner = next(item for item in finished if item[0] == 0)
+        loser = next(item for item in finished if item[0] == 1)
+        self.assertIn(meta["projectRoot"], [str(root) for root in roots])
+        self.assertTrue(winner[1].startswith(f"opened {directory}"))
+        self.assertIn(f"already holds a coordinator for {meta['projectRoot']}", loser[2])
+        self.assertIn("pick another --name", loser[2])
+
+    def test_set_thread_refuses_to_replace_a_recorded_thread(self):
+        self.open()
+        self.brigade("set", "--thread", "thread-1")
+        self.brigade("set", "--thread", "thread-1")
+        before = (self.at / "restaurant.json").read_bytes()
+        error = self.brigade("set", "--thread", "thread-2", ok=False)
+        self.assertEqual(error, "brigade: thread thread-1 already recorded")
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+        self.brigade("set", "--thread", "thread-2", "--replace")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["thread"], "thread-2")
 
 
 if __name__ == "__main__":
