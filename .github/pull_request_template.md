@@ -5,4 +5,4 @@
 - [ ] `python3 scripts/build.py` passes and the regenerated `skills/` is committed.
 - [ ] `python3 -m unittest discover -s tests -v` passes.
 - [ ] No edits to `vendor/` or hand edits to `skills/`.
-- [ ] `CHANGELOG.md` has a line under Unreleased for any user-facing change.
+- [ ] A user-facing change has one bullet in `changes/<encoded branch>.md`, as `CONTRIBUTING.md` describes.

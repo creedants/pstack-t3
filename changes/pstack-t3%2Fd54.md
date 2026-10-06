@@ -1,0 +1,1 @@
+- The pull request template asks for one bullet in `changes/<encoded branch>.md`, as `CONTRIBUTING.md` describes. `.gitignore` ignores `/.agents/`, `/.cursor/`, and `/skills/poteto-mode/scripts/node_modules/`.
