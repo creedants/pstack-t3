@@ -71,6 +71,11 @@ def git(*args, cwd, check=True, stdin=None):
     return result
 
 
+def git_push(*args, cwd, check=False):
+    """Every queue push passes --no-follow-tags, so push.followTags cannot publish a local tag."""
+    return git("push", "--no-follow-tags", *args, cwd=cwd, check=check)
+
+
 def common_dir(path):
     """The git common directory identifies a repository across all of its worktrees."""
     top = git("rev-parse", "--show-toplevel", cwd=path).stdout.strip()
@@ -463,8 +468,8 @@ def publish(store, base, candidate):
     if contract["mode"] == "local":
         result = git("update-ref", trunk_ref(contract), candidate, base, cwd=repo, check=False)
         return None if result.returncode == 0 else "trunk moved during landing"
-    result = git("push", f"--force-with-lease=refs/heads/{contract['trunk']}:{base}", contract["remote"],
-                 f"{candidate}:refs/heads/{contract['trunk']}", cwd=repo, check=False)
+    result = git_push(f"--force-with-lease=refs/heads/{contract['trunk']}:{base}", contract["remote"],
+                      f"{candidate}:refs/heads/{contract['trunk']}", cwd=repo, check=False)
     if result.returncode != 0:
         if remote_trunk(store) != base:
             return "trunk moved during landing"
@@ -611,7 +616,7 @@ def land_human(store, integration, entry):
             settle_bounced(store, db, entry["id"], reason)
         return False
     head = integration.head()
-    push = git("push", "--force", contract["remote"], f"{head}:refs/heads/{human_branch(entry)}", cwd=store.repo, check=False)
+    push = git_push("--force", contract["remote"], f"{head}:refs/heads/{human_branch(entry)}", cwd=store.repo, check=False)
     if push.returncode != 0:
         raise Infrastructure("push failed: " + git_reason(push.stderr))
     with store.tx() as db:
@@ -791,66 +796,51 @@ def request_merge(store, ident, url):
     return True
 
 
-def receive_pack_lacks(repo, remote, ref):
-    """True when a dry-run push would create ref.
-
-    receive-pack still advertises a ref that upload-pack hides, so this is not
-    fooled by uploadpack.hideRefs. An empty ls-remote is not evidence. A failed
-    probe returns False, and the caller leaves the entry for the next run."""
-    head = git("rev-parse", "--verify", "HEAD", cwd=repo, check=False)
-    sha = head.stdout.strip()
-    if head.returncode != 0 or not sha:
-        return False
-    probe = git("push", "--dry-run", "--porcelain", remote, f"{sha}:{ref}", cwd=repo, check=False)
-    if probe.returncode != 0:
-        return False
-    for line in probe.stdout.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        dest = parts[1].split(":", 1)[-1]
-        if dest == ref and parts[2] == "[new branch]":
-            return True
-    return False
+_CLIENT_ABSENT_REF = re.compile(r"^error: unable to delete '[^']*': remote ref does not exist$", re.M)
 
 
-def hidden_ref_rejected(repo, remote, ref):
-    """True when the server refuses a full-refspec delete because ref is hidden.
+def http_status(text):
+    """The status code from an HTTP status line, or None when the text has none."""
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].startswith("HTTP/") and parts[1].isdigit():
+            return int(parts[1])
+    return None
 
-    `git push --delete <name>` stops in the client when the name was not
-    advertised. That message is the same when the ref is gone and when
-    receive.hideRefs hides it. The full refspec is what the server answers."""
-    confirm = git("push", remote, f":{ref}", cwd=repo, check=False)
-    return confirm.returncode != 0 and "deny deleting a hidden ref" in (confirm.stderr or "")
+
+def forge_branch_status(repo, branch):
+    """HTTP status for branch on the forge this checkout already uses for gh pr.
+
+    gh fills {owner} and {repo} from the checkout. 404 means the branch is gone.
+    200 means it exists. None means the read did not return a status line."""
+    result = gh("api", "--include", "repos/{owner}/{repo}/branches/" + branch, cwd=repo)
+    return http_status(result.stdout)
+
+
+def remote_branch_is_gone(store, branch, stderr):
+    """Whether a failed delete left the queue branch absent.
+
+    Merge and human mode ask the forge, because the client's 'remote ref does
+    not exist' line is also what a hidden ref prints. Only HTTP 404 counts as
+    gone. Push and local mode have no forge read. They accept only that exact
+    client line, and any other failure waits for the next run."""
+    if store.contract["mode"] in ("merge", "human"):
+        return forge_branch_status(store.repo, branch) == 404
+    return _CLIENT_ABSENT_REF.search(stderr or "") is not None
 
 
 def delete_queue_branch(store, entry):
     """Drop landing/q<n> after the PR has merged.
 
     Returns (deleted, warning). The delete counts as done when the server
-    accepts it. A failed delete counts as done when the server tried to lock
-    the ref and receive-pack no longer advertises it. It also counts as done
-    when the client says the remote ref does not exist, unless a full-refspec
-    delete is rejected because the ref is hidden. An empty git ls-remote does
-    not count. upload-pack can hide a ref that receive-pack still advertises.
-    A policy refusal leaves the entry for the next run. A local branch that
-    exists and cannot be deleted is named in warning. The entry still lands
-    when the remote ref is gone."""
+    accepts it, or when remote_branch_is_gone says the branch is gone.
+    A local branch that exists and cannot be deleted is named in warning.
+    The entry still lands when the remote ref is gone."""
     branch = human_branch(entry)
     remote = store.contract["remote"]
-    ref = f"refs/heads/{branch}"
-    pushed = git("push", remote, "--delete", branch, cwd=store.repo, check=False)
-    if pushed.returncode != 0:
-        stderr = pushed.stderr or ""
-        raced = "cannot lock ref" in stderr or "reference already exists" in stderr
-        if raced:
-            if not receive_pack_lacks(store.repo, remote, ref):
-                return False, ""
-        elif "does not exist" in stderr:
-            if hidden_ref_rejected(store.repo, remote, ref):
-                return False, ""
-        else:
-            return False, ""
+    pushed = git_push(remote, "--delete", branch, cwd=store.repo, check=False)
+    if pushed.returncode != 0 and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
+        return False, ""
     git("update-ref", "-d", f"refs/remotes/{remote}/{branch}", cwd=store.repo, check=False)
     warning = ""
     if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", cwd=store.repo, check=False).returncode == 0:
