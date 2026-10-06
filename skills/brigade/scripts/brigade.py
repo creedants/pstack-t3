@@ -155,6 +155,17 @@ class Restaurant:
                 os.close(self._lock_fd)
                 self._lock_fd = None
 
+    @contextmanager
+    def checked(self):
+        """One command's checks and writes, run against tables that all parse.
+
+        Nothing inside may wait on stdin, a subprocess, or a sleep. That would stop every other command on this store.
+        """
+        with self.locked():
+            for table in TABLES:
+                self.rows(table)
+            yield
+
     def write(self, relative, text):
         with self.locked():
             write_atomic(self.dir / relative, text)
@@ -613,6 +624,54 @@ def claim_lease(restaurant, dish, paths):
     return result.stdout.strip()
 
 
+def release_lease(restaurant, lease):
+    subprocess.run([sys.executable, str(LAND), "--repo", restaurant.meta["projectRoot"], "lease", "release", lease],
+                   capture_output=True, text=True)
+
+
+def unfireable(restaurant, ids):
+    for ident in ids:
+        _, ticket = restaurant.find("rail.tsv", ident)
+        if ticket["state"] != "waiting":
+            return f"{ident} is {ticket['state']}, not waiting"
+    return None
+
+
+def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths):
+    with restaurant.checked():
+        refusal = unfireable(restaurant, ids)
+        if refusal:
+            raise BrigadeError(refusal)
+        dish = restaurant.next_id("dishes.tsv")
+    while True:
+        # land.py can wait on the landing database, so the claim runs outside the store lock.
+        # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
+        lease = claim_lease(restaurant, dish, paths) if paths else ""
+        with restaurant.checked():
+            refusal = unfireable(restaurant, ids)
+            current = restaurant.next_id("dishes.tsv")
+            if not refusal and current == dish:
+                restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": station,
+                                                 "tickets": ",".join(ids), "task": task, "thread": thread,
+                                                 "branch": branch, "summary": summary, "timebox": timebox,
+                                                 "lease": lease, "paths": paths})
+                restaurant.log("dish", dish, "in-progress", summary)
+                rows = restaurant.rows("rail.tsv")
+                for row in rows:
+                    if row["id"] in ids:
+                        row["state"], row["dish"] = "assigned", dish
+                restaurant.save_rows("rail.tsv", rows)
+                for row in rows:
+                    if row["id"] in ids:
+                        restaurant.log("ticket", row["id"], "assigned", row["summary"])
+                return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
+        if lease:
+            release_lease(restaurant, lease)
+        if refusal:
+            raise BrigadeError(f"nothing fired: {refusal}")
+        dish = current
+
+
 def menu_purpose(restaurant):
     text = (restaurant.dir / "menu.md").read_text()
     match = re.search(r"^## Purpose\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
@@ -943,9 +1002,16 @@ def run(argv):
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at)
-    with restaurant.locked():
-        for table in TABLES:
-            restaurant.rows(table)
+    if args.command == "brief":
+        # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
+        fields = _brief_fields(args)
+        with restaurant.checked():
+            return brief(restaurant, args.id, **fields)
+    if args.command == "fire":
+        ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
+        return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
+                    args.paths)
+    with restaurant.checked():
         return command(restaurant, args)
 
 
@@ -990,29 +1056,6 @@ def command(restaurant, args):
         restaurant.update("rail.tsv", args.id, "ticket", state=args.state)
         return f"{args.id} {args.state}"
 
-    if args.command == "fire":
-        ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
-        for ident in ids:
-            _, ticket = restaurant.find("rail.tsv", ident)
-            if ticket["state"] != "waiting":
-                raise BrigadeError(f"{ident} is {ticket['state']}, not waiting")
-        dish = restaurant.next_id("dishes.tsv")
-        lease = claim_lease(restaurant, dish, args.paths) if args.paths else ""
-        restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": args.station,
-                                         "tickets": ",".join(ids), "task": args.task, "thread": args.thread,
-                                         "branch": args.branch, "summary": args.summary, "timebox": args.timebox,
-                                         "lease": lease, "paths": args.paths})
-        restaurant.log("dish", dish, "in-progress", args.summary)
-        rows = restaurant.rows("rail.tsv")
-        for row in rows:
-            if row["id"] in ids:
-                row["state"], row["dish"] = "assigned", dish
-        restaurant.save_rows("rail.tsv", rows)
-        for row in rows:
-            if row["id"] in ids:
-                restaurant.log("ticket", row["id"], "assigned", row["summary"])
-        return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
-
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
         if args.state in ("queued", "merged"):
@@ -1055,8 +1098,6 @@ def command(restaurant, args):
         rows = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
         return "\n".join(f"{q['id']}: {q['question']} Options: {q['options']}. Default: {q['default']}." for q in rows) or "no open decisions"
 
-    if args.command == "brief":
-        return brief(restaurant, args.id, **_brief_fields(args))
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "hang":

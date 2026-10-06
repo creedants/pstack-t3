@@ -83,6 +83,8 @@ def _race_child(mode, case, args):
             return original(path, content)
 
         glob["write_atomic"] = hooked
+    elif mode == "fake-land":
+        glob["LAND"] = case / "land.py"
     elif mode == "die-before-log":
         glob["Restaurant"].log = lambda self, *rest: os._exit(9)
     elif mode == "die-inside-log-append":
@@ -365,6 +367,42 @@ class BrigadeTest(unittest.TestCase):
             self.assertIn("leased to you as L1: src.", text)
             self.assertIn("branch `perf/d1`", text)
 
+    def test_fire_claims_outside_the_store_lock_and_rechecks_before_it_writes(self):
+        case = Path(self.temporary.name)
+        calls = case / "land-calls"
+        (case / "land.py").write_text(
+            "import sys, time\nfrom pathlib import Path\n"
+            f"case = Path({str(case)!r})\n"
+            "with open(case / 'land-calls', 'a') as f:\n    f.write(' '.join(sys.argv[3:]) + '\\n')\n"
+            "if sys.argv[4] == 'claim':\n"
+            "    (case / 'claiming').touch()\n"
+            "    end = time.monotonic() + 30\n"
+            "    while not (case / 'claim-proceed').exists() and time.monotonic() < end:\n        time.sleep(0.01)\n"
+            "    print('L7')\n"
+            "else:\n    print('L7 released')\n")
+        self.open()
+        (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
+        self.brigade("ticket", "add", "--summary", "one")
+        firing = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                   "--store", str(self.store), "--at", str(self.at),
+                                   "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        try:
+            _wait_for_path(case / "claiming")
+            other = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
+                                   capture_output=True, text=True, timeout=10)
+            self.assertEqual(other.stdout.strip(), "D1", other.stderr)
+            (case / "claim-proceed").touch()
+            _, err = firing.communicate(timeout=10)
+        finally:
+            firing.kill()
+        self.assertEqual(firing.returncode, 1)
+        self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
+        self.assertEqual(calls.read_text().splitlines(), ["lease claim --holder perf/D1 --paths src", "lease release L7"])
+        self.assertEqual(self.brigade("status"), "reporting: milestones, in progress: 1")
+
     def test_tabs_and_newlines_in_input_cannot_break_a_table(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "line one\nline\ttwo")
@@ -471,6 +509,28 @@ class BrigadeTest(unittest.TestCase):
         piped = self.brigade("brief", "D1", "--fields", "-", stdin=raw)
         self.assertEqual(piped, filed)
         self.assertIn("$(touch sentinel)", piped)
+
+    def test_a_brief_waiting_on_stdin_leaves_the_store_to_other_commands(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        waiting = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    "brief", "D1", "--fields", "-"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(waiting.poll())
+            others = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                      for args in (("status",), ("watch",), ("ticket", "add", "--summary", "second"))]
+            outputs = [other.communicate(timeout=10) for other in others]
+            self.assertEqual([other.returncode for other in others], [0, 0, 0], outputs)
+            self.assertEqual(outputs[2][0].strip(), "T2")
+            out, err = waiting.communicate(json.dumps(self.literal_brief_fields()), timeout=10)
+        finally:
+            waiting.kill()
+        self.assertEqual(waiting.returncode, 0, err)
+        self.assertIn("TICKETS: T1: Startup is slow", out)
 
     def test_a_shell_reads_brief_fields_without_running_them(self):
         self.open()
@@ -1048,6 +1108,25 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+
+    def test_a_short_append_restores_the_last_complete_row(self):
+        from unittest import mock
+        self.open("core")
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        log = self.dir("core") / "log.tsv"
+        complete = log.read_text()
+        log.write_text(complete + "2026-10-06T00:00:00.000000+00:00\tticket\tT9\twai")
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        restaurant = glob["Restaurant"](self.dir("core"))
+        row = {"at": "2026-10-06T00:00:01.000000+00:00", "kind": "ticket", "id": "T2", "state": "waiting", "note": "b"}
+        real_write = os.write
+        with mock.patch.object(os, "write", lambda fd, data: real_write(fd, data[:7])):
+            with self.assertRaises(glob["BrigadeError"]) as raised:
+                restaurant.append("log.tsv", row)
+        self.assertEqual(str(raised.exception), "wrote 7 of 53 bytes to log.tsv; nothing appended")
+        self.assertEqual(log.read_text(), complete)
+        restaurant.append("log.tsv", row)
+        self.assertEqual(log.read_text(), complete + "2026-10-06T00:00:01.000000+00:00\tticket\tT2\twaiting\tb\n")
 
     def test_two_processes_appending_200_rows_each_leave_400_rows(self):
         self.open("core")
