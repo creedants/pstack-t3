@@ -47,7 +47,7 @@ If a worker drops out, proceed with N-1 and note it.
 
 ## Phase C: Aggregate
 
-End the turn and let each completion notification wake you, or call `task_status` with a retained `taskId` when a result gates the next step. Read the terminal results. Drop a result that does not record the SHAs and method its brief names, and respawn that worker once as a fresh child. After a second miss, record a gap. A gap does not count as a pass. For coverage, every required slice needs a result. For a race, apply the selection rule declared up front. Use first pass, rank all, or best-of. Do not paste raw worker dumps.
+Collect each worker's result per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation). Read the terminal results. Drop a result that does not record the SHAs and method its brief names, and respawn that worker once as a fresh child. After a second miss, record a gap. A gap does not count as a pass. For coverage, every required slice needs a result. For a race, apply the selection rule declared up front. Use first pass, rank all, or best-of. Do not paste raw worker dumps.
 
 Keep a compact result table, one-line evidenced issues, and explicit gaps or dropouts. Remove worker worktrees after integrating them.
 

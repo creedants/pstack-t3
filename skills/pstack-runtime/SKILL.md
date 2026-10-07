@@ -16,7 +16,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | subagent, worker, delegate, reviewer, runner, judge | A child task created with `delegate_task`, owned by this thread. |
 | cloud worker | A child task. T3 children run on this machine, so they can reach local files, browsers, and auth. |
 | background, `run_in_background` | `delegate_task` with `mode: "async"`. |
-| wait for a worker | End the turn and let the completion notification wake you, or call `task_status` mid-turn. A thread with no schedule of its own keeps a bounded wait. See [Delegation](#delegation) step 5. |
+| wait for a worker | A thread with a schedule of its own ends the turn, and its completions wake it. Any other thread keeps a bounded wait with `t3_thread_wait`. Call `task_status` for a result mid-turn. See [Delegation](#delegation) step 5. |
 | cancel a worker | `task_cancel`. |
 | model slug, role model | A target `{providerInstanceId, model, options}` from `orchestrator_capabilities`, resolved through roles. See [Roles](#roles). |
 | `inherit-parent`, `auto` | `"inherit"`. Omit `target` so the child inherits this thread's provider, model, and options. |

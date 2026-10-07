@@ -39,7 +39,7 @@ Build its prompt from `references/explainer-prompt.md` without the explorer-find
 
 ## Step 3. Synthesize (complex questions only)
 
-Once all explorers have returned (end the turn and let the completion notifications wake you, or check `task_status`), spawn one child task to synthesize their findings into one explanation:
+Once all explorers have returned (collect them per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation)), spawn one child task to synthesize their findings into one explanation:
 
 - `delegate_task` with `role`: `"general"`
 - `target`: the `how explainer` role

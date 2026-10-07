@@ -61,7 +61,7 @@ Read `references/reviewer-prompt.md` and fill in the template with:
 
 The same filled template goes to all reviewers, so every model applies the code-quality lens.
 
-End the turn and let each completion notification wake you, or call `task_status` with a retained `taskId`. If a reviewer fails or returns nothing usable, proceed with N-1 and record the dropout.
+Collect each reviewer's result per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation). If a reviewer fails or returns nothing usable, proceed with N-1 and record the dropout.
 
 ## Step 4, Synthesize
 

@@ -68,7 +68,7 @@ A dependency is a context relay, not just ordering. Undeclared upstream context 
 
 #### Queue and drain
 
-- On a completion notification (T3 wakes this thread when a `delegate_task` child finishes, so end the turn rather than wait), run `orch inbox push <agent> <unit> <status> [--report PATH]` and return to what you were doing. Never deep-review inline. A completion that needs review becomes a verifier unit. Never review a diff inside a drain.
+- On a completion notification (collect children per [the runtime's Delegation step 5](../../pstack-runtime/SKILL.md#delegation)), run `orch inbox push <agent> <unit> <status> [--report PATH]` and return to what you were doing. Never deep-review inline. A completion that needs review becomes a verifier unit. Never review a diff inside a drain.
 - Drain in batches at four points: the end of a critical section, a track rollup, a frontier wake from `watch_pull_request` on that PR (per [Pull request watching](../../pstack-runtime/SKILL.md#pull-request-watching), with a long `schedule_task` heartbeat as fallback whose prompt points at the store, per [Scheduling](../../pstack-runtime/SKILL.md#scheduling)), and before a human report. Begin each batch with `orch inbox drain`. Arrivals during a drain wait for the next one.
 - Critical sections you finish first: authoring a brief, a stack operation, a conflict decision, writing a gate, updating ledger or frontier.
 - Each drain classifies every pointer (landed, needs-verify, failed, zombie, noise), writes the resulting rows through `orch unit add`, `orch unit set`, and `orch ledger record`, runs `orch status`, then spawns the next wave in one message.

@@ -128,7 +128,7 @@ If your scope assessment suggests a single-commit trivial target where the PR de
 
 Spawn one synthesizer child:
 
-- `delegate_task` with `role: "research"` and `title: "why synthesizer"`. Use `mode: "async"` and end the turn, or `mode: "wait"` when presenting is the only step left.
+- `delegate_task` with `role: "research"` and `title: "why synthesizer"`. Use `mode: "async"` and collect it per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation), or `mode: "wait"` when presenting is the only step left.
 - `target`: the `why synthesizer` role's seat
 - A read-only brief. The synthesizer's quality check spot-verifies citations, which can require MCP access, so keep its tools and put "do not edit files, commit, or push" in the brief.
 
