@@ -17,7 +17,8 @@
       {"id": "claude-opus-5-5", "label": "Claude Opus 5.5", "options": [
         {"id": "effort", "label": "Reasoning", "type": "select", "options": [{"id": "low"}, {"id": "medium", "isDefault": true}, {"id": "high"}, {"id": "xhigh"}, {"id": "max"}, {"id": "ultracode"}, {"id": "ultrathink"}]},
         {"id": "fastMode", "label": "Fast Mode", "type": "boolean"}]},
-      {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "options": [{"id": "thinking", "label": "Thinking", "type": "boolean"}]}]},
+      {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "options": [{"id": "thinking", "label": "Thinking", "type": "boolean"}]},
+      {"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "options": [{"id": "effort", "label": "Reasoning", "type": "select", "options": [{"id": "low"}, {"id": "medium", "isDefault": true}, {"id": "high"}, {"id": "xhigh"}, {"id": "max"}, {"id": "ultrathink"}]}]}]},
     {"providerInstanceId": "cursor", "driverKind": "cursor", "displayName": "Cursor", "canRunChildTask": false, "canRunCrossProviderChildTask": false,
      "constraints": ["Provider is not authenticated."],
      "models": [{"id": "default", "label": "Auto", "options": []}]},

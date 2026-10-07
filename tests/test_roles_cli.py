@@ -650,3 +650,70 @@ class ModeCliTest(unittest.TestCase):
         self.assertIn("A project write without `--mode` omits the key.", text)
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
+
+
+HAIKU_CAP = (
+    "claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model"
+)
+
+
+class PromptCapCliTest(unittest.TestCase):
+    def test_write_refuses_a_capped_bug_fix_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--set", "bug-fix=claudeAgent/claude-haiku-5-5")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.user}: role 'bug-fix' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
+            )
+            self.assertFalse(repo.user.exists())
+
+    def test_write_force_still_refuses_a_capped_bug_fix_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--force", "--set", "bug-fix=claudeAgent/claude-haiku-5-5")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.user}: role 'bug-fix' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
+            )
+            self.assertFalse(repo.user.exists())
+
+    def test_write_refuses_a_capped_seat_in_a_panel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--set", "verifiers=claudeAgent/claude-haiku-5-5;grok/grok-4.7")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.user}: role 'verifiers' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
+            )
+            self.assertFalse(repo.user.exists())
+
+    def test_write_accepts_a_capped_model_for_skill_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--set", "skill tests=claudeAgent/claude-haiku-5-5")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+            self.assertEqual(document["roles"]["skill tests"], [
+                {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            ])
+
+    def test_show_refuses_a_stored_capped_architect_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"architect runners": [
+                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
+            ]}})
+            completed = repo.run("show", "--role", "bug-fix")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.user}: role 'architect runners' cannot use cursor/claude-haiku-5-5: {HAIKU_CAP}\n",
+            )
