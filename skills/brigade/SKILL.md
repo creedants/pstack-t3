@@ -288,7 +288,7 @@ The user asks any thread for an executive admin.
 1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`, because the admin exists so the user hears less.
 2. Run `python3 <skills>/brigade/scripts/brigade.py open --admin --project-root <root> --reporting <level>`. It prints `opened <dir>` or `exists <dir>`, then one block per coordinator on the root with its purpose. Only the caller that got `opened` launches a thread.
 3. Write the user's priorities under `## Priorities` in its `menu.md`, highest first, with the user. Add which intake sources it should own. Without priorities, the rules fall back to purposes and age.
-4. Move shared intake. Each coordinator that lists the shared source runs `set --intake` without it. That is refused while it still has waiting or assigned tickets from the source, so it finishes them first or moves them to the admin with `ticket move <id> --to .admin`. Then run `$B set --intake <source>` on the admin.
+4. Move shared intake. Each coordinator that lists the shared source runs `set --intake <its other sources>`, or `set --intake ""` when that source was its only one. That is refused while it still has waiting or assigned tickets from the source, so it finishes them first or moves them to the admin with `ticket move <id> --to .admin`. Then run `$B set --intake <source>` on the admin.
 5. Launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record it with `$B set --thread <id>`. Then send it "Run your first service." with `t3_thread_send` and mode `"auto"`.
 
 When the user asks the admin to open a coordinator, it runs Open a restaurant, shows the user any overlap with the purposes `open` printed, and launches the new thread once the user agrees.
@@ -308,7 +308,7 @@ When the user asks the admin to open a coordinator, it runs Open a restaurant, s
 
 Every wake runs one service, whether a schedule, a message, or a user message.
 
-1. Run `$B status`. It prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no action. Otherwise pass that token as `--owner` on every `$B` command, and `--owner .admin/@<generation>` on every `$L` write. A write refused with `is stale` means another thread owns the store. End the service at once and run no further command, including the ruling's `$L` enforcement.
+1. Run `$B status`. It prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no action. Otherwise pass that token as `--owner` on every `$B` command, and `--owner .admin/@<generation>` on every `$L` ruling write, which is `lease reserve`, `lease unreserve`, `share`, and `contest`. `$L lease list`, `$L status`, and `$L land` take no `--owner`, and the admin never runs `land`. A write refused with `is stale` means another thread owns the store. End the service at once and run no further command, including the ruling's `$L` enforcement.
 2. Read `menu.md`, `$B status`, `$B 86 list`, and `python3 <skills>/brigade/scripts/brigade.py walk --repo <root> --stale-hours 3`.
 3. `$B inbox take`, for tickets moved back. Then intake from its owned sources with `$B ticket add --summary "..." --source <source> --ref <url>`. Then `$B request --republish`.
 4. Route each waiting ticket to the coordinator whose purpose fits with `$B ticket move <id> --to <coordinator>`, then `t3_thread_send` to the thread it prints, with mode `"auto"`, the line `ticket <coordinator>: run ticket take`, and the handoff id `<project>/.admin/T<n>` as `clientRequestId`. A ticket that fits two purposes gets an ownership ruling. A ticket no purpose fits becomes `$B 86 add` with options and a default.
@@ -320,7 +320,7 @@ Every wake runs one service, whether a schedule, a message, or a user message.
 
 Every exchange is an explicit `t3_thread_send`. The admin sends with mode `"auto"`, so the coordinator wakes. Coordinators send the event lines in [Reporting to an executive admin](#reporting-to-an-executive-admin) with mode `"queue"`. Messages are wakes, and the stores are the record. The admin consumes coordinator events only through `sync`, which reads each `log.tsv` past a cursor and relays each row once, so a second wake for one event finds nothing new.
 
-Every admin line except a routed ticket is a request. Run `$B request --to <coordinator> "<line>"`. It prints `A<n> for <coordinator>; tell thread <id>`. Then call `t3_thread_send` to that thread with the line and `clientRequestId` `A<n>`, so a retried send delivers once. A failed send is retried or left to the next scheduled wake, because the file waits in the inbox.
+Every admin line except a routed ticket is a request. Run `$B request --to <coordinator> "<line>"`. It prints `A<n> for <coordinator>; tell thread <id>`. Then call `t3_thread_send` to that thread with the line and `clientRequestId` `A<n>`, so a retried send delivers once. Retry a failed send with the same `A<n>`, or leave it to the next scheduled wake, because the file waits in the inbox. Never run `request` again to retry. Each run records a new id, so the coordinator would act twice.
 
 | Line | Sent when |
 | --- | --- |
@@ -349,9 +349,10 @@ A live lease is never taken away. A contested-path ruling decides who claims nex
 
 Carry out each ruling with its script, after `$B rule add` recorded it.
 
-- `contested-paths`: `$L lease reserve --for <winner>/ --paths <paths> --ruling R<n> --owner .admin/@<generation>`. It prints `S<n>`. Every other holder's claim on those paths is refused until the winner claims them or the reservation expires 2 hours after it arms.
+- `contested-paths`: `$L lease reserve --for <winner>/ --paths <paths> --ruling R<n> --owner .admin/@<generation>`. It prints `S<n>`. Every other holder's claim on those paths is refused until the winner claims them or the reservation expires. It arms, and starts its 2-hour clock, once no other holder's live lease overlaps it and both the cap and the winner's share have room for one more change. A reservation for a winner whose share is 0 stays waiting, so that winner also needs a shares ruling.
 - `ownership`: `$B ticket move <id> --to <winner>` when the admin holds the ticket. Otherwise the `ruling` line asks the holder to move it.
-- `shares`: `$L share --for <coordinator>/ <n> --owner .admin/@<generation>` for each coordinator. It refuses shares that add up to more than the cap.
+- `shares`: `$L share --for <coordinator>/ <n> --owner .admin/@<generation>` for each coordinator. It refuses a share that would bring the sum over the current cap.
+  `$L cap` leaves existing shares as they are, so after the user changes the cap, rule on shares again in the same service with `--supersedes` the old shares ruling. When the cap went down, first clear every share with `$L share --for <coordinator>/ 0 --clear --owner .admin/@<generation>`, because lowering one share is refused while the others still add up past the new cap. Then set the new shares.
 - `queue-order`: `$L contest --settle C<n> --first <holder> --owner .admin/@<generation>`. `land` then holds the other holder's entries until an entry of the first holder lands.
 
 Then send the `ruling` line to each coordinator involved.
@@ -362,7 +363,7 @@ Then send the `ruling` line to each coordinator involved.
 
 **Overrule.** The user can overrule any ruling by describing it. Run `$B rule overrule R<n> --decision "<the user's words>"`, which records a ruling decided by `user` that supersedes it, then carry the new one out. An overrule changes what happens next. It cannot undo a lease already claimed or work already landed. Say so. When the overrule states a general preference, ask whether to add it to `## Priorities`, and add it only when the user says yes.
 
-**Appeals.** On an `appeal` line, recheck the ruling with the appeal's facts, such as a dependency it did not know. When the rules now decide differently, record a new ruling that supersedes the old one. Otherwise keep it, and list the appeal in the next update for the user.
+**Appeals.** An `appeal` that says compliance would be irreversible means the coordinator holds and has not complied. Escalate it with `$B 86 add` and act on it only after the user answers. On any other `appeal` line, recheck the ruling with the appeal's facts, such as a dependency it did not know. When the rules now decide differently, record a new ruling that supersedes the old one. Otherwise keep it, and list the appeal in the next update for the user.
 
 **Escalate** only what the rules cannot settle. Park each with `$B 86 add --question "..." --options "..." --default "..."`, and act on that conflict only after the answer.
 
