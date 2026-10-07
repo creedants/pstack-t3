@@ -79,7 +79,7 @@ Every level sends the 18:00 report. A message from you gets at least one line, a
 $brigade open a standing coordinator for bridgekit focused on startup performance.
 ```
 
-Open one coordinator per project or focus area. Several can share one repository, because the queue and its leases keep them apart. An optional executive admin serves every coordinator on one repository, routing your requests, settling conflicts between them by rules you can overrule, and sending you one update. `brigade.py walk` lists every coordinator on the machine, grouped by repository, with its counts and open decisions.
+Open one coordinator per project or focus area. Several can share one repository, because the queue and its leases keep them apart. An optional executive admin serves every coordinator on one repository. It routes your requests. It settles conflicts between coordinators by rules you can overrule. It sends you one update instead of one per coordinator. `brigade.py walk` lists every coordinator on the machine, grouped by repository, with its counts and open decisions.
 
 The coordinator and the queue have both run on real work.
 
