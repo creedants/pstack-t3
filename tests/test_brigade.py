@@ -2657,13 +2657,24 @@ class AdminTest(StoresTest):
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
         self.assertEqual(self.inbox("docs"), ["A1.line"])
         self.brigade("docs", "inbox", "done", "A1")
-        # Not yet synced, so the admin publishes it again. The coordinator already finished it, so take drops it.
-        self.assertEqual(self.admin("request", "--republish"), "A1 republished for docs")
-        self.assertEqual(self.brigade("docs", "inbox", "take"), "nothing handed to you")
+        self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
         self.assertEqual(self.inbox("docs"), [])
         self.admin("sync")
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
         self.assertEqual(self.inbox("docs"), [])
+
+    def test_republish_before_sync_skips_a_request_the_coordinator_finished(self):
+        self.open("core")
+        self.open_admin()
+        self.brigade("core", "set", "--thread", "core-thread")
+        self.admin("set", "--thread", "admin-thread")
+        self.assertEqual(self.admin("request", "--to", "core", "reports-to core admin-thread"),
+                         "A1 for core; tell thread core-thread")
+        self.assertEqual(self.brigade("core", "inbox", "take"), "A1: reports-to core admin-thread")
+        self.assertEqual(self.brigade("core", "inbox", "done", "A1"), "A1 done")
+        self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
+        self.assertEqual(self.inbox("core"), [])
+        self.assertNotIn("requests from the user", self.brigade("core", "status"))
 
     def test_a_replayed_from_user_request_files_no_second_ticket(self):
         self.open("docs")
