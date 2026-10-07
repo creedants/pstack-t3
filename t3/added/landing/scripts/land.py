@@ -705,6 +705,9 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
 def lease_reserve(store, prefix, paths, ruling, ttl_hours, owner):
     holder_prefix(prefix)
     wanted = wanted_paths(paths)
+    # take() never drops an empty path for a narrower lease, so reserving one blocks every other holder until expiry.
+    if "" in wanted:
+        raise LandError("a reservation names the contested paths; it cannot hold the whole repository")
     with store.tx() as db:
         check_ruling_owner(db, owner)
         row = db.execute("SELECT * FROM reservation WHERE ruling = ?", (ruling,)).fetchone()
@@ -712,6 +715,8 @@ def lease_reserve(store, prefix, paths, ruling, ttl_hours, owner):
             state = reservation_state(row)
             if state in ("expired", "lifted"):
                 raise LandError(f"S{row['id']} for ruling {ruling} {'expired' if state == 'expired' else 'was lifted'}")
+            if state == "claimed":
+                return f"S{row['id']} was claimed in full"
             return f"S{row['id']}"
         clash = [r for r in standing(db) if overlaps(wanted, r["paths"].split("\n"))]
         if clash:
