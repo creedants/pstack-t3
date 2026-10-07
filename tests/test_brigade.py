@@ -952,28 +952,102 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"),
                              "T2 waiting [user] two blocked: repository")
 
-    def test_a_new_branch_adds_its_changelog_fragment_to_the_lease(self):
+    def renamed(self, hook=None):
+        """Fire D1 on perf/d1, then run dish D1 --branch perf/d1-r2 in this process, calling hook at its lease list."""
+        self.open()
+        self.brigade("set", "--thread", "coordinator")
+        self.brigade("ticket", "add", "--summary", "one")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                     "--branch", "perf/d1", "--paths", "src")
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        original = glob["land_result"]
+
+        def hooked(project_root, *args):
+            if hook and args[:2] == ("lease", "list"):
+                hook()
+            return original(project_root, *args)
+
+        glob["land_result"] = hooked
+        argv = ["--store", str(self.store), "--at", str(self.at), "--owner", "coordinator@1",
+                "dish", "D1", "--branch", "perf/d1-r2"]
+        try:
+            return glob["run"](argv)
+        except glob["BrigadeError"] as error:
+            return f"brigade: {error}"
+
+    def lease_lines(self):
+        return [line.split(" until ")[0] + ": " + line.rsplit(": ", 1)[1]
+                for line in self.land("lease", "list").splitlines()]
+
+    def test_a_new_branch_prints_the_commands_that_lease_its_fragment(self):
         from unittest import mock
-        self.init_landing("--cap", "2")
+        self.init_landing("--cap", "3")
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            wide = "src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md"
+            self.assertEqual(self.renamed(), "\n".join([
+                "D1 in-progress",
+                "D1: L1 does not cover changes/perf%2Fd1-r2.md; cover it with these commands:",
+                f"  $L lease claim --holder perf/D1 --paths {wide} --owner perf/@1",
+                f"  $B dish D1 --lease <new lease> --paths {wide}",
+                "  $L lease release L1 --owner perf/@1",
+            ]))
+            row = self.table_row(self.at, "dishes.tsv", "D1")
+            self.assertEqual((row["branch"], row["lease"], row["paths"]), ("perf/d1-r2", "L1", "src,changes/perf%2Fd1.md"))
+            self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, src"])
+            self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", wide, "--owner", "perf/@1"), "L2")
+            self.assertEqual(self.brigade("dish", "D1", "--lease", "L2", "--paths", wide), "D1 in-progress")
+            self.land("lease", "release", "L1", "--owner", "perf/@1")
+            self.assertEqual(self.lease_lines(), ["L2 active perf/D1: changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
+            self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "D1 in-progress")
+
+    def test_a_branch_rename_during_a_drop_leaves_no_lease(self):
+        from unittest import mock
+        self.init_landing("--cap", "3")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            dropped = []
+            result = self.renamed(lambda: dropped or dropped.append(self.brigade("dish", "D1", "--state", "dropped")))
+            self.assertEqual(dropped, ["D1 dropped; T1 waiting again"])
+            self.assertEqual(result, "D1 in-progress")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            refused = self.brigade("dish", "D1", "--lease", "L2", "--paths", "src", ok=False)
+            self.assertEqual(refused, "brigade: D1 is dropped; it holds no lease")
+            self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src"), "L2")
+            self.assertEqual(self.brigade("watch"), "no work in progress")
+
+    def test_a_branch_rename_by_a_replaced_owner_claims_nothing(self):
+        from unittest import mock
+        self.init_landing("--cap", "3")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            taken = []
+            result = self.renamed(lambda: taken or taken.append(
+                self.brigade("set", "--thread", "replacement", "--replace")))
+            self.assertEqual(len(taken), 1)
+            self.assertIn("$L lease claim --holder perf/D1", result)
+            self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, src"])
+            stale = self.run_at(self.at, "--owner", "coordinator@1", "dish", "D1", "--branch", "perf/d1-r3", ok=False)
+            self.assertEqual(stale, "brigade: owner coordinator@1 is stale; this store is owned by replacement@2")
+            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["branch"], "perf/d1-r2")
+            self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_a_branch_rename_after_submit_says_the_lease_cannot_change(self):
+        self.init_landing("--cap", "3")
+        from unittest import mock
+        with mock.patch.dict(os.environ, self.land_env()):
             self.open()
             self.brigade("ticket", "add", "--summary", "one")
-            self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
-                         "--branch", "perf/d1", "--paths", "src")
-            self.land("lease", "claim", "--holder", "engine/D9", "--paths", "other")
-            refused = self.brigade("dish", "D1", "--branch", "perf/d1-r2", ok=False)
-            self.assertEqual(refused, "brigade: D1 is on perf/d1-r2, but L1 does not cover changes/perf%2Fd1-r2.md: "
-                                      "repository at its cap: 2 of 2 changes in flight (engine/D9, perf/D1); "
-                                      "run dish D1 --branch perf/d1-r2 again once that claim fits")
-            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["branch"], "perf/d1-r2")
-            self.land("lease", "release", "L2")
-            self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"),
-                             "D1 in-progress\nD1: L3 covers src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md; released L1")
-            row = self.table_row(self.at, "dishes.tsv", "D1")
-            self.assertEqual((row["lease"], row["paths"]), ("L3", "src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md"))
-            self.assertEqual([line.rsplit(": ", 1)[1] for line in self.land("lease", "list").splitlines()],
-                             ["changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
-            self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "D1 in-progress")
+            self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "one",
+                         "--branch", "perf/d1", "--paths", "a.txt")
+            sha = self.worker_commit("perf/d1", {"a.txt": "changed\n"})
+            self.passed(sha)
+            self.submit(sha)
+            self.brigade("dish", "D1", "--state", "queued")
+            self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "\n".join([
+                "D1 queued",
+                "D1: L1 is submitted, so it cannot take changes/perf%2Fd1-r2.md; keep changes/perf%2Fd1.md "
+                "in the submitted commit, and run dish D1 --branch perf/d1-r2 again if its entry bounces",
+            ]))
+            self.assertEqual(self.lease_lines(), ["L1 submitted perf/D1: a.txt, changes/perf%2Fd1.md"])
 
     def test_open_prints_the_sibling_on_the_same_project_root(self):
         self.open()
