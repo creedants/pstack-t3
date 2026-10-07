@@ -32,6 +32,12 @@ $L lease check --holder <restaurant>/<dish> --paths src/engine   # the claim's t
 $L lease renew L3 [--if-live] [--owner ...] ; $L lease release L3 [--owner ...] ; $L lease list
 $L submit --holder <restaurant>/<dish> --branch <b> --sha <reviewed sha> --lease L3 --reviewer <provider/model> [--owner ...] [--title "..." --body-file pr.md]   # prints E<n>
 $L owner --prefix <restaurant>/ --generation 2   # raise a holder prefix's floor; it never lowers
+$L lease reserve --for <restaurant>/ --paths a.md,docs --ruling R<n> [--ttl-hours 2] --owner .admin/@<generation>   # prints S<n>; refuses other holders' claims on those paths
+$L lease unreserve S<n> --owner .admin/@<generation>   # lift a reservation
+$L share --for <restaurant>/ <n> [--clear] --owner .admin/@<generation>   # that prefix's share of the cap; --clear takes 0
+$L contest --holders <a>,<b> --owner <restaurant>/@<generation>   # prints C<n>; land holds both holders' entries
+$L contest --settle C<n> --first <holder> --owner .admin/@<generation>   # the first holder lands, then the other
+$L contest --cancel C<n> --owner .admin/@<generation>   # remove the hold or the order
 $L land                      # drain the queue; prints what landed, bounced, or is still queued
 $L status [E3] ; $L resume
 $L status --holder <restaurant>/<dish>   # that holder's entries with their SHAs; a value ending in / matches every holder under it
@@ -44,13 +50,23 @@ Every command takes `--help`.
 
 A coordinator replaced by another thread must not write again. `owner --prefix docs/ --generation 2` raises the floor for holders under `docs/` and never lowers it, so a rerun changes nothing and a lower generation exits 1. `lease claim`, `lease renew`, `lease release`, and `submit` take `--owner <prefix>@<generation>`, whose prefix the holder must start with. Inside the write's transaction each refuses a generation below the prefix's floor with `land: owner docs/@1 is stale; docs/ is at generation 2`, and refuses a holder under a floored prefix that passes no `--owner`. A prefix with no floor works without `--owner`. brigade's `set --thread --replace` raises its restaurant's floor before it records the new thread.
 
+## Rulings
+
+The executive admin carries out its rulings with four commands. Every ruling write takes `--owner <prefix>@<generation>`, usually `.admin/@<generation>`, and checks it against that prefix's floor first inside its own transaction. A stale one exits 1 with `land: owner .admin/@1 is stale; .admin/ is at generation 2` and changes nothing.
+
+`lease reserve` saves paths for a holder prefix. Every admission refuses another holder's overlap with a standing reservation, with `paths reserved for docs/ by ruling R4 until <time>`. That covers `lease claim` and the re-admission of an expired lease in `lease renew`. A reservation waits until no other holder's live lease overlaps it and the cap and the prefix's share have room. Then it arms, oldest first, in the same transaction as a claim. An armed reservation counts as one change in flight. It stops counting once the winner holds a lease taken from it, so the work counts once. A winner's claim removes the reserved paths it covers, and the rest stay reserved. The reservation expires 2 hours after it arms, or `--ttl-hours` after. A rerun with the same ruling prints the same `S<n>`. `lease list` and `lease check` show reservations.
+
+`share` sets a holder prefix's share of the cap. Admission refuses a claim that would put the prefix over it, with `docs/ is at its share: 2 of 2`. Shares that add up to more than the cap are refused.
+
+`contest --holders` holds every entry of both holders out of `land`, queued now or submitted later. It refuses when either holder already has an entry landing, awaiting merge, or landed. `--settle` turns the hold into an order. `land` holds the other holder's entries until an entry of the first holder lands, so a bounce and a resubmit keep the order. Settling again replaces the order until then. An order that would close a cycle with another settled contest is refused. `land` prints a held entry as `E2 (held by C1)`. Every form of `contest` waits for the queue lock, so it never changes a running `land`.
+
 ## Set up a repository once
 
 Run `init` the first time any coordinator writes to a repository. The mode decides whether the user stays a gate on landing, so it is the user's choice. brigade asks it when a restaurant opens. Any other coordinator asks once per repository with the host's question tool, unless the user already said.
 
-In `merge` mode, `init` runs `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`. With no `--merge-method`, it stores the only allowed method. When several methods are allowed and merge is allowed, it stores merge. When merge is not allowed, it stores squash. An explicit method the repository disallows is refused, and the error names the allowed methods. When `gh` fails, `init` stores merge, or the `--merge-method` you passed.
+In `merge` mode, `init` runs `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`. With no `--merge-method`, it stores the only allowed method. When several methods are allowed and merge is allowed, it stores merge. When merge is not allowed, it stores squash. An explicit method the repository disallows is refused, and the error names the allowed methods. When `gh` fails, `init` stores merge, or the `--merge-method` you passed. The method is checked against the repository whenever it is set, in any mode, and whenever the mode becomes merge. `mode merge` swaps a stored method the repository disallows for an allowed one and names it.
 
-The cap belongs to the repository like the mode does. It bounds changes in flight: every submitted lease and every active lease that has not expired, whichever coordinator holds it. The coordinator that opens first sets it with the mode, as `init --trunk main --mode merge --cap 4`, and `land.py cap N` changes it later. A claim at the cap is refused with `repository at its cap: 4 of 4 changes in flight (<holders>)`. `status` shows `changes in flight: 3 of 4` while a cap is set.
+The cap belongs to the repository like the mode does. It bounds changes in flight: every submitted lease and every active lease that has not expired, whichever coordinator holds it. The coordinator that opens first sets it with the mode, as `init --trunk main --mode merge --cap 4`, and `land.py cap N` changes it later. A claim at the cap is refused with `repository at its cap: 4 of 4 changes in flight (<holders>)`. `status` shows `changes in flight: 3 of 4` while a cap is set. The executive admin divides the cap into shares with `land.py share`.
 
 | Mode | Landing does | The user |
 | --- | --- | --- |

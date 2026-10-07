@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS attempt (
   entries TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('publishing', 'published', 'abandoned')));
 CREATE TABLE IF NOT EXISTS log (at TEXT NOT NULL, kind TEXT NOT NULL, id INTEGER NOT NULL, state TEXT NOT NULL, note TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS owner (prefix TEXT PRIMARY KEY, generation INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS reservation (
+  id INTEGER PRIMARY KEY, at TEXT NOT NULL, prefix TEXT NOT NULL, paths TEXT NOT NULL,
+  ruling TEXT NOT NULL UNIQUE, ttl REAL NOT NULL, armed TEXT NOT NULL DEFAULT '', expires TEXT NOT NULL DEFAULT '',
+  taken INTEGER, state TEXT NOT NULL CHECK (state IN ('standing', 'claimed', 'lifted')));
+CREATE TABLE IF NOT EXISTS share (prefix TEXT PRIMARY KEY, count INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS contest (
+  id INTEGER PRIMARY KEY, at TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, first TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL CHECK (state IN ('open', 'settled', 'cancelled')));
 """
 
 
@@ -384,9 +392,9 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
     repo = common.parent if common.name == ".git" else Path(git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = state_home() / "landing" / store_name(common)
     directory.mkdir(parents=True, exist_ok=True)
-    if mode == "merge":
+    if mode == "merge" or merge_method:
         merge_method = pick_merge_method(merge_method, allowed_merge_methods(repo))
-    elif not merge_method:
+    else:
         merge_method = "merge"
     store = Store(directory)
     wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
@@ -442,10 +450,14 @@ def change_mode(store, mode, merge_method):
     seen = store.contract["mode"]
     if "local" in (mode, seen) and mode != seen:
         raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
-    if merge_method and mode == "merge":
+    picked = None
+    if mode != "local" and (merge_method or mode == "merge"):
+        stored = store.contract.get("mergeMethod") or "merge"
         allowed = allowed_merge_methods(store.repo)
-        if allowed is not None and merge_method not in allowed:
-            raise LandError(f"repository does not allow {merge_method}; allowed: {allowed_list(allowed)}")
+        if merge_method:
+            pick_merge_method(merge_method, allowed)
+        elif allowed is not None and stored not in allowed:
+            picked = pick_merge_method(None, allowed)
     with store.tx() as db:
         # The read above can go stale while gh runs. This one decides the write.
         current = json.loads(db.execute("SELECT value FROM contract WHERE key = 'mode'").fetchone()["value"])
@@ -456,11 +468,14 @@ def change_mode(store, mode, merge_method):
         if busy and (mode != current or not merge_method):
             raise LandError(busy_queue_message(busy))
         db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps(mode),))
-        if merge_method:
-            db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(merge_method),))
+        if picked and (store.contract.get("mergeMethod") or "merge") != stored:
+            picked = None
+        method = merge_method or picked
+        if method:
+            db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(method),))
         store.log(db, "queue", 0, f"mode {mode}", f"was {current}")
         holders = holders_of(in_flight(db))
-    return (f"landing mode is now {mode}" + (f", merging with --{merge_method}" if merge_method else "")
+    return (f"landing mode is now {mode}" + (f", merging with --{method}" if method else "")
             + (f"; leases held by {holders}" if holders else ""))
 
 
@@ -482,17 +497,85 @@ def held_on(row):
     return f"L{row['id']} held by {row['holder']} on {lease_paths(row)}"
 
 
-def admission(store, db, holder, wanted):
-    """The leases a new lease on these paths would overlap, and the cap refusal when there are none.
+def standing(db):
+    """Reservations that still refuse other holders: waiting, or armed and not expired."""
+    return db.execute("SELECT * FROM reservation WHERE state = 'standing' AND (armed = '' OR expires > ?) ORDER BY id",
+                      (stamp(),)).fetchall()
 
-    Run it inside the transaction that writes the lease, so two claims cannot both pass.
+
+def counts(row):
+    """An armed reservation counts as one change in flight until the winner holds a lease taken from it."""
+    return bool(row["armed"]) and row["taken"] is None
+
+
+def under(prefix, leases, reservations):
+    return sum(lease["holder"].startswith(prefix) for lease in leases) + sum(r["prefix"].startswith(prefix) for r in reservations)
+
+
+def reserved_for(row):
+    hours = "1 hour" if row["ttl"] == 1 else f"{row['ttl']:g} hours"
+    until = row["expires"][:16] if row["armed"] else f"{hours} after it arms"
+    return f"paths reserved for {row['prefix']} by ruling {row['ruling']} until {until}"
+
+
+def arm_reservations(store, db, leases, cap):
+    """Start the clock of each waiting reservation, oldest first, once its paths are free and there is room for it."""
+    shares = db.execute("SELECT * FROM share").fetchall()
+    for row in standing(db):
+        paths = row["paths"].split("\n")
+        if row["armed"] or any(not lease["holder"].startswith(row["prefix"]) and overlaps(paths, lease["paths"].split("\n"))
+                               for lease in leases):
+            continue
+        counting = [r for r in standing(db) if counts(r)]
+        if cap and len(leases) + len(counting) >= cap:
+            continue
+        if any(row["prefix"].startswith(share["prefix"]) and under(share["prefix"], leases, counting) >= share["count"]
+               for share in shares):
+            continue
+        moment = now()
+        db.execute("UPDATE reservation SET armed = ?, expires = ? WHERE id = ?",
+                   (stamp(moment), stamp(moment + timedelta(hours=row["ttl"])), row["id"]))
+        store.log(db, "reservation", row["id"], "armed")
+
+
+def admission(store, db, holder, wanted):
+    """Arm what can arm, then test a lease on these paths for holder.
+
+    Returns the other holders' overlapping leases, a refusal, and the standing reservations the lease takes from.
+    Run it inside the transaction that writes the lease, so two claims cannot both pass. A caller that is refused
+    still commits, so arming is never lost to a refused claim.
     """
-    held = in_flight(db)
-    clash = [row for row in held if row["holder"] != holder and overlaps(wanted, row["paths"].split("\n"))]
-    cap = store.contract.get("cap")
-    full = (f"repository at its cap: {len(held)} of {cap} changes in flight ({holders_of(held)})"
-            if not clash and cap and len(held) >= cap else "")
-    return clash, full
+    leases, cap = in_flight(db), store.contract.get("cap")
+    arm_reservations(store, db, leases, cap)
+    clash = [row for row in leases if row["holder"] != holder and overlaps(wanted, row["paths"].split("\n"))]
+    if clash:
+        return clash, "", []
+    reserved = [row for row in standing(db) if overlaps(wanted, row["paths"].split("\n"))]
+    blocked = [row for row in reserved if not holder.startswith(row["prefix"])]
+    if blocked:
+        return [], "; ".join(reserved_for(row) for row in blocked), []
+    taken = [row["id"] for row in reserved]
+    others = [row for row in standing(db) if counts(row) and row["id"] not in taken]
+    count = len(leases) + len(others)
+    if cap and count >= cap:
+        names = ([holders_of(leases)] if leases else []) + [f"S{row['id']} for {row['prefix']}" for row in others]
+        return [], f"repository at its cap: {count} of {cap} changes in flight ({', '.join(names)})", []
+    for share in db.execute("SELECT * FROM share ORDER BY prefix"):
+        used = under(share["prefix"], leases, others)
+        if holder.startswith(share["prefix"]) and used >= share["count"]:
+            return [], f"{share['prefix']} is at its share: {used} of {share['count']}", []
+    return [], "", taken
+
+
+def take(store, db, taken, lease, wanted):
+    """Release the reserved paths a winner's lease covers. The rest stay reserved."""
+    for ident in taken:
+        row = db.execute("SELECT * FROM reservation WHERE id = ?", (ident,)).fetchone()
+        left = [path for path in row["paths"].split("\n") if not covered(path, wanted)]
+        state = "standing" if left else "claimed"
+        db.execute("UPDATE reservation SET paths = ?, taken = coalesce(taken, ?), state = ? WHERE id = ?",
+                   ("\n".join(left), lease, state, ident))
+        store.log(db, "reservation", ident, state, f"L{lease}")
 
 
 def wanted_paths(paths):
@@ -522,9 +605,21 @@ def check_owner(db, holder, owner):
             raise LandError(f"owner {owner} is stale; {prefix} is at generation {row['generation']}")
 
 
-def raise_floor(store, prefix, generation):
+def check_ruling_owner(db, owner):
+    """Refuse a ruling write by a replaced admin. Run it first inside the write's transaction."""
+    prefix, generation = parse_owner(owner)
+    row = db.execute("SELECT generation FROM owner WHERE prefix = ?", (prefix,)).fetchone()
+    if row and generation < row["generation"]:
+        raise LandError(f"owner {owner} is stale; {prefix} is at generation {row['generation']}")
+
+
+def holder_prefix(prefix):
     if not prefix.endswith("/"):
         raise LandError(f"{prefix!r} is not a holder prefix such as docs/")
+
+
+def raise_floor(store, prefix, generation):
+    holder_prefix(prefix)
     with store.tx() as db:
         row = db.execute("SELECT generation FROM owner WHERE prefix = ?", (prefix,)).fetchone()
         if row and row["generation"] > generation:
@@ -539,26 +634,30 @@ def lease_claim(store, holder, paths, ttl_hours, owner=None):
     wanted = wanted_paths(paths)
     with store.tx() as db:
         check_owner(db, holder, owner)
-        clash, full = admission(store, db, holder, wanted)
-        if clash:
-            raise LandError("paths overlap " + "; ".join(held_on(row) for row in clash))
-        if full:
-            raise LandError(full)
-        cursor = db.execute("INSERT INTO lease (at, holder, paths, state, expires) VALUES (?, ?, ?, 'active', ?)",
-                            (stamp(), holder, "\n".join(wanted), stamp(now() + timedelta(hours=ttl_hours))))
-        store.log(db, "lease", cursor.lastrowid, "active", holder)
+        clash, refusal, taken = admission(store, db, holder, wanted)
+        if not clash and not refusal:
+            cursor = db.execute("INSERT INTO lease (at, holder, paths, state, expires) VALUES (?, ?, ?, 'active', ?)",
+                                (stamp(), holder, "\n".join(wanted), stamp(now() + timedelta(hours=ttl_hours))))
+            store.log(db, "lease", cursor.lastrowid, "active", holder)
+            take(store, db, taken, cursor.lastrowid, wanted)
+    if clash:
+        raise LandError("paths overlap " + "; ".join(held_on(row) for row in clash))
+    if refusal:
+        raise LandError(refusal)
     return f"L{cursor.lastrowid}"
 
 
 def lease_check(store, holder, paths):
-    clash, full = admission(store, store.db, holder, wanted_paths(paths))
-    if clash or full:
-        return "\n".join(held_on(row) for row in clash) or full, 1
+    with store.tx() as db:
+        clash, refusal, _taken = admission(store, db, holder, wanted_paths(paths))
+    if clash or refusal:
+        return "\n".join(held_on(row) for row in clash) or refusal, 1
     return "free", 0
 
 
 def lease_renew(store, number, ttl_hours, if_live, owner=None):
     """Extend a live lease. An expired lease is admitted again, as a new claim on its paths would be."""
+    clash, refusal = [], ""
     with store.tx() as db:
         row = db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone()
         if not row:
@@ -571,16 +670,100 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
         expired = row["expires"] <= stamp()
         if expired and if_live:
             raise LandError(f"L{number} expired at {row['expires'][:16]}")
+        taken = []
         if expired:
-            clash, full = admission(store, db, row["holder"], row["paths"].split("\n"))
-            if clash:
-                covers = " and ".join(f"L{c['id']} held by {c['holder']} now covers {lease_paths(c)}" for c in clash)
-                raise LandError(f"L{number} expired and {covers}; claim again after {'it is' if len(clash) == 1 else 'they are'} released")
-            if full:
-                raise LandError(full)
-        db.execute("UPDATE lease SET expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=ttl_hours)), number))
-        store.log(db, "lease", number, "renewed", "after it expired" if expired else "")
+            clash, refusal, taken = admission(store, db, row["holder"], row["paths"].split("\n"))
+        if not clash and not refusal:
+            db.execute("UPDATE lease SET expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=ttl_hours)), number))
+            store.log(db, "lease", number, "renewed", "after it expired" if expired else "")
+            take(store, db, taken, number, row["paths"].split("\n"))
+    if clash:
+        covers = " and ".join(f"L{c['id']} held by {c['holder']} now covers {lease_paths(c)}" for c in clash)
+        raise LandError(f"L{number} expired and {covers}; claim again after {'it is' if len(clash) == 1 else 'they are'} released")
+    if refusal:
+        raise LandError(refusal)
     return f"L{number} renewed"
+
+
+def lease_reserve(store, prefix, paths, ruling, ttl_hours, owner):
+    holder_prefix(prefix)
+    wanted = wanted_paths(paths)
+    with store.tx() as db:
+        check_ruling_owner(db, owner)
+        row = db.execute("SELECT * FROM reservation WHERE ruling = ?", (ruling,)).fetchone()
+        if row:
+            state = reservation_state(row)
+            if state in ("expired", "lifted"):
+                raise LandError(f"S{row['id']} for ruling {ruling} {'expired' if state == 'expired' else 'was lifted'}")
+            return f"S{row['id']}"
+        clash = [r for r in standing(db) if overlaps(wanted, r["paths"].split("\n"))]
+        if clash:
+            raise LandError("; ".join(f"paths overlap S{r['id']} reserved for {r['prefix']} by ruling {r['ruling']} on {lease_paths(r)}"
+                                      for r in clash))
+        cursor = db.execute("INSERT INTO reservation (at, prefix, paths, ruling, ttl, state) VALUES (?, ?, ?, ?, ?, 'standing')",
+                            (stamp(), prefix, "\n".join(wanted), ruling, ttl_hours))
+        store.log(db, "reservation", cursor.lastrowid, "waiting", f"{prefix} by {ruling}")
+        arm_reservations(store, db, in_flight(db), store.contract.get("cap"))
+    return f"S{cursor.lastrowid}"
+
+
+def reservation_state(row):
+    if row["state"] != "standing":
+        return row["state"]
+    if not row["armed"]:
+        return "waiting"
+    return "armed" if row["expires"] > stamp() else "expired"
+
+
+def lease_unreserve(store, number, owner):
+    """Every outcome but a missing reservation exits 0, so a replacing ruling converges."""
+    with store.tx() as db:
+        check_ruling_owner(db, owner)
+        row = db.execute("SELECT * FROM reservation WHERE id = ?", (number,)).fetchone()
+        if not row:
+            raise LandError(f"no S{number}")
+        state = reservation_state(row)
+        if state == "claimed":
+            return f"S{number} was claimed in full"
+        if state == "expired":
+            return f"S{number} expired at {row['expires'][:16]}"
+        if state != "lifted":
+            db.execute("UPDATE reservation SET state = 'lifted' WHERE id = ?", (number,))
+            store.log(db, "reservation", number, "lifted")
+    return f"S{number} lifted"
+
+
+def lease_list(store):
+    lines = [f"L{r['id']} {r['state']} {r['holder']} until {r['expires'][:16]}: {lease_paths(r)}" for r in in_flight(store.db)]
+    for row in standing(store.db):
+        until = f" until {row['expires'][:16]}" if row["armed"] else ""
+        lines.append(f"S{row['id']} {reservation_state(row)} {row['prefix']} by {row['ruling']}{until}: {lease_paths(row)}")
+    return "\n".join(lines) or "no leases held"
+
+
+def change_share(store, prefix, count, clear, owner):
+    holder_prefix(prefix)
+    if clear and count != 0:
+        raise LandError("--clear takes 0")
+    if count < 0:
+        raise LandError(f"share {count} is negative")
+    with store.tx() as db:
+        check_ruling_owner(db, owner)
+        row = db.execute("SELECT count FROM share WHERE prefix = ?", (prefix,)).fetchone()
+        if clear:
+            if row:
+                db.execute("DELETE FROM share WHERE prefix = ?", (prefix,))
+                store.log(db, "share", 0, "cleared", prefix)
+            return f"{prefix} share cleared"
+        if row and row["count"] == count:
+            return f"{prefix} share is {count}"
+        cap = store.contract.get("cap")
+        total = count + db.execute("SELECT coalesce(sum(count), 0) FROM share WHERE prefix != ?", (prefix,)).fetchone()[0]
+        if cap and total > cap:
+            raise LandError(f"shares would add up to {total}, over the cap of {cap}")
+        db.execute("INSERT OR REPLACE INTO share VALUES (?, ?)", (prefix, count))
+        store.log(db, "share", count, "set", prefix)
+    return f"{prefix} share is {count}"
 
 
 def lease_release(store, number, owner=None):
@@ -599,6 +782,12 @@ def lease_id(text):
     if not re.fullmatch(r"L?\d+", text or ""):
         raise LandError(f"{text!r} is not a lease id such as L3")
     return int(text.lstrip("L"))
+
+
+def reservation_id(text):
+    if not re.fullmatch(r"S?\d+", text or ""):
+        raise LandError(f"{text!r} is not a reservation id such as S3")
+    return int(text.lstrip("S"))
 
 
 def entry_label(ident):
@@ -1354,6 +1543,119 @@ def poll_human(store):
     return landed, bounced, adopted
 
 
+def second_of(row):
+    return row["b"] if row["first"] == row["a"] else row["a"]
+
+
+def active_contests(db):
+    """Open contests, and settled ones whose first holder has not landed an entry yet."""
+    rows = db.execute("SELECT * FROM contest WHERE state IN ('open', 'settled') ORDER BY id").fetchall()
+    return [row for row in rows if not contest_done(db, row)]
+
+
+def contest_done(db, row):
+    return row["state"] == "settled" and db.execute(
+        "SELECT 1 FROM entry WHERE holder = ? AND state = 'landed'", (row["first"],)).fetchone() is not None
+
+
+def held_holders(db):
+    """Each held holder and the lowest active contest that holds it."""
+    held = {}
+    for row in active_contests(db):
+        for holder in (row["a"], row["b"]) if row["state"] == "open" else (second_of(row),):
+            held.setdefault(holder, row["id"])
+    return held
+
+
+def unheld_queued(store):
+    held = held_holders(store.db)
+    return [entry for entry in store.entries("queued") if entry["holder"] not in held]
+
+
+def contest_id(text):
+    if not re.fullmatch(r"C?\d+", text or ""):
+        raise LandError(f"{text!r} is not a contest id such as C3")
+    return int(text.lstrip("C"))
+
+
+def contest(store, owner, holders=None, settle=None, first=None, cancel=None):
+    """Every form waits for the queue lock, so a ruling never changes under a running land."""
+    with open(store.dir / ".queue.lock", "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        with store.tx() as db:
+            check_ruling_owner(db, owner)
+            if holders is not None:
+                return open_contest(store, db, holders)
+            if settle is not None:
+                return settle_contest(store, db, contest_id(settle), first)
+            return cancel_contest(store, db, contest_id(cancel))
+
+
+def open_contest(store, db, holders):
+    pair = [holder.strip() for holder in holders.split(",")]
+    if len(pair) != 2 or not all(pair) or pair[0] == pair[1]:
+        raise LandError("a contest needs two different holders")
+    a, b = pair
+    for row in active_contests(db):
+        if {row["a"], row["b"]} == {a, b}:
+            return f"C{row['id']}"
+    started = db.execute("SELECT * FROM entry WHERE holder IN (?, ?) AND state IN ('landing', 'awaiting-merge', 'landed') "
+                         "ORDER BY id LIMIT 1", (a, b)).fetchone()
+    if started:
+        raise LandError(f"{started['holder']} has {entry_label(started['id'])} {started['state']}; there is nothing left to order")
+    cursor = db.execute("INSERT INTO contest (at, a, b, state) VALUES (?, ?, ?, 'open')", (stamp(), a, b))
+    store.log(db, "contest", cursor.lastrowid, "open", f"{a},{b}")
+    return f"C{cursor.lastrowid}"
+
+
+def settle_contest(store, db, number, first):
+    row = db.execute("SELECT * FROM contest WHERE id = ?", (number,)).fetchone()
+    if not row:
+        raise LandError(f"no C{number}")
+    if row["state"] == "cancelled":
+        raise LandError(f"C{number} is cancelled")
+    if first not in (row["a"], row["b"]):
+        raise LandError(f"{first} is not a holder in C{number}")
+    second = row["b"] if first == row["a"] else row["a"]
+    settled = f"C{number}: {first} lands first, {second} waits"
+    if contest_done(db, row):
+        if row["first"] == first:
+            return settled
+        raise LandError(f"C{number} is done: {row['first']} landed")
+    edges = [(other["first"], second_of(other), other["id"]) for other in active_contests(db)
+             if other["state"] == "settled" and other["id"] != number]
+    cycle = sorted(ident for start, end, ident in edges if start in reach(edges, second) and first in reach(edges, end))
+    if cycle:
+        raise LandError(f"C{number} cannot order {first} before {second}: it closes a cycle with "
+                        + ", ".join(f"C{ident}" for ident in cycle))
+    if (row["state"], row["first"]) != ("settled", first):
+        db.execute("UPDATE contest SET first = ?, state = 'settled' WHERE id = ?", (first, number))
+        store.log(db, "contest", number, "settled", first)
+    return settled
+
+
+def reach(edges, start):
+    """Every holder that must land after start, start included, under these first-to-second orders."""
+    seen, todo = {start}, [start]
+    while todo:
+        node = todo.pop()
+        for before, after, _ident in edges:
+            if before == node and after not in seen:
+                seen.add(after)
+                todo.append(after)
+    return seen
+
+
+def cancel_contest(store, db, number):
+    row = db.execute("SELECT state FROM contest WHERE id = ?", (number,)).fetchone()
+    if not row:
+        raise LandError(f"no C{number}")
+    if row["state"] != "cancelled":
+        db.execute("UPDATE contest SET state = 'cancelled' WHERE id = ?", (number,))
+        store.log(db, "contest", number, "cancelled")
+    return f"C{number} cancelled"
+
+
 def land(store):
     handle = open(store.dir / ".queue.lock", "a")
     try:
@@ -1374,7 +1676,7 @@ def land(store):
             if store.contract["mode"] == "merge":
                 advance_drain(store)
             landed, bounced, adopted = poll_human(store)
-            for entry in store.entries("queued"):
+            for entry in unheld_queued(store):
                 (opened if land_human(store, integration, entry) else bounced).append(entry["id"])
             if store.contract["mode"] == "merge" and opened:
                 more_landed, more_bounced, more_adopted = poll_human(store)
@@ -1384,7 +1686,7 @@ def land(store):
             opened = [ident for ident in opened if states[ident] == "awaiting-merge"]
             return report(store, landed, bounced, opened, adopted)
         single, rounds = False, 0
-        while (queued := store.entries("queued")) and not store.contract.get("paused"):
+        while (queued := unheld_queued(store)) and not store.contract.get("paused"):
             rounds += 1
             if rounds > 4 * len(queued) + 4:
                 break
@@ -1424,7 +1726,12 @@ def report(store, landed, bounced, opened, adopted=()):
         lines.append(lead + ", ".join(f"{entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
     lines += [f"adopted {entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in adopted]
     lines += [f"bounced {entry_label(i)} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
-    waiting = [entry_label(row["id"]) for row in rows.values() if row["state"] in ("queued", "landing")]
+    held = held_holders(store.db)
+    waiting = []
+    for row in rows.values():
+        hold = held.get(row["holder"]) if row["state"] == "queued" else None
+        if row["state"] in ("queued", "landing"):
+            waiting.append(entry_label(row["id"]) + (f" (held by C{hold})" if hold else ""))
     if waiting:
         lines.append("still queued: " + ", ".join(waiting))
     if store.contract.get("paused"):
@@ -1463,12 +1770,13 @@ def status(store, ident=None):
             raise LandError(f"no {entry_label(number)}")
         detail = [f"landed as {row['landed'][:12]}" if row["landed"] else "", row["pr"], row["note"]]
         return f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['branch']})" + "".join(f". {part}" for part in detail if part)
-    counts = dict(store.db.execute("SELECT state, count(*) FROM entry GROUP BY state").fetchall())
+    states = dict(store.db.execute("SELECT state, count(*) FROM entry GROUP BY state").fetchall())
     leases = len(in_flight(store.db))
+    reserved = sum(counts(row) for row in standing(store.db))
     contract = store.contract
-    parts = [f"{state}: {count}" for state, count in counts.items()] + ([f"leases held: {leases}"] if leases else [])
+    parts = [f"{state}: {n}" for state, n in states.items()] + ([f"leases held: {leases}"] if leases else [])
     if contract.get("cap"):
-        parts.append(f"changes in flight: {leases} of {contract['cap']}")
+        parts.append(f"changes in flight: {leases + reserved} of {contract['cap']}")
     paused = f" Paused: {contract['paused']}" if contract.get("paused") else ""
     return f"{contract['mode']} mode onto {trunk_ref(contract)}. " + (", ".join(parts) or "empty") + "." + paused
 
@@ -1489,7 +1797,8 @@ def parser():
     p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
     p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
     p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
-                   help="merge mode: how the queue merges its PRs. omitted, init stores the one allowed method, or merge when gh cannot say")
+                   help="merge mode: how the queue merges its PRs, checked against the repository whenever it is set. "
+                        "omitted in merge mode, init stores the one allowed method, or merge when gh cannot say")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
 
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
@@ -1501,6 +1810,7 @@ def parser():
     p.add_argument("--merge-method", choices=MERGE_METHODS)
 
     owner_help = "<holder prefix>@<generation> of the coordinator writing; refused below that prefix's floor"
+    ruling_help = "<prefix>@<generation> of the writer, such as .admin/@2; refused below that prefix's floor"
     p = sub.add_parser("owner", help="raise a holder prefix's generation floor; it never lowers")
     p.add_argument("--prefix", required=True, help="a holder prefix ending in /, such as docs/")
     p.add_argument("--generation", type=int, required=True)
@@ -1524,6 +1834,15 @@ def parser():
     a = t.add_parser("check", help="run the claim's admission test without claiming")
     a.add_argument("--holder", required=True)
     a.add_argument("--paths", required=True)
+    a = t.add_parser("reserve", help="reserve paths for a holder prefix by a ruling; prints S<n>")
+    a.add_argument("--for", dest="prefix", required=True, help="the winner's holder prefix, such as docs/")
+    a.add_argument("--paths", required=True, help="comma-separated files or directories")
+    a.add_argument("--ruling", required=True, help="the ruling this carries out, such as R4; a rerun returns the same S<n>")
+    a.add_argument("--ttl-hours", type=float, default=2, help="hours the reservation stands once it arms")
+    a.add_argument("--owner", required=True, help=ruling_help)
+    a = t.add_parser("unreserve", help="lift a reservation")
+    a.add_argument("id")
+    a.add_argument("--owner", required=True, help=ruling_help)
 
     p = sub.add_parser("submit", help="queue a reviewed commit for landing")
     p.add_argument("--holder", required=True)
@@ -1534,6 +1853,20 @@ def parser():
     p.add_argument("--title", default="", help="human mode: the PR title (default: the last commit subject)")
     p.add_argument("--body-file", default="", help="human mode: a file holding the PR body")
     p.add_argument("--owner", help=owner_help)
+
+    p = sub.add_parser("share", help="set a holder prefix's share of the cap")
+    p.add_argument("--for", dest="prefix", required=True, help="a holder prefix ending in /, such as docs/")
+    p.add_argument("count", type=int)
+    p.add_argument("--clear", action="store_true", help="remove the share; pass 0")
+    p.add_argument("--owner", required=True, help=ruling_help)
+
+    p = sub.add_parser("contest", help="hold two holders' entries, then order them; waits for a running land")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--holders", help="<a>,<b>: hold both holders' entries until settled; prints C<n>")
+    g.add_argument("--settle", help="C<n>: with --first, land the first holder before the other")
+    g.add_argument("--cancel", help="C<n>: remove the hold or the order")
+    p.add_argument("--first", help="with --settle, the holder that lands first")
+    p.add_argument("--owner", required=True, help=ruling_help)
 
     sub.add_parser("land", help="drain the queue unless another run holds it")
     sub.add_parser("resume", help="clear a pause after you checked trunk")
@@ -1569,13 +1902,23 @@ def run(argv):
         if args.action == "check":
             return lease_check(store, args.holder, args.paths)
         if args.action == "list":
-            return "\n".join(f"L{r['id']} {r['state']} {r['holder']} until {r['expires'][:16]}: {lease_paths(r)}" for r in in_flight(store.db)) or "no leases held", 0
+            return lease_list(store), 0
+        if args.action == "reserve":
+            return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
+        if args.action == "unreserve":
+            return lease_unreserve(store, reservation_id(args.id), args.owner), 0
         number = lease_id(args.id)
         if args.action == "renew":
             return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
         return lease_release(store, number, args.owner), 0
     if args.command == "mode":
         return change_mode(store, args.mode, args.merge_method), 0
+    if args.command == "share":
+        return change_share(store, args.prefix, args.count, args.clear, args.owner), 0
+    if args.command == "contest":
+        if (args.settle is None) != (args.first is None):
+            raise LandError("--settle and --first go together")
+        return contest(store, args.owner, args.holders, args.settle, args.first, args.cancel), 0
     if args.command == "submit":
         body = Path(args.body_file).read_text() if args.body_file else ""
         return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body, args.owner), 0
