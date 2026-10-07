@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS owner (prefix TEXT PRIMARY KEY, generation INTEGER NO
 CREATE TABLE IF NOT EXISTS reservation (
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, prefix TEXT NOT NULL, paths TEXT NOT NULL,
   ruling TEXT NOT NULL UNIQUE, ttl REAL NOT NULL, armed TEXT NOT NULL DEFAULT '', expires TEXT NOT NULL DEFAULT '',
-  taken INTEGER, state TEXT NOT NULL CHECK (state IN ('standing', 'claimed', 'lifted')));
+  taken TEXT NOT NULL DEFAULT '', state TEXT NOT NULL CHECK (state IN ('standing', 'claimed', 'lifted')));
 CREATE TABLE IF NOT EXISTS share (prefix TEXT PRIMARY KEY, count INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS contest (
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, first TEXT NOT NULL DEFAULT '',
@@ -308,6 +308,10 @@ class Infrastructure(LandError):
     """A failure that is not the entry's fault. The queue pauses instead of bouncing."""
 
 
+class AutoMergeStillEnabled(Infrastructure):
+    """The message is the whole pause. land() stores it unchanged."""
+
+
 def trunk_ref(contract):
     if contract["mode"] == "local":
         return f"refs/landing/{contract['trunk']}"
@@ -501,9 +505,21 @@ def standing(db):
                       (stamp(),)).fetchall()
 
 
-def counts(row):
-    """An armed reservation counts as one change in flight until the winner holds a lease taken from it."""
-    return bool(row["armed"]) and row["taken"] is None
+def taken_ids(text):
+    return [int(part) for part in text.split("\n") if part]
+
+
+def add_taken(text, lease):
+    ids = taken_ids(text)
+    if lease not in ids:
+        ids.append(lease)
+    return "\n".join(str(ident) for ident in ids)
+
+
+def counts(row, leases):
+    """An armed reservation counts as one change in flight while the winner holds no live lease taken from it."""
+    live = {lease["id"] for lease in leases}
+    return bool(row["armed"]) and not any(ident in live for ident in taken_ids(row["taken"]))
 
 
 def under(prefix, leases, reservations):
@@ -524,7 +540,7 @@ def arm_reservations(store, db, leases, cap):
         if row["armed"] or any(not lease["holder"].startswith(row["prefix"]) and overlaps(paths, lease["paths"].split("\n"))
                                for lease in leases):
             continue
-        counting = [r for r in standing(db) if counts(r)]
+        counting = [r for r in standing(db) if counts(r, leases)]
         if cap and len(leases) + len(counting) >= cap:
             continue
         if any(row["prefix"].startswith(share["prefix"]) and under(share["prefix"], leases, counting) >= share["count"]
@@ -536,12 +552,13 @@ def arm_reservations(store, db, leases, cap):
         store.log(db, "reservation", row["id"], "armed")
 
 
-def admission(store, db, holder, wanted):
+def admission(store, db, holder, wanted, renewing=None):
     """Arm what can arm, then test a lease on these paths for holder.
 
     Returns the other holders' overlapping leases, a refusal, and the standing reservations the lease takes from.
     Run it inside the transaction that writes the lease, so two claims cannot both pass. A caller that is refused
-    still commits, so arming is never lost to a refused claim.
+    still commits, so arming is never lost to a refused claim. renewing is an expired lease id. A reservation
+    that already lists it is taken again and left out of the count, so that renewal fits a full cap.
     """
     leases, cap = in_flight(db), store.contract.get("cap")
     arm_reservations(store, db, leases, cap)
@@ -553,7 +570,9 @@ def admission(store, db, holder, wanted):
     if blocked:
         return [], "; ".join(reserved_for(row) for row in blocked), []
     taken = [row["id"] for row in reserved]
-    others = [row for row in standing(db) if counts(row) and row["id"] not in taken]
+    if renewing is not None:
+        taken += [row["id"] for row in standing(db) if row["id"] not in taken and renewing in taken_ids(row["taken"])]
+    others = [row for row in standing(db) if counts(row, leases) and row["id"] not in taken]
     count = len(leases) + len(others)
     if cap and count >= cap:
         names = ([holders_of(leases)] if leases else []) + [f"S{row['id']} for {row['prefix']}" for row in others]
@@ -571,8 +590,8 @@ def take(store, db, taken, lease, wanted):
         row = db.execute("SELECT * FROM reservation WHERE id = ?", (ident,)).fetchone()
         left = [path for path in row["paths"].split("\n") if not covered(path, wanted)]
         state = "standing" if left else "claimed"
-        db.execute("UPDATE reservation SET paths = ?, taken = coalesce(taken, ?), state = ? WHERE id = ?",
-                   ("\n".join(left), lease, state, ident))
+        db.execute("UPDATE reservation SET paths = ?, taken = ?, state = ? WHERE id = ?",
+                   ("\n".join(left), add_taken(row["taken"], lease), state, ident))
         store.log(db, "reservation", ident, state, f"L{lease}")
 
 
@@ -670,7 +689,7 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
             raise LandError(f"L{number} expired at {row['expires'][:16]}")
         taken = []
         if expired:
-            clash, refusal, taken = admission(store, db, row["holder"], row["paths"].split("\n"))
+            clash, refusal, taken = admission(store, db, row["holder"], row["paths"].split("\n"), renewing=number)
         if not clash and not refusal:
             db.execute("UPDATE lease SET expires = ? WHERE id = ?", (stamp(now() + timedelta(hours=ttl_hours)), number))
             store.log(db, "lease", number, "renewed", "after it expired" if expired else "")
@@ -1253,7 +1272,9 @@ def bounce_open_pr(store, ident, url, reason, armed):
     A PR whose auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
     problem = disarm_auto_merge(store, url, armed)
     if problem:
-        raise Infrastructure(f"{reason}. Auto-merge is still enabled: {problem}")
+        raise AutoMergeStillEnabled(
+            f"{reason}. Auto-merge is still enabled: {problem}. "
+            f"Turn auto-merge off on {url}, then run land.py resume and land.py land")
     with store.tx() as db:
         settle_bounced(store, db, ident, reason)
 
@@ -1706,11 +1727,14 @@ def land(store):
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
-        suggestion = suggested_merge_method(store.repo, str(problem))
-        if suggestion:
-            pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
+        if isinstance(problem, AutoMergeStillEnabled):
+            pause(store, str(problem))
         else:
-            pause(store, f"{problem}. Fix it, then run land.py resume")
+            suggestion = suggested_merge_method(store.repo, str(problem))
+            if suggestion:
+                pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
+            else:
+                pause(store, f"{problem}. Fix it, then run land.py resume")
         return report(store, [], [], [])
     finally:
         handle.close()
@@ -1777,8 +1801,9 @@ def status(store, ident=None):
         detail = [f"landed as {row['landed'][:12]}" if row["landed"] else "", row["pr"], row["note"]]
         return f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['branch']})" + "".join(f". {part}" for part in detail if part)
     states = dict(store.db.execute("SELECT state, count(*) FROM entry GROUP BY state").fetchall())
-    leases = len(in_flight(store.db))
-    reserved = sum(counts(row) for row in standing(store.db))
+    live = in_flight(store.db)
+    leases = len(live)
+    reserved = sum(counts(row, live) for row in standing(store.db))
     contract = store.contract
     parts = [f"{state}: {n}" for state, n in states.items()] + ([f"leases held: {leases}"] if leases else [])
     if contract.get("cap"):
