@@ -290,6 +290,55 @@ exit 0
         self.assertEqual(self.land("lease", "renew", "L2", ok=False), "land: L2 is released")
         self.assertEqual(self.land("lease", "renew", "L9", ok=False), "land: no L9")
 
+    def lease_row(self, number):
+        store = land.Store.for_repo(self.work)
+        try:
+            return tuple(store.db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone())
+        finally:
+            store.db.close()
+
+    def test_an_owner_floor_rises_and_never_lowers(self):
+        self.init()
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "1", ok=False),
+                         "land: docs/ is at generation 2; a floor never lowers")
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "3"), "docs/ at generation 3")
+
+    def test_lease_writes_refuse_an_owner_below_the_floor_and_change_nothing(self):
+        self.init()
+        self.assertEqual(self.claim("docs/D3", "a.txt", "--owner", "docs/@1"), "L1")
+        self.land("lease", "renew", "L1", "--ttl-hours", "0", "--owner", "docs/@1")
+        self.land("owner", "--prefix", "docs/", "--generation", "2")
+        before = self.lease_row(1)
+        stale = "land: owner docs/@1 is stale; docs/ is at generation 2"
+        self.assertEqual(self.land("lease", "release", "L1", "--owner", "docs/@1", ok=False), stale)
+        self.assertEqual(self.land("lease", "renew", "L1", "--owner", "docs/@1", ok=False), stale)
+        self.assertEqual(self.claim("docs/D4", "b.txt", "--owner", "docs/@1", ok=False), stale)
+        self.assertEqual(self.lease_row(1), before)
+        self.assertEqual(self.land("lease", "renew", "L1", "--owner", "docs/@2"), "L1 renewed")
+        self.assertEqual(self.land("lease", "release", "L1", "--owner", "docs/@2"), "L1 released")
+
+    def test_a_floored_prefix_needs_an_owner_that_covers_the_holder(self):
+        self.init()
+        self.land("owner", "--prefix", "docs/", "--generation", "2")
+        self.assertEqual(self.claim("docs/D1", "a.txt", ok=False), "land: docs/D1 is under docs/ at generation 2; pass --owner docs/@2")
+        self.assertEqual(self.claim("docs/D1", "a.txt", "--owner", "engine/@2", ok=False),
+                         "land: owner engine/@2 does not cover holder docs/D1")
+        self.assertEqual(self.claim("docs/D1", "a.txt", "--owner", "docs/@2"), "L1")
+        self.assertEqual(self.claim("engine/D1", "b.txt"), "L2")
+        self.assertEqual(self.land("lease", "release", "L2"), "L2 released")
+
+    def test_submit_refuses_a_stale_owner_and_queues_for_the_current_one(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "agent\n"})
+        lease = self.claim("docs/D1", "a.txt", "--owner", "docs/@1")
+        self.land("owner", "--prefix", "docs/", "--generation", "2")
+        submit = ("submit", "--holder", "docs/D1", "--branch", "w1", "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
+        self.assertEqual(self.land(*submit, "--owner", "docs/@1", ok=False), "land: owner docs/@1 is stale; docs/ is at generation 2")
+        self.assertEqual(self.land("status", "--holder", "docs/D1"), "no entries held by docs/D1")
+        self.assertEqual(self.land(*submit, "--owner", "docs/@2"), "E1")
+
     def lease_check(self, holder, paths):
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "check", "--holder", holder, "--paths", paths],
                                 capture_output=True, text=True, env=os.environ.copy())

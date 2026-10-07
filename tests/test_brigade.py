@@ -26,6 +26,18 @@ def _wait_for_path(path, timeout=8):
 
 def _race_child(mode, case, args):
     case = Path(case)
+    if mode == "land-pause":
+        land = runpy.run_path(str(ROOT / "t3/added/landing/scripts/land.py"))
+        store = land["run"].__globals__["Store"]
+        original_tx = store.tx
+
+        def paused_tx(self):
+            (case / "paused").touch()
+            _wait_for_path(case / "proceed", timeout=60)
+            return original_tx(self)
+
+        store.tx = paused_tx
+        sys.exit(land["main"](args))
     mod = runpy.run_path(str(SCRIPT))
     # run_path returns a copy. The live functions read the original globals.
     glob = mod["run"].__globals__
@@ -86,6 +98,17 @@ def _race_child(mode, case, args):
         glob["write_atomic"] = hooked
     elif mode == "fake-land":
         glob["LAND"] = case / "land.py"
+    elif mode == "pause":
+        original_locked = glob["Restaurant"].locked
+
+        def paused_locked(self):
+            if not getattr(self, "paused_once", False):
+                self.paused_once = True
+                (case / "paused").touch()
+                _wait_for_path(case / "proceed", timeout=60)
+            return original_locked(self)
+
+        glob["Restaurant"].locked = paused_locked
     elif mode == "die-before-log":
         glob["Restaurant"].log = lambda self, *rest: os._exit(9)
     elif mode == "die-inside-log-append":
@@ -1236,6 +1259,250 @@ class BrigadeTest(unittest.TestCase):
             watching.kill()
         self.assertEqual(watching.returncode, 0, err)
         self.assertEqual(out.strip(), "T1: waiting on L1 (engine/D1)")
+
+    def landing_env(self):
+        from unittest import mock
+        patcher = mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def started(self, *init, paths="README.md"):
+        """A local landing contract, the Perf coordinator, and D1 holding L1."""
+        self.init_landing(*init)
+        self.landing_env()
+        self.open()
+        (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
+        self.brigade("ticket", "add", "--summary", "one")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", paths),
+                         "D1 (lease L1 held by perf/D1)")
+
+    def lease_row(self, number):
+        import sqlite3
+        from contextlib import closing
+        database = next((Path(self.temporary.name) / "state").glob("pstack-t3/landing/*/land.db"))
+        with closing(sqlite3.connect(database)) as db:
+            db.row_factory = sqlite3.Row
+            return dict(db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone())
+
+    def worker_commit(self, branch, files):
+        path = Path(self.temporary.name) / branch.replace("/", "-")
+        git = lambda *command, cwd=self.project: subprocess.run(command, cwd=cwd, capture_output=True, text=True,
+                                                                check=True).stdout.strip()
+        if not path.exists():
+            git("git", "worktree", "add", "-q", "-b", branch, str(path), "main")
+        for name, text in files.items():
+            if text is None:
+                (path / name).unlink()
+            else:
+                (path / name).write_text(text)
+        git("git", "add", "-A", cwd=path)
+        git("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", branch, cwd=path)
+        return git("git", "rev-parse", "HEAD", cwd=path)
+
+    def passed(self, sha):
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
+        self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass", "--author", CODEX, "--verifier", CLAUDE)
+
+    def submit(self, sha):
+        return self.land("submit", "--holder", "perf/D1", "--branch", "perf/d1", "--sha", sha, "--lease", "L1",
+                         "--reviewer", CLAUDE)
+
+    def test_watch_renews_a_live_lease_and_records_activity(self):
+        self.started()
+        self.land("lease", "renew", "L1", "--ttl-hours", "0.01")
+        before = json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"]
+        self.assertLess(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (no worker recorded)")
+        self.assertGreater(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
+        self.assertGreater(json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"], before)
+
+    def test_an_expired_lease_stays_expired_until_an_explicit_renew(self):
+        self.started()
+        self.land("lease", "renew", "L1", "--ttl-hours", "0")
+        expired = self.lease_row(1)["expires"]
+        self.assertEqual(self.brigade("watch").splitlines(),
+                         ["D1: running 0m of 60m (no worker recorded)",
+                          "D1: lease L1 expired; stop its worker, then run lease renew L1"])
+        self.assertEqual(self.lease_row(1)["expires"], expired)
+        self.assertEqual(self.land("lease", "renew", "L1"), "L1 renewed")
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (no worker recorded)")
+
+    def test_re_admitting_an_expired_lease_names_the_holder_that_claimed_its_paths(self):
+        self.started()
+        self.land("lease", "renew", "L1", "--ttl-hours", "0")
+        self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "README.md"), "L2")
+        self.assertIn("D1: lease L1 expired; stop its worker, then run lease renew L1", self.brigade("watch"))
+        self.assertEqual(self.land("lease", "renew", "L1", ok=False),
+                         "land: L1 expired and L2 held by engine/D1 now covers README.md; claim again after it is released")
+
+    def test_a_released_or_unreadable_lease_gets_its_own_line(self):
+        self.started()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.land("lease", "release", "L1")
+        self.assertEqual(self.brigade("watch"), "D1: lease L1 was released; claim again before submitting")
+        before = (self.at / "restaurant.json").read_text()
+        (Path(self.temporary.name) / "state").rename(Path(self.temporary.name) / "moved")
+        self.assertEqual(self.brigade("watch"),
+                         f"D1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
+        self.assertEqual((self.at / "restaurant.json").read_text(), before)
+
+    def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line(self):
+        self.started()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.assertEqual(self.brigade("watch"), "D1: in review")
+        verdict = ("pass", "record", "D1", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
+        self.brigade(*verdict, "send-back")
+        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.brigade(*verdict, "blocked")
+        self.assertEqual(self.brigade("watch"), "D1: parked")
+        self.brigade(*verdict, "pass")
+        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertGreater(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
+
+    def test_a_passed_item_with_a_submitted_entry_says_mark_it_queued(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "fast\n"})
+        self.passed(sha)
+        self.assertEqual(self.submit(sha), "E1")
+        self.assertEqual(self.brigade("watch"), "D1: E1 already submitted; mark it queued")
+
+    def test_an_entry_another_run_landed_says_mark_it_merged(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "fast\n"})
+        self.passed(sha)
+        self.submit(sha)
+        self.brigade("dish", "D1", "--state", "queued")
+        self.assertEqual(self.brigade("watch"), "D1: E1 queued")
+        self.land("land")
+        landed = subprocess.run(["git", "rev-parse", "refs/landing/lane"], cwd=self.project, capture_output=True,
+                                text=True, check=True).stdout.strip()
+        self.assertEqual(self.brigade("watch"), f"D1: landed as E1 ({landed[:12]}); mark it merged")
+
+    def test_an_old_bounced_entry_is_ignored_for_the_current_sha(self):
+        self.started("--check", "test ! -e BROKEN", paths="README.md,BROKEN")
+        old = self.worker_commit("perf/d1", {"README.md": "fast\n", "BROKEN": "x\n"})
+        self.passed(old)
+        self.submit(old)
+        self.brigade("dish", "D1", "--state", "queued")
+        self.land("land")
+        self.assertRegex(self.brigade("watch"), r"^D1: E1 bounced: checks failed")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        new = self.worker_commit("perf/d1", {"BROKEN": None})
+        self.passed(new)
+        self.assertEqual(self.submit(new), "E2")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.assertEqual(self.brigade("watch"), "D1: E2 queued")
+
+    def test_a_drop_waits_for_the_worker_and_then_releases_the_lease(self):
+        self.started()
+        self.brigade("dish", "D1", "--thread", "w1")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", ok=False),
+                         "brigade: D1 holds L1 and its worker may still be running; "
+                         "wait for its run with t3_thread_wait, then pass --stopped <run id>")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
+        self.assertEqual(self.land("lease", "list").split(" until ")[0], "L1 active perf/D1")
+        self.assertIn("L1 held by perf/D1",
+                      self.land("lease", "claim", "--holder", "engine/D1", "--paths", "README.md", ok=False))
+        self.worker_commit("perf/d1", {"README.md": "late\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+        dropped = [line for line in (self.at / "log.tsv").read_text().splitlines() if "\tD1\tdropped\t" in line]
+        self.assertEqual(len(dropped), 1)
+        self.assertIn("stopped r1", dropped[0])
+        self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "README.md"), "L2")
+
+    def test_a_late_worker_submit_after_the_drop_is_refused(self):
+        self.started()
+        self.brigade("dish", "D1", "--thread", "w1")
+        self.worker_commit("perf/d1", {"README.md": "first\n"})
+        case = Path(self.temporary.name)
+        worktree = case / "perf-d1"
+        script = (f"while [ ! -e {shlex.quote(str(case / 'go'))} ]; do sleep 0.01; done; "
+                  f"echo late > README.md && git add -A && git -c user.name=t -c user.email=t@t commit -qm late && "
+                  f"{shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 't3/added/landing/scripts/land.py'))} "
+                  f"--repo {shlex.quote(str(self.project))} submit --holder perf/D1 --branch perf/d1 "
+                  f"--sha $(git rev-parse HEAD) --lease L1 --reviewer {CLAUDE}")
+        worker = subprocess.Popen(["bash", "-c", script], cwd=worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        try:
+            self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+            engine = self.store / "bridge-kit" / "engine"
+            self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine", "--landing", "local")
+            (engine / "menu.md").write_text("## Purpose\n\nEngine.\n")
+            self.run_at(engine, "ticket", "add", "--summary", "engine work")
+            self.assertEqual(self.run_at(engine, "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "e",
+                                         "--paths", "README.md"), "D1 (lease L2 held by engine/D1)")
+            (case / "go").touch()
+            _, err = worker.communicate(timeout=30)
+        finally:
+            worker.kill()
+        self.assertEqual(worker.returncode, 1)
+        self.assertEqual(err.strip(), "land: L1 is not an active lease held by perf/D1; claim one before submitting")
+        self.assertEqual(self.land("status", "--holder", "perf/D1"), "no entries held by perf/D1")
+        self.assertEqual([line.split(" until ")[0] for line in self.land("lease", "list").splitlines()],
+                         ["L2 active engine/D1"])
+        self.assertEqual(self.table_row(engine, "dishes.tsv", "D1")["lease"], "L2")
+
+    def test_a_replaced_coordinators_paused_commands_change_nothing(self):
+        self.init_landing()
+        self.landing_env()
+        docs = self.store / "bridge-kit" / "docs"
+        self.run_at(docs, "open", "--project-root", str(self.project), "--name", "Docs", "--landing", "local")
+        (docs / "menu.md").write_text("## Purpose\n\nDocs.\n")
+        self.run_at(docs, "set", "--thread", "t1")
+        old = ("--owner", "t1@1")
+        self.assertIn("owner t1@1", self.run_at(docs, *old, "status"))
+        self.run_at(docs, *old, "ticket", "add", "--summary", "one")
+        self.assertEqual(self.run_at(docs, *old, "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                     "--paths", "README.md"), "D1 (lease L1 held by docs/D1)")
+        self.run_at(docs, *old, "dish", "D1", "--thread", "w1")
+        self.land("lease", "renew", "L1", "--ttl-hours", "0", "--owner", "docs/@1")
+        stale_brigade = "brigade: owner t1@1 is stale; this store is owned by t2@2"
+        stale_land = "land: owner docs/@1 is stale; docs/ is at generation 2"
+        land_script = str(ROOT / "t3/added/landing/scripts/land.py")
+        commands = [
+            ("pause", ["--store", str(self.store), "--at", str(docs), *old, "ticket", "add", "--summary", "late"], stale_brigade),
+            ("pause", ["--store", str(self.store), "--at", str(docs), *old, "dish", "D1", "--state", "dropped", "--stopped", "r1"],
+             stale_brigade),
+            ("land-pause", ["--repo", str(self.project), "lease", "release", "L1", "--owner", "docs/@1"], stale_land),
+            ("land-pause", ["--repo", str(self.project), "lease", "renew", "L1", "--owner", "docs/@1"], stale_land),
+        ]
+        running = []
+        for number, (mode, args, message) in enumerate(commands):
+            case = Path(self.temporary.name) / f"stale{number}"
+            case.mkdir()
+            running.append((case, self._spawn_race(mode, case, args), message))
+        for case, _, _ in running:
+            _wait_for_path(case / "paused", timeout=20)
+        self.run_at(docs, "set", "--thread", "t2", "--replace")
+        self.assertIn("owner t2@2", self.run_at(docs, "--owner", "t2@2", "status"))
+        tables = ("rail.tsv", "log.tsv", "restaurant.json")
+        after_replace = {name: (docs / name).read_bytes() for name in tables}
+        row = self.lease_row(1)
+        for case, proc, message in running:
+            (case / "proceed").touch()
+            code, _, err = self._finish_race(proc)
+            self.assertEqual((code, err), (1, message))
+        self.assertEqual({name: (docs / name).read_bytes() for name in tables}, after_replace)
+        self.assertEqual(self.lease_row(1), row)
+        new = ("--owner", "t2@2")
+        self.assertEqual(self.run_at(docs, *new, "ticket", "add", "--summary", "late"), "T2")
+        self.assertEqual(self.land("lease", "renew", "L1", "--owner", "docs/@2"), "L1 renewed")
+        self.assertEqual(self.land("lease", "release", "L1", "--owner", "docs/@2"), "L1 released")
+        self.assertEqual(self.run_at(docs, *new, "dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
+        self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "1", ok=False),
+                         "land: docs/ is at generation 2; a floor never lowers")
+
+    def test_a_store_without_a_generation_works_until_set_thread_records_one(self):
+        self.open()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["thread"] = "t1"
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "legacy"), "T1")
+        self.brigade("set", "--thread", "t1")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "unowned", ok=False),
+                         "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
+        self.assertEqual(self.brigade("--owner", "t1@1", "ticket", "add", "--summary", "owned"), "T2")
 
 
 class HandoffTest(unittest.TestCase):
