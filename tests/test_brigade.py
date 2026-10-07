@@ -359,6 +359,13 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("close", "--to-file", "--dry-run", ok=False)
         self.assertEqual(list((self.at / "closeouts").glob("*.md")), [])
 
+    def test_status_help_names_the_thread_line_then_counts(self):
+        env = os.environ | {"COLUMNS": "200"}
+        result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("status              the thread line first, then counts, then reports to and owner when present", result.stdout)
+        self.assertNotIn("one line of counts", result.stdout)
+
     def test_status_and_walk_speak_plain_engineering_prose(self):
         self.open()
         self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
@@ -2284,6 +2291,14 @@ class HandoffTest(StoresTest):
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+
+    def test_a_table_that_is_not_utf8_names_the_line(self):
+        self.open("core")
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        rail = self.dir("core") / "rail.tsv"
+        rail.write_bytes(rail.read_bytes() + b"\xff\n")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False),
+                         "brigade: rail.tsv line 3 is malformed; fix or remove it")
 
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock
