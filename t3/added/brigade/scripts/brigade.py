@@ -289,7 +289,6 @@ class Restaurant:
         return row
 
 
-LANDING = ("human", "merge", "push", "local")
 REPORTING = ("every-turn", "milestones", "digest")
 CLAIM_WAIT_SECONDS = 1.0
 PURPOSE_TEMPLATE = "What this restaurant exists to achieve"
@@ -526,7 +525,7 @@ def handed_count(restaurant):
     return len(list((restaurant.dir / "inbox").glob("*.json")))
 
 
-def open_restaurant(root, project_root, name, landing, reporting="milestones", intake=(), workers=None):
+def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None):
     project_root = Path(project_root).resolve()
     directory = root / slug(project_root.name) / slug(name)
     # The project directory is shared by every coordinator on this path slug.
@@ -554,7 +553,7 @@ def open_restaurant(root, project_root, name, landing, reporting="milestones", i
     for table in TABLES:
         header = TABLES[table]
         write_atomic(directory / table, "\t".join(header) + "\n")
-    meta = {"restaurant": name, "projectRoot": str(project_root), "landing": landing,
+    meta = {"restaurant": name, "projectRoot": str(project_root),
             "reporting": reporting, "openedAt": now(), "lastActivityAt": now(),
             "lastReportAt": None, "thread": None, "schedules": {}, "intake": list(intake)}
     if workers is not None:
@@ -761,6 +760,14 @@ def blocked_kind(restaurant, ident):
 def land_result(project_root, *args):
     return subprocess.run([sys.executable, str(LAND), "--repo", str(project_root), *args],
                           capture_output=True, text=True)
+
+
+def contract_mode(project_root):
+    """`lands by merge`, or `no landing contract` when land.py status fails."""
+    result = land_result(project_root, "status")
+    if result.returncode != 0 or not result.stdout.strip():
+        return "no landing contract"
+    return f"lands by {result.stdout.split(None, 1)[0]}"
 
 
 def repository_cap(project_root):
@@ -1147,19 +1154,69 @@ def record_hang(restaurant, ident, provider, minutes):
     return f"{ident}: {provider} open {minutes}m"
 
 
-def walk(root, stale_hours=24):
-    lines = []
+def display_root(path):
+    path = Path(path)
+    try:
+        relative = path.relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    if not relative.parts:
+        return "~"
+    return "~/" + relative.as_posix()
+
+
+def leases_for(listing, name):
+    """Lease ids from one `lease list`, held by this coordinator. A failed listing holds none."""
+    if listing.returncode != 0:
+        return []
+    prefix = f"{slug(name)}/"
+    found = []
+    for line in listing.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or not re.fullmatch(r"L\d+", parts[0]):
+            continue
+        holder = parts[2]
+        if holder.startswith(prefix):
+            found.append(f"{parts[0]} ({holder.removeprefix(prefix)})")
+    return found
+
+
+def walk(root, stale_hours=24, repo=None):
+    """Coordinators grouped by projectRoot. One land.py status and one lease list per root, outside any store lock."""
+    wanted = str(Path(repo).resolve()) if repo is not None else None
+    groups = {}
     for meta_path in sorted(root.glob("*/*/restaurant.json")):
         restaurant = Restaurant(meta_path.parent)
-        meta = restaurant.meta
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
-        idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
-        landing = f", lands by {meta['landing']}" if meta.get("landing") else ""
-        lines.append(f"{meta['restaurant']} ({meta['projectRoot']}{landing}, reports {reporting_of(meta)}){idle}: {status_line(restaurant)}")
-        lines.append(f"  thread {meta.get('thread') or 'not recorded'}, store {restaurant.dir}")
-        for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
-            lines.append(f"  {question['id']}: {question['question']}")
-    return "\n".join(lines) or f"no restaurants under {root}"
+        project = restaurant.meta.get("projectRoot", "")
+        if wanted is not None and project != wanted:
+            continue
+        groups.setdefault(project, []).append(restaurant)
+    if not groups:
+        if wanted is not None:
+            return f"no restaurants for {wanted}"
+        return f"no restaurants under {root}"
+    lines = []
+    for project in sorted(groups):
+        coordinators = sorted(groups[project], key=lambda restaurant: str(restaurant.dir / "restaurant.json"))
+        status = land_result(project, "status")
+        listing = land_result(project, "lease", "list")
+        header = status.stdout.strip() if status.returncode == 0 else "no landing contract"
+        lines.append(f"{display_root(project)}: {header}")
+        for restaurant in coordinators:
+            meta = restaurant.meta
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
+            idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
+            counts = status_line(restaurant)
+            blocked = len(blocked_waiting(restaurant))
+            if blocked:
+                counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
+            lines.append(f"  {meta['restaurant']} (reports {reporting_of(meta)}){idle}: {counts}")
+            leases = leases_for(listing, meta["restaurant"])
+            lease_text = f", leases {', '.join(leases)}" if leases else ""
+            lines.append(f"    thread {meta.get('thread') or 'not recorded'}{lease_text}")
+            for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
+                lines.append(f"    {question['id']}: {question['question']}")
+    return "\n".join(lines)
 
 
 def parser():
@@ -1172,8 +1229,6 @@ def parser():
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--landing", choices=LANDING, required=True,
-                   help="who lands work: human (PRs you merge), merge (PRs the queue merges), push (no PRs), local (a lane ref)")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
                    help="how often the coordinator replies (default: milestones)")
     p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
@@ -1183,7 +1238,6 @@ def parser():
     p.add_argument("--thread")
     p.add_argument("--replace", action="store_true", help="replace a recorded coordinator thread")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
-    p.add_argument("--landing", choices=LANDING, help="record a landing mode changed with land.py mode")
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
@@ -1275,8 +1329,9 @@ def parser():
     output.add_argument("--dry-run", action="store_true")
     output.add_argument("--to-file", action="store_true",
                         help="print only the path of the written report, not its text")
-    p = sub.add_parser("walk", help="every restaurant's counts and open decisions")
+    p = sub.add_parser("walk", help="every restaurant's counts and open decisions, grouped by repository")
     p.add_argument("--stale-hours", type=float, default=24)
+    p.add_argument("--repo", help="print only this repository")
     return top
 
 
@@ -1343,7 +1398,7 @@ def run(argv):
     root = store_root(args.store)
     if args.command == "open":
         require_workers(args.workers)
-        restaurant, created = open_restaurant(root, args.project_root, args.name, args.landing, args.reporting,
+        restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
                                               intake_list(args.intake), args.workers)
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
         meta = restaurant.meta
@@ -1361,10 +1416,15 @@ def run(argv):
                 lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
         return "\n".join(lines)
     if args.command == "walk":
-        return walk(root, args.stale_hours)
+        return walk(root, args.stale_hours, args.repo)
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)
+    if args.command == "status":
+        # land.py can wait on the landing database, so the contract is read before the store lock.
+        contract = contract_mode(restaurant.meta["projectRoot"])
+        with restaurant.checked():
+            return command(restaurant, args, contract)
     if args.command == "set" and args.thread:
         return set_thread(restaurant, args)
     if args.command == "dish" and args.state == "dropped":
@@ -1384,7 +1444,7 @@ def run(argv):
         return command(restaurant, args)
 
 
-def command(restaurant, args):
+def command(restaurant, args, contract=None):
     if args.command == "set":
         meta = restaurant.meta
         if args.intake is not None:
@@ -1392,8 +1452,6 @@ def command(restaurant, args):
         if args.thread:
             meta["generation"], _ = next_owner(meta, args.thread, args.replace)
             meta["thread"] = args.thread
-        if args.landing:
-            meta["landing"] = args.landing
         if args.reporting:
             meta["reporting"] = args.reporting
         if args.workers is not None:
@@ -1487,7 +1545,7 @@ def command(restaurant, args):
         return record_hang(restaurant, args.id, args.provider, args.minutes)
     if args.command == "status":
         meta = restaurant.meta
-        level = f"reporting: {reporting_of(meta)}"
+        level = f"reporting: {reporting_of(meta)}, {contract}"
         counts_text = status_line(restaurant)
         line = level if counts_text == "nothing on record" else f"{level}, {counts_text}"
         if meta.get("generation") is not None:

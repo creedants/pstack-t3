@@ -24,6 +24,18 @@ def _wait_for_path(path, timeout=8):
         time.sleep(0.005)
 
 
+def _shown_root(path):
+    """The project root walk prints, with the home directory as ~."""
+    path = Path(path).resolve()
+    try:
+        relative = path.relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    if not relative.parts:
+        return "~"
+    return "~/" + relative.as_posix()
+
+
 def _owner_words(directory):
     """The --owner a coordinator reads from status, as the skill's service step 1 does."""
     try:
@@ -187,7 +199,7 @@ class BrigadeTest(unittest.TestCase):
         return subprocess.run(["bash", "-c", invocation], capture_output=True, text=True, env=self.land_env())
 
     def open(self):
-        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge")
+        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf")
 
     def test_open_creates_the_store_once_and_keeps_edits(self):
         self.assertEqual(self.open(), f"opened {self.at}")
@@ -227,7 +239,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued", "--sha", "def", ok=False),
                          "brigade: only reviewed work lands: D1 has no review verdict for def")
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
-        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting to land: 1")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract, waiting to land: 1")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
         self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done [user] s")
 
@@ -306,14 +318,119 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
-        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting tickets: 1, decisions for you: 1\nowner thread-1@1")
-        walked = self.brigade("walk")
-        self.assertIn(", lands by merge, reports milestones): ", walked)
-        self.assertIn("thread thread-1", walked)
-        self.assertIn("Q1: Ship it?", walked)
+        self.assertEqual(self.brigade("status"),
+                         "reporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nowner thread-1@1")
+        self.assertEqual(self.brigade("walk"), "\n".join([
+            f"{_shown_root(self.project)}: no landing contract",
+            "  Perf (reports milestones): waiting tickets: 1, decisions for you: 1",
+            "    thread thread-1",
+            "    Q1: Ship it?",
+        ]))
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"], {"report": "s-1"})
         for word in ("86", "plate", "heard", "chef", "fire", "pass "):
             self.assertNotIn(word, self.brigade("status").lower())
+
+    def test_status_without_a_contract_ignores_a_stored_landing_field(self):
+        self.open()
+        self.assertNotIn("landing", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract")
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["landing"] = "merge"
+        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract")
+        walked = self.brigade("walk")
+        self.assertEqual(walked.splitlines()[0], f"{_shown_root(self.project)}: no landing contract")
+        self.assertNotIn("lands by", walked)
+
+    def test_set_landing_exits_2(self):
+        self.open()
+        before = (self.at / "restaurant.json").read_bytes()
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 "set", "--landing", "merge"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_walk_prints_a_home_directory_as_a_tilde(self):
+        from unittest import mock
+        project = Path.home() / "brigade-no-such-contract-d57"
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            directory = self.store / "brigade-no-such-contract-d57" / "docs"
+            self.assertEqual(self.brigade("open", "--project-root", str(project), "--name", "Docs"), f"opened {directory}")
+            self.assertEqual(self.brigade("walk"), "\n".join([
+                "~/brigade-no-such-contract-d57: no landing contract",
+                "  Docs (reports milestones): nothing on record",
+                "    thread not recorded",
+            ]))
+
+    def test_status_and_walk_follow_a_landing_mode_change(self):
+        from unittest import mock
+        self.git_project()
+        remote = Path(self.temporary.name) / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=self.project, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=self.project, check=True)
+        self.land("init", "--trunk", "main", "--mode", "human")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.land("mode", "merge")
+            self.assertEqual(self.brigade("status"), "reporting: milestones, lands by merge")
+            header = self.brigade("walk").splitlines()[0]
+            self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
+            self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
+
+    def test_walk_groups_repositories_and_repo_selects_one(self):
+        from unittest import mock
+        other = Path(self.temporary.name) / "other-app"
+        other.mkdir()
+        self.init_landing("--cap", "4")
+        run = lambda *command: subprocess.run(command, cwd=other, capture_output=True, text=True, check=True)
+        run("git", "init", "-q", "-b", "main")
+        (other / "a.txt").write_text("a\n")
+        run("git", "add", "-A")
+        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        self.land_repo(other, "init", "--trunk", "lane", "--mode", "local", "--base", "main", "--cap", "4")
+        docs = self.store / "bridge-kit" / "docs"
+        engine = self.store / "bridge-kit" / "engine"
+        core = self.store / "other-app" / "core"
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.assertEqual(self.brigade("walk"), f"no restaurants under {self.store}")
+            self.run_at(docs, "open", "--project-root", str(self.project), "--name", "Docs")
+            self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine")
+            self.run_at(core, "open", "--project-root", str(other), "--name", "Core")
+            self.run_at(docs, "set", "--thread", "thread-docs")
+            self.run_at(engine, "set", "--thread", "thread-engine")
+            self.run_at(core, "set", "--thread", "thread-core")
+            self.run_at(docs, "ticket", "add", "--summary", "Write the guide")
+            self.assertEqual(self.run_at(docs, "fire", "--tickets", "T1", "--station", "bug-fix",
+                                         "--summary", "Write the guide", "--paths", "a.txt"),
+                             "D1 (lease L1 held by docs/D1)")
+            self.run_at(engine, "ticket", "add", "--summary", "Blocked edit")
+            refused = self.run_at(engine, "fire", "--tickets", "T1", "--station", "bug-fix",
+                                  "--summary", "Blocked edit", "--paths", "a.txt", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by docs/D1", refused)
+            self.assertEqual(self.land("lease", "claim", "--holder", "engine/D12", "--paths", "src"), "L2")
+            self.assertEqual(self.land("lease", "claim", "--holder", "engine/D13", "--paths", "lib"), "L3")
+            self.assertEqual(self.run_at(docs, "86", "add", "--question", "Ship the guide?",
+                                         "--options", "yes, no", "--default", "no"), "Q1")
+            app = _shown_root(self.project)
+            other_root = _shown_root(other)
+            expected = "\n".join([
+                f"{app}: local mode onto refs/landing/lane. leases held: 3, changes in flight: 3 of 4.",
+                "  Docs (reports milestones): in progress: 1, decisions for you: 1",
+                "    thread thread-docs, leases L1 (D1)",
+                "    Q1: Ship the guide?",
+                "  Engine (reports milestones): waiting tickets: 1 (1 blocked)",
+                "    thread thread-engine, leases L2 (D12), L3 (D13)",
+                f"{other_root}: local mode onto refs/landing/lane. changes in flight: 0 of 4.",
+                "  Core (reports milestones): nothing on record",
+                "    thread thread-core",
+            ])
+            self.assertEqual(self.brigade("walk"), expected)
+            self.assertEqual(self.brigade("walk", "--repo", str(self.project)), "\n".join(expected.splitlines()[:6]))
+            self.assertEqual(self.brigade("walk", "--repo", str(other)), "\n".join(expected.splitlines()[6:]))
+            missing = Path(self.temporary.name) / "empty-repo"
+            missing.mkdir()
+            self.assertEqual(self.brigade("walk", "--repo", str(missing)), f"no restaurants for {missing.resolve()}")
 
     def fire_one(self, station="perf-issue", timebox="60"):
         (self.at / "menu.md").write_text("# Menu: Perf\n\n## Purpose\n\nMake startup fast.\n\n## Budget\n\nsmall\n")
@@ -469,7 +586,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
         self.assertEqual(calls.read_text().splitlines(),
                          ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
-        self.assertEqual(self.brigade("status"), "reporting: milestones, in progress: 1")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract, in progress: 1")
 
     def test_tabs_and_newlines_in_input_cannot_break_a_table(self):
         self.open()
@@ -498,13 +615,14 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         meta = json.loads((self.at / "restaurant.json").read_text())
         self.assertEqual(meta["reporting"], "milestones")
-        self.assertEqual(self.brigade("status"), "reporting: milestones")
+        self.assertNotIn("landing", meta)
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
-                                      "--landing", "merge", "--reporting", "every-turn"), f"exists {self.at}")
+                                      "--reporting", "every-turn"), f"exists {self.at}")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "milestones")
         other = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
-                             "--landing", "local", "--reporting", "digest")
+                             "--reporting", "digest")
         quiet = self.store / "bridge-kit" / "quiet"
         self.assertEqual(other, "\n".join([
             f"opened {quiet}",
@@ -519,7 +637,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.brigade("set", "--reporting", "every-turn")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "every-turn")
-        self.assertEqual(self.brigade("status"), "reporting: every-turn")
+        self.assertEqual(self.brigade("status"), "reporting: every-turn, no landing contract")
         self.brigade("set", "--reporting", "digest")
         before = (self.at / "restaurant.json").read_text()
         error = self.brigade("set", "--reporting", "hourly", ok=False)
@@ -527,7 +645,7 @@ class BrigadeTest(unittest.TestCase):
             self.assertIn(level, error)
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
         opened = self.brigade("open", "--project-root", str(self.project), "--name", "Loud",
-                              "--landing", "merge", "--reporting", "hourly", ok=False)
+                              "--reporting", "hourly", ok=False)
         for level in ("every-turn", "milestones", "digest"):
             self.assertIn(level, opened)
         self.assertFalse((self.store / "bridge-kit" / "loud").exists())
@@ -658,7 +776,7 @@ class BrigadeTest(unittest.TestCase):
         del meta["reporting"]
         (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "reporting: milestones")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, no landing contract")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
 
@@ -737,7 +855,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("set", "--thread", "thread-perf")
         docs_dir = self.store / "bridge-kit" / "docs"
         self.assertEqual(
-            self.brigade("open", "--project-root", str(self.project), "--name", "Docs", "--landing", "merge"),
+            self.brigade("open", "--project-root", str(self.project), "--name", "Docs"),
             "\n".join([
                 f"opened {docs_dir}",
                 f"sibling Perf ({self.at}), thread thread-perf",
@@ -745,7 +863,7 @@ class BrigadeTest(unittest.TestCase):
                 "  off the menu: Docs and release notes; Vendor upgrades",
             ]))
         self.assertEqual(
-            self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge"),
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf"),
             "\n".join([
                 f"exists {self.at}",
                 "thread thread-perf already recorded",
@@ -761,10 +879,10 @@ class BrigadeTest(unittest.TestCase):
         second.mkdir(parents=True)
         directory = self.store / "app" / "docs"
         self.assertEqual(
-            self.brigade("open", "--project-root", str(first), "--name", "Docs", "--landing", "merge"),
+            self.brigade("open", "--project-root", str(first), "--name", "Docs"),
             f"opened {directory}")
         before = (directory / "restaurant.json").read_bytes()
-        error = self.brigade("open", "--project-root", str(second), "--name", "Docs", "--landing", "local", ok=False)
+        error = self.brigade("open", "--project-root", str(second), "--name", "Docs", ok=False)
         self.assertEqual(
             error,
             f"brigade: {directory} already holds a coordinator for {first}; pick another --name")
@@ -780,7 +898,7 @@ class BrigadeTest(unittest.TestCase):
         procs = [
             subprocess.Popen(
                 [sys.executable, str(SCRIPT), "--store", str(self.store),
-                 "open", "--project-root", str(root), "--name", "Docs", "--landing", "merge"],
+                 "open", "--project-root", str(root), "--name", "Docs"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             for root in roots
         ]
@@ -830,7 +948,7 @@ class BrigadeTest(unittest.TestCase):
         project = Path(self.temporary.name) / "app"
         project.mkdir()
         directory = self.store / "app" / "docs"
-        args = ["--store", str(self.store), "open", "--project-root", str(project), "--name", "Docs", "--landing", "merge"]
+        args = ["--store", str(self.store), "open", "--project-root", str(project), "--name", "Docs"]
         owner = loser = None
         try:
             owner = self._spawn_race("owner", case, args)
@@ -879,7 +997,7 @@ class BrigadeTest(unittest.TestCase):
         self.at.mkdir(parents=True)
         (self.at / "restaurant.json").write_text('{"restaurant":')
         started = time.monotonic()
-        error = self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge", ok=False)
+        error = self.brigade("open", "--project-root", str(self.project), "--name", "Perf", ok=False)
         elapsed = time.monotonic() - started
         self.assertEqual(error, f"brigade: {self.at / 'restaurant.json'} is not valid JSON")
         self.assertGreaterEqual(elapsed, 0.9)
@@ -894,7 +1012,7 @@ class BrigadeTest(unittest.TestCase):
         path.write_text('{"restaurant":')
         proc = subprocess.Popen(
             [sys.executable, str(SCRIPT), "--store", str(self.store), "open",
-             "--project-root", str(self.project), "--name", "Perf", "--landing", "merge"],
+             "--project-root", str(self.project), "--name", "Perf"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         try:
@@ -928,12 +1046,15 @@ class BrigadeTest(unittest.TestCase):
     def land_env(self):
         return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
 
-    def land(self, *args, ok=True):
+    def land_repo(self, repo, *args, ok=True):
         result = subprocess.run([sys.executable, str(ROOT / "t3/added/landing/scripts/land.py"),
-                                 "--repo", str(self.project), *args],
+                                 "--repo", str(repo), *args],
                                 capture_output=True, text=True, env=self.land_env())
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
+
+    def land(self, *args, ok=True):
+        return self.land_repo(self.project, *args, ok=ok)
 
     def init_landing(self, *args):
         self.git_project()
@@ -987,7 +1108,7 @@ class BrigadeTest(unittest.TestCase):
 
     def test_an_option_leading_summary_round_trips_through_bash(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
-                     "--landing", "merge", "--workers", "1")
+                     "--workers", "1")
         self.brigade("ticket", "add", "--summary", "seed")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "seed")
         blocker = "D1"
@@ -1012,7 +1133,7 @@ class BrigadeTest(unittest.TestCase):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             directory = self.store / "bridge-kit" / "review-more"
-            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review more", "--landing", "merge")
+            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review more")
             self.assertEqual(opened, f"opened {directory}")
             self.run_at(directory, "ticket", "add", "--summary", "Blocked on src")
             self.run_at(directory, "ticket", "add", "--summary", "Takes the first id")
@@ -1045,7 +1166,7 @@ class BrigadeTest(unittest.TestCase):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             directory = self.store / "bridge-kit" / "review"
-            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review", "--landing", "merge")
+            opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review")
             self.assertEqual(opened, f"opened {directory}")
             self.run_at(directory, "ticket", "add", "--summary", "Explicit branch")
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
@@ -1069,7 +1190,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertNotIn("changes/review%2Fd1.md", row["paths"])
 
     def test_a_worker_refusal_prints_the_running_count(self):
-        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--landing", "merge", "--workers", "3")
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "3")
         for number, summary in enumerate(("one", "two", "three"), start=1):
             self.brigade("ticket", "add", "--summary", summary)
             self.brigade("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", summary)
@@ -1135,7 +1256,7 @@ class BrigadeTest(unittest.TestCase):
 
     def test_workers_one_refuses_fire_and_a_dish_that_is_not_already_counted(self):
         opened = self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
-                              "--landing", "merge", "--workers", "1")
+                              "--workers", "1")
         self.assertEqual(opened, f"opened {self.at}")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["workers"], 1)
         for summary in ("one", "two", "three"):
@@ -1158,7 +1279,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("workers must be 1 or more", error)
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
         missing = self.brigade("open", "--project-root", str(self.project), "--name", "Nope",
-                               "--landing", "merge", "--workers", "0", ok=False)
+                               "--workers", "0", ok=False)
         self.assertIn("workers must be 1 or more", missing)
         self.assertFalse((self.store / "bridge-kit" / "nope").exists())
 
@@ -1167,13 +1288,13 @@ class BrigadeTest(unittest.TestCase):
         self.init_landing("--cap", "2")
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             first = self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
-                                 "--landing", "merge", "--workers", "4")
+                                 "--workers", "4")
             self.assertNotIn("warning:", first)
             second = self.brigade("open", "--project-root", str(self.project), "--name", "Docs",
-                                  "--landing", "merge", "--workers", "2")
+                                  "--workers", "2")
             self.assertIn("warning: workers 2 is at or above the repository cap of 2 while a sibling exists", second)
             third = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
-                                 "--landing", "merge", "--workers", "1")
+                                 "--workers", "1")
             self.assertNotIn("warning:", third)
 
     def test_fire_leases_the_branch_changelog_fragment_and_dish_records_a_new_lease(self):
@@ -1501,7 +1622,7 @@ class BrigadeTest(unittest.TestCase):
         try:
             self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
             engine = self.store / "bridge-kit" / "engine"
-            self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine", "--landing", "local")
+            self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine")
             (engine / "menu.md").write_text("## Purpose\n\nEngine.\n")
             self.run_at(engine, "ticket", "add", "--summary", "engine work")
             self.assertEqual(self.run_at(engine, "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "e",
@@ -1521,7 +1642,7 @@ class BrigadeTest(unittest.TestCase):
         self.init_landing()
         self.landing_env()
         docs = self.store / "bridge-kit" / "docs"
-        self.run_at(docs, "open", "--project-root", str(self.project), "--name", "Docs", "--landing", "local")
+        self.run_at(docs, "open", "--project-root", str(self.project), "--name", "Docs")
         (docs / "menu.md").write_text("## Purpose\n\nDocs.\n")
         self.run_at(docs, "set", "--thread", "t1")
         old = ("--owner", "t1@1")
@@ -1609,7 +1730,7 @@ class HandoffTest(unittest.TestCase):
         return (result.stdout if ok else result.stderr).strip()
 
     def open(self, name, *extra):
-        return self.brigade(name, "open", "--project-root", str(self.project), "--name", name, "--landing", "merge", *extra)
+        return self.brigade(name, "open", "--project-root", str(self.project), "--name", name, *extra)
 
     def child(self, mode, name, *args):
         return subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", mode, self.temporary.name,
@@ -1660,11 +1781,11 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(self.brigade("engine", "set", "--intake", "github", ok=False),
                          "brigade: docs already owns intake from github; move tickets to it instead")
         self.assertEqual(self.brigade("engine", "open", "--project-root", str(self.project), "--name", "release",
-                                      "--landing", "merge", "--intake", "github", ok=False),
+                                      "--intake", "github", ok=False),
                          "brigade: docs already owns intake from github; move tickets to it instead")
         self.assertFalse(self.dir("release").exists())
         self.assertEqual(self.brigade("engine", "open", "--project-root", str(self.project), "--name", "engine",
-                                      "--landing", "merge", "--intake", "github"),
+                                      "--intake", "github"),
                          "\n".join([f"exists {self.dir('engine')}",
                                     "intake stays empty; change it with set --intake",
                                     f"sibling docs ({self.dir('docs')}), thread not recorded",
@@ -1724,7 +1845,8 @@ class HandoffTest(unittest.TestCase):
                          {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "github", "ref": "R7"})
         self.assertEqual(self.brigade("core", "watch"), "T1: moved to engine, waiting for ticket take")
         self.assertEqual(self.brigade("engine", "watch"), "handed to you: 1; run ticket take")
-        self.assertEqual(self.brigade("engine", "status"), "reporting: milestones, handed to you: 1\nowner thread-engine@1")
+        self.assertEqual(self.brigade("engine", "status"),
+                         "reporting: milestones, no landing contract, handed to you: 1\nowner thread-engine@1")
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [github (from app/core/T1)] Fix the cache R7")
         self.assertEqual(self.inbox("engine"), [])
