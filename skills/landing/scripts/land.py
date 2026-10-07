@@ -481,6 +481,12 @@ def set_cap(db, cap):
 
 def change_cap(store, cap):
     with store.tx() as db:
+        if cap > 0:
+            rows = db.execute("SELECT prefix, count FROM share ORDER BY prefix").fetchall()
+            total = sum(row["count"] for row in rows)
+            if total > cap:
+                listed = ", ".join(f"{row['prefix']} {row['count']}" for row in rows)
+                raise LandError(f"shares add up to {total} ({listed}), over the cap of {cap}")
         set_cap(db, cap)
         store.log(db, "queue", 0, f"cap {cap}")
     return f"repository cap is now {cap} changes in flight" if cap else "repository cap cleared"

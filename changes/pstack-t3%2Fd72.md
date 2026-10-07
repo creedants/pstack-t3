@@ -1,0 +1,1 @@
+- `land.py cap N` refuses a positive cap below the current sum of shares, names that sum and each share, and writes nothing. `land.py cap 0` still clears the cap.
