@@ -1162,7 +1162,7 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         f"- Run builds and tests through `python3 {land} slot -- <command>`.",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
-        "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. At the limit, write the report with what you have and stop.",
+        "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
         "", "REPORT:",
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
