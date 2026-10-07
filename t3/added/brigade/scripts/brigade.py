@@ -743,20 +743,6 @@ def blocked_waiting(restaurant):
     return found
 
 
-def blocked_kind(restaurant, ident):
-    latest = None
-    for event in restaurant.rows("log.tsv"):
-        if event["kind"] == "ticket" and event["id"] == ident:
-            latest = event
-    if not latest or latest["state"] != "blocked":
-        return ""
-    try:
-        note = json.loads(latest["note"])
-    except json.JSONDecodeError:
-        return ""
-    return note.get("kind", "") if isinstance(note, dict) else ""
-
-
 def land_result(project_root, *args):
     return subprocess.run([sys.executable, str(LAND), "--repo", str(project_root), *args],
                           capture_output=True, text=True)
@@ -817,27 +803,57 @@ def fire_command(ident, note):
     return " ".join(shlex.quote(str(word)) for word in words)
 
 
-def blocked_watch_line(project_root, prefix, ident, note, running, cap, next_dish):
-    requested = note.get("paths") or ""
-    known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    checking = with_fragment(requested, known) if requested else ""
-    if checking:
-        code, out, err = lease_check(project_root, f"{prefix}/{ident}", checking)
-        if code != 0:
-            overlap = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
-            if len(overlap) == 1:
-                lease, holder_name = overlap[0]
-                return f"{ident}: waiting on {lease} ({holder_name})"
-            if overlap:
-                parts = ", ".join(f"{lease} ({holder_name})" for lease, holder_name in overlap)
-                return f"{ident}: waiting on {parts}"
-            room = re.search(r"(\d+ of \d+ changes in flight)", out)
-            if room:
-                return f"{ident}: waiting for room in the repository ({room.group(1)})"
-            return f"{ident}: waiting on the landing queue ({out or err or 'lease check failed'})"
+def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
+    """The block on a waiting ticket that holds now, as (kind, text), or None. Workers come first, as in fire."""
     if running >= cap:
-        return f"{ident}: waiting for a worker ({running} of {cap} running)"
-    return f"{ident}: unblocked; run {fire_command(ident, note)}"
+        return "workers", f"waiting for a worker ({running} of {cap} running)"
+    requested = note.get("paths") or ""
+    if not requested:
+        return None
+    known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
+    code, out, err = lease_check(project_root, f"{prefix}/{ident}", with_fragment(requested, known))
+    if code == 0:
+        return None
+    overlap = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
+    if overlap:
+        return "lease", "waiting on " + ", ".join(f"{lease} ({holder_name})" for lease, holder_name in overlap)
+    room = re.search(r"(\d+ of \d+ changes in flight)", out)
+    if room:
+        return "repository", f"waiting for room in the repository ({room.group(1)})"
+    return note.get("kind") or "lease", f"waiting on the landing queue ({out or err or 'lease check failed'})"
+
+
+def block_inputs(restaurant):
+    """What a block recheck reads from the store. Call it under the store lock."""
+    return blocked_waiting(restaurant), running_workers(restaurant), worker_cap(restaurant.meta), restaurant.next_id("dishes.tsv")
+
+
+def recheck_blocks(restaurant, inputs):
+    """Each blocked ticket, its note, and the block that holds now or None. land.py runs here, outside the store lock."""
+    blocked, running, cap, next_dish = inputs
+    root, prefix = restaurant.meta["projectRoot"], slug(restaurant.meta["restaurant"])
+    return [(ident, note, block_holds(root, prefix, ident, note, running, cap, next_dish)) for ident, note in blocked]
+
+
+def holding_blocks(restaurant):
+    """The blocks that still hold, by ticket, rechecked as watch does."""
+    with restaurant.checked():
+        inputs = block_inputs(restaurant)
+    return {ident: held for ident, _, held in recheck_blocks(restaurant, inputs) if held}
+
+
+def ticket_lines(restaurant, state, held):
+    lines = []
+    for row in restaurant.rows("rail.tsv"):
+        if state and row["state"] != state:
+            continue
+        line = f"{row['id']} {row['state']} [{row['source']}] {row['summary']}"
+        if row["ref"]:
+            line += f" {row['ref']}"
+        if row["state"] == "waiting" and row["id"] in held:
+            line += f" blocked: {held[row['id']][0]}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def unfireable(restaurant, ids):
@@ -954,13 +970,13 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
     return text
 
 
-def started_at(restaurant, ident):
-    """When the current attempt started: the last in-progress log row.
+def attempt_starts(restaurant, dish):
+    """When each attempt started: the dish's in-progress log rows, oldest first.
 
     Replacing the worker appends that row again without leaving in-progress.
     """
-    moves = [row["at"] for row in restaurant.rows("log.tsv") if row["kind"] == "dish" and row["id"] == ident and row["state"] == "in-progress"]
-    return datetime.fromisoformat(moves[-1]) if moves else None
+    moves = [row["at"] for row in restaurant.rows("log.tsv") if row["kind"] == "dish" and row["id"] == dish["id"] and row["state"] == "in-progress"]
+    return [datetime.fromisoformat(at) for at in moves or [dish["at"]]]
 
 
 def renew_line(restaurant, dish):
@@ -1019,7 +1035,7 @@ def watch(restaurant):
             if dish["state"] != "in-progress":
                 continue
             attempt = progress.setdefault(dish["id"], [])
-            start = started_at(restaurant, dish["id"]) or datetime.fromisoformat(dish["at"])
+            start = attempt_starts(restaurant, dish)[-1]
             minutes = int((moment - start).total_seconds() // 60)
             timebox = int(dish.get("timebox") or 60)
             report = restaurant.dir / "reports" / f"{dish['id']}.md"
@@ -1054,12 +1070,7 @@ def watch(restaurant):
         handed = handed_count(restaurant)
         if handed:
             lines.append(f"handed to you: {handed}; run ticket take")
-        blocked = blocked_waiting(restaurant)
-        cap = worker_cap(restaurant.meta)
-        running = running_workers(restaurant)
-        root = restaurant.meta["projectRoot"]
-        prefix = slug(restaurant.meta["restaurant"])
-        next_dish = restaurant.next_id("dishes.tsv")
+        inputs = block_inputs(restaurant)
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -1072,8 +1083,8 @@ def watch(restaurant):
             found += [line] if line else []
         found += [entry] if entry else []
         item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
-    for ident, note in blocked:
-        lines.append(blocked_watch_line(root, prefix, ident, note, running, cap, next_dish))
+    for ident, note, held in recheck_blocks(restaurant, inputs):
+        lines.append(f"{ident}: {held[1]}" if held else f"{ident}: unblocked; run {fire_command(ident, note)}")
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         with restaurant.locked():
@@ -1103,7 +1114,41 @@ def drop(restaurant, ident, stopped):
         evidence += [f"released {lease}"] if lease else []
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
+        rows = restaurant.rows("rail.tsv")
+        back = [row for row in rows if row["state"] == "assigned" and row["dish"] == ident]
+        for row in back:
+            row["state"], row["dish"] = "waiting", ""
+        if back:
+            restaurant.save_rows("rail.tsv", rows)
+        for row in back:
+            restaurant.log("ticket", row["id"], "waiting", f"{row['summary']} (back from dropped {ident})")
+    if back:
+        return f"{ident} dropped; {', '.join(row['id'] for row in back)} waiting again"
     return f"{ident} dropped"
+
+
+def widen_lease(restaurant, ident, branch):
+    """Lease the branch's changelog fragment. land.py cannot add paths to a lease, so a claim on the wider paths replaces it before the old one is released."""
+    with restaurant.checked():
+        restaurant.fence()
+        _, dish = restaurant.find("dishes.tsv", ident)
+        old, paths = dish["lease"], with_fragment(dish["paths"], branch)
+        if not old or dish["state"] not in LEASED_STATES or paths == dish["paths"]:
+            return None
+    try:
+        lease = claim_lease(restaurant, ident, paths)
+    except ClaimError as error:
+        raise BrigadeError(f"{ident} is on {branch}, but {old} does not cover {changelog_fragment(branch)}: {error}; "
+                           f"run dish {ident} --branch {branch} again once that claim fits") from error
+    with restaurant.checked():
+        current = restaurant.find("dishes.tsv", ident)[1]["lease"]
+        if current == old:
+            restaurant.update("dishes.tsv", ident, "dish", lease=lease, paths=paths)
+    if current != old:
+        release_lease(restaurant, lease)
+        raise BrigadeError(f"{ident} now records {current}; released {lease}")
+    release_lease(restaurant, old)
+    return f"{ident}: {lease} covers {paths}; released {old}"
 
 
 def next_owner(meta, thread, replace):
@@ -1138,20 +1183,35 @@ def set_thread(restaurant, args):
             return command(restaurant, args)
 
 
-def record_hang(restaurant, ident, provider, minutes):
+def hang_attempt(row, starts):
+    """The attempt a hang row belongs to: its `(attempt <n>)` suffix, or the attempt running when it was logged."""
+    match = re.search(r" \(attempt (\d+)\)$", row["note"])
+    if match:
+        return int(match.group(1))
+    return sum(start <= datetime.fromisoformat(row["at"]) for start in starts)
+
+
+def record_hang(restaurant, ident, provider, minutes, attempt=None):
     if not clean(provider):
         raise BrigadeError("hang needs a provider")
     if minutes < 0:
         raise BrigadeError("minutes must be 0 or more")
     _, dish = restaurant.find("dishes.tsv", ident)
-    if dish.get("reported") != "yes":
-        raise BrigadeError("no report-back on this attempt")
-    start = started_at(restaurant, ident) or datetime.fromisoformat(dish["at"])
+    starts = attempt_starts(restaurant, dish)
+    current = len(starts)
+    if attempt is not None and not 1 <= attempt <= current:
+        raise BrigadeError(f"{ident} has attempts 1 to {current}")
+    # An earlier attempt was replaced, so only the current one waits for its report-back.
+    if attempt in (None, current) and dish.get("reported") != "yes":
+        earlier = f"; for a run left open by an earlier attempt, pass --attempt {'1' if current == 2 else f'1 to {current - 1}'}"
+        raise BrigadeError("no report-back on this attempt" + (earlier if current > 1 else ""))
+    number = attempt or current
     for row in restaurant.rows("log.tsv"):
-        if row["kind"] == "hang" and row["id"] == ident and datetime.fromisoformat(row["at"]) >= start:
+        if row["kind"] == "hang" and row["id"] == ident and hang_attempt(row, starts) == number:
             return f"{ident}: hang already recorded"
-    restaurant.log("hang", ident, "open", f"{provider} {minutes}m")
-    return f"{ident}: {provider} open {minutes}m"
+    suffix = f" (attempt {attempt})" if attempt else ""
+    restaurant.log("hang", ident, "open", f"{provider} {minutes}m{suffix}")
+    return f"{ident}: {provider} open {minutes}m{suffix}"
 
 
 def display_root(path):
@@ -1207,7 +1267,7 @@ def walk(root, stale_hours=24, repo=None):
             age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
             idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
             counts = status_line(restaurant)
-            blocked = len(blocked_waiting(restaurant))
+            blocked = len(holding_blocks(restaurant))
             if blocked:
                 counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
             lines.append(f"  {meta['restaurant']} (reports {reporting_of(meta)}){idle}: {counts}")
@@ -1282,6 +1342,7 @@ def parser():
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
     p.add_argument("id")
+    p.add_argument("--attempt", type=int, help="an earlier attempt, counted from 1, whose run was left open")
     p.add_argument("--provider", required=True)
     p.add_argument("--minutes", type=int, required=True)
 
@@ -1440,6 +1501,15 @@ def run(argv):
                     args.paths)
     if args.command == "watch":
         return watch(restaurant)
+    if args.command == "ticket" and args.action == "list":
+        held = holding_blocks(restaurant)
+        with restaurant.checked():
+            return ticket_lines(restaurant, args.state, held)
+    if args.command == "dish" and args.branch and args.lease is None:
+        with restaurant.checked():
+            result = command(restaurant, args)
+        widened = widen_lease(restaurant, args.id, args.branch)
+        return f"{result}\n{widened}" if widened else result
     with restaurant.checked():
         return command(restaurant, args)
 
@@ -1475,19 +1545,6 @@ def command(restaurant, args, contract=None):
             return move_ticket(restaurant, args.id, args.to)
         if args.action == "take":
             return take_tickets(restaurant)
-        if args.action == "list":
-            rows = [row for row in restaurant.rows("rail.tsv") if not args.state or row["state"] == args.state]
-            lines = []
-            for row in rows:
-                line = f"{row['id']} {row['state']} [{row['source']}] {row['summary']}"
-                if row["ref"]:
-                    line += f" {row['ref']}"
-                if row["state"] == "waiting":
-                    kind = blocked_kind(restaurant, row["id"])
-                    if kind:
-                        line += f" blocked: {kind}"
-                lines.append(line)
-            return "\n".join(lines)
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
@@ -1542,7 +1599,7 @@ def command(restaurant, args, contract=None):
         return "\n".join(f"{q['id']}: {q['question']} Options: {q['options']}. Default: {q['default']}." for q in rows) or "no open decisions"
 
     if args.command == "hang":
-        return record_hang(restaurant, args.id, args.provider, args.minutes)
+        return record_hang(restaurant, args.id, args.provider, args.minutes, args.attempt)
     if args.command == "status":
         meta = restaurant.meta
         level = f"reporting: {reporting_of(meta)}, {contract}"

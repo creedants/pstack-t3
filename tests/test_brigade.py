@@ -971,7 +971,7 @@ class BrigadeTest(unittest.TestCase):
                              "D1 in-progress\nD1: L3 covers src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md; released L1")
             row = self.table_row(self.at, "dishes.tsv", "D1")
             self.assertEqual((row["lease"], row["paths"]), ("L3", "src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md"))
-            self.assertEqual([line.split(":", 1)[1].strip() for line in self.land("lease", "list").splitlines()],
+            self.assertEqual([line.rsplit(": ", 1)[1] for line in self.land("lease", "list").splitlines()],
                              ["changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
             self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "D1 in-progress")
 
@@ -1669,7 +1669,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--state", "queued")
         self.land("land")
         self.assertIn("D1 holds L1", self.brigade("dish", "D1", "--state", "dropped", ok=False))
-        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "idle"), "D1 dropped")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "idle"), "D1 dropped; T1 waiting again")
         self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_an_entry_another_run_landed_says_mark_it_merged(self):
@@ -1733,7 +1733,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("L1 held by perf/D1",
                       self.land("lease", "claim", "--holder", "engine/D1", "--paths", "README.md", ok=False))
         self.worker_commit("perf/d1", {"README.md": "late\n"})
-        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped; T1 waiting again")
         dropped = [line for line in (self.at / "log.tsv").read_text().splitlines() if "\tD1\tdropped\t" in line]
         self.assertEqual(len(dropped), 1)
         self.assertIn("stopped r1", dropped[0])
@@ -1753,7 +1753,7 @@ class BrigadeTest(unittest.TestCase):
         worker = subprocess.Popen(["bash", "-c", script], cwd=worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   text=True)
         try:
-            self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+            self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped; T1 waiting again")
             engine = self.store / "bridge-kit" / "engine"
             self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine")
             (engine / "menu.md").write_text("## Purpose\n\nEngine.\n")
@@ -1819,7 +1819,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.run_at(docs, *new, "ticket", "add", "--summary", "late"), "T2")
         self.assertEqual(self.land("lease", "renew", "L1", "--owner", "docs/@2"), "L1 renewed")
         self.assertEqual(self.land("lease", "release", "L1", "--owner", "docs/@2"), "L1 released")
-        self.assertEqual(self.run_at(docs, *new, "dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped")
+        self.assertEqual(self.run_at(docs, *new, "dish", "D1", "--state", "dropped", "--stopped", "r1"), "D1 dropped; T1 waiting again")
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "1", ok=False),
                          "land: docs/ is at generation 2; a floor never lowers")

@@ -531,7 +531,7 @@ The admin work waits for the live run. Changes 1 to 7 close every gap on their o
 
 Run after change 7 lands, on a clone of `creedants/pstack-t3-sandbox`, the scratch repository the request for this design names for the live run. Changes 8 to 11 start only after its first part records its numbers. Opening issues there is still a GitHub write outside pstack-t3's own PR flow. The ref check compares strings, so the run uses an existing sandbox issue URL, or a made-up ref, rather than opening an issue.
 
-1. `land.py init --trunk main --mode merge --cap 3 --check <the sandbox's test command>`. Open `core` with `--intake github` and then `docs`, each with `--workers 2`. `docs`'s `open` prints `core`'s purpose and exclusions.
+1. `land.py init --trunk main --mode merge --merge-method <the method the repository allows> --cap 3 --check <the sandbox's test command>`. The sandbox allows only squash merges, so pass `--merge-method squash`. Open `core` with `--intake github`, and fill `core`'s `menu.md` before opening `docs`. Then open `docs`. Give each `--workers 2`. `docs`'s `open` prints `core`'s purpose and exclusions, and prints `purpose: not written yet` when `core`'s menu is still the template.
 2. `docs` adds a ticket with `--source github` and is refused, naming `core`. `core` files the issue, and filing it again is refused.
 3. `core` starts one item on `README.md` and one on `src/`. `docs`'s `fire` on `README.md` is refused. `docs`'s `watch` prints `waiting on L<n> (core/D1)`.
 4. `docs` starts one item on a disjoint path, which makes 3 changes in flight. A third `fire` in `core` is refused by its own cap of 2. A second `fire` in `docs` is refused with the repository cap message, `3 of 3 changes in flight`.
