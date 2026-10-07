@@ -531,6 +531,8 @@ The admin work waits for the live run. Changes 1 to 7 close every gap on their o
 
 Run after change 7 lands, on a clone of `creedants/pstack-t3-sandbox`, the scratch repository the request for this design names for the live run. Changes 8 to 11 start only after its first part records its numbers. Opening issues there is still a GitHub write outside pstack-t3's own PR flow. The ref check compares strings, so the run uses an existing sandbox issue URL, or a made-up ref, rather than opening an issue.
 
+The clone is not a git worktree of the sandbox's T3 project, so T3 refuses an `existing_worktree` strategy that points at it. Register the clone as its own T3 project with `t3_project_create`. Launch every coordinator and the admin in that project with `workspaceStrategy: {"type": "root"}`, as the brigade skill says. Workers then use the skill's `worktree` strategy unchanged.
+
 1. `land.py init --trunk main --mode merge --merge-method <the method the repository allows> --cap 3 --check <the sandbox's test command>`. The sandbox allows only squash merges, so pass `--merge-method squash`. Open `core` with `--intake github`, and fill `core`'s `menu.md` before opening `docs`. Then open `docs`. Give each `--workers 2`. `docs`'s `open` prints `core`'s purpose and exclusions, and prints `purpose: not written yet` when `core`'s menu is still the template.
 2. `docs` adds a ticket with `--source github` and is refused, naming `core`. `core` files the issue, and filing it again is refused.
 3. `core` starts one item on `README.md` and one on `src/`. `docs`'s `fire` on `README.md` is refused. `docs`'s `watch` prints `waiting on L<n> (core/D1)`.
@@ -550,12 +552,12 @@ Record four numbers.
 
 After change 10 lands, the same run continues with an executive admin.
 
-1. `core` drops `github` from its intake. Open the admin with `open --admin --project-root <sandbox root>`, give it `--intake github`, launch its thread in the sandbox's T3 project, and have `core` and `docs` run `set --reports-to <its thread>`.
-2. The user sends one request to the admin. It moves the ticket to `docs` and sends the `ticket` line, and `docs` takes it.
+1. `core` drops `github` from its intake. Open the admin with `open --admin --project-root <sandbox root>`, give it `--intake github`, launch its thread in the clone's T3 project, and have `core` and `docs` run `set --reports-to <its thread>`.
+2. The user sends one request to the admin. It files the request with `ticket add --source user`, moves the ticket to `docs`, and sends the `ticket` line, and `docs` takes it.
 3. When `docs`'s item merges, `docs` sends the `merged` line and sends the user nothing. The admin replies at the user's level, in plain language.
-4. With `## Priorities` empty, `core` and `docs` both wait for `README.md` past an hour, while a third item holds it. Shorten the threshold for the run if no conflict lasts that long. The admin rules by age, records the ruling, and reserves the paths for the older side. When the lease frees, the other side's `fire` is refused with the reservation message, and the winner's succeeds. `lease list` shows no lease taken away.
+4. With `## Priorities` empty, `core` and `docs` both wait for `CONTRIBUTING.md` past an hour, while a third item holds it. Use a path neither purpose names. Each coordinator lists its sibling's purpose under `## Off the menu`, so a path one purpose names, such as `README.md` for a docs coordinator, is decided by `purpose` and never reaches age. Shorten the threshold for the run if no conflict lasts that long. The admin rules by age, records the ruling, and reserves the paths for the older side. When the lease frees, the other side's `fire` is refused with the reservation message, and the winner's succeeds. `lease list` shows no lease taken away.
 5. The user overrules that ruling in plain words. The admin records the overrule, lifts the reservation, and reserves for the other side. Its next update lists both rulings.
-6. `docs` finds that its passed item depends on one of `core`'s, opens a contest, and sends the `contest` line. Neither item lands until the admin settles it by dependency, and then `land` lands `core`'s item first.
+6. `docs` finds that its passed item depends on one of `core`'s, opens a contest, sends the `contest` line, and then submits the item rather than holding it. Neither item lands until the admin settles it by dependency, and then `land` lands `core`'s item first.
 
 That part records three more numbers.
 
