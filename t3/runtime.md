@@ -16,7 +16,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | subagent, worker, delegate, reviewer, runner, judge | A child task created with `delegate_task`, owned by this thread. |
 | cloud worker | A child task. T3 children run on this machine, so they can reach local files, browsers, and auth. |
 | background, `run_in_background` | `delegate_task` with `mode: "async"`. |
-| wait for a worker | End the turn and let the completion notification wake you, or call `task_status` mid-turn. |
+| wait for a worker | End the turn and let the completion notification wake you, or call `task_status` mid-turn. A thread with no schedule of its own keeps a bounded wait. See [Delegation](#delegation) step 5. |
 | cancel a worker | `task_cancel`. |
 | model slug, role model | A target `{providerInstanceId, model, options}` from `orchestrator_capabilities`, resolved through roles. See [Roles](#roles). |
 | `inherit-parent`, `auto` | `"inherit"`. Omit `target` so the child inherits this thread's provider, model, and options. |
@@ -57,7 +57,8 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
    - Retain every returned `taskId` in your todo list or work log.
 4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body and carries a `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
 5. Collect results.
-   - If nothing else in this turn depends on the results, end the turn. Each completion wakes this thread.
+   - If nothing else in this turn depends on the results, and this thread has a schedule of its own that wakes it, end the turn. Each completion wakes this thread.
+   - A completion arrives only when the child's run ends. A child stalled on an approval request, or a run that stays open after its final message, never ends, so no wake comes. A thread with no schedule of its own, such as a worker running a brief, does not end its turn while a child is open. A coordinator's liveness check is not this thread's schedule. Call `t3_thread_wait` on the child's `childThreadId` with `timeoutMs: 300000`. When it returns a terminal status, call `task_status` to read and acknowledge the result, because `t3_thread_wait` does not acknowledge it. When it returns `timedOut: true`, read the child with `t3_thread_read`, `view: "activity"`, and `afterPosition`. A child with no new item for 10 minutes is stalled. Handle it per [Failure handling](#failure-handling), then wait on the next open child.
    - If you need a result now, call `task_status` with the `taskId`. Reading a terminal result this way acknowledges it, so no completion notification follows. Process that result immediately, as if the notification had arrived. `workState: "result_available"` means done, and `summary` holds the result. `working` and `waiting_for_children` mean not done. Do not busy-poll. Do other work between checks.
    - `mode: "wait"` blocks for at most `timeoutMs`, ten minutes by default. Use it only for short children whose result gates the very next step. `waitTimedOut: true` does not cancel the child. Keep the `taskId`.
 6. You own every child's output. Read the diff or the evidence yourself before you report it. A child's "done" is a claim, not a verification.
@@ -66,13 +67,14 @@ Same-provider native subagent tools (Claude's Agent tool, Codex's subagents) are
 
 ### Permissions
 
-Children inherit this thread's runtime mode and interaction mode. Do not raise `runtimeMode` above the parent's. A read-only reviewer is a read-only brief: say "do not edit files, commit, or push" in the task. T3 has no read-only flag that keeps MCP access, so the brief carries the constraint.
+Children inherit this thread's runtime mode and interaction mode. Omit `runtimeMode` so the child inherits. Never raise it above the parent's, and never lower it. A child in `approval-required` stops at its first command on an approval request that no tool can answer, so it never finishes. A read-only reviewer is a read-only brief: say "do not edit files, commit, or push" in the task. T3 has no read-only flag that keeps MCP access, so the brief carries the constraint.
 
 ### Failure handling
 
 - A target is rejected: call `orchestrator_capabilities`, then fall back per [Roles](#roles), and say which seat changed and why.
 - A child fails or returns nothing usable: proceed with N-1 and record the dropout. Respawn once with a fresh child for a required slice. Never resume a failed child to fix its own work.
 - `task_status` shows `hasPendingChildRuns`: that child is still running nested work. It is not finished.
+- A stalled child (see [Delegation](#delegation) step 5): read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
 
 ### Fresh children by default
 
@@ -210,7 +212,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - The tick prompt must stand alone. Point it at the work log or store so a run can rebuild state from disk.
 - Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
 - Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
-- Do not schedule a tick to wait for a child task. Child completions already wake this thread.
+- Do not schedule a tick to wait for a child task. Child completions wake this thread, and [Delegation](#delegation) step 5 bounds the wait for a child that never completes.
 - Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. A required heartbeat whose job is to notice a merge may use `900000`, as that section states.
 
 ## Local state
