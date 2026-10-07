@@ -2616,6 +2616,23 @@ os.execv({real!r}, [{real!r}, *args])
                              "land: repository does not allow merge; allowed: squash")
             self.assertEqual(self.stored_merge_method(), "squash")
 
+    def test_a_settled_contest_keeps_its_order_while_a_bounced_pr_still_has_auto_merge(self):
+        with self.fake_gh():
+            (self.base / "required-checks").write_text("")
+            (self.base / "disable-auto-fails").write_text("API unavailable")
+            self.arm_auto_merge()
+            self.init(mode="merge")
+            self.queue_one(path="a.txt", name="w1", holder="docs/D7")
+            self.contest("--holders", "docs/D7,engine/D3")
+            self.queue_one(path="b.txt", name="w2", holder="engine/D3")
+            self.contest("--settle", "C1", "--first", "docs/D7")
+            self.land("land")
+            self.land("land")
+            (self.base / "checks").write_text("failed")
+            self.assertIn("auto-merge still enabled: API unavailable", self.land("land"))
+            self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
+                             "land: C1 cannot put engine/D3 first: docs/D7 has E1 bounced with auto-merge still enabled")
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--paused-child"]:
         paused_child(sys.argv[2], sys.argv[3:])
