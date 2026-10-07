@@ -2390,6 +2390,17 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertRegex(self.land("lease", "unreserve", "S2", *ADMIN), r"^S2 expired at \d{4}-\d\d-\d\dT\d\d:\d\d$")
         self.assertEqual(self.land("lease", "unreserve", "S9", *ADMIN, ok=False), "land: no S9")
         self.assertEqual(self.reserve("docs", "c.txt", "R7", ok=False), "land: 'docs' is not a holder prefix such as docs/")
+        self.assertEqual(self.reserve("docs/", "c.txt", "R8"), "S3")
+        self.assertEqual(self.claim("docs/D7", "c.txt"), "L3")
+        self.assertEqual(self.reserve("docs/", "c.txt", "R8"), "S3 was claimed in full")
+
+    def test_a_reservation_refuses_the_whole_repository(self):
+        self.init()
+        refusal = "land: a reservation names the contested paths; it cannot hold the whole repository"
+        self.assertEqual(self.reserve("docs/", "", "R4", ok=False), refusal)
+        self.assertEqual(self.reserve("docs/", "a.txt,.", "R4", ok=False), refusal)
+        self.assertEqual(self.claim("engine/D3", "lib"), "L1")
+        self.assertEqual(self.listed(), ["L1 active engine/D3: lib"])
 
     def test_shares_refuse_a_sum_over_the_cap_and_admission_refuses_a_claim_over_a_share(self):
         self.init()
