@@ -450,14 +450,11 @@ def change_mode(store, mode, merge_method):
     seen = store.contract["mode"]
     if "local" in (mode, seen) and mode != seen:
         raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
-    picked = None
-    if mode != "local" and (merge_method or mode == "merge"):
-        stored = store.contract.get("mergeMethod") or "merge"
+    allowed = None
+    if merge_method or mode == "merge":
         allowed = allowed_merge_methods(store.repo)
         if merge_method:
             pick_merge_method(merge_method, allowed)
-        elif allowed is not None and stored not in allowed:
-            picked = pick_merge_method(None, allowed)
     with store.tx() as db:
         # The read above can go stale while gh runs. This one decides the write.
         current = json.loads(db.execute("SELECT value FROM contract WHERE key = 'mode'").fetchone()["value"])
@@ -468,9 +465,10 @@ def change_mode(store, mode, merge_method):
         if busy and (mode != current or not merge_method):
             raise LandError(busy_queue_message(busy))
         db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps(mode),))
-        if picked and (store.contract.get("mergeMethod") or "merge") != stored:
-            picked = None
-        method = merge_method or picked
+        method = merge_method
+        if not method and mode == "merge" and allowed is not None:
+            # Check the method stored now, not the one stored before gh ran.
+            method = None if (store.contract.get("mergeMethod") or "merge") in allowed else pick_merge_method(None, allowed)
         if method:
             db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(method),))
         store.log(db, "queue", 0, f"mode {mode}", f"was {current}")
@@ -1622,6 +1620,12 @@ def settle_contest(store, db, number, first):
         if row["first"] == first:
             return settled
         raise LandError(f"C{number} is done: {row['first']} landed")
+    if row["first"] and row["first"] != first:
+        # An open PR can merge on its own, so an order that has started cannot be reversed.
+        started = db.execute("SELECT * FROM entry WHERE holder = ? AND state IN ('landing', 'awaiting-merge') ORDER BY id LIMIT 1",
+                             (row["first"],)).fetchone()
+        if started:
+            raise LandError(f"C{number} cannot put {first} first: {row['first']} has {entry_label(started['id'])} {started['state']}")
     edges = [(other["first"], second_of(other), other["id"]) for other in active_contests(db)
              if other["state"] == "settled" and other["id"] != number]
     cycle = sorted(ident for start, end, ident in edges if start in reach(edges, second) and first in reach(edges, end))
