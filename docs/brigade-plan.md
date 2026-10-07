@@ -32,13 +32,13 @@ The kitchen terms name files, commands, and process steps only. They never reach
 
 - `$brigade open` runs from any thread. It interviews the user with `grilling` for the menu and house rules, writes the store, then launches the head chef in the target project. In its first turn the head chef creates its own supplier, line-check, and close-out schedules, so each run posts into its own thread.
 - `$brigade` inside a head chef thread is the operating manual: take tickets, group them, fire stations, run the pass, update the 86 board, write the close-out.
-- `$brigade walk` prints every restaurant's 86 board and last close-out from the store. It is a script, not an agent.
+- `$brigade walk` prints every restaurant grouped under its repository, with the repository's landing status, each restaurant's counts, leases, and 86 board. It is a script, not an agent.
 
 ## Store
 
 `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<restaurant>/`
 
-- `restaurant.json` records the name, project root, the landing mode chosen at open or the one last recorded with `brigade.py set --landing`, the head chef thread, schedule IDs, last activity, and last report. The mode that decides what reaches trunk is the repository's landing contract.
+- `restaurant.json` records the name, project root, the head chef thread, schedule IDs, last activity, and last report. It records no landing mode. The repository's landing contract is the only record of the mode, and an old `landing` field is ignored.
 - `menu.md`, `house-rules.md`: written from templates at opening, then edited by the head chef.
 - `rail.tsv` (tickets), `dishes.tsv` (grouped work assigned to a station), `pass.tsv` (one verdict per dish and head SHA), `86.tsv` (decisions for the user): current state, updated in place.
 - `log.tsv`: every state change, append-only.
@@ -49,7 +49,7 @@ The head chef thread is the only writer. Nothing is committed.
 
 ## Defaults
 
-- `brigade.py dish <id> --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. The landing mode belongs to the repository's landing contract (`land.py init` and `land.py mode`). `restaurant.json` records the landing mode chosen at open, or the one last recorded with `brigade.py set --landing`.
+- `brigade.py dish <id> --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. The landing mode belongs to the repository's landing contract (`land.py init` and `land.py mode`). `brigade.py status` and `walk` read it from `land.py status`.
 - `pass record` refuses a verifier from the author's model family unless `--same-family` is given, and then notes it on the verdict.
 - A report lists only log entries after `lastReportAt`, so nothing the user already saw repeats.
 - `walk` marks a restaurant idle after 24 hours without activity, so a stalled head chef shows up.
