@@ -26,6 +26,9 @@ TICKET_STATES = ("waiting", "assigned", "moved", "done", "dropped")
 LIVE_TICKET_STATES = ("waiting", "assigned")
 DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "queued", "merged", "dropped")
 COUNTED_STATES = ("in-progress", "in-review")
+# A dish in one of these holds an active lease that watch keeps renewing. A queued dish's lease is the queue's.
+LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
+OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 OPEN_RUN_MINUTES = 10
 
@@ -129,12 +132,34 @@ def is_timestamp(value):
 
 
 class Restaurant:
-    def __init__(self, directory):
+    def __init__(self, directory, owner=None):
         self.dir = Path(directory)
         if not (self.dir / "restaurant.json").is_file():
             raise BrigadeError(f"{self.dir} is not a restaurant (no restaurant.json); run brigade.py open")
+        if owner is not None and not re.fullmatch(r".+@\d+", owner):
+            raise BrigadeError(f"--owner takes <thread>@<generation>, got {owner!r}")
+        self.owner = owner
+        # set --thread changes the owner, so it alone writes without matching the recorded one.
+        self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+
+    def fence(self):
+        """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
+        meta = self.meta
+        if meta.get("generation") is None:
+            return
+        recorded = f"{meta.get('thread') or ''}@{meta['generation']}"
+        if self.owner is None:
+            raise BrigadeError(f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status")
+        if self.owner != recorded:
+            raise BrigadeError(f"owner {self.owner} is stale; this store is owned by {recorded}")
+
+    def land_owner(self):
+        """The --owner words for land.py: this store's holder prefix at the caller's generation."""
+        if self.owner is None:
+            return []
+        return ["--owner", f"{slug(self.meta['restaurant'])}/@{self.owner.rpartition('@')[2]}"]
 
     @contextmanager
     def locked(self):
@@ -170,6 +195,8 @@ class Restaurant:
 
     def write(self, relative, text):
         with self.locked():
+            if not self.unfenced:
+                self.fence()
             write_atomic(self.dir / relative, text)
 
     @property
@@ -203,6 +230,8 @@ class Restaurant:
         data = ("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n").encode()
         path = self.dir / table
         with self.locked():
+            if not self.unfenced:
+                self.fence()
             if not path.exists():
                 self.save_rows(table, [])
             fd = os.open(path, os.O_RDWR | os.O_APPEND)
@@ -237,14 +266,14 @@ class Restaurant:
                 return rows, row
         raise BrigadeError(f"no {ident} in {table}")
 
-    def update(self, table, ident, kind, **fields):
+    def update(self, table, ident, kind, note=None, **fields):
         rows, row = self.find(table, ident)
         changed = {key: value for key, value in fields.items() if value is not None}
         moved = "state" in changed and changed["state"] != row.get("state")
         row.update(changed)
         self.save_rows(table, rows)
         if moved:
-            self.log(kind, ident, changed["state"], row.get("summary") or row.get("question", ""))
+            self.log(kind, ident, changed["state"], note or row.get("summary") or row.get("question", ""))
         return row
 
 
@@ -733,14 +762,14 @@ def repository_cap(project_root):
 def claim_lease(restaurant, dish, paths):
     """Claim the dish's paths in the repository's landing queue. A refused claim fires nothing."""
     result = land_result(restaurant.meta["projectRoot"], "lease", "claim",
-                         "--holder", holder(restaurant, dish), "--paths", paths)
+                         "--holder", holder(restaurant, dish), "--paths", paths, *restaurant.land_owner())
     if result.returncode != 0:
         raise ClaimError(result.stderr.strip().removeprefix("land: "))
     return result.stdout.strip()
 
 
 def release_lease(restaurant, lease):
-    result = land_result(restaurant.meta["projectRoot"], "lease", "release", lease)
+    result = land_result(restaurant.meta["projectRoot"], "lease", "release", lease, *restaurant.land_owner())
     if result.returncode != 0:
         diagnostic = (result.stderr or result.stdout).strip().removeprefix("land: ")
         print(f"brigade: warning: could not release {lease}: {diagnostic}", file=sys.stderr)
@@ -803,6 +832,7 @@ def unfireable(restaurant, ids):
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths):
     while True:
         with restaurant.checked():
+            restaurant.fence()
             refusal = unfireable(restaurant, ids)
             if refusal:
                 raise BrigadeError(refusal)
@@ -914,13 +944,59 @@ def started_at(restaurant, ident):
     return datetime.fromisoformat(moves[-1]) if moves else None
 
 
+def renew_line(restaurant, dish):
+    """Renew a live lease. Returns the line to print, or None, and whether the landing store answered."""
+    lease = dish["lease"]
+    result = land_result(restaurant.meta["projectRoot"], "lease", "renew", lease, "--if-live", *restaurant.land_owner())
+    error = result.stderr.strip().removeprefix("land: ")
+    if result.returncode == 0 or error.startswith(f"{lease} is submitted"):
+        return None, True
+    if error == f"{lease} is released":
+        return f"{dish['id']}: lease {lease} was released; claim again before submitting", True
+    if error.startswith(f"{lease} expired at "):
+        return f"{dish['id']}: lease {lease} expired; stop its worker, then run lease renew {lease}", True
+    return f"{dish['id']}: could not renew {lease}: {error or result.stdout.strip()}", False
+
+
+ENTRY_LINE = re.compile(r"^E(\d+) (\S+) \((\S+), ([0-9a-f]+)\)(.*)$")
+
+
+def entry_line(restaurant, dish):
+    """The queue's entry for this dish: its holder's highest entry at the dish's SHA."""
+    result = land_result(restaurant.meta["projectRoot"], "status", "--holder", holder(restaurant, dish["id"]))
+    if result.returncode != 0:
+        return f"{dish['id']}: could not read the queue: {result.stderr.strip().removeprefix('land: ')}"
+    sha = dish["sha"].lower()
+    found = None
+    for line in result.stdout.splitlines():
+        match = ENTRY_LINE.match(line)
+        if match and sha and match.group(4).startswith(sha[:12]):
+            found = match
+    if not found:
+        return None if dish["state"] == "passed" else f"{dish['id']}: queued, but no entry at {sha[:12]}"
+    number, state, rest = found.group(1), found.group(2), found.group(5)
+    ident = dish["id"]
+    if state == "bounced":
+        return f"{ident}: E{number} bounced{rest}"
+    if dish["state"] == "passed":
+        return f"{ident}: E{number} already submitted; mark it queued"
+    if state == "landed":
+        return f"{ident}: landed as E{number} ({rest.removeprefix(' as ')}); mark it merged"
+    if state == "awaiting-merge":
+        return f"{ident}: E{number} awaiting merge {rest.strip()}; watch that PR"
+    return f"{ident}: E{number} {state}"
+
+
 def watch(restaurant):
     with restaurant.checked():
-        lines = []
+        restaurant.fence()
+        progress = {}
         moment = datetime.now(timezone.utc)
-        for dish in restaurant.rows("dishes.tsv"):
+        dishes = [dish for dish in restaurant.rows("dishes.tsv") if dish["state"] not in ("merged", "dropped")]
+        for dish in dishes:
             if dish["state"] != "in-progress":
                 continue
+            attempt = progress.setdefault(dish["id"], [])
             start = started_at(restaurant, dish["id"]) or datetime.fromisoformat(dish["at"])
             minutes = int((moment - start).total_seconds() // 60)
             timebox = int(dish.get("timebox") or 60)
@@ -931,15 +1007,16 @@ def watch(restaurant):
                 if dish.get("reported") == "yes":
                     ago = int((moment - written).total_seconds() // 60)
                     if ago > OPEN_RUN_MINUTES:
-                        lines.append(f"{dish['id']}: reported, run still open {ago}m ({where})")
+                        attempt.append(f"{dish['id']}: reported, run still open {ago}m ({where})")
                     else:
-                        lines.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
+                        attempt.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
                 else:
-                    lines.append(f"{dish['id']}: report written, no report-back ({where})")
+                    attempt.append(f"{dish['id']}: report written, no report-back ({where})")
             elif minutes > timebox:
-                lines.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
+                attempt.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
             else:
-                lines.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+                attempt.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+        lines = []
         for ticket in restaurant.rows("rail.tsv"):
             if ticket["state"] != "moved":
                 continue
@@ -961,10 +1038,81 @@ def watch(restaurant):
         root = restaurant.meta["projectRoot"]
         prefix = slug(restaurant.meta["restaurant"])
         next_dish = restaurant.next_id("dishes.tsv")
-    # lease check waits on the landing database, so it runs outside the store lock.
+    # land.py waits on the landing database, so every call runs outside the store lock.
+    item_lines, answered = [], True
+    for dish in dishes:
+        found = progress.get(dish["id"], [])
+        if dish["lease"] and dish["state"] in LEASED_STATES:
+            line, ok = renew_line(restaurant, dish)
+            answered = answered and ok
+            found += [line] if line else []
+        if dish["state"] in ("passed", "queued"):
+            line = entry_line(restaurant, dish)
+            found += [line] if line else []
+        item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
     for ident, note in blocked:
         lines.append(blocked_watch_line(root, prefix, ident, note, running, cap, next_dish))
-    return "\n".join(lines) or "no work in progress"
+    if answered:
+        # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
+        with restaurant.locked():
+            meta = restaurant.meta
+            meta["lastActivityAt"] = now()
+            restaurant.save_meta(meta)
+    return "\n".join(item_lines + lines) or "no work in progress"
+
+
+def drop(restaurant, ident, stopped):
+    """Drop a dish and release its lease, only after its worker stopped. A requested interrupt is not a stop."""
+    with restaurant.checked():
+        restaurant.fence()
+        _, dish = restaurant.find("dishes.tsv", ident)
+        lease = dish["lease"] if dish["state"] in LEASED_STATES else ""
+        if lease and dish["thread"] and not stopped:
+            raise BrigadeError(f"{ident} holds {lease} and its worker may still be running; "
+                               "wait for its run with t3_thread_wait, then pass --stopped <run id>")
+    if lease:
+        result = land_result(restaurant.meta["projectRoot"], "lease", "release", lease, *restaurant.land_owner())
+        error = result.stderr.strip().removeprefix("land: ")
+        if result.returncode != 0 and not error.startswith(f"{lease} is not active"):
+            raise BrigadeError(f"{ident} not dropped: could not release {lease}: {error}")
+    with restaurant.checked():
+        _, dish = restaurant.find("dishes.tsv", ident)
+        evidence = [f"stopped {stopped}"] if stopped else []
+        evidence += [f"released {lease}"] if lease else []
+        note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
+        restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
+    return f"{ident} dropped"
+
+
+def next_owner(meta, thread, replace):
+    """The generation set --thread records, and whether it replaces a recorded thread."""
+    current = (meta.get("thread") or "").strip()
+    generation = meta.get("generation")
+    if current and thread != current:
+        if not replace:
+            raise BrigadeError(f"thread {current} already recorded")
+        return (generation or 1) + 1, True
+    return generation or 1, False
+
+
+def set_thread(restaurant, args):
+    """Raise the landing floor first, outside the store lock, so a crash before the rewrite is reached again."""
+    while True:
+        with restaurant.locked():
+            target = next_owner(restaurant.meta, args.thread, args.replace)
+        generation, replacing = target
+        if replacing:
+            prefix = f"{slug(restaurant.meta['restaurant'])}/"
+            result = land_result(restaurant.meta["projectRoot"], "owner", "--prefix", prefix, "--generation", str(generation))
+            error = result.stderr.strip().removeprefix("land: ")
+            # A project with no landing contract has no leases to fence.
+            if result.returncode != 0 and "has no landing contract" not in error and "not a git repository" not in error:
+                raise BrigadeError(f"thread not replaced: could not raise the landing floor for {prefix}: {error}")
+        with restaurant.checked():
+            if next_owner(restaurant.meta, args.thread, args.replace) != target:
+                continue
+            restaurant.unfenced = True
+            return command(restaurant, args)
 
 
 def record_hang(restaurant, ident, provider, minutes):
@@ -1002,6 +1150,7 @@ def parser():
     top = argparse.ArgumentParser(prog="brigade.py", description=__doc__.splitlines()[0])
     top.add_argument("--store", help="store root (default $BRIGADE_STORE or $XDG_STATE_HOME/pstack-t3/brigade)")
     top.add_argument("--at", default=os.environ.get("BRIGADE_DIR"), help="restaurant directory (default $BRIGADE_DIR)")
+    top.add_argument("--owner", help="<thread>@<generation> from status; every write in a store with a generation needs it")
     sub = top.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
@@ -1075,6 +1224,7 @@ def parser():
     p.add_argument("--reported", action="store_true", help="record that this attempt's report-back arrived")
     p.add_argument("--lease", help="record a lease id claimed again")
     p.add_argument("--paths", help="record the paths that lease covers")
+    p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
 
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
@@ -1198,7 +1348,11 @@ def run(argv):
         return walk(root, args.stale_hours)
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
-    restaurant = Restaurant(args.at)
+    restaurant = Restaurant(args.at, args.owner)
+    if args.command == "set" and args.thread:
+        return set_thread(restaurant, args)
+    if args.command == "dish" and args.state == "dropped":
+        return drop(restaurant, args.id, args.stopped)
     if args.command == "brief":
         # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
         fields = _brief_fields(args)
@@ -1220,9 +1374,7 @@ def command(restaurant, args):
         if args.intake is not None:
             meta = set_intake(restaurant, intake_list(args.intake))
         if args.thread:
-            current = (meta.get("thread") or "").strip()
-            if current and args.thread != current and not args.replace:
-                raise BrigadeError(f"thread {current} already recorded")
+            meta["generation"], _ = next_owner(meta, args.thread, args.replace)
             meta["thread"] = args.thread
         if args.landing:
             meta["landing"] = args.landing
@@ -1318,11 +1470,13 @@ def command(restaurant, args):
     if args.command == "hang":
         return record_hang(restaurant, args.id, args.provider, args.minutes)
     if args.command == "status":
-        level = f"reporting: {reporting_of(restaurant.meta)}"
+        meta = restaurant.meta
+        level = f"reporting: {reporting_of(meta)}"
         counts_text = status_line(restaurant)
-        if counts_text == "nothing on record":
-            return level
-        return f"{level}, {counts_text}"
+        line = level if counts_text == "nothing on record" else f"{level}, {counts_text}"
+        if meta.get("generation") is not None:
+            line += f"\nowner {meta.get('thread') or ''}@{meta['generation']}"
+        return line
     if args.command == "close":
         text, path = report(restaurant, write=not args.dry_run)
         if args.to_file:

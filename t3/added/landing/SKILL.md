@@ -25,10 +25,11 @@ L="python3 <skills>/landing/scripts/land.py --repo <checkout>"
 $L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4]
 $L mode merge [--merge-method squash]   # switch between human, merge, and push while nothing is in flight
 $L cap 4                     # most changes in flight on the repository at once; 0 clears it
-$L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json   # prints L<n>, who holds the overlap, or the cap and its holders
+$L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json [--owner <restaurant>/@<generation>]   # prints L<n>, who holds the overlap, or the cap and its holders
 $L lease check --holder <restaurant>/<dish> --paths src/engine   # the claim's test without claiming: free, the overlapping leases, or the cap
-$L lease renew L3 [--if-live] ; $L lease release L3 ; $L lease list
-$L submit --holder <restaurant>/<dish> --branch <b> --sha <reviewed sha> --lease L3 --reviewer <provider/model> [--title "..." --body-file pr.md]   # prints E<n>
+$L lease renew L3 [--if-live] [--owner ...] ; $L lease release L3 [--owner ...] ; $L lease list
+$L submit --holder <restaurant>/<dish> --branch <b> --sha <reviewed sha> --lease L3 --reviewer <provider/model> [--owner ...] [--title "..." --body-file pr.md]   # prints E<n>
+$L owner --prefix <restaurant>/ --generation 2   # raise a holder prefix's floor; it never lowers
 $L land                      # drain the queue; prints what landed, bounced, or is still queued
 $L status [E3] ; $L resume
 $L status --holder <restaurant>/<dish>   # that holder's entries with their SHAs; a value ending in / matches every holder under it
@@ -37,6 +38,8 @@ $L slot --exclusive -- npm run bench   # hold every slot: nothing else heavy run
 ```
 
 Every command takes `--help`.
+
+A coordinator replaced by another thread must not write again. `owner --prefix docs/ --generation 2` raises the floor for holders under `docs/` and never lowers it, so a rerun changes nothing and a lower generation exits 1. `lease claim`, `lease renew`, `lease release`, and `submit` take `--owner <prefix>@<generation>`, whose prefix the holder must start with. Inside the write's transaction each refuses a generation below the prefix's floor with `land: owner docs/@1 is stale; docs/ is at generation 2`, and refuses a holder under a floored prefix that passes no `--owner`. A prefix with no floor works without `--owner`. brigade's `set --thread --replace` raises its restaurant's floor before it records the new thread.
 
 ## Set up a repository once
 
@@ -71,7 +74,7 @@ For every unit of writing work:
 
 ## Keep the queue moving
 
-While any entry you submitted is `queued` or `awaiting-merge`, keep the queue moving. Drains from other coordinators on the same repository are harmless, because the queue lock runs one at a time.
+While any entry you submitted is `queued` or `awaiting-merge`, keep the queue moving. Drains from other coordinators on the same repository are harmless, because the queue lock runs one at a time. `land` prints every holder's entries. Act only on lines whose holder is this coordinator's own, and call `watch_pull_request` only on those PRs. A sibling's PR is the sibling's to watch. When a sibling's `land` opens your PR, read its URL from your own `status --holder <restaurant>/<dish>`, which brigade's `watch` prints as `awaiting merge <pr url>`.
 
 In `merge` and `human` mode, once `land` has opened a PR, this thread calls `watch_pull_request` on that PR per [Pull request watching](../pstack-runtime/SKILL.md#pull-request-watching). This thread owns the PR. A worker child cannot watch. On each wake, run `land` and act on what it prints. When that wake's `land` prints `queue busy`, run `land` again before ending the turn, at most 3 more times, waiting 5 seconds before each try. The passed-checks wake is spent, so this thread would otherwise notice the merge only from the hourly heartbeat. Keep the watch while the entry is queued or awaiting merge. An interim status reply keeps the watch. Call `unwatch_pull_request` only when this thread stops driving that PR or hands the queue back to the user. Driving stops when that PR closes, when the queue bounces it and leaves it open, or when this thread stops owning the queue. When `land` reports a bounce and leaves the PR open, call `unwatch_pull_request` on that PR.
 

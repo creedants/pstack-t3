@@ -24,6 +24,17 @@ def _wait_for_path(path, timeout=8):
         time.sleep(0.005)
 
 
+def _owner_words(directory):
+    """The --owner a coordinator reads from status, as the skill's service step 1 does."""
+    try:
+        meta = json.loads((Path(directory) / "restaurant.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(meta, dict) or meta.get("generation") is None:
+        return ()
+    return ("--owner", f"{meta.get('thread') or ''}@{meta['generation']}")
+
+
 def _race_child(mode, case, args):
     case = Path(case)
     if mode == "land-pause":
@@ -137,10 +148,12 @@ class BrigadeTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def brigade(self, *args, ok=True, stdin=None):
-        return self.run_at(self.at, *args, ok=ok, stdin=stdin)
+    def brigade(self, *args, ok=True, stdin=None, owner=True):
+        return self.run_at(self.at, *args, ok=ok, stdin=stdin, owner=owner)
 
-    def run_at(self, directory, *args, ok=True, stdin=None):
+    def run_at(self, directory, *args, ok=True, stdin=None, owner=True):
+        if owner and "--owner" not in args:
+            args = (*_owner_words(directory), *args)
         result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(directory), *args],
                                 capture_output=True, text=True, input=stdin)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
@@ -293,7 +306,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
-        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting tickets: 1, decisions for you: 1")
+        self.assertEqual(self.brigade("status"), "reporting: milestones, waiting tickets: 1, decisions for you: 1\nowner thread-1@1")
         walked = self.brigade("walk")
         self.assertIn(", lands by merge, reports milestones): ", walked)
         self.assertIn("thread thread-1", walked)
@@ -570,12 +583,14 @@ class BrigadeTest(unittest.TestCase):
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
         waiting = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    *_owner_words(self.at),
                                     "brief", "D1", "--fields", "-"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             time.sleep(0.3)
             self.assertIsNone(waiting.poll())
-            others = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
+            others = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                        *_owner_words(self.at), *args],
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                       for args in (("status",), ("watch",), ("ticket", "add", "--summary", "second"))]
             outputs = [other.communicate(timeout=10) for other in others]
@@ -597,7 +612,7 @@ class BrigadeTest(unittest.TestCase):
         work.mkdir()
         script = (
             f"FIELDS='{work / 'fields.json'}'\n"
-            f"B='{sys.executable} {SCRIPT} --store {self.store} --at {self.at}'\n"
+            f"B='{sys.executable} {SCRIPT} --store {self.store} --at {self.at} {' '.join(_owner_words(self.at))}'\n"
             "cat > \"$FIELDS\" <<'JSON'\n"
             + json.dumps(fields) + "\n"
             "JSON\n"
@@ -1500,7 +1515,7 @@ class BrigadeTest(unittest.TestCase):
         (self.at / "restaurant.json").write_text(json.dumps(meta))
         self.assertEqual(self.brigade("ticket", "add", "--summary", "legacy"), "T1")
         self.brigade("set", "--thread", "t1")
-        self.assertEqual(self.brigade("ticket", "add", "--summary", "unowned", ok=False),
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "unowned", ok=False, owner=False),
                          "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
         self.assertEqual(self.brigade("--owner", "t1@1", "ticket", "add", "--summary", "owned"), "T2")
 
@@ -1521,6 +1536,8 @@ class HandoffTest(unittest.TestCase):
         return self.store / "app" / name
 
     def run_brigade(self, name, *args):
+        if "--owner" not in args:
+            args = (*_owner_words(self.dir(name)), *args)
         return subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(name)), *args],
                               capture_output=True, text=True)
 
@@ -1623,7 +1640,7 @@ class HandoffTest(unittest.TestCase):
                          {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "github", "ref": "R7"})
         self.assertEqual(self.brigade("core", "watch"), "T1: moved to engine, waiting for ticket take")
         self.assertEqual(self.brigade("engine", "watch"), "handed to you: 1; run ticket take")
-        self.assertEqual(self.brigade("engine", "status"), "reporting: milestones, handed to you: 1")
+        self.assertEqual(self.brigade("engine", "status"), "reporting: milestones, handed to you: 1\nowner thread-engine@1")
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [github (from app/core/T1)] Fix the cache R7")
         self.assertEqual(self.inbox("engine"), [])
