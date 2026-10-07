@@ -6,17 +6,215 @@
 # deletion stays a human-gated step in the playbook, and the playbook checks
 # T3 thread bindings with T3's tools, which this script cannot see.
 #
-# Usage: worktree-audit.sh [repo-path]   (defaults to the current repo)
-# Env:   TRUNK=<branch>  override the trunk branch (default: origin/HEAD, else main)
-#        T3_HOME=<dir>   T3's data dir (default: ~/.t3); worktrees live in $T3_HOME/worktrees
-#        RECENT_DAYS=<n> activity window for verify-recent (default: 4)
+# Usage: worktree-audit.sh [repo-path] [--t3-worktrees DIR]
+# Env:   TRUNK=<branch>     override the trunk branch (default: origin/HEAD, else main)
+#        T3CODE_HOME=<dir>  T3 data dir, the variable T3's server reads (else ~/.t3)
+#        T3_HOME=<dir>      data dir when T3CODE_HOME is unset
+#        T3_WORKTREES=<dir> configured worktree directory for this run
+#        RECENT_DAYS=<n>    activity window for verify-recent (default: 4)
+# T3=yes when the worktree sits under <data dir>/worktrees, or under
+# worktreesDirectory or previousWorktreesDirectories in
+# <data dir>/userdata/settings.json. dev/settings.json is read only when
+# T3CODE_HOME is unset and userdata/settings.json is absent. --t3-worktrees
+# and T3_WORKTREES replace that configured directory, and the flag wins.
+# An empty, relative, or filesystem-root value is ignored. The default
+# directory still counts, matching T3's managed set.
 set -u
 
-repo="${1:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+invoke_pwd=$(pwd)
+repo=""
+flag_root=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--t3-worktrees)
+			shift
+			if [ $# -eq 0 ] || [ -z "${1:-}" ]; then
+				echo "worktree-audit: --t3-worktrees needs a directory" >&2
+				exit 1
+			fi
+			flag_root="$1"
+			;;
+		--t3-worktrees=*)
+			flag_root="${1#--t3-worktrees=}"
+			if [ -z "$flag_root" ]; then
+				echo "worktree-audit: --t3-worktrees needs a directory" >&2
+				exit 1
+			fi
+			;;
+		-*)
+			echo "worktree-audit: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			if [ -n "$repo" ]; then
+				echo "worktree-audit: unexpected argument $1" >&2
+				exit 1
+			fi
+			repo="$1"
+			;;
+	esac
+	shift
+done
+
+repo="${repo:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -z "$repo" ] && { echo "not in a git repo; pass a repo path" >&2; exit 1; }
 cd "$repo" || exit 1
 
-t3_worktrees="${T3_HOME:-$HOME/.t3}/worktrees"
+expand_home() {
+	case "$1" in
+		"~") printf '%s\n' "$HOME" ;;
+		"~/"*) printf '%s\n' "$HOME/${1#"~/"}" ;;
+		*) printf '%s\n' "$1" ;;
+	esac
+}
+
+# Drop . and .. without resolving symlinks. A non-absolute input prints nothing.
+normalize_abs() {
+	local rest="$1" part acc=""
+	case "$rest" in
+		/*) ;;
+		*) printf '\n'; return ;;
+	esac
+	rest="${rest#/}"
+	while [ -n "$rest" ]; do
+		part="${rest%%/*}"
+		case "$rest" in
+			*/*) rest="${rest#*/}" ;;
+			*) rest="" ;;
+		esac
+		case "$part" in
+			""|.) ;;
+			..)
+				case "$acc" in
+					"") ;;
+					*/*) acc="${acc%/*}" ;;
+					*) acc="" ;;
+				esac
+				;;
+			*)
+				if [ -z "$acc" ]; then acc="$part"; else acc="$acc/$part"; fi
+				;;
+		esac
+	done
+	if [ -z "$acc" ]; then printf '/\n'; else printf '/%s\n' "$acc"; fi
+}
+
+# Empty, relative, or a filesystem root prints nothing. A root would mark
+# every path on that drive as a T3 worktree.
+resolve_worktrees_dir() {
+	local raw expanded abs
+	raw="$1"
+	[ -z "$raw" ] && return 0
+	expanded=$(expand_home "$raw")
+	case "$expanded" in
+		/*) ;;
+		*) return 0 ;;
+	esac
+	abs=$(normalize_abs "$expanded")
+	[ -z "$abs" ] || [ "$abs" = "/" ] && return 0
+	printf '%s\n' "$abs"
+}
+
+resolve_t3_home() {
+	local raw expanded abs
+	raw="$1"
+	expanded=$(expand_home "$raw")
+	case "$expanded" in
+		/*) ;;
+		*) expanded="$invoke_pwd/$expanded" ;;
+	esac
+	abs=$(normalize_abs "$expanded")
+	[ -z "$abs" ] || [ "$abs" = "/" ] && return 0
+	printf '%s\n' "$abs"
+}
+
+read_configured_dirs() {
+	local file="$1" out
+	if command -v jq >/dev/null 2>&1; then
+		if out=$(jq -r '(.worktreesDirectory // ""), (.previousWorktreesDirectories // [])[]' "$file" 2>/dev/null); then
+			printf '%s\n' "$out"
+			return 0
+		fi
+		echo "warn: could not read $file; T3 worktree location unread" >&2
+		return 0
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		if out=$(python3 -c '
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+current = data.get("worktreesDirectory") or ""
+if isinstance(current, str):
+    print(current)
+previous = data.get("previousWorktreesDirectories") or []
+if isinstance(previous, list):
+    for item in previous:
+        if isinstance(item, str):
+            print(item)
+' "$file" 2>/dev/null); then
+			printf '%s\n' "$out"
+			return 0
+		fi
+		echo "warn: could not read $file; T3 worktree location unread" >&2
+		return 0
+	fi
+	echo "warn: jq and python3 missing; T3 worktree location unread" >&2
+}
+
+if [ -n "${T3CODE_HOME:-}" ]; then
+	t3_home=$(resolve_t3_home "$T3CODE_HOME")
+elif [ -n "${T3_HOME:-}" ]; then
+	t3_home=$(resolve_t3_home "$T3_HOME")
+else
+	t3_home=$(resolve_t3_home "$HOME/.t3")
+fi
+if [ -z "$t3_home" ]; then
+	echo "worktree-audit: T3 data dir is not a usable path" >&2
+	exit 1
+fi
+
+t3_roots=""
+add_root() {
+	local dir
+	dir=$(resolve_worktrees_dir "$1")
+	[ -z "$dir" ] && return 0
+	case "
+$t3_roots
+" in
+		*"
+$dir
+"*) return 0 ;;
+	esac
+	if [ -z "$t3_roots" ]; then t3_roots="$dir"; else t3_roots="$t3_roots
+$dir"; fi
+}
+
+add_root "$t3_home/worktrees"
+if [ -n "$flag_root" ] || [ -n "${T3_WORKTREES:-}" ]; then
+	add_root "${flag_root:-$T3_WORKTREES}"
+else
+	settings=""
+	if [ -f "$t3_home/userdata/settings.json" ]; then
+		settings="$t3_home/userdata/settings.json"
+	elif [ -z "${T3CODE_HOME:-}" ] && [ -f "$t3_home/dev/settings.json" ]; then
+		settings="$t3_home/dev/settings.json"
+	fi
+	if [ -n "$settings" ]; then
+		configured=$(read_configured_dirs "$settings") || true
+		if [ -n "$configured" ]; then
+			while IFS= read -r line; do
+				add_root "$line"
+			done <<EOF
+$configured
+EOF
+		fi
+	fi
+fi
+
 recent_days="${RECENT_DAYS:-4}"
 now=$(date +%s)
 
@@ -63,7 +261,17 @@ printf "SIZE\tAGE\tACTIVE\tMERGED\tDIRTY\tREMOTE\tPR\tT3\tBUCKET\tWORKTREE\n"
 git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r wt; do
 	[ "$wt" = "$main_wt" ] && continue
 
-	case "$wt" in "$t3_worktrees"/*) t3=yes ;; *) t3=no ;; esac
+	t3=no
+	wt_abs=$(normalize_abs "$wt")
+	[ -n "$wt_abs" ] || wt_abs="$wt"
+	while IFS= read -r root; do
+		[ -z "$root" ] && continue
+		case "$wt_abs" in
+			"$root"|"$root"/*) t3=yes; break ;;
+		esac
+	done <<EOF
+$t3_roots
+EOF
 
 	# A registered worktree whose directory is gone is metadata only.
 	if [ ! -d "$wt" ]; then

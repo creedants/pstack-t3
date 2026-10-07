@@ -25,7 +25,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | `/loop`, hourly tick, automation, scheduled wakeup | `schedule_task`. See [Scheduling](#scheduling). |
 | `scripts/watch-pr`, a poll loop, waiting on CI | `watch_pull_request` on the thread that owns the PR. See [Pull request watching](#pull-request-watching). |
 | transcript, chat history, cloud-agent URL | A T3 thread, read with `t3_thread_search` and `t3_thread_read`. |
-| control-ui, browser MCP | T3 preview tools: `preview_open`, `preview_snapshot`, `preview_click`, `preview_type`, `preview_evaluate`, `preview_recording_start`. |
+| control-ui, browser MCP | T3 preview tools: `preview_open`, `preview_snapshot`, `preview_click`, `preview_type`, `preview_evaluate`, `preview_recording_start`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. |
 | ask the user (`AskQuestion`) | The host's question tool if it has one, otherwise a short question in the reply. |
 | todolist | The host's todo tool if it has one, otherwise a checklist in the work log. |
 | PR you opened or now drive | Register it with `link_pull_request`. |
@@ -219,7 +219,7 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 
 ## Verification surfaces
 
-- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Keep the `tabId` that `preview_open` returns and close each preview you opened with `t3_preview_close` and that `tabId`.
+- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Keep the `tabId` that `preview_open` returns and close each preview you opened with `t3_preview_close` and that `tabId`.
 - Devices and simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`.
 - CLIs and TUIs: run them in the terminal and assert on output.
 - A project `verify-*` skill beats all of these when one exists.
