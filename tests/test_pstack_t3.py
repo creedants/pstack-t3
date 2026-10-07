@@ -1325,6 +1325,41 @@ class WorktreeAuditTest(unittest.TestCase):
         marks = self._audit(T3CODE_HOME="   ", T3_HOME=str(t3_home), HOME=str(home))
         self.assertEqual(marks[str(default)], "yes")
 
+    def test_javascript_whitespace_pad_counts_for_each_parser(self):
+        t3_home = self.root / "t3home"
+        custom = self.root / "custom" / "wt"
+        outside = self.root / "outside" / "wt"
+        default = t3_home / "worktrees" / "wt"
+        _add_worktree(self.repo, custom, "b-custom")
+        _add_worktree(self.repo, outside, "b-out")
+        _add_worktree(self.repo, default, "b-default")
+        (t3_home / "userdata").mkdir(parents=True)
+        settings = t3_home / "userdata" / "settings.json"
+        parsers = [name for name in ("jq", "python3") if shutil.which(name)]
+        self.assertEqual(parsers, ["jq", "python3"])
+        paths = {parser: self._parser_path(parser) for parser in parsers}
+        for pad in ("\u00a0", "\ufeff"):
+            for parser, tool_path in paths.items():
+                label = (parser, hex(ord(pad)))
+                settings.write_text(json.dumps({
+                    "worktreesDirectory": f"{pad}{custom.parent}{pad}",
+                }))
+                marks = self._audit(T3CODE_HOME=str(t3_home), PATH=tool_path)
+                self.assertEqual(marks[str(custom)], "yes", (*label, "setting"))
+                self.assertEqual(marks[str(default)], "yes", (*label, "setting"))
+                self.assertEqual(marks[str(outside)], "no", (*label, "setting"))
+
+                settings.write_text(json.dumps({
+                    "worktreesDirectory": str(custom.parent),
+                }))
+                marks = self._audit(
+                    T3CODE_HOME=f"{pad}{t3_home}{pad}",
+                    PATH=tool_path,
+                )
+                self.assertEqual(marks[str(custom)], "yes", (*label, "home"))
+                self.assertEqual(marks[str(default)], "yes", (*label, "home"))
+                self.assertEqual(marks[str(outside)], "no", (*label, "home"))
+
     def test_playbook_names_the_configured_worktree_location(self):
         text = (ROOT / "t3/overrides/poteto-mode/playbooks/worktree-cleanup.md").read_text()
         self.assertIn("worktreesDirectory", text)
