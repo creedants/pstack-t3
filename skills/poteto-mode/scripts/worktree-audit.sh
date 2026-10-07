@@ -16,9 +16,13 @@
 # worktreesDirectory or previousWorktreesDirectories in
 # <data dir>/userdata/settings.json. dev/settings.json is read only when
 # T3CODE_HOME is unset and userdata/settings.json is absent. --t3-worktrees
-# and T3_WORKTREES replace that configured directory, and the flag wins.
+# and T3_WORKTREES replace those settings roots, and the flag wins.
 # An empty, relative, or filesystem-root value is ignored. The default
 # directory still counts, matching T3's managed set.
+# previousWorktreesDirectories counts only when it is an array of strings.
+# T3CODE_HOME and each settings path are trimmed before ~ expansion.
+# An existing directory is compared by its physical path. A filesystem root
+# is ignored after that resolution, so a symlink to / matches nothing.
 set -u
 
 invoke_pwd=$(pwd)
@@ -68,6 +72,40 @@ expand_home() {
 	esac
 }
 
+# T3 trims the data dir and settings paths before it expands ~.
+trim() {
+	local s="$1"
+	s="${s#"${s%%[![:space:]]*}"}"
+	s="${s%"${s##*[![:space:]]}"}"
+	printf '%s\n' "$s"
+}
+
+# Git records the physical path. cd -P and pwd -P are POSIX. realpath flags
+# differ between GNU and BSD, so this does not call realpath. A missing leaf
+# keeps the physical path of the ancestor that does exist.
+physical_abs() {
+	local path="$1" tail="" base
+	[ -z "$path" ] && return 0
+	if [ -d "$path" ] && base=$(cd -P -- "$path" && pwd -P); then
+		printf '%s\n' "$base"
+		return 0
+	fi
+	while [ "$path" != "/" ] && [ ! -d "$path" ]; do
+		tail="/${path##*/}$tail"
+		path="${path%/*}"
+		[ -n "$path" ] || path="/"
+	done
+	if [ "$path" = "/" ]; then
+		printf '/%s\n' "${tail#/}"
+		return 0
+	fi
+	if base=$(cd -P -- "$path" && pwd -P); then
+		printf '%s%s\n' "$base" "$tail"
+		return 0
+	fi
+	printf '%s\n' "$1"
+}
+
 # Drop . and .. without resolving symlinks. A non-absolute input prints nothing.
 normalize_abs() {
 	local rest="$1" part acc=""
@@ -103,7 +141,7 @@ normalize_abs() {
 # every path on that drive as a T3 worktree.
 resolve_worktrees_dir() {
 	local raw expanded abs
-	raw="$1"
+	raw=$(trim "$1")
 	[ -z "$raw" ] && return 0
 	expanded=$(expand_home "$raw")
 	case "$expanded" in
@@ -111,13 +149,16 @@ resolve_worktrees_dir() {
 		*) return 0 ;;
 	esac
 	abs=$(normalize_abs "$expanded")
+	[ -z "$abs" ] && return 0
+	abs=$(physical_abs "$abs")
 	[ -z "$abs" ] || [ "$abs" = "/" ] && return 0
 	printf '%s\n' "$abs"
 }
 
 resolve_t3_home() {
 	local raw expanded abs
-	raw="$1"
+	raw=$(trim "$1")
+	[ -z "$raw" ] && return 0
 	expanded=$(expand_home "$raw")
 	case "$expanded" in
 		/*) ;;
@@ -131,7 +172,14 @@ resolve_t3_home() {
 read_configured_dirs() {
 	local file="$1" out
 	if command -v jq >/dev/null 2>&1; then
-		if out=$(jq -r '(.worktreesDirectory // ""), (.previousWorktreesDirectories // [])[]' "$file" 2>/dev/null); then
+		if out=$(jq -r '
+			if type != "object" then error("settings are not an object") else
+				(if (.worktreesDirectory | type) == "string" then .worktreesDirectory else empty end),
+				(if (.previousWorktreesDirectories | type) == "array"
+				 then .previousWorktreesDirectories[] | select(type == "string")
+				 else empty end)
+			end
+		' "$file" 2>/dev/null); then
 			printf '%s\n' "$out"
 			return 0
 		fi
@@ -165,9 +213,12 @@ if isinstance(previous, list):
 	echo "warn: jq and python3 missing; T3 worktree location unread" >&2
 }
 
-if [ -n "${T3CODE_HOME:-}" ]; then
+# A blank T3CODE_HOME is unset. T3's resolveBaseDir trims first, and an empty
+# result uses the default data dir rather than a padded path.
+t3_home=""
+if [ -n "$(trim "${T3CODE_HOME:-}")" ]; then
 	t3_home=$(resolve_t3_home "$T3CODE_HOME")
-elif [ -n "${T3_HOME:-}" ]; then
+elif [ -n "$(trim "${T3_HOME:-}")" ]; then
 	t3_home=$(resolve_t3_home "$T3_HOME")
 else
 	t3_home=$(resolve_t3_home "$HOME/.t3")
@@ -264,6 +315,8 @@ git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r wt
 	t3=no
 	wt_abs=$(normalize_abs "$wt")
 	[ -n "$wt_abs" ] || wt_abs="$wt"
+	phys=$(physical_abs "$wt_abs")
+	[ -n "$phys" ] && wt_abs="$phys"
 	while IFS= read -r root; do
 		[ -z "$root" ] && continue
 		case "$wt_abs" in
