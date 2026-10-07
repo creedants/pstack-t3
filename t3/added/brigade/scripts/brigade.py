@@ -1575,27 +1575,9 @@ def unlogged_rulings(admin):
     for event in admin.rows("log.tsv"):
         if event["kind"] == "ruling":
             latest[event["id"]] = event["state"]
-    replacer = {}
-    by_id = {}
-    for row in rows:
-        by_id[row["id"]] = row
-        if row["supersedes"]:
-            replacer[row["supersedes"]] = row["id"]
-    pending = [row for row in rows if latest.get(row["id"]) != row["state"]]
-    pending_ids = {row["id"] for row in pending}
-    seen = set()
-    ordered = []
-    for row in pending:
-        if row["id"] in seen:
-            continue
-        if row["state"] in ("superseded", "overruled"):
-            other = replacer.get(row["id"])
-            if other in pending_ids and other not in seen:
-                ordered.append(by_id[other])
-                seen.add(other)
-        ordered.append(row)
-        seen.add(row["id"])
-    return [(row["id"], row["state"], _ruling_note(row, replacer)) for row in ordered]
+    replacer = {row["supersedes"]: row["id"] for row in rows if row["supersedes"]}
+    pending = sorted((row for row in rows if latest.get(row["id"]) != row["state"]), key=lambda row: row["state"] != "in-force")
+    return [(row["id"], row["state"], _ruling_note(row, replacer)) for row in pending]
 
 
 def log_rulings(admin):
@@ -2015,7 +1997,7 @@ def run(argv):
         lines = fragment_lines(restaurant, args.id, args.branch)
         return f"{result}\n{lines}" if lines else result
     rails = None
-    if args.command == "ticket" and args.action in ("add", "move"):
+    if args.command == "ticket" and (args.action == "move" or args.action == "add" and args.ref):
         rails = sibling_rails(restaurant)
     with restaurant.checked():
         return command(restaurant, args, rails=rails)
@@ -2079,15 +2061,15 @@ def command(restaurant, args, contract=None, rails=None):
         return send_request(restaurant, args.to, args.line)
 
     if args.command == "rule":
-        if args.action == "add":
+        if args.action != "list":
+            # A ruling command killed before its log row left an event to write first.
             log_rulings(restaurant)
+        if args.action == "add":
             return add_ruling(restaurant, args.kind, args.parties, clean(args.question), args.rule, clean(args.decision),
                               clean(args.supersedes))
         if args.action == "overrule":
-            log_rulings(restaurant)
             return overrule(restaurant, args.id, clean(args.decision))
         if args.action == "set":
-            log_rulings(restaurant)
             return end_ruling(restaurant, args.id, args.state)
         rows = [row for row in restaurant.rows("rulings.tsv") if not args.state or row["state"] == args.state]
         return "\n".join(ruling_line(row) for row in rows) or "no rulings"
