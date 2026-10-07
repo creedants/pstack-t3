@@ -339,9 +339,14 @@ class Restaurant:
         data = self.snapshot(table)
         if data is None:
             return []
+        try:
+            text = data.decode()
+        except UnicodeDecodeError as error:
+            number = data[:error.start].count(b"\n") + 1
+            raise BrigadeError(f"{table} line {number} is malformed; fix or remove it") from error
         rows = []
         # The last element is the text after the final newline: empty, or the tail of a killed append.
-        for number, line in enumerate(data.decode().split("\n")[1:-1], start=2):
+        for number, line in enumerate(text.split("\n")[1:-1], start=2):
             row = parse_row(table, line)
             if row is None:
                 raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
@@ -1864,7 +1869,7 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="one line of counts")
+    sub.add_parser("status", help="the thread line first, then counts, then reports to and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
