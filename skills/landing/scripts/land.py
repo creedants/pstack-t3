@@ -1247,14 +1247,13 @@ def disarm_auto_merge(store, url, armed):
     return (result.stderr or result.stdout or "gh pr merge --disable-auto failed").strip()
 
 
-AUTO_MERGE_LEFT = "auto-merge still enabled"
-
-
 def bounce_open_pr(store, ident, url, reason, armed):
-    """Bounce an open merge-mode PR. Disable auto-merge when it is on, and leave the PR open."""
+    """Bounce an open merge-mode PR. Disable auto-merge when it is on, and leave the PR open.
+
+    A PR whose auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
     problem = disarm_auto_merge(store, url, armed)
     if problem:
-        reason = f"{reason} ({AUTO_MERGE_LEFT}: {problem})"
+        raise Infrastructure(f"{reason}. Auto-merge is still enabled: {problem}")
     with store.tx() as db:
         settle_bounced(store, db, ident, reason)
 
@@ -1625,12 +1624,10 @@ def settle_contest(store, db, number, first):
         raise LandError(f"C{number} is done: {row['first']} landed")
     if row["first"] and row["first"] != first:
         # An open PR can merge on its own, so an order that has started cannot be reversed.
-        started = db.execute("SELECT * FROM entry WHERE holder = ? AND (state IN ('landing', 'awaiting-merge') "
-                             "OR (state = 'bounced' AND note LIKE ?)) ORDER BY id LIMIT 1",
-                             (row["first"], f"%({AUTO_MERGE_LEFT}:%")).fetchone()
+        started = db.execute("SELECT * FROM entry WHERE holder = ? AND state IN ('landing', 'awaiting-merge') ORDER BY id LIMIT 1",
+                             (row["first"],)).fetchone()
         if started:
-            state = started["state"] if started["state"] != "bounced" else f"bounced with {AUTO_MERGE_LEFT}"
-            raise LandError(f"C{number} cannot put {first} first: {row['first']} has {entry_label(started['id'])} {state}")
+            raise LandError(f"C{number} cannot put {first} first: {row['first']} has {entry_label(started['id'])} {started['state']}")
     edges = [(other["first"], second_of(other), other["id"]) for other in active_contests(db)
              if other["state"] == "settled" and other["id"] != number]
     cycle = sorted(ident for start, end, ident in edges if start in reach(edges, second) and first in reach(edges, end))
