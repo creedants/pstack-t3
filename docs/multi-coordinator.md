@@ -430,7 +430,7 @@ Closes gaps 6 and 8.
 - **`walk` groups by repository.** One header per `projectRoot` carries the `land.py status` line, followed by each coordinator's line without the old `lands by` field, its unreleased leases from `land.py lease list` matched by holder, and its blocked ticket count:
 
   ```
-  ~/Projects/app: merge mode onto refs/remotes/origin/main. awaiting-merge: 1, landed: 40, changes in flight: 3 of 4.
+  ~/Projects/app: merge mode onto refs/remotes/origin/main. awaiting-merge: 1, landed: 40, leases held: 3, changes in flight: 3 of 4.
     docs (reports digest): in progress: 1, waiting to land: 1
       thread <id>, leases L41 (D7)
     engine (reports milestones): in progress: 2, waiting tickets: 1 (1 blocked)
@@ -578,7 +578,7 @@ That part records three more numbers.
 
 ## The experiment script
 
-This is the audit script, run against commit `5794d40`. It records what each command printed and asserts nothing. The tests in changes 2 to 7 are the asserting checks. Run it with the path to a `skills/` directory. It writes only under a fresh `mktemp -d` and prints that path at the end. After change 7, its `--landing` flags no longer parse.
+This is the audit script, run against commit `5794d40`. It records what each command printed and asserts nothing. The tests in changes 2 to 7 are the asserting checks. Run it with the `skills/` directory of a checkout at `5794d40`, for example one made with `git worktree add /tmp/pstack-t3-5794d40 5794d40`, as `two_restaurants.sh /tmp/pstack-t3-5794d40/skills`. Never point it at a current `skills/` directory. After change 7, its `--landing` flags no longer parse. It writes only under a fresh `mktemp -d` and prints that path at the end.
 
 ```bash
 #!/usr/bin/env bash

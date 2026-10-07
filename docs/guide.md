@@ -209,11 +209,11 @@ To stop one, ask it to close. It deletes its schedules, writes a last report, an
 
 You can open more than one coordinator on a repository, each with its own purpose. One might own the docs while another owns the engine. Coordinators whose `restaurant.json` names the same project root are siblings. They share the repository's landing contract, its leases, and its queue. Each keeps its own store and is the only writer of it.
 
-**Opening a second one.** `brigade.py open` prints a block for each sibling, with its store, its thread, its purpose, and what it does not take. The opener keeps the new purpose clear of those and lists each sibling's purpose under `## Off the menu`. Two openers racing for one name get one coordinator. The one that created the directory prints `opened` and launches the thread. The other prints `exists`. A name already used by a coordinator for another repository is refused with `pick another --name`. Rerun `open` on an existing coordinator at any time to see its current siblings.
+**Opening a second one.** `brigade.py open` prints a block for each sibling, with its store, its thread, its purpose, and what it does not take. The opener keeps the new purpose clear of those and lists each sibling's purpose under `## Off the menu`. Two openers racing for one name get one coordinator. The one that created the directory prints `opened` and launches the thread. The other prints `exists`. A coordinator's store is `<project directory slug>/<name slug>`. When another repository's directory has the same slug and a coordinator there has the same name slug, `open` refuses with `pick another --name`. Coordinators in repositories whose directories have different slugs can reuse a name. Rerun `open` on an existing coordinator at any time to see its current siblings.
 
 **Caps.** Two caps keep coordinators from crowding each other.
 
-- The repository cap counts changes in flight across every coordinator. A change is in flight from the moment its lease is claimed until the lease is released, including while it waits to land. Set it once with `land.py init --cap N` or later with `land.py cap N`. `land.py cap 0` clears it. A claim at the cap is refused with `repository at its cap: 3 of 3 changes in flight`, followed by the holders.
+- The repository cap counts changes in flight across every coordinator. It counts every submitted lease and every active lease that has not expired. A submitted lease counts until it is released, even past its expiry, so a change waiting to land always counts. An active lease that expires stops counting before it is released, and a sibling can claim that room. It counts again only after `land.py lease renew` admits it again, which refuses while the repository is at its cap. Set it once with `land.py init --cap N` or later with `land.py cap N`. `land.py cap 0` clears it. A claim at the cap is refused with `repository at its cap: 3 of 3 changes in flight`, followed by the holders.
 - The coordinator cap counts that coordinator's units in progress or in review. Set it with `brigade.py open --workers N` or `set --workers N`. A missing value reads as 2. `open` warns when it is at or above the repository cap while a sibling exists, because one coordinator could then fill the repository alone.
 
 **Intake.** Each intake source, such as `github`, has exactly one owning coordinator. `open --intake github` or `set --intake github` records it, and both refuse a source a sibling already owns. `ticket add` refuses a source this coordinator does not own, and a ref that is still open here or in a sibling. So one issue becomes one ticket. A request from you is filed with the `user` source, which every coordinator accepts.
@@ -242,7 +242,7 @@ Nothing starts by itself when a lease frees. The coordinator decides.
 **The view across coordinators.** `brigade.py walk` groups coordinators under their repository.
 
 ```
-~/Projects/app: merge mode onto refs/remotes/origin/main. awaiting-merge: 1, landed: 40, changes in flight: 3 of 4.
+~/Projects/app: merge mode onto refs/remotes/origin/main. awaiting-merge: 1, landed: 40, leases held: 3, changes in flight: 3 of 4.
   docs (reports digest): in progress: 1, waiting to land: 1
     thread <id>, leases L41 (D7)
   engine (reports milestones): in progress: 2, waiting tickets: 1 (1 blocked)
