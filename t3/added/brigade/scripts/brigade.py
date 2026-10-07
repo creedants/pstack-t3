@@ -680,9 +680,15 @@ def take_tickets(restaurant):
 
 
 def request_files(restaurant):
-    """Request files the executive admin published into this inbox, oldest first."""
-    found = [path for path in (restaurant.dir / "inbox").glob("A*.line") if re.fullmatch(r"A\d+", path.stem)]
-    return sorted(found, key=lambda path: int(path.stem[1:]))
+    """Request files the executive admin published into this inbox, oldest first, as (pending, finished).
+
+    A file whose id has an inbox-done row is finished. request --republish reads completions before
+    the admin's lock, so it can publish a request inbox done finished meanwhile. Nothing counts that file.
+    """
+    found = sorted((path for path in (restaurant.dir / "inbox").glob("A*.line") if re.fullmatch(r"A\d+", path.stem)),
+                   key=lambda path: int(path.stem[1:]))
+    finished = finished_requests(restaurant)
+    return [path for path in found if path.stem not in finished], [path for path in found if path.stem in finished]
 
 
 def finished_requests(restaurant):
@@ -690,14 +696,12 @@ def finished_requests(restaurant):
 
 
 def take_inbox(restaurant):
-    """File handed tickets, then print each request waiting for inbox done. A finished request replayed by the admin is dropped."""
+    """File handed tickets, then print each request waiting for inbox done. A finished request's file is deleted."""
     lines = take_tickets(restaurant)
-    finished = finished_requests(restaurant)
-    for path in request_files(restaurant):
-        if path.stem in finished:
-            restaurant.remove(path)
-            continue
-        lines.append(f"{path.stem}: {path.read_text().strip()}")
+    pending, finished = request_files(restaurant)
+    for path in finished:
+        restaurant.remove(path)
+    lines.extend(f"{path.stem}: {path.read_text().strip()}" for path in pending)
     return "\n".join(lines) or NOTHING_HANDED
 
 
@@ -775,7 +779,7 @@ def counts(restaurant):
         "merged": dishes.count("merged"),
         "decisions for you": len(questions),
         "handed to you": handed_count(restaurant),
-        "requests from the user": len(request_files(restaurant)),
+        "requests from the user": len(request_files(restaurant)[0]),
     }
 
 
