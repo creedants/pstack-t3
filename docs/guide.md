@@ -251,6 +251,61 @@ Nothing starts by itself when a lease frees. The coordinator decides.
 
 The header is the queue's own status line. Each coordinator shows its reporting level, its counts, and how many waiting tickets are blocked. The second line shows its thread and the leases its units hold. Open decisions follow. `walk --repo <root>` prints one repository.
 
+#### An executive admin
+
+Everything above works with no admin. Add one when several coordinators share a repository and you would rather hear from one thread than from each of them. The executive admin works for you on one repository. It forwards your requests, files shared intake once, settles conflicts between coordinators by published rules, and sends you one plain update. It never writes code, starts work, lands work, or overrides a review. Each coordinator still owns its own work, reviews, and queue entries. If the admin's thread goes away, every coordinator keeps working and replies to you directly again.
+
+**Opening it.** Type this in any thread.
+
+```
+$brigade open an executive admin for <project>.
+```
+
+The opener asks how often it replies, unless you already said. It recommends `digest`, because the admin exists so you hear less. It runs `brigade.py open --admin --project-root <root> --reporting digest`, which creates the store `<project directory slug>/.admin`. There is one admin per repository. A second open prints `exists`. The output lists every coordinator on the repository with its purpose and what it does not take. The admin store refuses `fire`, `brief`, `dish`, `pass`, and `watch` with `the executive admin routes work and never runs it`.
+
+The opener then asks you for two things.
+
+- **Your priorities.** A ranked list of coordinator names under `## Priorities` in the admin's `menu.md`, highest first. The rules below read it. A coordinator the list does not name ranks below every named one. Only you change the list. Without one, the rules fall back to purposes and age.
+- **Shared intake.** Which sources the admin should own, such as `github`. Each coordinator that owns that source gives it up with `set --intake` without it, after it finishes or moves its open tickets from that source. Then the admin takes it with `set --intake github`. The admin files each issue once and routes it to the coordinator whose purpose fits.
+
+Last, the opener launches the admin's thread in the repository's project and pins it. On its first run the admin tells each coordinator to report to it, and each records that with `set --reports-to <admin thread>`. A coordinator's `status` then prints `reports to <thread>`, and `walk --repo <root>` lists the admin first in that repository's group, as `executive admin (reports digest)`.
+
+**Sending it requests.** Write to the admin as you would to a coordinator. It routes each request to the coordinator whose purpose fits. When two fit, it makes an ownership ruling. When none fits, it asks you. A request that is an instruction rather than new work, such as "pause the engine work", goes to that coordinator with your words quoted. That coordinator can decline with a reason, and the admin passes the reason on. Each request is a file in the coordinator's `inbox/`, so a retried message never files the same work twice. The coordinator acts on it with `inbox take` and `inbox done <id>`, and `ticket add --request <id>` refuses a second ticket for one request. While requests wait, the coordinator's `status` prints `requests from the user: N`.
+
+You can still write to any coordinator directly. It answers you as it always did.
+
+**Rulings.** The admin settles four kinds of conflict on its own authority, and logs each one.
+
+| Kind | The question | Rules, in order. The first that separates the two coordinators decides. |
+| --- | --- | --- |
+| Contested paths | Which coordinator claims a contested path next, including `README.md` or `docs/guide.md` | The coordinator whose purpose names the path, when the other's `## Off the menu` excludes it. Then your priorities. Then the work that has waited longer. |
+| Ownership | Which coordinator owns a request that fits two purposes | A coordinator whose `## Off the menu` excludes it loses. Then your priorities. Then the coordinator whose open work already touches it. Otherwise the admin asks you. |
+| Shares of the cap | How many changes in flight each coordinator may hold, out of the repository cap you set | One each for every coordinator with waiting work, by your priorities and then age. The rest by your priorities, up to each coordinator's waiting work. A tie goes to the older waiting work. |
+| Queue order | Which of two passed changes lands first when one would break the other | The change the other depends on. Then your priorities. Then the side that was waiting first. |
+
+When no rule separates the two, such as an exact tie, the admin asks you instead, with options and a default. It also asks you when the rules keep ruling against one coordinator, when two purposes keep colliding, and before anything irreversible. It never changes the repository cap, the landing mode, your priorities, or any purpose on its own. It runs `land.py cap` or `land.py mode` only when you ask, and then tells every coordinator.
+
+A coordinator must comply with a ruling. When it disagrees, it complies and appeals. The admin rechecks the ruling with the new facts, and either replaces it or keeps it and lists the appeal in its next update for you.
+
+**Overruling.** Every update lists the rulings made since the last one, each with the rule that decided it. To overrule one, describe it in plain words, such as "let the engine coordinator take the README first." The admin runs `rule overrule R<n> --decision "<your words>"`, which marks the old ruling `overruled` and records yours in its place, then carries yours out. An overrule changes what happens next. It cannot undo a lease already claimed or work already landed, and the admin says so. When your words state a general preference, the admin asks whether to add it to `## Priorities`. `rule list` in the admin's store prints the log.
+
+```
+R1 overruled contested-paths (docs, engine): Who claims README.md next? Decided by age: docs claims README.md next.
+R2 in-force contested-paths (docs, engine): Who claims README.md next? Decided by user: engine goes first. Supersedes R1.
+```
+
+**How rulings are enforced.** A script carries out each ruling, so a ruling holds even while two coordinators act at once. No ruling takes away a live lease. Each command below also takes `--owner`, as every write does. The admin passes `--owner .admin/@<generation>`, so a command from a replaced admin thread is refused.
+
+- **Reservations.** A contested-path ruling runs `land.py lease reserve --for <winner>/ --paths <paths> --ruling R<n>`, which prints `S<n>`. Every other coordinator's claim on those paths is then refused with `paths reserved for docs/ by ruling R4 until <time>`. The current holder keeps its lease and finishes. The reservation's 2-hour clock starts only when no other lease overlaps it and the repository has room, so the winner can always claim. A reservation the winner never uses expires, and the admin rules again if the conflict remains. `lease list` shows reservations. `lease unreserve S<n>` lifts one.
+- **Shares.** `land.py share --for docs/ 2` limits that coordinator to 2 changes in flight. A claim over the share is refused with `docs/ is at its share: 2 of 2`. Shares never add up to more than the cap. Shrinking a share stops no running work. It only refuses the next claim until that coordinator is back under its share. `share --for docs/ 0 --clear` removes one. A coordinator's own worker cap still applies.
+- **Contests.** When a coordinator finds that its passed change and another coordinator's would conflict in the queue, it runs `land.py contest --holders <its unit>,<the other unit>`, which prints `C<n>`, and tells the admin. Until the admin rules, `land` keeps both sides' entries queued and prints `still queued: E1 (held by C1), E2 (held by C1)`. The ruling runs `land.py contest --settle C<n> --first <unit>`. From then on the second side waits until the first side lands, even if the first bounces and resubmits. `contest --cancel C<n>` removes the hold for a conflict that turned out not to exist.
+
+**What you hear.** You hear from the admin, not from each coordinator. A coordinator that reports to the admin sends it every event and replies to you only when you write to it directly. The admin's reporting level uses the same three values as a coordinator's. At `digest` it replies for a decision you must make, a failure no coordinator can fix itself, one summary when every coordinator has drained, and an evening update at 18:30, after the coordinators' 18:00 reports. A ruling alone is never a reason to reply at `milestones` or `digest`. It waits for the next update. Each reply is a few plain sentences per purpose on what changed, what is next, and what you must decide, with no ids, paths, or tool names. It ends with one line naming the full update file, which holds each ruling's id.
+
+**Recovery.** The admin's store outlives its thread. If the thread breaks, ask any thread to recover the executive admin. Recovery claims the store with `set --thread recovering:<its thread> --replace --expect <old thread>`, so two recoveries never both win. It interrupts the old thread and waits for its run to end, then launches a new thread and records it with `set --thread <new> --replace --expect recovering:<its thread> --stopped <run id>`. Without `--stopped`, that command refuses with `the old run has not been confirmed stopped`. Each replacement raises the store's generation, so any command the old thread still runs is refused with `owner ... is stale` and changes nothing. Tickets, owned intake, and rulings survive in the store, and the new thread's first run picks them up.
+
+To retire the admin, ask it to close. It routes or drops its waiting tickets, gives up its intake, deletes its schedules, sends a last update, and clears its thread. Each coordinator then runs `set --reports-to ""` and replies to you directly again.
+
 ## Tips and pitfalls
 
 - **Run fan-out work in a mode that allows commands and edits.** Children inherit the lead thread's runtime mode. In approval-required mode, a child can stall on an approval prompt that no tool can answer, and it looks idle while it waits.
