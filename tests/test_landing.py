@@ -2018,9 +2018,10 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(top.returncode, 0, top.stderr)
         self.assertEqual(mode.returncode, 0, mode.stderr)
         for text in (top.stdout, mode.stdout):
-            self.assertIn("when the queue is empty", text)
-            self.assertIn("--merge-method may change while entries are in flight", text)
-            self.assertNotIn("while nothing is in flight", text)
+            shown = " ".join(text.split())
+            self.assertIn("when the queue is empty", shown)
+            self.assertIn("--merge-method may change while entries are in flight", shown)
+            self.assertNotIn("while nothing is in flight", shown)
 
     def test_one_busy_entry_is_singular_and_two_are_plural(self):
         with self.fake_gh():

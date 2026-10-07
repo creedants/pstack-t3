@@ -439,14 +439,19 @@ def change_cap(store, cap):
 def change_mode(store, mode, merge_method):
     """Switch remote modes while nothing is in flight. A merge method may change while entries wait, because it only affects the next gh pr merge."""
     mode = LEGACY_MODES.get(mode, mode)
-    current = store.contract["mode"]
-    if "local" in (mode, current) and mode != current:
+    seen = store.contract["mode"]
+    if "local" in (mode, seen) and mode != seen:
         raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
     if merge_method and mode == "merge":
         allowed = allowed_merge_methods(store.repo)
         if allowed is not None and merge_method not in allowed:
             raise LandError(f"repository does not allow {merge_method}; allowed: {allowed_list(allowed)}")
     with store.tx() as db:
+        # The read above can go stale while gh runs. This one decides the write.
+        current = json.loads(db.execute("SELECT value FROM contract WHERE key = 'mode'").fetchone()["value"])
+        current = LEGACY_MODES.get(current, current)
+        if "local" in (mode, current) and mode != current:
+            raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
         busy = db.execute("SELECT count(*) FROM entry WHERE state IN ('queued', 'landing', 'awaiting-merge')").fetchone()[0]
         if busy and (mode != current or not merge_method):
             raise LandError(busy_queue_message(busy))
@@ -1490,7 +1495,8 @@ def parser():
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
     p.add_argument("count", type=int)
 
-    p = sub.add_parser("mode", help="switch between human, merge, and push while nothing is in flight")
+    mode_help = "switch human, merge, or push when the queue is empty. --merge-method may change while entries are in flight"
+    p = sub.add_parser("mode", help=mode_help, description=mode_help)
     p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
     p.add_argument("--merge-method", choices=MERGE_METHODS)
 
