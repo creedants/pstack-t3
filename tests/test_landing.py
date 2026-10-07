@@ -381,6 +381,28 @@ exit 0
                           f"E2 landed (engine/D2, {sha2[:12]}) as {sh('git', 'rev-parse', 'main~1', cwd=self.base / 'origin.git')[:12]}"])
         self.assertEqual(self.land("status", "--holder", "docs/D1"), "no entries held by docs/D1")
 
+    def test_status_holder_sha_matches_the_whole_commit(self):
+        import sqlite3
+        from contextlib import closing
+        self.init()
+        sha = self.worker("w1", {"a.txt": "one\n"})
+        lease = self.claim("engine/D1", "a.txt")
+        self.land("submit", "--holder", "engine/D1", "--branch", "w1", "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
+        other = sha[:12] + ("1" if sha[12] == "0" else "0") + sha[13:]
+        database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("INSERT INTO entry (at, holder, branch, sha, base, fingerprint, lease, reviewer, state, note) "
+                       "SELECT at, holder, branch, ?, base, fingerprint, lease, reviewer, 'bounced', 'other' FROM entry",
+                       (other,))
+        self.assertEqual(self.land("status", "--holder", "engine/D1").splitlines(),
+                         [f"E1 queued (engine/D1, {sha[:12]})", f"E2 bounced (engine/D1, {sha[:12]}): other"])
+        self.assertEqual(self.land("status", "--holder", "engine/D1", "--sha", sha), f"E1 queued (engine/D1, {sha[:12]})")
+        self.assertEqual(self.land("status", "--holder", "engine/D1", "--sha", sha.upper()),
+                         f"E1 queued (engine/D1, {sha[:12]})")
+        self.assertEqual(self.land("status", "--holder", "engine/D1", "--sha", other),
+                         f"E2 bounced (engine/D1, {sha[:12]}): other")
+        self.assertEqual(self.land("status", "--holder", "engine/D2", "--sha", sha), f"no entries held by engine/D2 at {sha}")
+
     def test_status_holder_shows_a_bounce_reason(self):
         self.init()
         self.queue_one(text="BROKEN\n")

@@ -1332,11 +1332,17 @@ def report(store, landed, bounced, opened, adopted=()):
     return "\n".join(lines) or "nothing to land"
 
 
-def holder_status(store, holder):
-    """Entries of one holder, or of every holder under a prefix that ends in /."""
+def holder_status(store, holder, sha=None):
+    """Entries of one holder, or of every holder under a prefix that ends in /, optionally only those at one commit."""
+    if sha:
+        # submit stores the full SHA rev-parse gives, so a short or uppercase SHA compares the same way.
+        resolved = git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}", cwd=store.repo, check=False)
+        sha = resolved.stdout.strip() if resolved.returncode == 0 else sha.lower()
     lines = []
     for row in store.db.execute("SELECT * FROM entry ORDER BY id"):
         if row["holder"] != holder and not (holder.endswith("/") and row["holder"].startswith(holder)):
+            continue
+        if sha and row["sha"] != sha:
             continue
         line = f"{entry_label(row['id'])} {row['state']} ({row['holder']}, {row['sha'][:12]})"
         if row["state"] == "landed" and row["landed"]:
@@ -1346,7 +1352,7 @@ def holder_status(store, holder):
         elif row["state"] == "bounced":
             line += f": {row['note']}"
         lines.append(line)
-    return "\n".join(lines) or f"no entries held by {holder}"
+    return "\n".join(lines) or f"no entries held by {holder}" + (f" at {sha}" if sha else "")
 
 
 def status(store, ident=None):
@@ -1432,6 +1438,7 @@ def parser():
     p = sub.add_parser("status")
     p.add_argument("id", nargs="?")
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
+    p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
@@ -1481,7 +1488,9 @@ def run(argv):
     if args.holder:
         if args.id:
             raise LandError("status takes an entry id or --holder, not both")
-        return holder_status(store, args.holder), 0
+        return holder_status(store, args.holder, args.sha), 0
+    if args.sha:
+        raise LandError("status --sha needs --holder")
     return status(store, args.id), 0
 
 

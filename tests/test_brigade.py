@@ -1291,13 +1291,29 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", paths),
                          "D1 (lease L1 held by perf/D1)")
 
-    def lease_row(self, number):
+    def landing_db(self):
         import sqlite3
-        from contextlib import closing
         database = next((Path(self.temporary.name) / "state").glob("pstack-t3/landing/*/land.db"))
-        with closing(sqlite3.connect(database)) as db:
-            db.row_factory = sqlite3.Row
+        db = sqlite3.connect(database)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def lease_row(self, number):
+        from contextlib import closing
+        with closing(self.landing_db()) as db:
             return dict(db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone())
+
+    def seed_entry(self, sha, state, note):
+        """A queue entry for perf/D1 at another commit whose first 12 characters match, copied from E1."""
+        from contextlib import closing
+        with closing(self.landing_db()) as db, db:
+            db.execute("INSERT INTO entry (at, holder, branch, sha, base, fingerprint, lease, reviewer, state, note) "
+                       "SELECT at, holder, branch, ?, base, fingerprint, lease, reviewer, ?, ? FROM entry WHERE id = 1",
+                       (sha, state, note))
+
+    @staticmethod
+    def same_prefix(sha):
+        return sha[:12] + ("1" if sha[12] == "0" else "0") + sha[13:]
 
     def worker_commit(self, branch, files):
         path = Path(self.temporary.name) / branch.replace("/", "-")
@@ -1428,6 +1444,29 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.submit(new), "E2")
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("watch"), "D1: E2 queued")
+
+    def test_an_old_bounce_at_a_sha_sharing_the_items_prefix_is_ignored(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "reviewed\n"})
+        self.passed(sha)
+        self.submit(sha)
+        from contextlib import closing
+        with closing(self.landing_db()) as db, db:
+            db.execute("UPDATE entry SET sha = ?, state = 'bounced', note = 'old different SHA' WHERE id = 1",
+                       (self.same_prefix(sha),))
+            db.execute("UPDATE lease SET state = 'active' WHERE id = 1")
+        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+
+    def test_a_later_bounce_sharing_the_prefix_does_not_hide_the_queued_entry(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "reviewed\n"})
+        self.passed(sha)
+        self.assertEqual(self.submit(sha), "E1")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.seed_entry(self.same_prefix(sha), "bounced", "other SHA")
+        self.assertEqual(self.land("status", "--holder", "perf/D1").splitlines()[1],
+                         f"E2 bounced (perf/D1, {sha[:12]}): other SHA")
+        self.assertEqual(self.brigade("watch"), "D1: E1 queued")
 
     def test_a_drop_waits_for_the_worker_and_then_releases_the_lease(self):
         self.started()
@@ -1577,6 +1616,28 @@ class HandoffTest(unittest.TestCase):
                                "--store", str(self.store), "--at", str(self.dir(name)), *args],
                               capture_output=True, text=True, timeout=30, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
+    def paused(self, label, name, *args):
+        """A command that has parsed its arguments and waits before it takes the store lock."""
+        case = Path(self.temporary.name) / label
+        case.mkdir()
+        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "pause", str(case),
+                                 "--store", str(self.store), "--at", str(self.dir(name)), *args],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        _wait_for_path(case / "paused", timeout=20)
+        return case, proc
+
+    def resume(self, case, proc):
+        (case / "proceed").touch()
+        _, err = proc.communicate(timeout=30)
+        return proc.returncode, err.strip()
+
+    def files(self, name):
+        directory = self.dir(name)
+        return {str(path.relative_to(directory)): path.read_bytes() for path in sorted(directory.rglob("*"))
+                if path.is_file() and path.name != "restaurant.lock"}
+
     def rows(self, name, table):
         lines = (self.dir(name) / table).read_text().splitlines()
         return [line.split("\t") for line in lines[1:]]
@@ -1701,6 +1762,45 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(self.brigade("engine", "ticket", "add", "--summary", "s", "--source", "github", "--ref", "R7", ok=False),
                          "brigade: R7 is already T1 in core (moved); nothing added")
         self.assertEqual(self.brigade("engine", "ticket", "add", "--summary", "s", "--source", "github", "--ref", "R8"), "T1")
+
+    def test_a_replaced_owners_paused_move_does_not_republish_the_handoff(self):
+        self.open("core", "--intake", "github")
+        self.open("engine")
+        self.brigade("core", "set", "--thread", "t1")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", "R7")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        # The handoff was never delivered, so a rerun of the move would publish it again.
+        (self.dir("engine") / "inbox" / "app~core~T1.json").unlink()
+        stale = self.paused("stale", "core", "--owner", "t1@1", "ticket", "move", "T1", "--to", "engine")
+        missing = self.paused("missing", "core", "ticket", "move", "T1", "--to", "engine")
+        self.brigade("core", "--owner", "t1@1", "set", "--thread", "t2", "--replace")
+        before = {"core": self.files("core"), "engine": self.files("engine")}
+        self.assertEqual(self.resume(*stale), (1, "brigade: owner t1@1 is stale; this store is owned by t2@2"))
+        self.assertEqual(self.resume(*missing),
+                         (1, "brigade: this store is owned by t2@2; pass --owner <thread>@<generation> from status"))
+        self.assertEqual({"core": self.files("core"), "engine": self.files("engine")}, before)
+        self.assertEqual(self.inbox("engine"), [])
+        self.brigade("core", "--owner", "t2@2", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.inbox("engine"), ["app~core~T1.json"])
+
+    def test_a_replaced_owners_paused_take_does_not_delete_the_inbox_file(self):
+        inbox = self.handoff()
+        self.brigade("engine", "set", "--thread", "e1")
+        handed = inbox.read_bytes()
+        self.assertEqual(self.brigade("engine", "--owner", "e1@1", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
+        # A take that filed the ticket and died before deleting the file leaves exactly this.
+        inbox.write_bytes(handed)
+        stale = self.paused("stale", "engine", "--owner", "e1@1", "ticket", "take")
+        missing = self.paused("missing", "engine", "ticket", "take")
+        self.brigade("engine", "--owner", "e1@1", "set", "--thread", "e2", "--replace")
+        before = self.files("engine")
+        self.assertEqual(self.resume(*stale), (1, "brigade: owner e1@1 is stale; this store is owned by e2@2"))
+        self.assertEqual(self.resume(*missing),
+                         (1, "brigade: this store is owned by e2@2; pass --owner <thread>@<generation> from status"))
+        self.assertEqual(self.files("engine"), before)
+        self.assertEqual(self.inbox("engine"), ["app~core~T1.json"])
+        self.assertEqual(self.brigade("engine", "--owner", "e2@2", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
+        self.assertEqual(self.inbox("engine"), [])
 
     def test_a_move_interrupted_after_the_rewrite_publishes_once_on_rerun(self):
         self.open("core", "--intake", "github")

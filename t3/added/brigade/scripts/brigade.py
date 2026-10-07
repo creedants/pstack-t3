@@ -193,11 +193,25 @@ class Restaurant:
                 self.rows(table)
             yield
 
-    def write(self, relative, text):
+    @contextmanager
+    def guarded(self):
+        """The one gate for every change this command makes: the store lock, then the owner fence, held through the change."""
         with self.locked():
             if not self.unfenced:
                 self.fence()
-            write_atomic(self.dir / relative, text)
+            yield
+
+    def write(self, relative, text):
+        self.publish(self.dir / relative, text)
+
+    def publish(self, path, text):
+        """Write a file this store owns, or a handoff into a sibling's inbox."""
+        with self.guarded():
+            write_atomic(path, text)
+
+    def remove(self, path):
+        with self.guarded():
+            path.unlink()
 
     @property
     def meta(self):
@@ -229,9 +243,7 @@ class Restaurant:
     def append(self, table, row):
         data = ("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n").encode()
         path = self.dir / table
-        with self.locked():
-            if not self.unfenced:
-                self.fence()
+        with self.guarded():
             if not path.exists():
                 self.save_rows(table, [])
             fd = os.open(path, os.O_RDWR | os.O_APPEND)
@@ -482,7 +494,7 @@ def move_ticket(restaurant, ident, to):
         restaurant.log("ticket", ident, "moved", f"{row['summary']} (to {name})")
     handoff = handoff_id(restaurant.dir, ident)
     if taken_row(target, handoff) is None:
-        write_atomic(inbox_file(target, handoff), json.dumps({
+        restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
         }, indent=2) + "\n")
     thread = (names[name].get("thread") or "").strip()
@@ -505,7 +517,7 @@ def take_tickets(restaurant):
             restaurant.save_rows("rail.tsv", rows + [row])
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
-        path.unlink()
+        restaurant.remove(path)
         lines.append(f"{row['id']} from {source}: {row['summary']}")
     return "\n".join(lines) or "nothing handed to you"
 
@@ -962,29 +974,32 @@ ENTRY_LINE = re.compile(r"^E(\d+) (\S+) \((\S+), ([0-9a-f]+)\)(.*)$")
 
 
 def entry_line(restaurant, dish):
-    """The queue's entry for this dish: its holder's highest entry at the dish's SHA."""
-    result = land_result(restaurant.meta["projectRoot"], "status", "--holder", holder(restaurant, dish["id"]))
-    if result.returncode != 0:
-        return f"{dish['id']}: could not read the queue: {result.stderr.strip().removeprefix('land: ')}"
+    """The queue's entry for this dish: its holder's highest entry at exactly the dish's SHA.
+
+    Returns the line to print, or None, and whether that entry holds the dish's submission.
+    """
     sha = dish["sha"].lower()
+    if not sha:
+        return (None if dish["state"] == "passed" else f"{dish['id']}: queued, but no SHA recorded"), False
+    result = land_result(restaurant.meta["projectRoot"], "status", "--holder", holder(restaurant, dish["id"]), "--sha", sha)
+    if result.returncode != 0:
+        return f"{dish['id']}: could not read the queue: {result.stderr.strip().removeprefix('land: ')}", False
     found = None
     for line in result.stdout.splitlines():
-        match = ENTRY_LINE.match(line)
-        if match and sha and match.group(4).startswith(sha[:12]):
-            found = match
+        found = ENTRY_LINE.match(line) or found
     if not found:
-        return None if dish["state"] == "passed" else f"{dish['id']}: queued, but no entry at {sha[:12]}"
+        return (None if dish["state"] == "passed" else f"{dish['id']}: queued, but no entry at {sha[:12]}"), False
     number, state, rest = found.group(1), found.group(2), found.group(5)
     ident = dish["id"]
     if state == "bounced":
-        return f"{ident}: E{number} bounced{rest}"
+        return f"{ident}: E{number} bounced{rest}", False
     if dish["state"] == "passed":
-        return f"{ident}: E{number} already submitted; mark it queued"
+        return f"{ident}: E{number} already submitted; mark it queued", True
     if state == "landed":
-        return f"{ident}: landed as E{number} ({rest.removeprefix(' as ')}); mark it merged"
+        return f"{ident}: landed as E{number} ({rest.removeprefix(' as ')}); mark it merged", True
     if state == "awaiting-merge":
-        return f"{ident}: E{number} awaiting merge {rest.strip()}; watch that PR"
-    return f"{ident}: E{number} {state}"
+        return f"{ident}: E{number} awaiting merge {rest.strip()}; watch that PR", True
+    return f"{ident}: E{number} {state}", True
 
 
 def watch(restaurant):
@@ -1042,9 +1057,8 @@ def watch(restaurant):
     item_lines, answered = [], True
     for dish in dishes:
         found = progress.get(dish["id"], [])
-        entry = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else None
+        entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
-        submitted = dish["state"] == "passed" and entry and entry.endswith("mark it queued")
         if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
             line, ok = renew_line(restaurant, dish)
             answered = answered and ok
