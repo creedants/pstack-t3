@@ -31,6 +31,8 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 Run the **arena** skill with the design-sketch task and the Phase A grounding artifacts. Pass `references/runner-prompt.md` as each runner's prompt. Each candidate produces a design package shaped per `references/rationale-template.md`.
 
+The runner prompt tells each runner to read this skill in full first, so each runner's brief opens with a numbered read list whose first item is the absolute path of this `SKILL.md`, then `references/runner-prompt.md`, then the grounding. Before you accept a runner's design, call `t3_thread_read` with `view: "activity"` on its `childThreadId` and confirm a read of `architect/SKILL.md`. A runner that did not read it is rerun as a fresh child or discarded, and the synthesis record names it.
+
 Take the runners from the `architect runners` role in place of the `arena runners` role. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
 
 ```bash
