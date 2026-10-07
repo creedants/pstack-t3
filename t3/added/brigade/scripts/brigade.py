@@ -1183,6 +1183,12 @@ def attempt_starts(restaurant, dish):
     return [datetime.fromisoformat(at) for at in moves or [dish["at"]]]
 
 
+def retired_worker_threads(restaurant, ident):
+    """Worker thread ids this dish already used on an earlier attempt."""
+    return [row["note"] for row in restaurant.rows("log.tsv")
+            if row["kind"] == "worker" and row["id"] == ident and row["state"] == "retired" and row["note"]]
+
+
 def renew_line(restaurant, dish):
     """Renew a live lease. Returns the line to print, or None, and whether the landing store answered."""
     lease = dish["lease"]
@@ -1240,7 +1246,11 @@ def watch(restaurant):
             if dish["state"] != "in-progress":
                 continue
             attempt = progress.setdefault(dish["id"], [])
-            start = attempt_starts(restaurant, dish)[-1]
+            starts = attempt_starts(restaurant, dish)
+            if not dish["thread"] and len(starts) > 1:
+                attempt.append(f"{dish['id']}: in progress with no worker thread; launch a fresh worker")
+                continue
+            start = starts[-1]
             minutes = int((moment - start).total_seconds() // 60)
             timebox = int(dish.get("timebox") or 60)
             report = restaurant.dir / "reports" / f"{dish['id']}.md"
@@ -2113,10 +2123,22 @@ def command(restaurant, args, contract=None, rails=None):
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
         entering = args.state == "in-progress" and current["state"] != "in-progress"
+        restart = entering and current["state"] in ("sent-back", "queued")
         replacing = (bool(args.thread) and args.thread != current.get("thread", "")
                      and current["state"] == "in-progress" and args.state in (None, "in-progress"))
+        thread = "" if restart and args.thread is None else args.thread
+        recorded = set(retired_worker_threads(restaurant, args.id))
+        earlier = set(recorded)
+        if restart and current.get("thread"):
+            earlier.add(current["thread"])
+        if thread and thread in earlier:
+            raise BrigadeError(f"thread {thread} is an earlier attempt of {args.id}; a send-back launches a fresh worker")
+        next_thread = current.get("thread", "") if thread is None else thread
+        if current.get("thread") and next_thread != current["thread"] and (restart or next_thread):
+            if current["thread"] not in recorded:
+                restaurant.log("worker", args.id, "retired", current["thread"])
         reported = "" if entering or replacing else ("yes" if args.reported else None)
-        row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=args.thread,
+        row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=thread,
                                 branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox, reported=reported,
                                 lease=args.lease, paths=args.paths)
         if replacing:
