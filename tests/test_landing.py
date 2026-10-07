@@ -1931,7 +1931,7 @@ os.execv({real!r}, [{real!r}, *args])
             )
             self.assertEqual(
                 self.land("mode", "merge", "--merge-method", "squash"),
-                "landing mode is now merge, merging with --squash",
+                "landing mode is now merge, merging with --squash; leases held by r/D1",
             )
             (self.base / "plain-merge-fails").unlink()
             self.assertEqual(self.land("resume"), "queue resumed")
@@ -1946,7 +1946,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.queue_one()
             self.assertEqual(
                 self.land("mode", "merge", "--merge-method", "squash"),
-                "landing mode is now merge, merging with --squash",
+                "landing mode is now merge, merging with --squash; leases held by r/D1",
             )
             self.assertEqual(self.stored_merge_method(), "squash")
             self.assertEqual(

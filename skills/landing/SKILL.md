@@ -25,7 +25,7 @@ The rules:
 ```bash
 L="python3 <skills>/landing/scripts/land.py --repo <checkout>"
 $L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4]
-$L mode merge [--merge-method squash]   # switch between human, merge, and push while nothing is in flight
+$L mode merge [--merge-method squash]   # change the mode while the queue is empty. --merge-method may change while entries await merge
 $L cap 4                     # most changes in flight on the repository at once; 0 clears it
 $L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json [--owner <restaurant>/@<generation>]   # prints L<n>, who holds the overlap, or the cap and its holders
 $L lease check --holder <restaurant>/<dish> --paths src/engine   # the claim's test without claiming: free, the overlapping leases, or the cap
@@ -48,6 +48,8 @@ A coordinator replaced by another thread must not write again. `owner --prefix d
 
 Run `init` the first time any coordinator writes to a repository. The mode decides whether the user stays a gate on landing, so it is the user's choice. brigade asks it when a restaurant opens. Any other coordinator asks once per repository with the host's question tool, unless the user already said.
 
+In `merge` mode, `init` runs `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`. With no `--merge-method`, it stores the only allowed method. When several methods are allowed and merge is allowed, it stores merge. When merge is not allowed, it stores squash. An explicit method the repository disallows is refused, and the error names the allowed methods. When `gh` fails, `init` stores merge, or the `--merge-method` you passed.
+
 The cap belongs to the repository like the mode does. It bounds changes in flight: every submitted lease and every active lease that has not expired, whichever coordinator holds it. The coordinator that opens first sets it with the mode, as `init --trunk main --mode merge --cap 4`, and `land.py cap N` changes it later. A claim at the cap is refused with `repository at its cap: 4 of 4 changes in flight (<holders>)`. `status` shows `changes in flight: 3 of 4` while a cap is set.
 
 | Mode | Landing does | The user |
@@ -59,7 +61,7 @@ The cap belongs to the repository like the mode does. It bounds changes in fligh
 
 `merge` and `push` let reviewed changes reach trunk with no human gate. When the PR needs an approving review, or when it has changes requested, the queue pauses and names the PR and that requirement. It does not run `gh pr merge --auto`. The user then either relaxes the rule for the queue or switches to `human`.
 
-Checks are the repository's own gates: test, type check, lint. `--setup` installs dependencies, because the queue's worktree is cleaned with `git clean -ffdx` before every attempt. `land.py mode` switches between `merge`, `human`, and `push` once nothing is queued, landing, or awaiting merge. Changing trunk or remote, or moving to or from `local`, needs a new contract.
+Checks are the repository's own gates: test, type check, lint. `--setup` installs dependencies, because the queue's worktree is cleaned with `git clean -ffdx` before every attempt. `land.py mode` switches between `merge`, `human`, and `push` once nothing is queued, landing, or awaiting merge. `land.py mode --merge-method` changes the method the next `gh pr merge` uses, and it may run while entries are queued, landing, or awaiting merge. Changing the mode still needs an empty queue. Changing trunk or remote, or moving to or from `local`, needs a new contract.
 
 ## Run writers through it
 
@@ -86,6 +88,8 @@ Keep one `schedule_task` heartbeat for a `queued` entry that has no open PR yet,
 ## When the queue pauses
 
 `land` pauses the queue when trunk no longer contains the last landed commit: someone rewound or replaced it. That is the user's call. Report it as a decision with the two commits from the message. Run `resume` only after the user confirms trunk is right.
+
+When GitHub refuses the merge method, the pause names `land.py mode merge --merge-method` with an allowed method, then `land.py resume`. Run that mode command, then `resume`, then `land`.
 
 ## Capacity
 

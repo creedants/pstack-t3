@@ -28,6 +28,17 @@ MODES = ("human", "merge", "push", "local")
 LEGACY_MODES = {"auto": "push"}
 REMOTE_MODES = ("human", "merge", "push")
 MERGE_METHODS = ("merge", "squash", "rebase")
+MERGE_FLAGS = {
+    "merge": "mergeCommitAllowed",
+    "squash": "squashMergeAllowed",
+    "rebase": "rebaseMergeAllowed",
+}
+# GitHub's mergePullRequest error names the method in this sentence.
+METHOD_REFUSAL = (
+    ("merge", "Merge commits are not allowed on this repository"),
+    ("squash", "Squash merges are not allowed on this repository"),
+    ("rebase", "Rebase merges are not allowed on this repository"),
+)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS contract (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS lease (
@@ -295,12 +306,88 @@ def trunk_ref(contract):
     return f"refs/remotes/{contract['remote']}/{contract['trunk']}"
 
 
-def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method="merge", cap=None):
+def allowed_merge_methods(repo):
+    """The methods gh says this repository allows, or None when gh cannot say."""
+    fields = ",".join(MERGE_FLAGS[method] for method in MERGE_METHODS)
+    try:
+        result = gh("repo", "view", "--json", fields, cwd=repo)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    allowed = []
+    for method in MERGE_METHODS:
+        flag = payload.get(MERGE_FLAGS[method])
+        if not isinstance(flag, bool):
+            return None
+        if flag:
+            allowed.append(method)
+    return tuple(allowed)
+
+
+def allowed_list(allowed):
+    return ", ".join(allowed) if allowed else "none"
+
+
+def pick_merge_method(explicit, allowed):
+    """The method init stores. When gh cannot say, an omitted method stays merge."""
+    if allowed is None:
+        return explicit or "merge"
+    if explicit:
+        if explicit not in allowed:
+            raise LandError(f"repository does not allow {explicit}; allowed: {allowed_list(allowed)}")
+        return explicit
+    if len(allowed) == 1:
+        return allowed[0]
+    if "merge" in allowed:
+        return "merge"
+    if "squash" in allowed:
+        return "squash"
+    raise LandError(f"repository allows no merge method; allowed: {allowed_list(allowed)}")
+
+
+def refused_merge_method(text):
+    for method, phrase in METHOD_REFUSAL:
+        if phrase in (text or ""):
+            return method
+    return None
+
+
+def suggested_merge_method(repo, problem):
+    """An allowed method other than the one GitHub just refused, preferring squash."""
+    refused = refused_merge_method(problem)
+    if not refused:
+        return None
+    allowed = allowed_merge_methods(repo)
+    if not allowed:
+        return None
+    for method in ("squash", "rebase", "merge"):
+        if method in allowed and method != refused:
+            return method
+    return None
+
+
+def busy_queue_message(count):
+    noun = "entry is" if count == 1 else "entries are"
+    return f"{count} {noun} queued, landing, or awaiting merge; change the mode when the queue is empty"
+
+
+def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None):
     mode = LEGACY_MODES.get(mode, mode)
     common = common_dir(path)
     repo = common.parent if common.name == ".git" else Path(git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = state_home() / "landing" / store_name(common)
     directory.mkdir(parents=True, exist_ok=True)
+    if mode == "merge":
+        merge_method = pick_merge_method(merge_method, allowed_merge_methods(repo))
+    elif not merge_method:
+        merge_method = "merge"
     store = Store(directory)
     wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
               "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
@@ -350,15 +437,19 @@ def change_cap(store, cap):
 
 
 def change_mode(store, mode, merge_method):
-    """Switch between the remote modes while nothing is in flight. Local mode lands on a different ref, so it needs its own contract."""
+    """Switch remote modes while nothing is in flight. A merge method may change while entries wait, because it only affects the next gh pr merge."""
     mode = LEGACY_MODES.get(mode, mode)
     current = store.contract["mode"]
     if "local" in (mode, current) and mode != current:
         raise LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
+    if merge_method and mode == "merge":
+        allowed = allowed_merge_methods(store.repo)
+        if allowed is not None and merge_method not in allowed:
+            raise LandError(f"repository does not allow {merge_method}; allowed: {allowed_list(allowed)}")
     with store.tx() as db:
         busy = db.execute("SELECT count(*) FROM entry WHERE state IN ('queued', 'landing', 'awaiting-merge')").fetchone()[0]
-        if busy:
-            raise LandError(f"{busy} entries are queued, landing, or awaiting merge; change the mode when the queue is empty")
+        if busy and (mode != current or not merge_method):
+            raise LandError(busy_queue_message(busy))
         db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps(mode),))
         if merge_method:
             db.execute("INSERT OR REPLACE INTO contract VALUES ('mergeMethod', ?)", (json.dumps(merge_method),))
@@ -1302,7 +1393,11 @@ def land(store):
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
-        pause(store, f"{problem}. Fix it, then run land.py resume")
+        suggestion = suggested_merge_method(store.repo, str(problem))
+        if suggestion:
+            pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
+        else:
+            pause(store, f"{problem}. Fix it, then run land.py resume")
         return report(store, [], [], [])
     finally:
         handle.close()
@@ -1388,7 +1483,8 @@ def parser():
     p.add_argument("--setup", default="", help="command run before checks in the clean integration worktree, such as npm ci")
     p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
     p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
-    p.add_argument("--merge-method", choices=MERGE_METHODS, default="merge", help="merge mode: how the queue merges its PRs")
+    p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
+                   help="merge mode: how the queue merges its PRs. omitted, init stores the one allowed method, or merge when gh cannot say")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
 
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
