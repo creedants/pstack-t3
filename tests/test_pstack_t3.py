@@ -1107,5 +1107,130 @@ class ChangelogTest(unittest.TestCase):
             self.assertEqual(release_bullets(repo), [])
 
 
+AUDIT = ROOT / "t3/overrides/poteto-mode/scripts/worktree-audit.sh"
+PREVIEW_TOOLS = (
+    "preview_hover",
+    "preview_drag",
+    "preview_select",
+    "preview_upload",
+    "preview_dialog",
+)
+
+
+def _init_repo(path):
+    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "audit@example.com"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "audit"], check=True)
+    (path / "f").write_text("a\n")
+    subprocess.run(["git", "-C", str(path), "add", "f"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"], check=True)
+
+
+def _add_worktree(repo, path, branch):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-q", str(path), "-b", branch],
+        check=True,
+    )
+
+
+class WorktreeAuditTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        _init_repo(self.repo)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _audit(self, *args, **env):
+        run_env = os.environ.copy()
+        for key in ("T3CODE_HOME", "T3_HOME", "T3_WORKTREES"):
+            run_env.pop(key, None)
+        run_env.update(env)
+        completed = subprocess.run(
+            [str(AUDIT), str(self.repo), *args],
+            capture_output=True,
+            text=True,
+            env=run_env,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        marks = {}
+        lines = [line for line in completed.stdout.splitlines() if line]
+        self.assertGreaterEqual(len(lines), 2, completed.stdout)
+        for line in lines[1:]:
+            cols = line.split("\t")
+            self.assertEqual(len(cols), 10, line)
+            marks[cols[9]] = cols[7]
+        return marks
+
+    def test_configured_locations_count_and_bad_ones_do_not(self):
+        t3_home = self.root / "code-home"
+        other_home = self.root / "other-home"
+        default = t3_home / "worktrees" / "proj" / "wt-default"
+        custom = self.root / "home" / "custom" / "wt-custom"
+        previous = self.root / "old" / "wt-old"
+        stray = self.root / "stray" / "wt-stray"
+        _add_worktree(self.repo, default, "b-default")
+        _add_worktree(self.repo, custom, "b-custom")
+        _add_worktree(self.repo, previous, "b-old")
+        _add_worktree(self.repo, stray, "b-stray")
+        (t3_home / "userdata").mkdir(parents=True)
+        (t3_home / "userdata" / "settings.json").write_text(json.dumps({
+            "worktreesDirectory": "~/custom",
+            "previousWorktreesDirectories": [str(previous.parent), "/", "relative/nope"],
+        }))
+        marks = self._audit(
+            T3CODE_HOME=str(t3_home),
+            T3_HOME=str(other_home),
+            HOME=str(self.root / "home"),
+        )
+        self.assertEqual(marks[str(default)], "yes")
+        self.assertEqual(marks[str(custom)], "yes")
+        self.assertEqual(marks[str(previous)], "yes")
+        self.assertEqual(marks[str(stray)], "no")
+
+    def test_flag_and_env_replace_the_configured_directory(self):
+        t3_home = self.root / "t3home"
+        default = t3_home / "worktrees" / "proj" / "wt-default"
+        chosen = self.root / "chosen" / "wt"
+        decoy = self.root / "decoy" / "wt"
+        _add_worktree(self.repo, default, "b-default")
+        _add_worktree(self.repo, chosen, "b-chosen")
+        _add_worktree(self.repo, decoy, "b-decoy")
+        (t3_home / "userdata").mkdir(parents=True)
+        (t3_home / "userdata" / "settings.json").write_text(json.dumps({
+            "worktreesDirectory": str(decoy.parent),
+        }))
+        marks = self._audit(
+            "--t3-worktrees", str(chosen.parent),
+            T3_HOME=str(t3_home),
+            T3_WORKTREES=str(decoy.parent),
+        )
+        self.assertEqual(marks[str(default)], "yes")
+        self.assertEqual(marks[str(chosen)], "yes")
+        self.assertEqual(marks[str(decoy)], "no")
+
+    def test_playbook_names_the_configured_worktree_location(self):
+        text = (ROOT / "t3/overrides/poteto-mode/playbooks/worktree-cleanup.md").read_text()
+        self.assertIn("worktreesDirectory", text)
+        self.assertIn("--t3-worktrees", text)
+        self.assertIn("T3_WORKTREES", text)
+
+
+class PreviewToolDocTest(unittest.TestCase):
+    def test_runtime_names_hover_drag_select_upload_and_dialog(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        row = next(line for line in text.splitlines() if "control-ui, browser MCP" in line)
+        bullet = next(line for line in text.splitlines() if line.startswith("- Web or Electron UI:"))
+        for name in PREVIEW_TOOLS:
+            self.assertIn(name, row)
+            self.assertIn(name, bullet)
+
+
 if __name__ == "__main__":
     unittest.main()
