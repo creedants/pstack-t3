@@ -2527,7 +2527,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.brigade("docs", "request", "--to", "docs", "x", ok=False),
                          "brigade: request works only in the executive admin's store")
         self.assertEqual(self.admin("request", "--to", "engine", "x", ok=False),
-                         f"brigade: engine is not a coordinator on {self.project}")
+                         f"brigade: engine is not a sibling coordinator on {self.project}")
         line = "from-user docs: add a FAQ"
         self.assertEqual(self.admin("request", "--to", "docs", line), "A1 for docs; tell thread th-docs")
         self.assertEqual(self.inbox("docs"), ["A1.line"])
@@ -2720,6 +2720,24 @@ class AdminTest(StoresTest):
         meta = self.meta(".admin")
         self.assertEqual((meta["thread"], meta["generation"], meta["previousThread"]), ("t6", 6, "t2"))
 
+    def test_the_claim_raises_the_admin_floor_in_the_landing_store(self):
+        env = dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
+        git = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
+        git("git", "init", "-q", "-b", "main")
+        (self.project / "a.txt").write_text("a\n")
+        git("git", "add", "-A")
+        git("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        land = lambda *args: subprocess.run([sys.executable, str(LAND_SCRIPT), "--repo", str(self.project), *args],
+                                            capture_output=True, text=True, env=env)
+        self.assertEqual(land("init", "--trunk", "lane", "--mode", "local", "--base", "main").returncode, 0)
+        self.open_admin()
+        for args in (("set", "--thread", "t1"), ("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")):
+            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")), *args],
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(land("owner", "--prefix", ".admin/", "--generation", "1").stderr.strip(),
+                         "land: .admin/ is at generation 2; a floor never lowers")
+
     def test_expect_works_only_in_the_admin_store(self):
         self.open("docs")
         self.brigade("docs", "set", "--thread", "t1")
@@ -2732,21 +2750,17 @@ class AdminTest(StoresTest):
         glob = runpy.run_path(str(SCRIPT))["run"].__globals__
         restaurant = glob["Restaurant"](self.dir(".admin"), "t1@1")
         self.assertEqual(restaurant.meta["thread"], "t1")
-        original_append = glob["Restaurant"].append
-        path = self.dir(".admin") / "restaurant.json"
-
-        def replaced_meanwhile(self_, table, row):
-            original_append(self_, table, row)
-            # What a replacement that ran between this command's first read and its metadata write leaves behind.
-            meta = json.loads(path.read_text())
-            meta.update(thread="t2", generation=2)
-            path.write_text(json.dumps(meta))
-
-        glob["Restaurant"].append = replaced_meanwhile
-        restaurant.log("ticket", "T1", "waiting", "one")
-        meta = json.loads(path.read_text())
-        self.assertEqual((meta["thread"], meta["generation"]), ("t2", 2))
-        self.assertNotEqual(meta["lastActivityAt"], self.meta(".admin").get("openedAt"))
+        self.admin("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")
+        after_claim = self.files(".admin")
+        with self.assertRaises(glob["BrigadeError"]) as raised:
+            restaurant.log("ticket", "T1", "waiting", "one")
+        self.assertEqual(str(raised.exception), "owner t1@1 is stale; this store is owned by recovering:t9@2")
+        self.assertEqual(self.files(".admin"), after_claim)
+        unfenced = glob["Restaurant"](self.dir(".admin"))
+        unfenced.unfenced = True
+        unfenced.log("ticket", "T1", "waiting", "one")
+        meta = self.meta(".admin")
+        self.assertEqual((meta["thread"], meta["generation"], meta["previousThread"]), ("recovering:t9", 2, "t1"))
 
     def test_reports_to_is_recorded_cleared_and_shown_by_status(self):
         self.open("docs")
