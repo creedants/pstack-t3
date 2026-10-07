@@ -1044,8 +1044,8 @@ class BrigadeTest(unittest.TestCase):
             self.brigade("dish", "D1", "--state", "queued")
             self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "\n".join([
                 "D1 queued",
-                "D1: L1 is submitted, so it cannot take changes/perf%2Fd1-r2.md; keep changes/perf%2Fd1.md "
-                "in the submitted commit, and run dish D1 --branch perf/d1-r2 again if its entry bounces",
+                "D1: L1 is submitted, so it cannot take changes/perf%2Fd1-r2.md; the submitted commit lands as it is. "
+                "Run dish D1 --branch perf/d1-r2 again if its entry bounces",
             ]))
             self.assertEqual(self.lease_lines(), ["L1 submitted perf/D1: a.txt, changes/perf%2Fd1.md"])
 

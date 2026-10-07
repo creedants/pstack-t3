@@ -1127,28 +1127,38 @@ def drop(restaurant, ident, stopped):
     return f"{ident} dropped"
 
 
-def widen_lease(restaurant, ident, branch):
-    """Lease the branch's changelog fragment. land.py cannot add paths to a lease, so a claim on the wider paths replaces it before the old one is released."""
+def lease_states(project_root):
+    """Each held lease's state in the landing queue, active or submitted, by id."""
+    result = land_result(project_root, "lease", "list")
+    return dict(line.split()[:2] for line in result.stdout.splitlines() if line.startswith("L"))
+
+
+def fragment_lines(restaurant, ident, branch):
+    """The commands that lease the new branch's changelog fragment. They are printed, not run.
+
+    land.py cannot add paths to a lease. A claim made here would stay unrecorded when a drop or a new owner
+    wins the store between the claim and its record.
+    """
+    states = lease_states(restaurant.meta["projectRoot"])
     with restaurant.checked():
-        restaurant.fence()
-        _, dish = restaurant.find("dishes.tsv", ident)
-        old, paths = dish["lease"], with_fragment(dish["paths"], branch)
-        if not old or dish["state"] not in LEASED_STATES or paths == dish["paths"]:
-            return None
-    try:
-        lease = claim_lease(restaurant, ident, paths)
-    except ClaimError as error:
-        raise BrigadeError(f"{ident} is on {branch}, but {old} does not cover {changelog_fragment(branch)}: {error}; "
-                           f"run dish {ident} --branch {branch} again once that claim fits") from error
-    with restaurant.checked():
-        current = restaurant.find("dishes.tsv", ident)[1]["lease"]
-        if current == old:
-            restaurant.update("dishes.tsv", ident, "dish", lease=lease, paths=paths)
-    if current != old:
-        release_lease(restaurant, lease)
-        raise BrigadeError(f"{ident} now records {current}; released {lease}")
-    release_lease(restaurant, old)
-    return f"{ident}: {lease} covers {paths}; released {old}"
+        dish = restaurant.find("dishes.tsv", ident)[1]
+    lease, paths = dish["lease"], with_fragment(dish["paths"], branch)
+    if not lease or dish["state"] in ("merged", "dropped") or paths == dish["paths"]:
+        return None
+    fragment = changelog_fragment(branch)
+    if states.get(lease) == "submitted":
+        return (f"{ident}: {lease} is submitted, so it cannot take {fragment}; the submitted commit lands as it is. "
+                f"Run dish {ident} --branch {branch} again if its entry bounces")
+    owner = " ".join(restaurant.land_owner())
+    owner = f" {owner}" if owner else ""
+    active = states.get(lease) == "active"
+    lines = [f"{ident}: {lease} {'does not cover' if active else 'is not active, so nothing covers'} {fragment}; "
+             "cover it with these commands:",
+             f"  $L lease claim --holder {holder(restaurant, ident)} --paths {shlex.quote(paths)}{owner}",
+             f"  $B dish {ident} --lease <new lease> --paths {shlex.quote(paths)}"]
+    if active:
+        lines.append(f"  $L lease release {lease}{owner}")
+    return "\n".join(lines)
 
 
 def next_owner(meta, thread, replace):
@@ -1508,8 +1518,8 @@ def run(argv):
     if args.command == "dish" and args.branch and args.lease is None:
         with restaurant.checked():
             result = command(restaurant, args)
-        widened = widen_lease(restaurant, args.id, args.branch)
-        return f"{result}\n{widened}" if widened else result
+        lines = fragment_lines(restaurant, args.id, args.branch)
+        return f"{result}\n{lines}" if lines else result
     with restaurant.checked():
         return command(restaurant, args)
 
@@ -1557,6 +1567,8 @@ def command(restaurant, args, contract=None):
             full = workers_full(restaurant)
             if full:
                 raise BrigadeError(full)
+        if (args.lease or args.paths) and current["state"] in ("merged", "dropped"):
+            raise BrigadeError(f"{args.id} is {current['state']}; it holds no lease")
         if args.state in ("queued", "merged"):
             ok, why = pass_check(restaurant, args.id, args.sha or current["sha"])
             if not ok:
