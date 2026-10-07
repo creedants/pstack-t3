@@ -1403,5 +1403,24 @@ class PreviewToolDocTest(unittest.TestCase):
             self.assertIn(name, bullet)
 
 
+class StalledChildDocTest(unittest.TestCase):
+    def test_delegation_step_5_bounds_an_open_child(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        step = text.split("5. Collect results.", 1)[1].split("6. You own every child's output.", 1)[0]
+        self.assertIn("t3_thread_wait", step)
+        self.assertIn("timeoutMs: 300000", step)
+        self.assertIn("does not end its turn while a child is open", step)
+
+    def test_permissions_never_lowers_runtime_mode(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        section = text.split("### Permissions", 1)[1].split("### Failure handling", 1)[0]
+        self.assertIn("never lower it", section)
+
+    def test_failure_handling_names_a_stalled_child(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        section = text.split("### Failure handling", 1)[1].split("### Fresh children by default", 1)[0]
+        self.assertIn("A stalled child", section)
+
+
 if __name__ == "__main__":
     unittest.main()

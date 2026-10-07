@@ -3156,6 +3156,16 @@ class AdminTest(StoresTest):
         self.assertEqual((land("lease", "list"), land("status")), before)
 
 
+class LivenessIdleDocTest(unittest.TestCase):
+    def test_step_5_nudges_an_idle_worker_with_its_timebox_open(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        section = text.split("## Liveness check", 1)[1].split("\n## ", 1)[0]
+        step = next(line for line in section.splitlines() if line.startswith("5. "))
+        self.assertIn("activeRunId", step)
+        self.assertIn("nudge-<dish>-<that run id>", step)
+        self.assertIn("goes to step 4", step)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--race-child":
         try:
