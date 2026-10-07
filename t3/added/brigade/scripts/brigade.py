@@ -1519,10 +1519,59 @@ def ruling_line(row):
     return line + (f" Supersedes {row['supersedes']}." if row["supersedes"] else "")
 
 
+def _ruling_note(row, replacer):
+    """The log note for a ruling row's current state. replacer maps an id to the ruling that replaced it."""
+    state = row["state"]
+    if state == "in-force":
+        return row["decision"]
+    if state in ("superseded", "overruled"):
+        return f"replaced by {replacer[row['id']]}"
+    return f"{row['decision']} ({state})"
+
+
+def unlogged_rulings(admin):
+    """Each rulings.tsv row whose state is not the latest ruling event, as (id, state, note).
+
+    rulings.tsv is the authority. A new in-force row comes before the row it replaces, which is the order a ruling command logs them.
+    """
+    rows = admin.rows("rulings.tsv")
+    latest = {}
+    for event in admin.rows("log.tsv"):
+        if event["kind"] == "ruling":
+            latest[event["id"]] = event["state"]
+    replacer = {}
+    by_id = {}
+    for row in rows:
+        by_id[row["id"]] = row
+        if row["supersedes"]:
+            replacer[row["supersedes"]] = row["id"]
+    pending = [row for row in rows if latest.get(row["id"]) != row["state"]]
+    pending_ids = {row["id"] for row in pending}
+    seen = set()
+    ordered = []
+    for row in pending:
+        if row["id"] in seen:
+            continue
+        if row["state"] in ("superseded", "overruled"):
+            other = replacer.get(row["id"])
+            if other in pending_ids and other not in seen:
+                ordered.append(by_id[other])
+                seen.add(other)
+        ordered.append(row)
+        seen.add(row["id"])
+    return [(row["id"], row["state"], _ruling_note(row, replacer)) for row in ordered]
+
+
+def log_rulings(admin):
+    """Append a ruling event for each rulings.tsv row the log does not yet record. A rerun appends nothing."""
+    with admin.guarded():
+        for ident, state, note in unlogged_rulings(admin):
+            admin.log("ruling", ident, state, note)
+
+
 def add_ruling(admin, kind, parties, question, rule, decision, supersedes="", ended="superseded"):
     """Record a ruling, and mark the one it replaces, in one rewrite of rulings.tsv. Recording comes before carrying out."""
     rows = admin.rows("rulings.tsv")
-    old = None
     if supersedes:
         old = next((row for row in rows if row["id"] == supersedes), None)
         if old is None:
@@ -1534,9 +1583,7 @@ def add_ruling(admin, kind, parties, question, rule, decision, supersedes="", en
     rows.append({"id": ident, "at": now(), "kind": kind, "parties": ", ".join(intake_list(parties)), "question": question,
                  "rule": rule, "decision": decision, "supersedes": supersedes, "state": "in-force"})
     admin.save_rows("rulings.tsv", rows)
-    admin.log("ruling", ident, "in-force", decision)
-    if old:
-        admin.log("ruling", supersedes, ended, f"replaced by {ident}")
+    log_rulings(admin)
     return ident
 
 
@@ -1546,12 +1593,14 @@ def overrule(admin, ident, decision):
 
 
 def end_ruling(admin, ident, state):
-    _, row = admin.find("rulings.tsv", ident)
+    rows, row = admin.find("rulings.tsv", ident)
     if row["state"] == state:
         return f"{ident} {state}"
     if row["state"] != "in-force":
         raise BrigadeError(f"{ident} is {row['state']}; only an in-force ruling ends")
-    admin.update("rulings.tsv", ident, "ruling", note=f"{row['decision']} ({state})", state=state)
+    row["state"] = state
+    admin.save_rows("rulings.tsv", rows)
+    log_rulings(admin)
     return f"{ident} {state}"
 
 
@@ -1619,6 +1668,7 @@ def admin_sections(admin, since):
     events, and each coordinator's newest report."""
     events = [event for event in admin.rows("log.tsv") if event["at"] > since]
     changed = {event["id"] for event in events if event["kind"] == "ruling"}
+    changed.update(ident for ident, _, _ in unlogged_rulings(admin))
     lines = []
     rulings = [row for row in admin.rows("rulings.tsv") if row["id"] in changed]
     if rulings:
@@ -1991,11 +2041,14 @@ def command(restaurant, args, contract=None):
 
     if args.command == "rule":
         if args.action == "add":
+            log_rulings(restaurant)
             return add_ruling(restaurant, args.kind, args.parties, clean(args.question), args.rule, clean(args.decision),
                               clean(args.supersedes))
         if args.action == "overrule":
+            log_rulings(restaurant)
             return overrule(restaurant, args.id, clean(args.decision))
         if args.action == "set":
+            log_rulings(restaurant)
             return end_ruling(restaurant, args.id, args.state)
         rows = [row for row in restaurant.rows("rulings.tsv") if not args.state or row["state"] == args.state]
         return "\n".join(ruling_line(row) for row in rows) or "no rulings"
@@ -2078,6 +2131,8 @@ def command(restaurant, args, contract=None):
             lines.append(f"owner {thread}@{meta['generation']}")
         return "\n".join(lines)
     if args.command == "close":
+        if not args.dry_run and is_admin(restaurant.meta):
+            log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
         if args.to_file:
             return str(path.resolve())
