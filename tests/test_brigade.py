@@ -143,6 +143,15 @@ def _race_child(mode, case, args):
             return original_change(self, **fields)
 
         glob["Restaurant"].change_meta = dying_change
+    elif mode == "die-before-thread":
+        original_change = glob["Restaurant"].change_meta
+
+        def dying_thread(self, drop=(), **fields):
+            if "thread" in fields:
+                os._exit(9)
+            return original_change(self, drop, **fields)
+
+        glob["Restaurant"].change_meta = dying_thread
     elif mode == "read16":
         reads = []
 
@@ -2785,11 +2794,13 @@ class AdminTest(StoresTest):
         self.assertEqual(self.admin("status").splitlines()[-1], "owner t2@3")
         self.assertEqual(self.meta(".admin")["previousThread"], "t1")
         self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[1] == "thread"], [
-            ["thread", "t1", "recorded", "first thread"],
-            ["thread", "recovering:t9", "recorded", "replaced t1"],
-            ["thread", "t2", "recorded", "replaced recovering:t9; stopped r1"],
+            ["thread", "t1@1", "recorded", "first thread"],
+            ["thread", "recovering:t9@2", "recorded", "replaced t1"],
+            ["thread", "t2@3", "recorded", "replaced recovering:t9; stopped r1"],
         ])
         self.admin("set", "--thread", "", "--replace", "--expect", "t2")
+        self.assertEqual([row[2:] for row in self.rows(".admin", "log.tsv") if row[1] == "thread" and row[2] == "@4"],
+                         [["@4", "recorded", "replaced t2"]])
         self.assertEqual(self.admin("--owner", "t2@3", "status").splitlines()[0], "thread not recorded")
         self.assertEqual(self.admin("--owner", "t2@3", "ticket", "add", "--summary", "late", ok=False),
                          "brigade: owner t2@3 is stale; this store is owned by @4")
@@ -2797,6 +2808,38 @@ class AdminTest(StoresTest):
         self.admin("set", "--thread", "t6", "--replace", "--expect", "recovering:t5", "--stopped", "gone")
         meta = self.meta(".admin")
         self.assertEqual((meta["thread"], meta["generation"], meta["previousThread"]), ("t6", 6, "t2"))
+
+    def test_a_replacement_killed_before_the_metadata_write_retries_with_one_row(self):
+        self.with_thread()
+        self.admin("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")
+        died = self.child("die-before-thread", ".admin", "set", "--thread", "t2", "--replace",
+                          "--expect", "recovering:t9", "--stopped", "r1")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        meta = self.meta(".admin")
+        self.assertEqual((meta["thread"], meta["generation"]), ("recovering:t9", 2))
+        self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[2] == "t2@3"], [
+            ["thread", "t2@3", "recorded", "replaced recovering:t9; stopped r1"],
+        ])
+        self.admin("set", "--thread", "t2", "--replace", "--expect", "recovering:t9", "--stopped", "r1")
+        meta = self.meta(".admin")
+        self.assertEqual((meta["thread"], meta["generation"], meta["previousThread"]), ("t2", 3, "t1"))
+        self.assertEqual([row[2] for row in self.rows(".admin", "log.tsv") if row[1] == "thread" and row[2] == "t2@3"],
+                         ["t2@3"])
+
+    def test_a_replacement_killed_inside_the_log_leaves_the_old_thread(self):
+        self.with_thread()
+        self.admin("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")
+        before = (self.dir(".admin") / "restaurant.json").read_bytes()
+        died = self.child("die-before-log", ".admin", "set", "--thread", "t2", "--replace",
+                          "--expect", "recovering:t9", "--stopped", "r1")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual((self.dir(".admin") / "restaurant.json").read_bytes(), before)
+        self.assertNotIn("stopped r1", (self.dir(".admin") / "log.tsv").read_text())
+        self.admin("set", "--thread", "t2", "--replace", "--expect", "recovering:t9", "--stopped", "r1")
+        meta = self.meta(".admin")
+        self.assertEqual((meta["thread"], meta["generation"], meta["previousThread"]), ("t2", 3, "t1"))
+        self.assertEqual([row[2:] for row in self.rows(".admin", "log.tsv") if "stopped r1" in row[4]],
+                         [["t2@3", "recorded", "replaced recovering:t9; stopped r1"]])
 
     def test_the_claim_raises_the_admin_floor_in_the_landing_store(self):
         env = dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
@@ -2909,7 +2952,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.finish(proc)[:2], (0, "R1"))
         self.assertEqual(self.finish(claim)[0], 0)
         kinds = [(row[1], row[2]) for row in self.rows(".admin", "log.tsv")]
-        self.assertLess(kinds.index(("ruling", "R1")), kinds.index(("thread", "recovering:t9")))
+        self.assertLess(kinds.index(("ruling", "R1")), kinds.index(("thread", "recovering:t9@2")))
         self.assertEqual(self.meta(".admin")["thread"], "recovering:t9")
 
     @unittest.skipUnless(_land_has_rulings(), "land.py has no share, lease reserve, or contest yet; change 8 adds them, "
