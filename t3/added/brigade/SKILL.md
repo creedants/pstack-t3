@@ -353,10 +353,12 @@ Carry out each ruling with its script, after `$B rule add` recorded it.
 - `contested-paths`: `$L lease reserve --for <winner>/ --paths <paths> --ruling R<n> --owner .admin/@<generation>`. It prints `S<n>`. Every other holder's claim on those paths is refused until the winner claims them or the reservation expires. It arms, and starts its 2-hour clock, once no other holder's live lease overlaps it and both the cap and the winner's share have room for one more change. A reservation for a winner whose share is 0 stays waiting, so that winner also needs a shares ruling.
 - `ownership`: `$B ticket move <id> --to <winner>` when the admin holds the ticket. Otherwise the `ruling` line asks the holder to move it.
 - `shares`: `$L share --for <coordinator>/ <n> --owner .admin/@<generation>` for each coordinator. It refuses a share that would bring the sum over the current cap.
-  `$L cap` leaves existing shares as they are. After the user changes the cap, rule on shares again in the same service, in this order:
+  `$L cap` leaves existing shares as they are. A positive `$L cap N` refuses when the shares add up to more than N, and it writes nothing. When the user asks for a new cap, rule on shares again in the same service, in this order:
   1. Record the new ruling with `$B rule add --kind shares ... --supersedes R<n>`, naming the old shares ruling.
-  2. When the cap went down, clear every share with `$L share --for <coordinator>/ 0 --clear --owner .admin/@<generation>`. Lowering one share is refused while the others still add up past the new cap.
-  3. Set the new shares.
+  2. For each share the ruling lowers, run `$L share --for <coordinator>/ <n> --owner .admin/@<generation>`. When that write is refused, clear that share with `$L share --for <coordinator>/ 0 --clear --owner .admin/@<generation>`.
+  3. Run `$L cap N`. When that command is refused, finish step 2. Then run `$L cap N` again.
+  4. For each share the ruling raises, and for each share step 2 cleared, run `$L share --for <coordinator>/ <n> --owner .admin/@<generation>`.
+  Do not run `$L cap 0` to get past a refusal.
 - `queue-order`: when no contest covers the two holders, such as an order the user states, first run `$L contest --holders <first holder>,<second holder> --owner .admin/@<generation>`. It prints `C<n>`, and a rerun prints the same id. Then `$L contest --settle C<n> --first <holder> --owner .admin/@<generation>`. `land` then holds the other holder's entries until an entry of the first holder lands.
 
 Then send the `ruling` line to each coordinator involved.
