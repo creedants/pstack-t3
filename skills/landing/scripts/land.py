@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS lease (
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, holder TEXT NOT NULL, paths TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('active', 'submitted', 'released')), expires TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS entry (
-  id INTEGER PRIMARY KEY, at TEXT NOT NULL, holder TEXT NOT NULL, branch TEXT NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, holder TEXT NOT NULL, branch TEXT NOT NULL,
   sha TEXT NOT NULL, base TEXT NOT NULL, fingerprint TEXT NOT NULL, lease INTEGER NOT NULL REFERENCES lease(id),
   reviewer TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('queued', 'landing', 'awaiting-merge', 'landed', 'bounced')),
@@ -234,6 +234,7 @@ class Store:
         for column in ("title", "body"):
             if column not in columns:
                 self.db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        migrate_entry_ids(self.db)
 
     @classmethod
     def for_repo(cls, path):
@@ -279,6 +280,43 @@ class Store:
     def entries(self, *states):
         marks = ",".join("?" * len(states))
         return list(self.db.execute(f"SELECT * FROM entry WHERE state IN ({marks}) ORDER BY id", states))
+
+
+def migrate_entry_ids(db):
+    """Copy an older entry table so ids are never reused after a bounced row is deleted.
+
+    SQLite reuses the largest rowid once that row is gone, and a resubmit deletes
+    the bounced row. AUTOINCREMENT can only be declared in CREATE TABLE. The copy
+    keeps every existing id. sqlite_sequence is renamed with the table so the next
+    id is one past the highest id the table has held.
+    """
+    row = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entry'").fetchone()
+    if row is None or "AUTOINCREMENT" in row["sql"].upper():
+        return
+    columns = [info["name"] for info in db.execute("PRAGMA table_info(entry)")]
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("BEGIN")
+    try:
+        db.execute("""
+            CREATE TABLE entry_id_keep (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, holder TEXT NOT NULL, branch TEXT NOT NULL,
+              sha TEXT NOT NULL, base TEXT NOT NULL, fingerprint TEXT NOT NULL, lease INTEGER NOT NULL REFERENCES lease(id),
+              reviewer TEXT NOT NULL,
+              state TEXT NOT NULL CHECK (state IN ('queued', 'landing', 'awaiting-merge', 'landed', 'bounced')),
+              candidate TEXT NOT NULL DEFAULT '', landed TEXT NOT NULL DEFAULT '', pr TEXT NOT NULL DEFAULT '',
+              note TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
+              UNIQUE (sha, holder))
+        """)
+        names = ", ".join(columns)
+        db.execute(f"INSERT INTO entry_id_keep ({names}) SELECT {names} FROM entry")
+        db.execute("DROP TABLE entry")
+        db.execute("ALTER TABLE entry_id_keep RENAME TO entry")
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
+            db.execute("UPDATE sqlite_sequence SET name = 'entry' WHERE name = 'entry_id_keep'")
+        db.execute("COMMIT")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
 
 
 def store_name(common):
@@ -795,9 +833,15 @@ def lease_release(store, number, owner=None):
             check_owner(db, row["holder"], owner)
         if not row or row["state"] != "active":
             raise LandError(f"L{number} is not active; a submitted lease is released when its entry lands or bounces")
-        db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (number,))
-        store.log(db, "lease", number, "released")
+        release_lease(store, db, number)
     return f"L{number} released"
+
+
+def release_lease(store, db, number, note=""):
+    """Release a lease and arm reservations that were waiting only on it."""
+    db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (number,))
+    store.log(db, "lease", number, "released", note)
+    arm_reservations(store, db, in_flight(db), store.contract.get("cap"))
 
 
 def lease_id(text):
@@ -993,8 +1037,7 @@ def settle_landed(store, db, ident, landed, note=""):
     forget_absent(db, ident)
     lease = db.execute("SELECT lease FROM entry WHERE id = ?", (ident,)).fetchone()["lease"]
     store.set_entry(db, ident, "landed", landed=landed, note=note)
-    db.execute("UPDATE lease SET state = 'released' WHERE id = ?", (lease,))
-    store.log(db, "lease", lease, "released", f"{entry_label(ident)} landed")
+    release_lease(store, db, lease, f"{entry_label(ident)} landed")
 
 
 def settle_bounced(store, db, ident, reason):
@@ -1142,33 +1185,40 @@ def publish_absent_branch(store, entry, branch):
         raise Infrastructure("push failed: " + git_reason(push.stderr))
 
 
-def ensure_pr(store, entry):
-    """Store this entry's PR. Open one on landing/e<n> when that name has none.
+def pr_adoptable_url(store, entry, branch):
+    """URL of a pull request on this branch that belongs to this entry.
 
-    Look at landing/e<n> first, in any state. Then adopt a pull request on
-    landing/q<n> when it is open, or when its head is this entry's stored
-    candidate. A closed or merged pull request at another head is a reused
-    id, so this run publishes landing/e<n> and opens the pull request there.
-    With no stored candidate, only an open pull request on the old name is
-    adopted. A crash after gh pr create and before the URL is stored is safe
-    to rerun. Returns "adopted" when an existing pull request was stored, and
-    "created" when this run opened one."""
+    An open pull request counts. A closed or merged one counts only when its
+    head is this entry's stored candidate. Any other pull request on the name
+    is a reused id. With no stored candidate, only an open pull request counts.
+    """
+    candidate = (entry["candidate"] or "").strip()
+    if candidate:
+        fields = "url,state,headRefOid"
+        query = f'select(.state == "OPEN" or .headRefOid == "{candidate}") | .url'
+    else:
+        fields = "url,state"
+        query = 'select(.state == "OPEN") | .url'
+    found = gh("pr", "view", branch, "--json", fields, "-q", query, cwd=store.repo)
+    if found.returncode != 0:
+        return ""
+    return found.stdout.strip()
+
+
+def ensure_pr(store, entry):
+    """Store this entry's PR. Open one on landing/e<n> when that name has none this entry can use.
+
+    Look at landing/e<n> first, then landing/q<n>. Each name is adopted only
+    by pr_adoptable_url. A reused id publishes landing/e<n> and opens the pull
+    request there. A crash after gh pr create and before the URL is stored is
+    safe to rerun. Returns "adopted" when an existing pull request was stored,
+    and "created" when this run opened one."""
     contract = store.contract
     branch = human_branch(entry)
-    found = gh("pr", "view", branch, "--json", "url", "-q", ".url", cwd=store.repo)
-    url = found.stdout.strip() if found.returncode == 0 else ""
+    url = pr_adoptable_url(store, entry, branch)
     adopted = bool(url)
     if not url:
-        legacy = f"landing/q{entry['id']}"
-        candidate = (entry["candidate"] or "").strip()
-        if candidate:
-            fields = "url,state,headRefOid"
-            query = f'select(.state == "OPEN" or .headRefOid == "{candidate}") | .url'
-        else:
-            fields = "url,state"
-            query = 'select(.state == "OPEN") | .url'
-        found = gh("pr", "view", legacy, "--json", fields, "-q", query, cwd=store.repo)
-        url = found.stdout.strip() if found.returncode == 0 else ""
+        url = pr_adoptable_url(store, entry, f"landing/q{entry['id']}")
         adopted = bool(url)
     if not url:
         publish_absent_branch(store, entry, branch)
