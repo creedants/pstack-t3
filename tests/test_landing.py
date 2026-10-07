@@ -2570,6 +2570,52 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.stored_merge_method(), "squash")
 
 
+    def test_a_settled_contest_keeps_its_order_once_the_first_holders_pr_is_open(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.queue_one(path="a.txt", name="w1", holder="docs/D7")
+            self.contest("--holders", "docs/D7,engine/D3")
+            self.queue_one(path="b.txt", name="w2", holder="engine/D3")
+            self.contest("--settle", "C1", "--first", "docs/D7")
+            self.assertEqual(self.land("land"), "opened PRs for E1 (docs/D7) https://github.com/o/r/pull/9\nstill queued: E2 (held by C1)")
+            self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
+                             "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
+            self.assertEqual(self.contest("--settle", "C1", "--first", "docs/D7"), "C1: docs/D7 lands first, engine/D3 waits")
+
+    def test_mode_merge_checks_the_method_stored_when_it_writes(self):
+        with self.fake_gh():
+            self.allow_methods(squash=True)
+            self.init(mode="human", merge_method="squash")
+            self.pause_repo_view()
+            (self.base / "pause-repo-view").write_text("")
+            child = subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), "mode", "merge"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+            try:
+                deadline = time.monotonic() + 10
+                while not (self.base / "repo-view-waiting").exists():
+                    if child.poll() is not None or time.monotonic() > deadline:
+                        self.fail(f"repo view did not pause: {child.communicate()}")
+                    time.sleep(0.01)
+                (self.base / "pause-repo-view").unlink()
+                self.init(mode="human")
+                self.assertEqual(self.stored_merge_method(), "merge")
+                (self.base / "repo-view-release").write_text("")
+                out, err = child.communicate(timeout=10)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate()
+            self.assertEqual((child.returncode, out.strip()), (0, "landing mode is now merge, merging with --squash"), err)
+            self.assertEqual(self.stored_merge_method(), "squash")
+
+    def test_mode_local_checks_an_explicit_merge_method(self):
+        with self.fake_gh():
+            self.allow_methods(squash=True)
+            self.init(mode="local", base="main", merge_method="squash")
+            self.assertEqual(self.land("mode", "local", "--merge-method", "merge", ok=False),
+                             "land: repository does not allow merge; allowed: squash")
+            self.assertEqual(self.stored_merge_method(), "squash")
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--paused-child"]:
         paused_child(sys.argv[2], sys.argv[3:])
