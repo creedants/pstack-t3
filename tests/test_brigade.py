@@ -2788,6 +2788,7 @@ class AdminTest(StoresTest):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
             return data
 
+        original_read = glob["read_chunk"]
         glob["read_chunk"] = chunk
         copied = b""
         with admin.locked():
@@ -2801,6 +2802,7 @@ class AdminTest(StoresTest):
                 self.fail(f"snapshot returned {copied!r}")
         self.assertEqual(copied, b"")
         self.assertNotEqual(log.read_bytes()[start:], fabricated)
+        glob["read_chunk"] = original_read
         with docs.locked():
             self.assertEqual(docs.snapshot("log.tsv", start), tail)
 

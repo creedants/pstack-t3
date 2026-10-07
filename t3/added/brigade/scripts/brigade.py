@@ -185,7 +185,8 @@ def store_path(directory):
     return f"{directory.parent.name}/{directory.name}"
 
 
-# Store locks this process holds. A reader that holds one takes no second, so no process holds two stores' locks.
+# Resolved directories of the exclusive locks this process holds.
+# A read of one of these takes no second lock. A read of any other store raises.
 HELD_LOCKS = []
 
 
@@ -233,27 +234,33 @@ class Restaurant:
             fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX)
             self._lock_fd = fd
-            HELD_LOCKS.append(self.dir)
+            self._held = self.dir.resolve()
+            HELD_LOCKS.append(self._held)
         self._lock_depth += 1
         try:
             yield
         finally:
             self._lock_depth -= 1
             if self._lock_depth == 0:
-                HELD_LOCKS.remove(self.dir)
+                HELD_LOCKS.remove(self._held)
                 os.close(self._lock_fd)
                 self._lock_fd = None
 
     @contextmanager
     def read_lock(self):
-        """A shared lock for a read, unless this process already holds a store lock.
+        """A shared lock for a read, unless this process already holds this store's lock.
 
-        Under its own lock a command reads its own tables. Under another store's lock it reads without one,
-        and readers drop an unfinished last line, so no process ever holds two stores' locks.
+        Under its own lock a command reads its own tables and takes no second lock.
+        Reading another store while holding a lock raises, so the caller reads that store first.
+        No process holds two stores' locks.
         """
-        if HELD_LOCKS:
+        if self.dir.resolve() in HELD_LOCKS:
             yield
             return
+        if HELD_LOCKS:
+            raise BrigadeError(
+                f"cannot read {self.dir} while holding {HELD_LOCKS[0]}'s lock; "
+                "read other stores before taking a lock")
         fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
         try:
             fcntl.flock(fd, fcntl.LOCK_SH)
@@ -530,38 +537,57 @@ def inbox_file(directory, handoff):
     return directory / "inbox" / f"{handoff.replace('/', '~')}.json"
 
 
-def taken_row(directory, handoff):
-    """The ticket a take filed for this handoff in the coordinator at directory, if any."""
-    if not (directory / "restaurant.json").is_file():
+def sibling_rails(restaurant):
+    """Each sibling's rail.tsv, read before this store's lock is taken.
+
+    The caller's lock never held a sibling still, so reading it first is the same check.
+    """
+    rails = {}
+    for name in siblings(restaurant.dir, restaurant.meta.get("projectRoot")):
+        directory = (restaurant.dir.parent / name).resolve()
+        rails[directory] = Restaurant(directory).rows("rail.tsv")
+    return rails
+
+
+def taken_row(rows, handoff):
+    """The ticket filed for this handoff among these rail rows, if any."""
+    if not rows:
         return None
     marker = f"(from {handoff})"
-    return next((row for row in Restaurant(directory).rows("rail.tsv") if row["source"].endswith(marker)), None)
+    return next((row for row in rows if row["source"].endswith(marker)), None)
 
 
-def is_live(directory, row):
+def is_live(directory, row, rails):
     """waiting and assigned are live. moved is as live as the ticket it became. A handoff not yet taken is live."""
     if row["state"] != "moved":
         return row["state"] in LIVE_TICKET_STATES
-    target = directory.parent / row["dish"].removeprefix("to:")
-    taken = taken_row(target, handoff_id(directory, row["id"]))
-    return taken is None or is_live(target, taken)
+    target = (directory.parent / row["dish"].removeprefix("to:")).resolve()
+    if target in rails:
+        rows = rails[target]
+    elif not (target / "restaurant.json").is_file():
+        return True
+    else:
+        rows = Restaurant(target).rows("rail.tsv")
+    taken = taken_row(rows, handoff_id(directory, row["id"]))
+    return taken is None or is_live(target, taken, rails)
 
 
-def refuse_live_ref(restaurant, ref):
+def refuse_live_ref(restaurant, ref, rails):
     if not ref:
         return
-    stores = [(restaurant.dir, restaurant.rows("rail.tsv"))]
-    for name in siblings(restaurant.dir, restaurant.meta.get("projectRoot")):
-        directory = restaurant.dir.parent / name
-        stores.append((directory, Restaurant(directory).rows("rail.tsv")))
+    own = restaurant.dir.resolve()
+    own_rows = restaurant.rows("rail.tsv")
+    rails = {**rails, own: own_rows}
+    stores = [(own, own_rows)]
+    stores.extend((directory, rows) for directory, rows in rails.items() if directory != own)
     for directory, rows in stores:
         for row in rows:
-            if row["ref"] == ref and is_live(directory, row):
-                where = "" if directory == restaurant.dir else f" in {directory.name}"
+            if row["ref"] == ref and is_live(directory, row, rails):
+                where = "" if directory == own else f" in {directory.name}"
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request=""):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -575,7 +601,7 @@ def add_ticket(restaurant, summary, source, ref, request=""):
             raise BrigadeError(f"{owner} owns intake from {source}; ask it to file this and move it here")
         if source not in (meta.get("intake") or []):
             raise BrigadeError(f"no coordinator owns intake from {source}; the one that reads it runs set --intake {source}")
-    refuse_live_ref(restaurant, ref)
+    refuse_live_ref(restaurant, ref, rails or {})
     if request:
         source = f"{source} (request {request})"
     ident = restaurant.next_id("rail.tsv")
@@ -600,9 +626,9 @@ def tell(name, meta):
     return f"tell thread {thread}" if thread else f"no thread recorded for {name}"
 
 
-def move_ticket(restaurant, ident, to):
+def move_ticket(restaurant, ident, to, rails):
     name, sibling = sibling_named(restaurant, to)
-    target = restaurant.dir.parent / name
+    target = (restaurant.dir.parent / name).resolve()
     destination = f"to:{name}"
     rows, row = restaurant.find("rail.tsv", ident)
     if row["state"] == "moved" and row["dish"] != destination:
@@ -617,7 +643,10 @@ def move_ticket(restaurant, ident, to):
                for event in restaurant.rows("log.tsv")):
         restaurant.log("ticket", ident, "moved", f"{row['summary']} (to {name})")
     handoff = handoff_id(restaurant.dir, ident)
-    if taken_row(target, handoff) is None:
+    target_rows = rails.get(target)
+    if target_rows is None:
+        target_rows = Restaurant(target).rows("rail.tsv")
+    if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
         }, indent=2) + "\n")
@@ -632,7 +661,7 @@ def take_tickets(restaurant):
         except json.JSONDecodeError as error:
             raise BrigadeError(f"{path} is not valid JSON: {error}") from error
         source = handoff["handoff"]
-        row = taken_row(restaurant.dir, source)
+        row = taken_row(restaurant.rows("rail.tsv"), source)
         if row is None:
             rows = restaurant.rows("rail.tsv")
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
@@ -1192,6 +1221,7 @@ def entry_line(restaurant, dish):
 
 
 def watch(restaurant):
+    rails = sibling_rails(restaurant)
     with restaurant.checked():
         restaurant.fence()
         progress = {}
@@ -1227,11 +1257,12 @@ def watch(restaurant):
             name = ticket["dish"].removeprefix("to:")
             target = restaurant.dir.parent / name
             handoff = handoff_id(restaurant.dir, ticket["id"])
+            taken = taken_row(rails.get(target.resolve()), handoff)
             # take writes the ticket before it deletes the file, so a missing file with no ticket was never delivered.
             if inbox_file(target, handoff).exists():
-                if taken_row(target, handoff) is None:
+                if taken is None:
                     lines.append(f"{ticket['id']}: moved to {name}, waiting for ticket take")
-            elif taken_row(target, handoff) is None:
+            elif taken is None:
                 lines.append(f"{ticket['id']}: moved to {name}, not delivered; run ticket move {ticket['id']} --to {name} again")
         handed = handed_count(restaurant)
         if handed:
@@ -1978,11 +2009,14 @@ def run(argv):
             result = command(restaurant, args)
         lines = fragment_lines(restaurant, args.id, args.branch)
         return f"{result}\n{lines}" if lines else result
+    rails = None
+    if args.command == "ticket" and args.action in ("add", "move"):
+        rails = sibling_rails(restaurant)
     with restaurant.checked():
-        return command(restaurant, args)
+        return command(restaurant, args, rails=rails)
 
 
-def command(restaurant, args, contract=None):
+def command(restaurant, args, contract=None, rails=None):
     if args.command == "set":
         meta = restaurant.meta
         changes, drop = {}, []
@@ -2055,9 +2089,9 @@ def command(restaurant, args, contract=None):
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request)
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {})
         if args.action == "move":
-            return move_ticket(restaurant, args.id, args.to)
+            return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":
             return "\n".join(take_tickets(restaurant)) or NOTHING_HANDED
         _, ticket = restaurant.find("rail.tsv", args.id)
