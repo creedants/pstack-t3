@@ -2762,6 +2762,48 @@ class AdminTest(StoresTest):
                                                                  "state": "waiting", "note": "from app/engine/T7"})])
         self.assertEqual(log.read_bytes()[tail:], b"2026-10-06T00:00:01Z\tticket\tT7\twaiting\tfrom app/engine/T7\n")
 
+    def test_snapshot_under_another_stores_lock_raises_and_returns_nothing(self):
+        self.open("docs")
+        self.open_admin()
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        admin = glob["Restaurant"](self.dir(".admin"))
+        docs = glob["Restaurant"](self.dir("docs"))
+        log = docs.dir / "log.tsv"
+        start = log.stat().st_size
+        tail = b"2026-10-06T00:00:00Z\tticket\tT6\twaiting\tfro"
+        log.write_bytes(log.read_bytes() + tail)
+        fabricated = b"2026-10-06T00:00:00Z\tticket\tT6\twaiting\tfrom app/engine/T7\n"
+        reads = [0]
+
+        def chunk(fd):
+            data = os.read(fd, 16)
+            reads[0] += len(data)
+            if reads[0] == 42 and data:
+                proc = subprocess.run([sys.executable, "-B", "-c",
+                                       "import runpy,sys; g=runpy.run_path(sys.argv[1]); r=g['Restaurant'](sys.argv[2]); "
+                                       "r.append('log.tsv',{'at':'2026-10-06T00:00:01Z','kind':'ticket','id':'T7',"
+                                       "'state':'waiting','note':'from app/engine/T7'})",
+                                       str(SCRIPT), str(docs.dir)],
+                                      capture_output=True, text=True, timeout=3)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+            return data
+
+        glob["read_chunk"] = chunk
+        copied = b""
+        with admin.locked():
+            try:
+                copied = docs.snapshot("log.tsv", start)
+            except glob["BrigadeError"] as error:
+                self.assertEqual(str(error),
+                                 f"cannot read {docs.dir} while holding {admin.dir.resolve()}'s lock; "
+                                 "read other stores before taking a lock")
+            else:
+                self.fail(f"snapshot returned {copied!r}")
+        self.assertEqual(copied, b"")
+        self.assertNotEqual(log.read_bytes()[start:], fabricated)
+        with docs.locked():
+            self.assertEqual(docs.snapshot("log.tsv", start), tail)
+
     # Recovery.
 
     def test_two_recoveries_racing_leave_one_claim(self):
