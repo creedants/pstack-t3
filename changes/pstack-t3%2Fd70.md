@@ -1,0 +1,3 @@
+- A deadline or timebox orders the work and never waives a playbook step. The runtime's Deadlines section says so once, and Autopilot-full's early PR target points at it. When the steps cannot fit, the agent reports what remains.
+- `roles.py check-brief <file>` checks a poteto-mode code delegate's brief before `delegate_task`. It exits 1 and names what is missing when the brief does not open with the poteto-agent persona body or lacks a `Playbook: playbooks/<name>.md` line naming a poteto-mode playbook.
+- Architect's runner briefs list `architect/SKILL.md` as the first read, and the parent confirms that read in each runner's activity before accepting its design.

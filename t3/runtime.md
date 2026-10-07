@@ -30,6 +30,10 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | todolist | The host's todo tool if it has one, otherwise a checklist in the work log. |
 | PR you opened or now drive | Register it with `link_pull_request`. |
 
+## Deadlines
+
+A deadline or timebox sets the order of work. It never waives a step. This holds for Autopilot's early red-test-and-PR target, a brigade or Orchestrate timebox, and any "aim for N minutes" in a brief. Start the deliverable the deadline names first, then run every step the playbook prescribes before the next gate, such as `CODE-READY` or the final report. That includes How, Architect, investigation, and the code delegate. The clock is never a `skip:` reason. When the remaining steps cannot fit, stop at a verifiable point and report the steps that remain instead of skipping them.
+
 ## Delegation
 
 1. Call `orchestrator_capabilities` once per session before the first delegation, and again after a delegation fails on a target. It returns `parentThreadId` (this thread's own ID, for `t3_thread_read` on yourself), `inheritedProviderInstanceId` and `inheritedModel` (this thread's own seat), `providers[]`, each with `providerInstanceId`, `models[]` and their `options`, `canRunChildTask`, `canRunCrossProviderChildTask`, and `constraints`. Treat a provider with `canRunChildTask: false` as unavailable and report its `constraints` if a role needed it.
@@ -51,7 +55,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
    - Omit `target` for an `inherit` seat.
    - Use a stable `clientRequestId` so a retried call does not spawn a duplicate.
    - Retain every returned `taskId` in your todo list or work log.
-4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names.
+4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body and carries a `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged.
 5. Collect results.
    - If nothing else in this turn depends on the results, end the turn. Each completion wakes this thread.
    - If you need a result now, call `task_status` with the `taskId`. Reading a terminal result this way acknowledges it, so no completion notification follows. Process that result immediately, as if the notification had arrived. `workState: "result_available"` means done, and `summary` holds the result. `working` and `waiting_for_children` mean not done. Do not busy-poll. Do other work between checks.
@@ -294,6 +298,6 @@ Every child gets the `t3-code` server. Other MCP servers come from each provider
 
 ## Personas
 
-- `agents/poteto-agent.md` is the persona for code-writing delegates inside a poteto-mode playbook. Paste its body at the top of the child's brief.
+- `agents/poteto-agent.md` is the persona for code-writing delegates inside a poteto-mode playbook. Paste its body at the top of the child's brief, name the playbook, and run `roles.py check-brief` per [Delegation](#delegation) step 4.
 - `agents/comment-sicko.md` is the persona for the no-comments review. Paste its body at the top of that reviewer's brief.
 - Paste the body only, without the frontmatter.
