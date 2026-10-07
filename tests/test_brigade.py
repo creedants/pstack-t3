@@ -3037,7 +3037,7 @@ class AdminTest(StoresTest):
         git("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         land("init", "--trunk", "lane", "--mode", "local", "--base", "main", "--cap", "3")
         self.with_thread()
-        contest = land("contest", "--holders", "docs/D1,engine/D1")
+        contest = land("contest", "--holders", "docs/D1,engine/D1", "--owner", ".admin/@1")
         old = ("--owner", ".admin/@1")
         commands = [("share", "--for", "docs/", "1", *old),
                     ("lease", "reserve", "--for", "docs/", "--paths", "README.md", "--ruling", "R1", *old),
