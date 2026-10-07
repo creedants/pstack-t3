@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -857,6 +858,28 @@ elif args[:2] == ["pr", "view"]:
 """)
         fake.chmod(0o755)
         return mock.patch.dict(os.environ, {"LAND_GH": str(fake)})
+
+    def pause_repo_view(self):
+        """Block gh repo view until repo-view-release appears. The waiting file is the barrier."""
+        real = os.environ["LAND_GH"]
+        wrapper = self.base / "gh-pause-view"
+        wrapper.write_text(
+            f"""#!{sys.executable}
+import os, sys, time
+from pathlib import Path
+base = Path({str(self.base)!r})
+real = {real!r}
+args = sys.argv[1:]
+if args[:2] == ["repo", "view"] and (base / "pause-repo-view").exists():
+    (base / "repo-view-waiting").touch()
+    end = time.monotonic() + 30
+    while not (base / "repo-view-release").exists() and time.monotonic() < end:
+        time.sleep(0.01)
+os.execv(real, [real, *args])
+"""
+        )
+        wrapper.chmod(0o755)
+        os.environ["LAND_GH"] = str(wrapper)
 
     def allow_methods(self, merge=False, squash=False, rebase=False):
         (self.base / "repo-merge.json").write_text(json.dumps({
@@ -1953,6 +1976,51 @@ os.execv({real!r}, [{real!r}, *args])
                 self.land("mode", "push", ok=False),
                 "land: 1 entry is queued, landing, or awaiting merge; change the mode when the queue is empty",
             )
+
+    def test_a_method_change_paused_in_github_keeps_the_mode_a_second_process_set(self):
+        with self.fake_gh():
+            self.allow_methods(merge=True, squash=True)
+            self.init(mode="merge")
+            self.pause_repo_view()
+            (self.base / "pause-repo-view").write_text("")
+            child = subprocess.Popen(
+                [sys.executable, str(SCRIPT), "--repo", str(self.work),
+                 "mode", "merge", "--merge-method", "squash"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+            try:
+                deadline = time.monotonic() + 10
+                while not (self.base / "repo-view-waiting").exists():
+                    if child.poll() is not None or time.monotonic() > deadline:
+                        out, err = child.communicate()
+                        self.fail(f"repo view did not pause: code {child.returncode}\n{out}\n{err}")
+                    time.sleep(0.01)
+                self.assertEqual(self.land("mode", "human"), "landing mode is now human")
+                self.assertEqual(self.queue_one(), "E1")
+                (self.base / "repo-view-release").write_text("")
+                out, err = child.communicate(timeout=10)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate()
+            self.assertEqual(child.returncode, 1, out + err)
+            self.assertEqual(
+                err.strip(),
+                "land: 1 entry is queued, landing, or awaiting merge; change the mode when the queue is empty",
+            )
+            self.assertEqual(self.stored_merge_method(), "merge")
+            status = self.land("status")
+            self.assertTrue(status.startswith("human mode onto"), status)
+            self.assertIn("queued: 1", status)
+
+    def test_mode_help_separates_a_switch_from_a_method_change(self):
+        top = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
+        mode = subprocess.run([sys.executable, str(SCRIPT), "mode", "--help"], capture_output=True, text=True)
+        self.assertEqual(top.returncode, 0, top.stderr)
+        self.assertEqual(mode.returncode, 0, mode.stderr)
+        for text in (top.stdout, mode.stdout):
+            self.assertIn("when the queue is empty", text)
+            self.assertIn("--merge-method may change while entries are in flight", text)
+            self.assertNotIn("while nothing is in flight", text)
 
     def test_one_busy_entry_is_singular_and_two_are_plural(self):
         with self.fake_gh():
