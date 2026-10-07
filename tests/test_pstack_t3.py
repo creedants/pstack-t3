@@ -1421,6 +1421,25 @@ class StalledChildDocTest(unittest.TestCase):
         section = text.split("### Failure handling", 1)[1].split("### Fresh children by default", 1)[0]
         self.assertIn("A stalled child", section)
 
+    def test_no_source_tells_a_parent_to_end_its_turn_on_an_open_child(self):
+        unbounded = re.compile(r"completion notifications? wakes?|let (?:each|the) completion|end the turn rather than wait"
+                               r"|`mode: \"async\"`,? and end the turn")
+        found = [f"{path.relative_to(ROOT)}:{number}"
+                 for path in sorted((ROOT / "t3").rglob("*.md"))
+                 for number, line in enumerate(path.read_text().splitlines(), 1) if unbounded.search(line)]
+        self.assertEqual(found, [])
+
+    def test_routed_skills_collect_children_per_delegation_step_5(self):
+        sources = {
+            "how/SKILL.md": "../pstack-runtime", "arena/SKILL.md": "../pstack-runtime",
+            "interrogate/SKILL.md": "../pstack-runtime", "swarm/SKILL.md": "../pstack-runtime",
+            "why/SKILL.md": "../pstack-runtime", "no-comments/SKILL.md": "../pstack-runtime",
+            "poteto-mode/playbooks/orchestrate.md": "../../pstack-runtime",
+        }
+        missing = [name for name, runtime in sources.items()
+                   if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
+        self.assertEqual(missing, [])
+
 
 if __name__ == "__main__":
     unittest.main()

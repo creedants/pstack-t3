@@ -620,6 +620,25 @@ class BrigadeTest(unittest.TestCase):
         report.write_text("partial from worker-3")
         self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread worker-3)")
 
+    def test_an_idle_replacement_with_an_earlier_report_reaches_the_nudge(self):
+        self.open()
+        self.fire_one(timebox="60")
+        log = self.at / "log.tsv"
+        log.write_text(log.read_text().replace(f"{__import__('datetime').date.today().year}-", "2020-"))
+        report = self.at / "reports" / "D1.md"
+        report.parent.mkdir()
+        report.write_text("report from the replaced worker")
+        self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker")
+        line = self.brigade("watch")
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        section = text.split("## Liveness check", 1)[1].split("\n## ", 1)[0]
+        step = next(row for row in section.splitlines() if row.startswith("5. "))
+        trigger = step.split("`", 2)[1].split("Nm")[0].replace("D<n>", "D1")
+        self.assertEqual((report.exists(), line), (True, "D1: running 0m of 60m (thread fresh-worker)"))
+        self.assertTrue(line.startswith(trigger), (trigger, line))
+        self.assertIn("no report for the current attempt", step)
+        self.assertNotIn("no report file exists", step)
+
     def test_fire_claims_the_lease_and_a_refused_claim_fires_nothing(self):
         import os
         from unittest import mock
