@@ -38,8 +38,20 @@ TABLES = {
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
+    # Only the executive admin's store has this table.
+    "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
-PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q"}
+PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
+ADMIN_DIR = ".admin"
+ADMIN_NAME = "executive admin"
+WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch")
+ADMIN_COMMANDS = ("request", "rule", "sync")
+RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
+RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
+RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
+NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
+NOTHING_HANDED = "nothing handed to you"
+SNAPSHOT_CHUNK = 1 << 16
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -72,6 +84,21 @@ Work this restaurant does not take, even when asked.
 ## Budget
 
 The pstack roles budget (`default`, `small`, `medium`, `large`, `unlimited`) and any cap on parallel workers.
+"""
+
+ADMIN_MENU = """# Menu: {restaurant}
+
+## Purpose
+
+Keep the user up to date across every coordinator on this repository, route the user's requests, and settle conflicts between coordinators by published rules.
+
+## Priorities
+
+Coordinator names, highest first, one per line. Only the user changes this list.
+
+## Off the menu
+
+Writing code, landing work, and every decision that belongs to the user: the repository cap, the landing mode, priorities, and purposes.
 """
 
 HOUSE_RULES = """# House rules: {restaurant}
@@ -131,12 +158,43 @@ def is_timestamp(value):
     return "T" in value
 
 
+def parse_row(table, line):
+    """One complete line of a table as a row, or None when its field count or timestamp is wrong."""
+    header = TABLES[table]
+    fields = line.split("\t")
+    if len(fields) != len(header) or not is_timestamp(fields[header.index("at")]):
+        return None
+    return dict(zip(header, fields))
+
+
+def read_chunk(fd):
+    return os.read(fd, SNAPSHOT_CHUNK)
+
+
+def is_admin(meta):
+    return meta.get("role") == "admin"
+
+
+def holder_prefix(meta):
+    """The landing holder prefix of a store: `.admin/` for the executive admin, else the restaurant's slug."""
+    return f"{ADMIN_DIR}/" if is_admin(meta) else f"{slug(meta['restaurant'])}/"
+
+
+def store_path(directory):
+    """A store's path under the store root, such as app/docs. Handoff ids and relay ids start with it."""
+    return f"{directory.parent.name}/{directory.name}"
+
+
+# Store locks this process holds. A reader that holds one takes no second, so no process holds two stores' locks.
+HELD_LOCKS = []
+
+
 class Restaurant:
     def __init__(self, directory, owner=None):
         self.dir = Path(directory)
         if not (self.dir / "restaurant.json").is_file():
             raise BrigadeError(f"{self.dir} is not a restaurant (no restaurant.json); run brigade.py open")
-        if owner is not None and not re.fullmatch(r".+@\d+", owner):
+        if owner is not None and not re.fullmatch(r".*@\d+", owner):
             raise BrigadeError(f"--owner takes <thread>@<generation>, got {owner!r}")
         self.owner = owner
         # set --thread changes the owner, so it alone writes without matching the recorded one.
@@ -154,12 +212,14 @@ class Restaurant:
             raise BrigadeError(f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status")
         if self.owner != recorded:
             raise BrigadeError(f"owner {self.owner} is stale; this store is owned by {recorded}")
+        if not meta.get("thread"):
+            raise BrigadeError("this store has no recorded thread; it was retired, and only set --thread --expect restarts it")
 
     def land_owner(self):
         """The --owner words for land.py: this store's holder prefix at the caller's generation."""
         if self.owner is None:
             return []
-        return ["--owner", f"{slug(self.meta['restaurant'])}/@{self.owner.rpartition('@')[2]}"]
+        return ["--owner", f"{holder_prefix(self.meta)}@{self.owner.rpartition('@')[2]}"]
 
     @contextmanager
     def locked(self):
@@ -173,14 +233,52 @@ class Restaurant:
             fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX)
             self._lock_fd = fd
+            HELD_LOCKS.append(self.dir)
         self._lock_depth += 1
         try:
             yield
         finally:
             self._lock_depth -= 1
             if self._lock_depth == 0:
+                HELD_LOCKS.remove(self.dir)
                 os.close(self._lock_fd)
                 self._lock_fd = None
+
+    @contextmanager
+    def read_lock(self):
+        """A shared lock for a read, unless this process already holds a store lock.
+
+        Under its own lock a command reads its own tables. Under another store's lock it reads without one,
+        and readers drop an unfinished last line, so no process ever holds two stores' locks.
+        """
+        if HELD_LOCKS:
+            yield
+            return
+        fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            yield
+        finally:
+            os.close(fd)
+
+    def snapshot(self, table, offset=0):
+        """The bytes of a table from offset to its end, copied while no writer can repair a tail or append.
+
+        Every table read goes through here, rows and sync included. None when the table does not exist.
+        """
+        with self.read_lock():
+            try:
+                fd = os.open(self.dir / table, os.O_RDONLY)
+            except FileNotFoundError:
+                return None
+            try:
+                os.lseek(fd, offset, os.SEEK_SET)
+                chunks = []
+                while chunk := read_chunk(fd):
+                    chunks.append(chunk)
+            finally:
+                os.close(fd)
+        return b"".join(chunks)
 
     @contextmanager
     def checked(self):
@@ -217,22 +315,30 @@ class Restaurant:
     def meta(self):
         return json.loads((self.dir / "restaurant.json").read_text())
 
-    def save_meta(self, meta):
-        self.write("restaurant.json", json.dumps(meta, indent=2) + "\n")
+    def change_meta(self, drop=(), **fields):
+        """Reread restaurant.json under the lock and change only these fields.
+
+        A command that read the file before a replacement can then never write the old owner back.
+        """
+        with self.guarded():
+            meta = self.meta
+            meta.update(fields)
+            for key in drop:
+                meta.pop(key, None)
+            self.write("restaurant.json", json.dumps(meta, indent=2) + "\n")
+            return meta
 
     def rows(self, table):
-        path = self.dir / table
-        if not path.exists():
+        data = self.snapshot(table)
+        if data is None:
             return []
-        header = TABLES[table]
-        at = header.index("at")
         rows = []
         # The last element is the text after the final newline: empty, or the tail of a killed append.
-        for number, line in enumerate(path.read_text().split("\n")[1:-1], start=2):
-            fields = line.split("\t")
-            if len(fields) != len(header) or not is_timestamp(fields[at]):
+        for number, line in enumerate(data.decode().split("\n")[1:-1], start=2):
+            row = parse_row(table, line)
+            if row is None:
                 raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
-            rows.append(dict(zip(header, fields)))
+            rows.append(row)
         return rows
 
     def save_rows(self, table, rows):
@@ -261,11 +367,9 @@ class Restaurant:
                 os.close(fd)
 
     def log(self, kind, ident, state, note=""):
-        with self.locked():
+        with self.guarded():
             self.append("log.tsv", {"at": now(), "kind": kind, "id": ident, "state": state, "note": note})
-            meta = self.meta
-            meta["lastActivityAt"] = now()
-            self.save_meta(meta)
+            self.change_meta(lastActivityAt=now())
 
     def next_id(self, table):
         numbers = [int(row["id"][1:]) for row in self.rows(table) if row.get("id", "")[1:].isdigit()]
@@ -396,8 +500,11 @@ def intake_list(text):
 
 
 def base_source(source):
-    """A taken ticket's source is `<source> (from <handoff id>)`. The intake source is the part before."""
-    return source.split(" (from ", 1)[0]
+    """A taken ticket's source is `<source> (from <handoff id>)`, and a request's ticket `<source> (request A<n>)`.
+
+    The intake source is the part before.
+    """
+    return re.split(r" \((?:from|request) ", source, maxsplit=1)[0]
 
 
 def set_intake(restaurant, sources):
@@ -454,9 +561,14 @@ def refuse_live_ref(restaurant, ref):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref):
-    source, ref = clean(source), clean(ref)
+def add_ticket(restaurant, summary, source, ref, request=""):
+    source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
+    if request:
+        # A replayed request file must not file a second ticket, whatever state the first reached.
+        for row in restaurant.rows("rail.tsv"):
+            if row["source"].endswith(f"(request {request})"):
+                raise BrigadeError(f"request {request} is already {row['id']}; nothing added")
     if source != "user":
         owner = intake_owner(restaurant.dir, meta.get("projectRoot"), source)
         if owner:
@@ -464,6 +576,8 @@ def add_ticket(restaurant, summary, source, ref):
         if source not in (meta.get("intake") or []):
             raise BrigadeError(f"no coordinator owns intake from {source}; the one that reads it runs set --intake {source}")
     refuse_live_ref(restaurant, ref)
+    if request:
+        source = f"{source} (request {request})"
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
                                    "ref": ref, "summary": summary})
@@ -471,12 +585,23 @@ def add_ticket(restaurant, summary, source, ref):
     return ident
 
 
-def move_ticket(restaurant, ident, to):
+def sibling_named(restaurant, to):
+    """A sibling's directory name and restaurant.json, found by directory name or restaurant name."""
     meta = restaurant.meta
     names = siblings(restaurant.dir, meta.get("projectRoot"))
     name = to if to in names else next((n for n in names if slug(names[n].get("restaurant") or n) == slug(to)), None)
     if name is None:
         raise BrigadeError(f"{to} is not a sibling coordinator on {meta.get('projectRoot')}")
+    return name, names[name]
+
+
+def tell(name, meta):
+    thread = (meta.get("thread") or "").strip()
+    return f"tell thread {thread}" if thread else f"no thread recorded for {name}"
+
+
+def move_ticket(restaurant, ident, to):
+    name, sibling = sibling_named(restaurant, to)
     target = restaurant.dir.parent / name
     destination = f"to:{name}"
     rows, row = restaurant.find("rail.tsv", ident)
@@ -496,8 +621,7 @@ def move_ticket(restaurant, ident, to):
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
         }, indent=2) + "\n")
-    thread = (names[name].get("thread") or "").strip()
-    return f"{ident} moved to {name}; " + (f"tell thread {thread}" if thread else f"no thread recorded for {name}")
+    return f"{ident} moved to {name}; {tell(name, sibling)}"
 
 
 def take_tickets(restaurant):
@@ -518,16 +642,52 @@ def take_tickets(restaurant):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
         restaurant.remove(path)
         lines.append(f"{row['id']} from {source}: {row['summary']}")
-    return "\n".join(lines) or "nothing handed to you"
+    return lines
+
+
+def request_files(restaurant):
+    """Request files the executive admin published into this inbox, oldest first."""
+    found = [path for path in (restaurant.dir / "inbox").glob("A*.line") if re.fullmatch(r"A\d+", path.stem)]
+    return sorted(found, key=lambda path: int(path.stem[1:]))
+
+
+def finished_requests(restaurant):
+    return {row["id"] for row in restaurant.rows("log.tsv") if row["kind"] == "inbox-done"}
+
+
+def take_inbox(restaurant):
+    """File handed tickets, then print each request waiting for inbox done. A finished request replayed by the admin is dropped."""
+    lines = take_tickets(restaurant)
+    finished = finished_requests(restaurant)
+    for path in request_files(restaurant):
+        if path.stem in finished:
+            restaurant.remove(path)
+            continue
+        lines.append(f"{path.stem}: {path.read_text().strip()}")
+    return "\n".join(lines) or NOTHING_HANDED
+
+
+def finish_request(restaurant, ident):
+    """Record the request as acted on, then delete its file. A rerun after a crash between the two finishes the delete."""
+    path = restaurant.dir / "inbox" / f"{ident}.line"
+    if ident not in finished_requests(restaurant):
+        if not path.exists():
+            raise BrigadeError(f"no request {ident} in the inbox")
+        restaurant.log("inbox-done", ident, "done", path.read_text().strip())
+    if path.exists():
+        restaurant.remove(path)
+    return f"{ident} done"
 
 
 def handed_count(restaurant):
     return len(list((restaurant.dir / "inbox").glob("*.json")))
 
 
-def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None):
+def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False):
     project_root = Path(project_root).resolve()
-    directory = root / slug(project_root.name) / slug(name)
+    if admin:
+        name = ADMIN_NAME
+    directory = root / slug(project_root.name) / (ADMIN_DIR if admin else slug(name))
     # The project directory is shared by every coordinator on this path slug.
     # The coordinator directory is the claim, so mkdir must fail when it exists.
     directory.parent.mkdir(parents=True, exist_ok=True)
@@ -548,9 +708,11 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
     except BrigadeError:
         directory.rmdir()
         raise
-    for filename, template in (("menu.md", MENU), ("house-rules.md", HOUSE_RULES)):
+    for filename, template in (("menu.md", ADMIN_MENU if admin else MENU), ("house-rules.md", HOUSE_RULES)):
         write_atomic(directory / filename, template.format(restaurant=name))
     for table in TABLES:
+        if table == "rulings.tsv" and not admin:
+            continue
         header = TABLES[table]
         write_atomic(directory / table, "\t".join(header) + "\n")
     meta = {"restaurant": name, "projectRoot": str(project_root),
@@ -558,6 +720,8 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
             "lastReportAt": None, "thread": None, "schedules": {}, "intake": list(intake)}
     if workers is not None:
         meta["workers"] = workers
+    if admin:
+        meta["role"] = "admin"
     write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     return Restaurant(directory), True
 
@@ -577,6 +741,7 @@ def counts(restaurant):
         "merged": dishes.count("merged"),
         "decisions for you": len(questions),
         "handed to you": handed_count(restaurant),
+        "requests from the user": len(request_files(restaurant)),
     }
 
 
@@ -634,6 +799,8 @@ def report(restaurant, write=True):
             pr = f" {dish['pr']}" if dish.get("pr") else ""
             lines.append(f"- {event['id']}{tickets}: {event['note']}{pr}")
         lines.append("")
+    if is_admin(meta):
+        lines += admin_sections(restaurant, since)
     questions = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
     if questions:
         lines += ["## Decisions for you", ""]
@@ -646,8 +813,7 @@ def report(restaurant, write=True):
     if write:
         path = restaurant.dir / "closeouts" / f"{stamp[:26].replace(':', '')}.md"
         restaurant.write(path.relative_to(restaurant.dir), text)
-        meta["lastReportAt"] = stamp
-        restaurant.save_meta(meta)
+        restaurant.change_meta(lastReportAt=stamp)
     return text, path
 
 
@@ -1087,10 +1253,7 @@ def watch(restaurant):
         lines.append(f"{ident}: {held[1]}" if held else f"{ident}: unblocked; run {fire_command(ident, note)}")
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
-        with restaurant.locked():
-            meta = restaurant.meta
-            meta["lastActivityAt"] = now()
-            restaurant.save_meta(meta)
+        restaurant.change_meta(lastActivityAt=now())
     return "\n".join(item_lines + lines) or "no work in progress"
 
 
@@ -1161,10 +1324,27 @@ def fragment_lines(restaurant, ident, branch):
     return "\n".join(lines)
 
 
-def next_owner(meta, thread, replace):
-    """The generation set --thread records, and whether it changes the recorded thread."""
+def next_owner(meta, thread, replace, expect=None, stopped=None):
+    """The generation set --thread records, and whether it changes the recorded thread.
+
+    The executive admin's thread changes only by compare-and-swap: --expect names the thread it replaces.
+    """
     current = (meta.get("thread") or "").strip()
     generation = meta.get("generation")
+    if expect is not None:
+        if not is_admin(meta):
+            raise BrigadeError("--expect works only in the executive admin's store")
+        if not replace:
+            raise BrigadeError("the executive admin's thread changes only with --replace --expect <old>")
+        if current != expect:
+            raise BrigadeError(f"thread is {current or 'not recorded'}, not {expect or 'empty'}; nothing replaced")
+        if thread == current:
+            return generation or 1, False
+        if current.startswith("recovering:") and not stopped:
+            raise BrigadeError(NOT_STOPPED)
+        return (generation or 0) + 1, True
+    if is_admin(meta) and (current or generation) and thread != current:
+        raise BrigadeError("the executive admin's thread changes only with --replace --expect <old>")
     if current and thread != current:
         if not replace:
             raise BrigadeError(f"thread {current} already recorded")
@@ -1176,17 +1356,17 @@ def set_thread(restaurant, args):
     """Raise the landing floor first, outside the store lock, so a crash before the rewrite is reached again."""
     while True:
         with restaurant.locked():
-            target = next_owner(restaurant.meta, args.thread, args.replace)
+            target = next_owner(restaurant.meta, args.thread, args.replace, args.expect, args.stopped)
         generation, changing = target
         if changing and generation > 1:
-            prefix = f"{slug(restaurant.meta['restaurant'])}/"
+            prefix = holder_prefix(restaurant.meta)
             result = land_result(restaurant.meta["projectRoot"], "owner", "--prefix", prefix, "--generation", str(generation))
             error = result.stderr.strip().removeprefix("land: ")
             # A project with no landing contract has no leases to fence.
             if result.returncode != 0 and "has no landing contract" not in error and "not a git repository" not in error:
                 raise BrigadeError(f"thread not replaced: could not raise the landing floor for {prefix}: {error}")
         with restaurant.checked():
-            if next_owner(restaurant.meta, args.thread, args.replace) != target:
+            if next_owner(restaurant.meta, args.thread, args.replace, args.expect, args.stopped) != target:
                 continue
             # Recording the same thread again is an ordinary write, so it keeps the fence.
             restaurant.unfenced = changing
@@ -1235,11 +1415,10 @@ def display_root(path):
     return "~/" + relative.as_posix()
 
 
-def leases_for(listing, name):
-    """Lease ids from one `lease list`, held by this coordinator. A failed listing holds none."""
+def leases_for(listing, prefix):
+    """Lease ids from one `lease list`, held under this store's prefix. A failed listing holds none."""
     if listing.returncode != 0:
         return []
-    prefix = f"{slug(name)}/"
     found = []
     for line in listing.stdout.splitlines():
         parts = line.split()
@@ -1267,7 +1446,9 @@ def walk(root, stale_hours=24, repo=None):
         return f"no restaurants under {root}"
     lines = []
     for project in sorted(groups):
-        coordinators = sorted(groups[project], key=lambda restaurant: str(restaurant.dir / "restaurant.json"))
+        # The executive admin comes first in its repository.
+        coordinators = sorted(groups[project], key=lambda restaurant: (not is_admin(restaurant.meta),
+                                                                       str(restaurant.dir / "restaurant.json")))
         status = land_result(project, "status")
         listing = land_result(project, "lease", "list")
         header = status.stdout.strip() if status.returncode == 0 else "no landing contract"
@@ -1281,12 +1462,184 @@ def walk(root, stale_hours=24, repo=None):
             if blocked:
                 counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
             lines.append(f"  {meta['restaurant']} (reports {reporting_of(meta)}){idle}: {counts}")
-            leases = leases_for(listing, meta["restaurant"])
+            leases = leases_for(listing, holder_prefix(meta))
             lease_text = f", leases {', '.join(leases)}" if leases else ""
             lines.append(f"    thread {meta.get('thread') or 'not recorded'}{lease_text}")
             for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
                 lines.append(f"    {question['id']}: {question['question']}")
     return "\n".join(lines)
+
+
+REQUEST_NOTE = re.compile(r"^to (\S+): (.*)$")
+
+
+def admin_requests(admin):
+    """Each request the admin recorded, as (id, coordinator directory name, line)."""
+    found = []
+    for row in admin.rows("log.tsv"):
+        match = REQUEST_NOTE.match(row["note"]) if row["kind"] == "request" else None
+        if match:
+            found.append((row["id"], match.group(1), match.group(2)))
+    return found
+
+
+def send_request(admin, to, line):
+    """Record the request in the admin's log, then publish it into the coordinator's inbox under the admin's lock."""
+    name, sibling = sibling_named(admin, to)
+    line = clean(line)
+    if not line:
+        raise BrigadeError("a request needs its line")
+    ident = f"A{max((int(ident[1:]) for ident, _, _ in admin_requests(admin)), default=0) + 1}"
+    admin.log("request", ident, "sent", f"to {name}: {line}")
+    admin.publish(admin.dir.parent / name / "inbox" / f"{ident}.line", line + "\n")
+    return f"{ident} for {name}; {tell(name, sibling)}"
+
+
+def relayed(admin):
+    """The rows sync copied, as {relay id: the coordinator's row}."""
+    return {row["id"]: json.loads(row["note"]) for row in admin.rows("log.tsv") if row["kind"] == "relay"}
+
+
+def republish(admin):
+    """Publish again each request whose file is gone and whose inbox-done row sync has not yet copied."""
+    done = {(ident.rpartition("@")[0], row["id"]) for ident, row in relayed(admin).items() if row["kind"] == "inbox-done"}
+    lines = []
+    for ident, name, line in admin_requests(admin):
+        path = admin.dir.parent / name / "inbox" / f"{ident}.line"
+        if path.exists() or (store_path(path.parent.parent), ident) in done:
+            continue
+        admin.publish(path, line + "\n")
+        lines.append(f"{ident} republished for {name}")
+    return "\n".join(lines) or "nothing to republish"
+
+
+def ruling_line(row):
+    line = (f"{row['id']} {row['state']} {row['kind']} ({row['parties']}): {row['question']} "
+            f"Decided by {row['rule']}: {row['decision']}.")
+    return line + (f" Supersedes {row['supersedes']}." if row["supersedes"] else "")
+
+
+def add_ruling(admin, kind, parties, question, rule, decision, supersedes="", ended="superseded"):
+    """Record a ruling, and mark the one it replaces, in one rewrite of rulings.tsv. Recording comes before carrying out."""
+    rows = admin.rows("rulings.tsv")
+    old = None
+    if supersedes:
+        old = next((row for row in rows if row["id"] == supersedes), None)
+        if old is None:
+            raise BrigadeError(f"no {supersedes} in rulings.tsv")
+        if old["state"] in ("superseded", "overruled"):
+            raise BrigadeError(f"{supersedes} is already {old['state']}; replace the ruling that replaced it")
+        old["state"] = ended
+    ident = admin.next_id("rulings.tsv")
+    rows.append({"id": ident, "at": now(), "kind": kind, "parties": ", ".join(intake_list(parties)), "question": question,
+                 "rule": rule, "decision": decision, "supersedes": supersedes, "state": "in-force"})
+    admin.save_rows("rulings.tsv", rows)
+    admin.log("ruling", ident, "in-force", decision)
+    if old:
+        admin.log("ruling", supersedes, ended, f"replaced by {ident}")
+    return ident
+
+
+def overrule(admin, ident, decision):
+    _, old = admin.find("rulings.tsv", ident)
+    return add_ruling(admin, old["kind"], old["parties"], old["question"], "user", decision, ident, ended="overruled")
+
+
+def end_ruling(admin, ident, state):
+    _, row = admin.find("rulings.tsv", ident)
+    if row["state"] == state:
+        return f"{ident} {state}"
+    if row["state"] != "in-force":
+        raise BrigadeError(f"{ident} is {row['state']}; only an in-force ruling ends")
+    admin.update("rulings.tsv", ident, "ruling", note=f"{row['decision']} ({state})", state=state)
+    return f"{ident} {state}"
+
+
+def log_rows(data, start):
+    """The complete rows of a log.tsv snapshot that starts at byte start.
+
+    Returns (offset, row) pairs, the byte just past the last newline consumed, and the offset of a malformed line or None.
+    """
+    rows, position = [], 0
+    while (newline := data.find(b"\n", position)) >= 0:
+        offset = start + position
+        try:
+            line = data[position:newline].decode()
+        except UnicodeDecodeError:
+            return rows, offset, offset
+        if offset > 0:
+            row = parse_row("log.tsv", line)
+            if row is None:
+                return rows, offset, offset
+            rows.append((offset, row))
+        position = newline + 1
+    return rows, start + position, None
+
+
+def sync(admin):
+    """Copy each coordinator's new log.tsv rows into the admin's log as relay rows, once each.
+
+    Each coordinator's bytes are copied under its shared lock. The admin's lock is taken only after that lock is
+    released, so no command holds two stores' locks. A relay id is the coordinator's store path and the row's byte
+    offset, which a tail repair never moves, so a rerun after a crash copies nothing twice.
+    Returns the lines to print and the malformed-line failures.
+    """
+    cursors = admin.meta.get("cursors") or {}
+    copied, failures = [], []
+    for name in siblings(admin.dir, admin.meta.get("projectRoot")):
+        directory = admin.dir.parent / name
+        store = store_path(directory)
+        start = int(cursors.get(store, 0))
+        data = Restaurant(directory).snapshot("log.tsv", start)
+        if data is None:
+            continue
+        rows, end, malformed = log_rows(data, start)
+        copied.append((name, store, rows, end))
+        if malformed is not None:
+            failures.append(f"{store}/log.tsv at byte {malformed} is malformed; nothing past it relayed")
+    lines = []
+    with admin.guarded():
+        have = relayed(admin)
+        cursors = dict(admin.meta.get("cursors") or {})
+        for name, store, rows, end in copied:
+            for offset, row in rows:
+                ident = f"{store}@{offset}"
+                if ident in have:
+                    continue
+                admin.append("log.tsv", {"at": now(), "kind": "relay", "id": ident, "state": "copied",
+                                         "note": json.dumps(row, separators=(",", ":"))})
+                lines.append(f"{name} {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}")
+            cursors[store] = end
+        admin.change_meta(cursors=cursors, lastActivityAt=now())
+    return "\n".join(lines), failures
+
+
+def admin_sections(admin, since):
+    """The admin's report adds the rulings recorded or changed since the last one, each coordinator's relayed
+    events, and each coordinator's newest report."""
+    events = [event for event in admin.rows("log.tsv") if event["at"] > since]
+    changed = {event["id"] for event in events if event["kind"] == "ruling"}
+    lines = []
+    rulings = [row for row in admin.rows("rulings.tsv") if row["id"] in changed]
+    if rulings:
+        lines += ["## Rulings", "", *(f"- {ruling_line(row)}" for row in rulings), ""]
+    by_store = {}
+    for event in events:
+        if event["kind"] == "relay":
+            by_store.setdefault(event["id"].rpartition("@")[0], []).append(json.loads(event["note"]))
+    blocks = []
+    for name in siblings(admin.dir, admin.meta.get("projectRoot")):
+        directory = admin.dir.parent / name
+        closeouts = sorted((directory / "closeouts").glob("*.md"))
+        rows = by_store.get(store_path(directory), [])
+        if not rows and not closeouts:
+            continue
+        blocks += [f"### {name}", "", *(f"- {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}" for row in rows)]
+        blocks += [f"- Newest report: {closeouts[-1]}"] if closeouts else []
+        blocks.append("")
+    if blocks:
+        lines += ["## From each coordinator", "", *blocks]
+    return lines
 
 
 def parser():
@@ -1298,7 +1651,8 @@ def parser():
 
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
-    p.add_argument("--name", required=True)
+    p.add_argument("--name")
+    p.add_argument("--admin", action="store_true", help="open the repository's executive admin at <project>/.admin; takes no --name")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
                    help="how often the coordinator replies (default: milestones)")
     p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
@@ -1307,6 +1661,9 @@ def parser():
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
     p.add_argument("--replace", action="store_true", help="replace a recorded coordinator thread")
+    p.add_argument("--expect", help="executive admin only: replace the thread only while it is still this value")
+    p.add_argument("--stopped", help="with --expect recovering:<id>: the run id t3_thread_wait reported terminal, idle, or gone")
+    p.add_argument("--reports-to", help="the executive admin's thread this coordinator reports to; \"\" clears it")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
@@ -1318,6 +1675,7 @@ def parser():
     a.add_argument("--summary", required=True)
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
+    a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -1394,6 +1752,37 @@ def parser():
     a.add_argument("--answer", required=True)
     t.add_parser("list")
 
+    p = sub.add_parser("inbox", help="take handed tickets and the admin's requests, or finish a request")
+    t = p.add_subparsers(dest="action", required=True)
+    t.add_parser("take", help="file handed tickets and print each request file")
+    a = t.add_parser("done", help="record a request as acted on and delete its file")
+    a.add_argument("id")
+
+    p = sub.add_parser("request", help="executive admin: publish a request line into a coordinator's inbox")
+    p.add_argument("line", nargs="?")
+    p.add_argument("--to", help="the coordinator's directory name")
+    p.add_argument("--republish", action="store_true", help="publish again each request a crash left unwritten")
+
+    p = sub.add_parser("rule", help="executive admin: record, overrule, end, or list rulings")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("add")
+    a.add_argument("--kind", choices=RULING_KINDS, required=True)
+    a.add_argument("--parties", required=True, help="comma-separated coordinator names")
+    a.add_argument("--question", required=True)
+    a.add_argument("--rule", choices=RULING_RULES, required=True, help="the rule that decided it")
+    a.add_argument("--decision", required=True)
+    a.add_argument("--supersedes", default="", help="the ruling this one replaces")
+    a = t.add_parser("overrule", help="record the user's ruling in place of this one")
+    a.add_argument("id")
+    a.add_argument("--decision", required=True)
+    a = t.add_parser("set", help="record how a ruling ended")
+    a.add_argument("id")
+    a.add_argument("--state", choices=("done", "expired"), required=True)
+    a = t.add_parser("list")
+    a.add_argument("--state", choices=RULING_STATES)
+
+    sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
+
     sub.add_parser("status", help="one line of counts")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
@@ -1468,9 +1857,13 @@ def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
     if args.command == "open":
+        if args.admin and args.name:
+            raise BrigadeError("open --admin takes no --name")
+        if not args.admin and not args.name:
+            raise BrigadeError("open needs --name, or --admin")
         require_workers(args.workers)
         restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
-                                              intake_list(args.intake), args.workers)
+                                              intake_list(args.intake), args.workers, args.admin)
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
         meta = restaurant.meta
         thread = (meta.get("thread") or "").strip()
@@ -1480,7 +1873,7 @@ def run(argv):
         if not created and args.intake and intake_list(args.intake) != intake:
             lines.append(f"intake stays {', '.join(intake) or 'empty'}; change it with set --intake")
         lines.extend(sibling_lines(restaurant))
-        if siblings(restaurant.dir, restaurant.meta.get("projectRoot")):
+        if siblings(restaurant.dir, restaurant.meta.get("projectRoot")) and not is_admin(meta):
             cap = repository_cap(restaurant.meta["projectRoot"])
             workers = worker_cap(restaurant.meta)
             if cap is not None and workers >= cap:
@@ -1491,12 +1884,27 @@ def run(argv):
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)
+    admin = is_admin(restaurant.meta)
+    if admin and args.command in WORK_COMMANDS:
+        raise BrigadeError("the executive admin routes work and never runs it")
+    if not admin and args.command in ADMIN_COMMANDS:
+        raise BrigadeError(f"{args.command} works only in the executive admin's store")
+    if args.command == "sync":
+        # The admin's lock is taken only after each coordinator's read lock is released, so this runs outside checked.
+        text, failures = sync(restaurant)
+        if failures:
+            if text:
+                print(text)
+            raise BrigadeError("\nbrigade: ".join(failures))
+        return text or "nothing new"
     if args.command == "status":
         # land.py can wait on the landing database, so the contract is read before the store lock.
         contract = contract_mode(restaurant.meta["projectRoot"])
         with restaurant.checked():
             return command(restaurant, args, contract)
-    if args.command == "set" and args.thread:
+    if args.command == "set" and (args.thread or args.expect is not None):
+        if args.thread is None:
+            raise BrigadeError("--expect needs --thread")
         return set_thread(restaurant, args)
     if args.command == "dish" and args.state == "dropped":
         return drop(restaurant, args.id, args.stopped)
@@ -1527,34 +1935,78 @@ def run(argv):
 def command(restaurant, args, contract=None):
     if args.command == "set":
         meta = restaurant.meta
+        changes, drop, recorded = {}, [], None
         if args.intake is not None:
-            meta = set_intake(restaurant, intake_list(args.intake))
-        if args.thread:
-            meta["generation"], _ = next_owner(meta, args.thread, args.replace)
-            meta["thread"] = args.thread
+            changes["intake"] = set_intake(restaurant, intake_list(args.intake))["intake"]
+        if args.thread is not None and (args.thread or args.expect is not None):
+            current = (meta.get("thread") or "").strip()
+            generation, changing = next_owner(meta, args.thread, args.replace, args.expect, args.stopped)
+            changes.update(generation=generation, thread=args.thread)
+            if changing and current and not current.startswith("recovering:"):
+                changes["previousThread"] = current
+            if changing and is_admin(meta):
+                recorded = f"replaced {current}" if current else ("restarted" if meta.get("generation") else "first thread")
+                recorded += f"; stopped {clean(args.stopped)}" if args.stopped else ""
         if args.reporting:
-            meta["reporting"] = args.reporting
+            changes["reporting"] = args.reporting
         if args.workers is not None:
             require_workers(args.workers)
-            meta["workers"] = args.workers
-        for pair in args.schedule:
-            if "=" not in pair:
-                raise BrigadeError(f"--schedule takes NAME=ID, got {pair!r}")
-            name, ident = pair.split("=", 1)
-            if ident:
-                meta["schedules"][name] = ident
+            changes["workers"] = args.workers
+        if args.reports_to is not None:
+            if clean(args.reports_to):
+                changes["reportsTo"] = clean(args.reports_to)
             else:
-                meta["schedules"].pop(name, None)
-        restaurant.save_meta(meta)
+                drop.append("reportsTo")
+        if args.schedule:
+            schedules = dict(meta.get("schedules") or {})
+            for pair in args.schedule:
+                if "=" not in pair:
+                    raise BrigadeError(f"--schedule takes NAME=ID, got {pair!r}")
+                name, ident = pair.split("=", 1)
+                if ident:
+                    schedules[name] = ident
+                else:
+                    schedules.pop(name, None)
+            changes["schedules"] = schedules
+        meta = restaurant.change_meta(drop, **changes)
+        if recorded:
+            # The audit row for a change of the admin's owner, with the stop evidence the recovering thread asserted.
+            restaurant.log("thread", args.thread, "recorded", recorded)
+            meta = restaurant.meta
         return json.dumps(meta, indent=2)
+
+    if args.command == "inbox":
+        if args.action == "take":
+            return take_inbox(restaurant)
+        return finish_request(restaurant, args.id)
+
+    if args.command == "request":
+        if args.republish:
+            if args.to or args.line:
+                raise BrigadeError("request --republish takes no --to or line")
+            return republish(restaurant)
+        if not args.to or args.line is None:
+            raise BrigadeError('request needs --to <coordinator> "<line>", or --republish')
+        return send_request(restaurant, args.to, args.line)
+
+    if args.command == "rule":
+        if args.action == "add":
+            return add_ruling(restaurant, args.kind, args.parties, clean(args.question), args.rule, clean(args.decision),
+                              clean(args.supersedes))
+        if args.action == "overrule":
+            return overrule(restaurant, args.id, clean(args.decision))
+        if args.action == "set":
+            return end_ruling(restaurant, args.id, args.state)
+        rows = [row for row in restaurant.rows("rulings.tsv") if not args.state or row["state"] == args.state]
+        return "\n".join(ruling_line(row) for row in rows) or "no rulings"
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref)
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to)
         if args.action == "take":
-            return take_tickets(restaurant)
+            return "\n".join(take_tickets(restaurant)) or NOTHING_HANDED
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
@@ -1614,12 +2066,17 @@ def command(restaurant, args, contract=None):
         return record_hang(restaurant, args.id, args.provider, args.minutes, args.attempt)
     if args.command == "status":
         meta = restaurant.meta
+        thread = (meta.get("thread") or "").strip()
         level = f"reporting: {reporting_of(meta)}, {contract}"
         counts_text = status_line(restaurant)
-        line = level if counts_text == "nothing on record" else f"{level}, {counts_text}"
+        # The thread comes first, so a service's fence step compares it before anything else.
+        lines = [f"thread {thread}" if thread else "thread not recorded",
+                 level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
+        if meta.get("reportsTo"):
+            lines.append(f"reports to {meta['reportsTo']}")
         if meta.get("generation") is not None:
-            line += f"\nowner {meta.get('thread') or ''}@{meta['generation']}"
-        return line
+            lines.append(f"owner {thread}@{meta['generation']}")
+        return "\n".join(lines)
     if args.command == "close":
         text, path = report(restaurant, write=not args.dry_run)
         if args.to_file:
