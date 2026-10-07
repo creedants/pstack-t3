@@ -860,7 +860,7 @@ class BrigadeTest(unittest.TestCase):
         log.write_text("\n".join(rewritten) + "\n")
         moment = datetime.now(timezone.utc) - timedelta(minutes=12, seconds=30)
         os.utime(report, (moment.timestamp(), moment.timestamp()))
-        self.assertEqual(self.brigade("watch"), "D1: reported, run still open 12m (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "D1: reported 12m ago, not in review; read the thread (thread thread-9)")
         moment = datetime.now(timezone.utc) - timedelta(minutes=10, seconds=10)
         os.utime(report, (moment.timestamp(), moment.timestamp()))
         self.assertEqual(self.brigade("watch"),
@@ -2714,6 +2714,22 @@ class AdminTest(StoresTest):
         self.assertRegex(self.admin("sync"), rf"^docs {older} ticket T9 waiting: late$")
         self.assertEqual(self.admin("sync"), "nothing new")
         self.assertEqual([row["note"] for _, row in self.relays()], ["one", "late"])
+
+    def test_an_older_sync_finishing_late_never_moves_the_cursor_back(self):
+        self.open("docs")
+        self.open_admin()
+        self.brigade("docs", "ticket", "add", "--summary", "one")
+        case, outer = self.admin_child("pause", "outer", "sync")
+        _wait_for_path(case / "paused", timeout=20)
+        self.brigade("docs", "ticket", "add", "--summary", "two")
+        self.admin("sync")
+        consumed = self.size("docs")
+        self.assertEqual(self.cursor("docs"), consumed)
+        (case / "proceed").touch()
+        code, out, err = self.finish(outer)
+        self.assertEqual((code, out), (0, "nothing new"), err)
+        self.assertEqual(self.cursor("docs"), consumed)
+        self.assertEqual([row["note"] for _, row in self.relays()], ["one", "two"])
 
     def test_sync_leaves_an_unfinished_tail_and_relays_the_repaired_row_once(self):
         self.open("engine")

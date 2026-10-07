@@ -2,7 +2,7 @@
 
 brigade gives each project, or each focus area inside a project, its own standing coordinator thread. It replicates the setup Lauren Tan describes in her livestream with Matt Pocock ([video](https://www.youtube.com/watch?v=MN9dGgmLyso), around 39:00 to 53:00). She runs more than ten coordinators, one per area. Each delegates and supervises and never does the work itself. She moves between them and reviews what landed.
 
-brigade has no overall coordinator. The user moves between restaurants.
+brigade has no overall coordinator. The user moves between restaurants. An optional executive admin serves the user on one repository, and rules on conflicts between its coordinators by published rules that the user can overrule.
 
 ## Roles
 
@@ -11,6 +11,7 @@ brigade has no overall coordinator. The user moves between restaurants.
 | Executive chef | The user. | |
 | Restaurant | One project, or one focus area inside a project. A project may hold several. | T3 project |
 | Head chef | One long-lived top-level thread per restaurant, pinned in that project. It never writes code. | `t3_thread_launch` with `projectId`, `t3_thread_organize` pin |
+| Executive admin | One optional thread per repository that works for the user across its coordinators. It routes requests and shared intake, writes one update, and rules on conflicts between coordinators by published rules the user can overrule. It never writes code or lands work. | `brigade.py open --admin`, `rule`, `request`, `sync`, and `land.py` reservations, shares, and contests |
 | Menu | The restaurant's purpose, what good looks like, non-goals, and budget. | `menu.md` |
 | House rules | Standing orders pasted into every brief. They name forbidden paths, the verification bar, and that work lands through the repository's landing queue. | `house-rules.md` |
 | Rail | Append-only intake. The head chef groups related tickets before it fires any. | `rail.tsv` |

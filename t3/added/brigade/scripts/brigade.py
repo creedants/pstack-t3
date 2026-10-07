@@ -1246,7 +1246,7 @@ def watch(restaurant):
                 if dish.get("reported") == "yes":
                     ago = int((moment - written).total_seconds() // 60)
                     if ago > OPEN_RUN_MINUTES:
-                        attempt.append(f"{dish['id']}: reported, run still open {ago}m ({where})")
+                        attempt.append(f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})")
                     else:
                         attempt.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
                 else:
@@ -1676,7 +1676,8 @@ def sync(admin):
                 admin.append("log.tsv", {"at": now(), "kind": "relay", "id": ident, "state": "copied",
                                          "note": json.dumps(row, separators=(",", ":"))})
                 lines.append(f"{name} {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}")
-            cursors[store] = end
+            # A sync that started later may have read further and moved this cursor already.
+            cursors[store] = max(end, int(cursors.get(store, 0)))
         admin.change_meta(cursors=cursors, lastActivityAt=now())
     return "\n".join(lines), failures
 

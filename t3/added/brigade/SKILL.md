@@ -1,6 +1,6 @@
 ---
 name: brigade
-description: "Give a project or a focus area its own standing head chef: one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
+description: "Give a project or a focus area its own standing head chef: one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', 'an executive admin over the coordinators on one repository', or running one of those threads. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
 ---
 
 # Brigade
@@ -40,17 +40,20 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
-$B status                                    # reporting level, landing mode, then counts, then owner <thread>@<generation>
+$B status                                    # thread <id> or thread not recorded, then reporting level, landing mode, and counts, then reports to <thread> and owner <thread>@<generation> when set
 $B set --thread <id> [--replace] --schedule <name>=<id>
 $B set --reporting every-turn|milestones|digest
 $B set --schedule <name>= drops that name from restaurant.json. A name that is not recorded is already absent, and the command still succeeds. Other names stay.
 $B set --intake github,<feed>                # the intake sources this restaurant owns. Replaces the list. --intake "" clears it
 $B set --workers <n>                         # dishes in progress or in review at once. A missing value reads as 2
-$B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>]   # prints T<n>
+$B set --reports-to <thread>                 # the executive admin this restaurant reports through. --reports-to "" clears it
+$B ticket add --summary "<request>" --source user|github|<feed> [--ref <url>] [--request A<n>]   # prints T<n>. --request refuses a second ticket for that request
 $B ticket list [--state waiting|assigned|moved|done|dropped]
 $B ticket set T3 --state dropped
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
+$B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
+$B inbox done A<n>                           # records the request as acted on and deletes its file
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60]   # claims the lease, prints D<n>
 $B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md
 $B brief D2 --goal '...' --acceptance '...' [--acceptance ...] --verify '...' --base main [--context ...]   # same brief. Single-quote every field
@@ -79,7 +82,7 @@ Every store write checks its owner. `restaurant.json` holds the recorded `thread
 
 `dish --state dropped` releases the dish's active lease, including a queued dish whose entry bounced. On a dish that holds a lease and records a worker thread it refuses without `--stopped`, with `brigade: D3 holds L4 and its worker may still be running; wait for its run with t3_thread_wait, then pass --stopped <run id>`. The lease stays active, so no sibling claims its paths early. `--stopped` records the run id in `log.tsv` as evidence. The script cannot check it. The dish's `assigned` tickets go back to `waiting`, each with a log row naming the dropped dish, and the command prints `D3 dropped; T2 waiting again`. Fire them again, or drop them with `ticket set`.
 
-`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family. `$B dish <id> --reported` records that this attempt's report-back arrived. A new attempt clears that mark. The attempt is new when the dish enters in progress, and when `$B dish <id> --thread <id>` records a different worker while the dish stays in progress. That command logs a new start. `$B watch` compares the report file to that start. Recording the same thread again leaves the attempt alone. When that report-back is recorded and the report file is more than 10 minutes old, `$B watch` prints `reported, run still open Nm`. The number is minutes since the report file was written. The script has not read the thread.
+`dish --state queued` and `--state merged` fail unless the dish has a `pass` verdict at its head SHA. `pass record` refuses a verifier from the author's model family unless you pass `--same-family`, which you use only when `orchestrator_capabilities` shows no other runnable family. `$B dish <id> --reported` records that this attempt's report-back arrived. A new attempt clears that mark. The attempt is new when the dish enters in progress, and when `$B dish <id> --thread <id>` records a different worker while the dish stays in progress. That command logs a new start. `$B watch` compares the report file to that start. Recording the same thread again leaves the attempt alone. When that report-back is recorded and the report file is more than 10 minutes old while the dish is still in progress, `$B watch` prints `reported Nm ago, not in review; read the thread`. The number is minutes since the report file was written.
 
 ## Open a restaurant
 
@@ -111,7 +114,7 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
 2. Call `orchestrator_capabilities` and resolve roles per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). Apply the menu's budget.
 3. Create three schedules with `schedule_task`, bound to this thread, each with a self-contained prompt: "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Reporting level: `<level>`. Follow Run a service step 9. Run a service." Read `<level>` from `restaurant.json` (`every-turn`, `milestones`, or `digest`). A missing `reporting` field is `milestones`. Add the purpose of the run to each. A later `$B set --reporting` changes the level, and the next service reads `restaurant.json` rather than the level copied into an older prompt.
    - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`. The prompt carries the reporting level.
-   - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source. The prompt carries the reporting level.
+   - Intake: an interval matched to the sources in the house rules, at least `3600000`. Skip it when the menu names no source. A restaurant whose `restaurant.json` has `reportsTo` keeps this schedule even with no source, at `3600000`, because each service starts with `inbox take`. The prompt carries the reporting level.
    - Evening report: `{"type": "fixed_time", "timeOfDay": "18:00"}`, prompt adds "Write the report." The prompt carries the reporting level.
    - While this restaurant has dishes queued, keep a landing drain schedule per the [landing skill](../landing/SKILL.md#keep-the-queue-moving), and delete it when none are. Name the reporting level in that prompt, and say to follow Run a service step 9. After the queue opens a PR, that section has this thread call `watch_pull_request` and run `land` on each wake. Other restaurants' drains on the same repository are harmless. The queue lock runs one at a time. When you delete that schedule, run `$B set --schedule drain=`.
    - While `$B watch` prints anything other than "no work in progress", and on the first refused `fire`, keep a liveness schedule. `watch` renews every live lease, so this schedule is what keeps a lease from expiring. At `every-turn` and `milestones` use `{"type": "interval", "everyMs": 600000}`, every 10 minutes. At `digest` use `{"type": "interval", "everyMs": 1800000}`, every 30 minutes, because worker report-backs and pull request watches are the primary wakes. The prompt is "Use the brigade skill. You are the head chef for the restaurant at `<restaurant dir>`. Reporting level: `<level>`. Follow Run a service step 9. Run the liveness check." Delete it when `$B watch` prints "no work in progress". When you delete that schedule, run `$B set --schedule liveness=`. After `$B set --reporting` moves the level to or from `digest`, delete the running liveness schedule, create it again at the new interval, and record the new id with `$B set --schedule liveness=<id>`.
@@ -123,8 +126,8 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
 
 Every wake runs this: a user message, a worker's report-back, a verifier's completion, a schedule, or a `watch_pull_request` wake.
 
-1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. It is the purpose every decision answers to. `$B status` prints `owner <thread>@<generation>`. When it names another thread, end the turn with no further command. Otherwise set `$B` to `brigade.py --at <restaurant dir> --owner <thread>@<generation>`, and pass `--owner <restaurant>/@<generation>` on every `$L lease claim`, `lease renew`, `lease release`, and `submit`. When `status` prints no owner line and `restaurant.json` records this thread, run `$B set --thread <this thread>` once and read `status` again. A write refused with `is stale` means another thread replaced this one. End the service with no further command.
-2. **Take tickets.** Start with `$B ticket take`. It files each ticket a sibling handed to this restaurant. Each user request or supplier finding becomes `$B ticket add`. Fetch only the sources in this restaurant's intake. A ticket that is a sibling's work goes to it with `$B ticket move <id> --to <sibling>`. Then call `t3_thread_send` to the thread it prints, with mode `"auto"` and the line `ticket <sibling>: run ticket take`. A refused `ticket add` is not an error to work around. It means the ref is already filed, or another restaurant owns the source. Fetch supplier sources (`gh issue list`, `gh pr list`, notifications) only when the house rules name them and this restaurant owns them. Drop a ticket that is off the menu with `$B ticket set <id> --state dropped` and say why in the next report. At `digest` a dropped ticket is not a reply occasion.
+1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. It is the purpose every decision answers to. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no further command. Otherwise set `$B` to `brigade.py --at <restaurant dir> --owner <thread>@<generation>`, and pass `--owner <restaurant>/@<generation>` on every `$L lease claim`, `lease renew`, `lease release`, and `submit`. When `status` prints no owner line and `restaurant.json` records this thread, run `$B set --thread <this thread>` once and read `status` again. A write refused with `is stale` means another thread replaced this one. End the service with no further command.
+2. **Take tickets.** Start with `$B inbox take`. It files each ticket a sibling or the executive admin handed to this restaurant, then prints each request from the admin as `A<n>: <line>`. Act on each request per [Reporting to an executive admin](#reporting-to-an-executive-admin), then run `$B inbox done A<n>`. Each user request or supplier finding becomes `$B ticket add`. Fetch only the sources in this restaurant's intake. A ticket that is a sibling's work goes to it with `$B ticket move <id> --to <sibling>`. Then call `t3_thread_send` to the thread it prints, with mode `"auto"`, the line `ticket <sibling>: run ticket take`, and the handoff id as `clientRequestId`. The handoff id is this restaurant's store path, the last two parts of `<restaurant dir>`, then the ticket, such as `app/engine/T6`. A refused `ticket add` is not an error to work around. It means the ref is already filed, or another restaurant owns the source. Fetch supplier sources (`gh issue list`, `gh pr list`, notifications) only when the house rules name them and this restaurant owns them. Drop a ticket that is off the menu with `$B ticket set <id> --state dropped` and say why in the next report. At `digest` a dropped ticket is not a reply occasion.
 3. **Group before firing.** Read the waiting tickets together. Several reports of one cause are one dish. Fire a ticket alone only when it is urgent or unrelated to the rest. A ticket that is a whole program with a done predicate runs as one dish whose station is poteto-mode's Orchestrate playbook.
 4. **Fire.** Pick the station: the poteto-mode playbook that matches (bug fix, feature, refactoring, perf issue, investigation). Then:
    1. `$B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minutes> --paths <files and directories the dish will change> [--branch <name>]`. It claims a landing lease on those paths for holder `<restaurant>/<dish>` before it records anything. `fire` refuses when this restaurant's running workers are already at `--workers`. A refused claim names the holder and fires nothing. A refused `fire` leaves the tickets waiting. On the first refusal, create the liveness schedule from First service step 3 if `restaurant.json` has no `liveness` id. Fold the tickets into the holder's dish when it is this restaurant's, or leave them waiting until that lease is released. Never pass `.` for a dish that touches a few files. Size the timebox to the work, 30 to 90 minutes.
@@ -135,16 +138,16 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 6. **Review.** When a worker is done, read its report and diff yourself. A worker's "done" is a claim. `t3_thread_read` on the worker thread returns its `worktreePath` and branch. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from the `verifiers` role on a model family other than the author's. Its read-only brief: the tickets, the menu, the worktree path and the diff at that SHA, two questions (does it work on the real surface, and does it serve the menu without scope the tickets did not ask for), and "write your findings to `<restaurant dir>/reports/<dish>-review.md`". Record the verdict with `$B pass record`.
 7. **Act on the verdict.**
    - `pass`: write the PR title and body (what changed, the measured effect, how it was verified) to `<restaurant dir>/prs/<dish>.md`, then `$L submit --holder <restaurant>/<dish> --branch <b> --sha <head> --lease L<n> --reviewer <provider/model> --title "..." --body-file <restaurant dir>/prs/<dish>.md`, then `$B dish <id> --state queued`, then `$L land`. When it lands, `$B dish <id> --state merged`. In `merge` and `human` mode it opens a PR first. Record it with `$B dish <id> --pr <url>`, link it with `link_pull_request`, and call `watch_pull_request` on it per [Pull request watching](../pstack-runtime/SKILL.md#pull-request-watching). This head chef thread owns the PR. On each wake, run `$L land`. Keep the watch while the dish is queued or awaiting merge. A reply, or a wake with no reply, keeps the watch. Call `unwatch_pull_request` only when this thread stops driving that PR. Driving stops when the dish is dropped, when its PR closes, when the queue bounces it and leaves the PR open, or when the restaurant closes. If this thread is settled, call `t3_thread_organize` with `action: "unsettle"` before the next `watch_pull_request`. This thread is pinned, so a merge does not auto-settle it. Mark the dish merged when a later `land` reports it landed.
-   - Bounced by the queue: the lease is active again. Call `unwatch_pull_request` on the PR the bounce left open. Run `$B dish <id> --state in-progress`, because `brief` refuses a queued dish. Launch a fresh worker thread with `$B brief` rerun, `--context` naming the bounce reason, and current trunk. A conflict or a changed rebase needs a new review.
-   - `send-back`: `$B dish <id> --state in-progress`, rerun `$B brief` (it adds the verifier's findings file), and launch a fresh worker thread on a new branch from the old branch's head. Never message the old worker to fix its own work.
+   - Bounced by the queue: the lease is active again. Call `unwatch_pull_request` on the PR the bounce left open. Finish with the old worker per [Git and PR housekeeping](#git-and-pr-housekeeping). Then run `$B dish <id> --state in-progress`, because `brief` refuses a queued dish. Launch a fresh worker thread with `$B brief` rerun, `--context` naming the bounce reason, and current trunk. A conflict or a changed rebase needs a new review.
+   - `send-back`: finish with the old worker per [Git and PR housekeeping](#git-and-pr-housekeeping). Then `$B dish <id> --state in-progress`, rerun `$B brief` (it adds the verifier's findings file), launch a fresh worker thread on a new branch from the old branch's head, and record it with `$B dish <id> --thread <new thread id>`. Never message the old worker to fix its own work.
    - Drop a dish in three steps. A requested interrupt is not a stop. `t3_thread_interrupt` can return `status: "interrupt_requested"` while the worker's run goes on.
      1. Call `t3_thread_interrupt` on its worker thread.
      2. Call `t3_thread_wait` on the run id it returned, or on the thread when it returned none. When the wait returns `timedOut: true`, leave the dish in its state. `watch` keeps its lease renewing. Wait again on the next service.
      3. When the wait reports a terminal state, run `$B dish <id> --state dropped --stopped <run id>`, or `--stopped idle` when the wait reported an idle thread. That releases its lease.
-   - After a dish merges, is dropped, or is sent back, clean up per [Git and PR housekeeping](#git-and-pr-housekeeping).
+   - After a dish merges, is dropped, is sent back, or bounces, clean up per [Git and PR housekeeping](#git-and-pr-housekeeping).
    - `blocked`: `86 add` if only the user can unblock it. Otherwise fix the environment and run the pass again.
 8. **Fix the recipe.** When two dishes repeat the same mistake, fire a dish that runs the **correct** skill to make it impossible (lint, type, test, or skill). Run the **reflect** skill over this restaurant's threads once a week.
-9. **Report.** Read `reporting` from `restaurant.json`. A missing field means `milestones`. Send the scheduled evening report at every level. The 09:00 morning service is not a report. A batch has drained when `$B status` omits `in progress`, `in review`, `passed review`, and `waiting to land`. Status omits a count of zero, so a missing label is a count of zero. `waiting to land` is work queued to land, including a pull request that awaits merge. Send the drain summary on the wake that first finds the batch drained. A later wake that still sees the batch drained does not send that summary again. A service the user started is a turn begun by a user message. A worker report, a verifier completion, a schedule, or a pull-request wake is not a service the user started. A message from the user gets at least a one-line acknowledgment at every level. A direct question gets an answer. Each level below adds the replies it names. It does not drop the evening report, the user message, or the direct question.
+9. **Report.** When `$B status` prints `reports to <thread>`, this restaurant reports through the executive admin. Send each event line per [Reporting to an executive admin](#reporting-to-an-executive-admin), and reply to the user only in a service the user started. The levels below then decide nothing, except for an event whose send to the admin failed. Reply to the user about that event at this restaurant's own level. Otherwise read `reporting` from `restaurant.json`. A missing field means `milestones`. Send the scheduled evening report at every level. The 09:00 morning service is not a report. A batch has drained when `$B status` omits `in progress`, `in review`, `passed review`, and `waiting to land`. Status omits a count of zero, so a missing label is a count of zero. `waiting to land` is work queued to land, including a pull request that awaits merge. Send the drain summary on the wake that first finds the batch drained. A later wake that still sees the batch drained does not send that summary again. A service the user started is a turn begun by a user message. A worker report, a verifier completion, a schedule, or a pull-request wake is not a service the user started. A message from the user gets at least a one-line acknowledgment at every level. A direct question gets an answer. Each level below adds the replies it names. It does not drop the evening report, the user message, or the direct question.
    - `every-turn`. Send a short reply after every wake. Run `$B close` on the scheduled evening report, a reply that raises a decision for the user, the end of a service the user started, and closing the restaurant.
    - `milestones`. Reply when work merges, when a review sends work back or blocks it, when a decision needs the user, when something fails or the queue pauses, or when the user sends a message. A routine wake ends with no reply, or with a single line when the host requires text. A liveness check with nothing new, a liveness check while a review is pending, a review starting, and a worker launching are routine wakes. Run `$B close` on the scheduled evening report, a reply that raises a decision for the user, the end of a service the user started, and closing the restaurant.
    - `digest`. Reply only on these five wakes:
@@ -180,7 +183,8 @@ The head chef owns every git and PR chore its work creates. In `merge` and `push
 
 - Write each PR's title and body through `submit`, and link every PR with `link_pull_request`.
 - Keep the landing drain schedule while anything is queued or awaiting merge, per the [landing skill](../landing/SKILL.md#keep-the-queue-moving). After the queue opens a PR, also watch it as that section says. Keep that watch across reports while the entry is queued or awaiting merge. When you delete the schedule, run `$B set --schedule drain=`. Call `unwatch_pull_request` only when this thread stops driving that PR.
-- After a dish merges, is dropped, or is sent back, read its worker thread with `t3_thread_read` before you archive it. If its run is still open after the report-back, call `t3_thread_interrupt`, then `$B hang <id> --provider <provider> --minutes <n>` with the provider and the minutes that read showed, then archive. A worker that an earlier attempt launched counts too. Check each attempt's thread, and for a run a replaced attempt left open, add `--attempt <n>`, counting attempts from 1 in launch order. If the run has already closed, archive it. Then remove its worktree, delete its branch locally and on the remote, and delete the queue's `landing/e<n>` branch, including a leftover `landing/q<n>`, once its PR merged or closed. At `digest` this is a routine wake with no reply.
+- Finish with the old worker when a dish merges, is dropped, is sent back, or bounces. The old worker is the thread the dish row names before any `$B dish <id> --thread` records a replacement. Name that thread id in every call below, so the replacement's open run is never touched. Read it with `t3_thread_read`. If its run is still open after the report-back, call `t3_thread_interrupt`, then `$B hang <id> --provider <provider> --minutes <n>` with the provider and the minutes that read showed, then archive it. A worker that an earlier attempt launched counts too. Check each attempt's thread, and for a run a replaced attempt left open, add `--attempt <n>`, counting attempts from 1 in launch order. If the run has already closed, archive it. On a send-back or a bounce, finish before `$B dish <id> --state in-progress`. Entering in progress starts a new attempt, and `hang` then refuses with `brigade: no report-back on this attempt`. At `digest` reading, interrupting, logging a hang, and archiving send no reply of their own. A merge that drains the batch still sends the drain summary.
+- After a dish merges, is dropped, or is sent back, remove the old worker's worktree, delete its branch locally and on the remote, and delete the queue's `landing/e<n>` branch, including a leftover `landing/q<n>`, once its PR merged or closed. After a send-back, delete the old branch only once the fresh worker is launched, because its branch starts from the old head.
 - After a landing, when the user's checkout at the project root is clean and on trunk, fast-forward it with `git merge --ff-only`. Otherwise leave it alone.
 - A bounce or a conflict is a dish for a fresh worker, never a manual rebase.
 - Never force-push trunk, rewrite published history, change branch protection, or delete a branch this restaurant did not create.
@@ -189,7 +193,7 @@ The head chef owns every git and PR chore its work creates. In `merge` and `push
 
 Run on the liveness schedule, and at the start of any service while work is in progress.
 
-1. `$B watch`. It prints one line per dish in progress, one line for each other dish not `merged` or `dropped`, one line per ticket moved to a sibling that has not filed it yet, and `handed to you: <n>; run ticket take` while siblings' handoffs wait in this restaurant's inbox. On `handed to you`, run `$B ticket take`. On `not delivered`, run the `ticket move` command the line prints, then message the sibling per Run a service step 2. `waiting for ticket take` needs nothing until the sibling's next service. For a waiting ticket whose latest log row is `blocked`, it prints `waiting for a worker (<running> of <cap> running)`, `waiting on L<n> (<holder>)`, or `waiting for room in the repository (<n> of <n> changes in flight)`, the first that holds now. An `unblocked` line names a shell-quoted `fire` command. Run it as printed. That is the `fire` in steps 3 and 4 of Run a service for those tickets.
+1. `$B watch`. It prints one line per dish in progress, one line for each other dish not `merged` or `dropped`, one line per ticket moved to a sibling that has not filed it yet, and `handed to you: <n>; run ticket take` while siblings' handoffs wait in this restaurant's inbox. On `handed to you`, run `$B ticket take`. On `not delivered`, run the `ticket move` command the line prints, then message the sibling per Run a service step 2. `waiting for ticket take` needs nothing until the sibling's next service. For a waiting ticket whose latest log row is `blocked`, it prints `waiting for a worker (<running> of <cap> running)`, `waiting on L<n> (<holder>)`, or `waiting for room in the repository (<n> of <n> changes in flight)`, the first that holds now. An `unblocked` line names a shell-quoted `fire` command. Run it as printed. That is the `fire` in steps 3 and 4 of Run a service for those tickets. When `$B status` prints `reports to <thread>` and a ticket's first `blocked` row in `log.tsv` is more than an hour old, send the `blocked` line per [Reporting to an executive admin](#reporting-to-an-executive-admin).
    `watch` renews the lease of every dish in progress, in review, passed, sent back, or parked, and prints nothing for a live one. It updates `lastActivityAt` after a pass that renewed every live lease, so `walk` marks a restaurant whose leases stopped renewing. A submitted lease is the queue's. Act on these lines.
    - `D3: lease L4 expired; stop its worker, then run lease renew L4`. Call `t3_thread_interrupt` on the worker thread, then `t3_thread_wait` on the run id it returned. When the wait returns `timedOut: true`, leave the lease expired and the dish as it is, run no `lease renew`, and wait again on the next service. Only after the wait reports a terminal state, run `$L lease renew L4 --owner <restaurant>/@<generation>`. It admits the lease again, or refuses with the overlap or cap message. On a refusal, park the dish with `86 add` when only the user can unblock it, and run the renew again on a later service.
    - `D3: lease L4 was released; claim again before submitting`. Claim the paths with `$L lease claim` and record it with `$B dish D3 --lease <id> --paths <paths>` before any submit.
@@ -197,7 +201,7 @@ Run on the liveness schedule, and at the start of any service while work is in p
    - `D2: in review`, `D3: passed, not submitted`, `D4: parked`, and `D5: sent back` keep the liveness schedule alive. Act on them per Run a service steps 6 and 7.
    - For a passed or queued dish, `watch` reads `land.py status --holder <restaurant>/<dish> --sha <dish sha>` and takes the highest entry at exactly the dish's SHA. `D1: landed as E1 (<commit>); mark it merged`: run `$B dish D1 --state merged`. `D2: E3 awaiting merge <pr url>; watch that PR`: call `watch_pull_request` on that PR, because this thread owns it even when a sibling's `land` opened it. `D4: E4 bounced: <reason>`: follow the bounce step in Run a service step 7. `D5: E6 already submitted; mark it queued`: run `$B dish D5 --state queued`. That recovers a crash between `submit` and `dish --state queued`. `D6: E7 queued` needs nothing until the queue moves.
 2. "report written, no report-back" is a defect. The report file exists and the dish is not marked reported. Read the worker thread with `t3_thread_read` and `view` set to "activity". Find why the message never arrived. The brief lacked the send step, the worker skipped it, `t3_thread_send` failed or went to the wrong thread, or the timebox ran out. Fire a fix at that cause, in the brief template, the skill text the worker followed, or `brigade.py`, using the **correct** skill.
-3. A "report written" line that does not say "no report-back", and a line `reported, run still open Nm`, mean the worker reported back. The number is minutes since the report file was written. The script has not read the thread. Read the worker thread with `t3_thread_read`. If its run is still open, call `t3_thread_interrupt`, then `$B hang <id> --provider <provider> --minutes <n>` with the provider and the minutes that read showed. Then review per Run a service step 6. At `digest` this is a routine wake with no reply.
+3. A "report written" line that does not say "no report-back", and a line `reported Nm ago, not in review; read the thread`, mean the worker reported back and its review has not started. Read the worker thread with `t3_thread_read`. If its run is still open, call `t3_thread_interrupt`, then `$B hang <id> --provider <provider> --minutes <n>` with the provider and the minutes that read showed. Then review per Run a service step 6. At `digest` this is a routine wake with no reply.
 4. "over its timebox": `t3_thread_read` the thread with `view: "activity"` and `afterPosition`. When it made progress in the last 10 minutes, raise the timebox once with `$B dish <id> --timebox <m>`. Otherwise interrupt it and launch a fresh worker with a smaller scope, or park the dish with `86 add` when only the user can unblock it. Recording the fresh worker's thread with `$B dish <id> --thread <thread id>` starts its attempt while the dish stays in progress. The previous report and report-back mark belong to the worker you replaced. `$B watch` compares the report file to this new start.
 5. "running": nothing new. Reply per Run a service step 9. At `milestones` this is a routine wake, so end with no reply, or with a single line when the host requires text. At `digest`, end the turn with no reply text at all. At `every-turn`, send a short reply. A dish in `in-review` or `passed` is not this line.
 6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`. Delete it only on that line. A blocked ticket is not that line, so the schedule stays while one is waiting. Do not treat that line as a drained batch. A batch has drained when step 9 says it has. The drain summary is sent on the wake that first finds the batch drained. A review still pending means the batch has not drained. Do not send the drain summary while a review is pending. Reply per step 9.
@@ -209,3 +213,194 @@ Run on the liveness schedule, and at the start of any service while work is in p
 ## Close a restaurant
 
 First, for every dish that still holds an active lease, run the three drop steps in Run a service step 7: `t3_thread_interrupt`, then `t3_thread_wait`, then `$B dish <id> --state dropped --stopped <run id>` only after a terminal state. `$B close` writes reports and releases nothing. When any wait returns `timedOut: true`, stop here. Keep every schedule, so `watch` keeps that lease renewing, and continue closing on a later service once every wait has reported a terminal state. Then call `unwatch_pull_request` on each PR this thread is still watching. Delete its schedules with `delete_scheduled_task`, then clear each recorded name with `$B set --schedule <name>=`. Run `$B close` one last time, or `$B close --to-file` at `digest`. That close is the closing reply step 9 names. Unpin the thread with `t3_thread_organize`. Leave the store. It is the record.
+
+## Reporting to an executive admin
+
+A restaurant reports through the repository's executive admin while `$B status` prints `reports to <thread>`. The admin forwards the user's words, files shared intake, and rules on conflicts between coordinators. It never directs this restaurant's own work. The user stays in charge, and can still write to this thread directly. In the lines below, `<restaurant>` is this restaurant's directory name.
+
+**Events.** Send each line to the admin's thread with `t3_thread_send` and mode `"queue"`, so it never interrupts a turn in progress. Send every event, whatever this restaurant's reporting level. The admin reads the same events from this restaurant's `log.tsv`, so a lost line only delays it. When a send fails, also reply to the user about that event at this restaurant's own level, per Run a service step 9.
+
+| Line | Send when |
+| --- | --- |
+| `merged <restaurant>: <title> [<pr url>]` | work lands. `push` and `local` modes have no PR URL |
+| `sent-back <restaurant> D<n>: <one line>` | a review sends work back or blocks it |
+| `decision <restaurant> Q<n>: <question> Options: <options>. Default: <default>.` | it parks a decision for the user |
+| `failed <restaurant>: <one line>` | a failure or a paused queue it cannot fix itself |
+| `drained <restaurant>: <closeout path>` | its batch drains. Run `$B close --to-file` for the path |
+| `report <restaurant>: <closeout path>` | its evening report is written with `$B close --to-file` |
+| `blocked <restaurant> T<n>: waiting on L<n> held by <holder> since <time>` | a ticket has been blocked for more than an hour. `<time>` is its first `blocked` row in `log.tsv` |
+| `misrouted <restaurant> T<n>: <why>` | a routed ticket is off the menu, after `$B ticket move T<n> --to .admin` |
+| `reply <restaurant>: <one line>` | it answers a `from-user` request, including a decline and its reason |
+| `contest <restaurant> C<n> D<n>: <one line>` | its item and another coordinator's would conflict in the queue, after it opened contest `C<n>`. Name which depends on which |
+| `appeal <restaurant> R<n>: <why>` | it disagrees with a ruling, after it complied, or instead of complying when compliance would be irreversible |
+
+Send `blocked` from the Liveness check, once per ticket, with `clientRequestId` `blocked:<store path>/T<n>`, such as `blocked:app/docs/T4`, where the store path is the last two parts of `<restaurant dir>`, so a later check that sends it again delivers nothing new.
+
+**Requests.** The admin publishes each request into this restaurant's `inbox/` and wakes this thread. `$B inbox take` prints it as `A<n>: <line>`. Act on it, then run `$B inbox done A<n>`. A crash between the two replays the request, so key every action by its id.
+
+| Line | Do |
+| --- | --- |
+| `from-user <restaurant>: <the user's words>` | Treat it as a message from the user. Work it asks for becomes `$B ticket add --summary "..." --request A<n>`, which refuses a second ticket for that id. Answer with the `reply` line. |
+| `answer <restaurant> Q<n>: <answer>` | `$B 86 answer Q<n> --answer "<answer>"`, then act on it. |
+| `reports-to <restaurant> <thread>` | `$B set --reports-to <thread>`, or `$B set --reports-to ""` when `<thread>` is `none`. On a new thread, create the hourly service schedule from First service step 3 when `restaurant.json` records no `intake` schedule. On `none`, delete that schedule if the menu names no intake source. |
+| `ruling <restaurant> R<n>: <decision>` | Read the ruling's state with `python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>/../.admin rule list`. When `R<n>` is not `in-force`, do nothing. Otherwise carry out this restaurant's side. |
+
+The `ticket <restaurant>: run ticket take` line from the admin is a routed ticket, and `inbox take` files it. Take it per Run a service step 2. When it is off the menu, move it back with `$B ticket move <id> --to .admin` and send `misrouted`.
+
+**A ruling's side.** A coordinator complies with every ruling, and may appeal.
+
+- Contested paths. A reservation on the paths refuses every other holder's claim. The winner fires when `watch` prints `unblocked`. The other side starts no new work on those paths.
+- Ownership. When the ruling gives this restaurant's ticket to another coordinator, run `$B ticket move <id> --to <winner>` and send the `ticket` line per Run a service step 2.
+- Shares. `fire` refuses a claim past this restaurant's share. Nothing else changes.
+- Queue order. `land` holds the second holder's entries until the first lands. Nothing else changes.
+
+When this restaurant disagrees, it complies first, then sends `appeal`. When compliance would be irreversible, such as dropping work or deleting a branch, it holds and sends `appeal`, and the admin escalates.
+
+**Contests.** When this restaurant's item and another coordinator's would break or conflict with each other in the queue, run `$L contest --holders <this dish's holder>,<the other holder> --owner <restaurant>/@<generation>`. It prints `C<n>`, and `land` holds both holders' entries until the admin settles it. Then send the `contest` line. A refusal that says `there is nothing left to order` means one side already landed or is landing. Send nothing.
+
+**What the user hears.** While `reportsTo` is set, reply to the user only in a service the user started. This restaurant's reporting level decides only the fallback for a failed send. `$B close --to-file` still writes each report into this restaurant's store. Once `reportsTo` is cleared, reply at this restaurant's own level again.
+
+## Executive admin
+
+The executive admin is one thread that works for the user on one repository. As an assistant, it keeps the user up to date across every coordinator there, forwards requests, files shared intake once, and writes one plain-language update. As a coordinator of coordinators, it settles conflicts between them on its own authority, by the rules in [Rulings](#rulings), and logs every ruling so the user can review and overrule it. It escalates only what the rules cannot settle. The scripts enforce. The cap stays in `land.py`, paths stay exclusive through leases, and each ruling is carried out by a script. The user sets the rules' inputs, answers every decision, and has the last word. Each coordinator keeps its own work, reviews, queue entries, and `menu.md`. Without an admin, every coordinator works as the rest of this skill says.
+
+Its store is `<store>/<project>/.admin/`, beside the coordinators it serves, with `role: "admin"` in `restaurant.json`. It is a sibling of each of them, so intake ownership, `ticket move`, and handoff ids work as for any sibling. An admin thread follows this section and Digest messages. Open a restaurant, First service, Run a service, Liveness check, and Git and PR housekeeping are for coordinators. Here `$B` is `python3 <skills>/brigade/scripts/brigade.py --at <store>/<project>/.admin --owner <thread>@<generation>`. `set --thread` needs no `--owner`, so drop it there.
+
+```bash
+python3 <skills>/brigade/scripts/brigade.py open --admin --project-root <root> --reporting <level>   # opened or exists, then every coordinator on the root
+$B request --to <coordinator> "<line>"     # records A<n>, publishes it into that inbox, prints the thread to tell
+$B request --republish                     # publishes again any request a crash left unwritten
+$B rule add --kind contested-paths|ownership|shares|queue-order --parties <a>,<b> --question "..." --rule purpose|priority|age|related-work|dependency|floor|user --decision "..." [--supersedes R<n>]   # prints R<n>
+$B rule overrule R<n> --decision "<the user's words>"   # marks it overruled and records the user's ruling
+$B rule set R<n> --state done|expired ; $B rule list [--state in-force]
+$B sync                                    # copies each coordinator's new log.tsv rows into this log, or prints nothing new
+$B set --thread <new> --replace --expect <old> [--stopped <run id>|idle|gone]   # compare-and-swap of the admin's thread
+```
+
+The admin store refuses `fire`, `brief`, `dish`, `pass`, and `watch` with `brigade: the executive admin routes work and never runs it`.
+
+### Open an executive admin
+
+The user asks any thread for an executive admin.
+
+1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`, because the admin exists so the user hears less.
+2. Run `python3 <skills>/brigade/scripts/brigade.py open --admin --project-root <root> --reporting <level>`. It prints `opened <dir>` or `exists <dir>`, then one block per coordinator on the root with its purpose. Only the caller that got `opened` launches a thread.
+3. Write the user's priorities under `## Priorities` in its `menu.md`, highest first, with the user. Add which intake sources it should own. Without priorities, the rules fall back to purposes and age.
+4. Move shared intake. Each coordinator that lists the shared source runs `set --intake` without it. That is refused while it still has waiting or assigned tickets from the source, so it finishes them first or moves them to the admin with `ticket move <id> --to .admin`. Then run `$B set --intake <source>` on the admin.
+5. Launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record it with `$B set --thread <id>`. Then send it "Run your first service." with `t3_thread_send` and mode `"auto"`.
+
+When the user asks the admin to open a coordinator, it runs Open a restaurant, shows the user any overlap with the purposes `open` printed, and launches the new thread once the user agrees.
+
+### Admin first service
+
+1. `t3_thread_organize` with `action: "pin"` and no `threadId`.
+2. Create three schedules with `schedule_task`, bound to this thread, and record each with `$B set --schedule <name>=<id>`. Each prompt says "Use the brigade skill. You are the executive admin for the store at `<dir>`. Reporting level: `<level>`. Run a service."
+   - Intake: `{"type": "interval", "everyMs": 3600000}`. Each service also runs the idle check, which must run well inside the 6-hour lease expiry.
+   - Morning service: `{"type": "fixed_time", "timeOfDay": "09:00"}`, for routing and checks.
+   - Evening update: `{"type": "fixed_time", "timeOfDay": "18:30"}`, after the coordinators' 18:00 reports. The prompt adds "Write the update."
+   It creates no liveness or drain schedule, because it runs no workers and owns no queue entries.
+3. Send each coordinator `reports-to <coordinator> <this thread>` as a request, per Admin messages.
+4. Run an admin service.
+
+### Admin service
+
+Every wake runs one service, whether a schedule, a message, or a user message.
+
+1. Run `$B status`. It prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no action. Otherwise pass that token as `--owner` on every `$B` command, and `--owner .admin/@<generation>` on every `$L` write. A write refused with `is stale` means another thread owns the store. End the service at once and run no further command, including the ruling's `$L` enforcement.
+2. Read `menu.md`, `$B status`, `$B 86 list`, and `python3 <skills>/brigade/scripts/brigade.py walk --repo <root> --stale-hours 3`.
+3. `$B inbox take`, for tickets moved back. Then intake from its owned sources with `$B ticket add --summary "..." --source <source> --ref <url>`. Then `$B request --republish`.
+4. Route each waiting ticket to the coordinator whose purpose fits with `$B ticket move <id> --to <coordinator>`, then `t3_thread_send` to the thread it prints, with mode `"auto"`, the line `ticket <coordinator>: run ticket take`, and the handoff id `<project>/.admin/T<n>` as `clientRequestId`. A ticket that fits two purposes gets an ownership ruling. A ticket no purpose fits becomes `$B 86 add` with options and a default.
+5. Run `$B sync`. It prints each coordinator's new rows. Rule on each conflict it finds, such as a block older than an hour, a `contest` or `appeal` line, or waiting work that needs a changed share, per [Rulings](#rulings). Record each ruling with `$B rule add` before carrying it out. Then reconcile every ruling `$B rule list --state in-force` prints, mark the ones whose condition ended with `$B rule set`, and carry out the rest again, which repeats nothing. Pass each coordinator's `decision` to the user. Never answer it. A malformed-line failure from `sync` goes to the user as a failure.
+6. When the repository sits at its cap while tickets wait for an hour, park a decision proposing a new cap, with a default. A coordinator that `walk` marks idle while it holds leases becomes a decision for the user, before its 6-hour leases lapse.
+7. Reply per [What the user hears from the admin](#what-the-user-hears-from-the-admin).
+
+### Admin messages
+
+Every exchange is an explicit `t3_thread_send`. The admin sends with mode `"auto"`, so the coordinator wakes. Coordinators send the event lines in [Reporting to an executive admin](#reporting-to-an-executive-admin) with mode `"queue"`. Messages are wakes, and the stores are the record. The admin consumes coordinator events only through `sync`, which reads each `log.tsv` past a cursor and relays each row once, so a second wake for one event finds nothing new.
+
+Every admin line except a routed ticket is a request. Run `$B request --to <coordinator> "<line>"`. It prints `A<n> for <coordinator>; tell thread <id>`. Then call `t3_thread_send` to that thread with the line and `clientRequestId` `A<n>`, so a retried send delivers once. A failed send is retried or left to the next scheduled wake, because the file waits in the inbox.
+
+| Line | Sent when |
+| --- | --- |
+| `ticket <coordinator>: run ticket take` | it routes a ticket, as in service step 4 |
+| `from-user <coordinator>: <the user's words>` | the user asks something of that coordinator, a mode change, or disagrees with its verdict. Quote the user's words |
+| `answer <coordinator> Q<n>: <answer>` | the user answers that coordinator's decision |
+| `reports-to <coordinator> <thread>` | its first service, recovery, or retirement with `none` |
+| `ruling <coordinator> R<n>: <decision>` | it records a ruling. Send it to each coordinator involved |
+
+### Rulings
+
+The admin rules on four kinds of conflict between coordinators. It applies the rules in order, and the first rule that separates the parties decides. A ruling binds the coordinators involved until it is done, expires, is superseded, or the user overrules it.
+
+The rules read three inputs. Each coordinator's `menu.md`, with its purpose and `## Off the menu`. The user's priorities, the ranked names under `## Priorities` in the admin's `menu.md`. A coordinator the list does not name ranks below every named one, level with the other unnamed ones. Only the user changes the list. Age, how long the waiting work has waited. A blocked ticket's age counts from its first `blocked` row. A coordinator's age is its oldest waiting ticket's. Queue order counts from the `contest` line.
+
+| Kind | Question | Rules, in order |
+| --- | --- | --- |
+| `contested-paths` | Which coordinator claims a contested path next, including a hot shared file such as `README.md` | 1. A path one purpose names and the other's `## Off the menu` excludes goes to the first (`purpose`). 2. The user's priorities (`priority`). 3. The older waiting work (`age`). |
+| `ownership` | Which coordinator owns a request that fits two purposes | 1. A coordinator whose `## Off the menu` excludes it loses (`purpose`). 2. The user's priorities (`priority`). 3. The coordinator whose open work already touches the request's paths or ref (`related-work`). 4. Otherwise escalate. |
+| `shares` | How many of the repository's changes in flight each coordinator may hold, out of the cap | 1. Each coordinator with waiting work gets one, by priorities, then age, until the cap runs out (`floor`). 2. The rest go by priorities, highest first, up to each coordinator's waiting work (`priority`). 3. A tie goes to the older waiting work (`age`). |
+| `queue-order` | Which of two coordinators' passed items lands first when one would break or conflict with the other | 1. An item the other depends on, as a `contest` line stated, lands first (`dependency`). 2. The user's priorities (`priority`). 3. The older `contest` side (`age`). |
+
+When two ages are equal, no rule separates the parties, and the admin escalates. So every ruling has one outcome or escalates.
+
+A live lease is never taken away. A contested-path ruling decides who claims next when the lease frees, and keeps the holder from starting new work on those paths while the winner waits. A share counts changes in flight, as the cap does. Shrinking a share stops no running work.
+
+Carry out each ruling with its script, after `$B rule add` recorded it.
+
+- `contested-paths`: `$L lease reserve --for <winner>/ --paths <paths> --ruling R<n> --owner .admin/@<generation>`. It prints `S<n>`. Every other holder's claim on those paths is refused until the winner claims them or the reservation expires 2 hours after it arms.
+- `ownership`: `$B ticket move <id> --to <winner>` when the admin holds the ticket. Otherwise the `ruling` line asks the holder to move it.
+- `shares`: `$L share --for <coordinator>/ <n> --owner .admin/@<generation>` for each coordinator. It refuses shares that add up to more than the cap.
+- `queue-order`: `$L contest --settle C<n> --first <holder> --owner .admin/@<generation>`. `land` then holds the other holder's entries until an entry of the first holder lands.
+
+Then send the `ruling` line to each coordinator involved.
+
+**States.** A ruling starts `in-force`. Mark it `done` with `$B rule set R<n> --state done` when its condition ends. A rerun of its `lease reserve` prints `S<n> was claimed in full`, the moved ticket appears in the winner's `rail.tsv`, the share is in place, or `$L status --holder <first holder>` shows a `landed` entry. Mark it `expired` when the rerun refuses with `S<n> for ruling R<n> expired`, or its entry left the queue unordered. Rule again on the next service if the conflict remains. Recording comes first, so a crash never leaves a ruling carried out but unlogged. A rerun of `lease reserve` with the same ruling, `ticket move`, `share`, and `contest --settle` gives the same result.
+
+**Replacing a ruling.** A new ruling that changes an earlier one names it with `--supersedes R<n>`. Remove the old constraint before carrying out the new one, with `$L lease unreserve S<n> --owner .admin/@<generation>`, a new `contest --settle`, `$L contest --cancel C<n> --owner .admin/@<generation>`, or new shares.
+
+**Overrule.** The user can overrule any ruling by describing it. Run `$B rule overrule R<n> --decision "<the user's words>"`, which records a ruling decided by `user` that supersedes it, then carry the new one out. An overrule changes what happens next. It cannot undo a lease already claimed or work already landed. Say so. When the overrule states a general preference, ask whether to add it to `## Priorities`, and add it only when the user says yes.
+
+**Appeals.** On an `appeal` line, recheck the ruling with the appeal's facts, such as a dependency it did not know. When the rules now decide differently, record a new ruling that supersedes the old one. Otherwise keep it, and list the appeal in the next update for the user.
+
+**Escalate** only what the rules cannot settle. Park each with `$B 86 add --question "..." --options "..." --default "..."`, and act on that conflict only after the answer.
+
+- A real priority call. No rule separates the parties, or two ages are equal. One coordinator lost three rulings in a row on the same paths, or its work has waited on rulings for more than 24 hours. An ordered entry has waited more than 24 hours on an item that keeps bouncing.
+- A change to a purpose. The same two purposes collided in more than three rulings in a week, or a request fits no purpose. Propose new wording. Never edit a coordinator's `menu.md`.
+- Anything irreversible. Dropping or closing another coordinator's work, deleting a branch, and changing the repository cap or the landing mode belong to the user. Run `$L cap` and `$L mode` only when the user asks, and after `$L mode`, tell every coordinator with a `from-user` line.
+
+### What the admin never does
+
+- Decide what belongs to the user. It sets no cap, landing mode, priority, or purpose, and never answers a coordinator's decision.
+- Direct a coordinator's own work. What a coordinator builds, how it reviews, and when it submits, absent a conflict, stay its own.
+- Write code, or edit any file in a repository.
+- Land work. It never runs `$L submit` or `$L land`, and never merges or deletes a branch.
+- Override a review. It never records or changes a verdict, never asks a coordinator to submit work that did not pass, and never messages a worker.
+- Write into a coordinator's store, except new files in its `inbox/` through `ticket move` and `request`.
+- Claim, renew, or release a lease, or start work. It only reserves contested paths for a ruling's winner.
+
+### Admin recovery and retirement
+
+The store outlives its thread. Recovery is a user request, run from one thread. Every `brigade.py` write checks the owner token under the store lock, and every `land.py` ruling write checks `--owner .admin/@<generation>` against the floor `set --thread` raises. So a command the old run started either finished before the claim or is refused after it. The stop steps are a courtesy.
+
+1. Claim the store with `$B set --thread recovering:<this thread> --replace --expect <old thread>`. Of two racing recoveries, one wins and the other exits 1. The output names the recorded schedule ids and `previousThread`. Run `$B status` again for the new owner token.
+2. Delete each schedule with `delete_scheduled_task`, and clear each name with `$B set --schedule <name>=`.
+3. When the old thread still exists, call `t3_thread_interrupt` on it. `status: "interrupt_requested"` means its run has not stopped yet.
+4. Call `t3_thread_wait` on the run id it returned, or on the thread when it returned none.
+5. When the wait returns `timedOut: true`, launch nothing. The store stays `recovering:<this thread>`. Tell the user, and wait again on the next turn on the thread in `previousThread`.
+6. When the wait reports a terminal state, archive the old thread. Launch the new thread with the message from opening step 5. Run `$B set --thread <new> --replace --expect recovering:<this thread> --stopped <run id>`, `--stopped idle` for an idle thread, or `--stopped gone` when the old thread no longer exists. Without `--stopped` it exits 1 with `brigade: the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>`. Then send the start message. The new thread's first service sends every coordinator the `reports-to` line.
+
+When the recovering thread is itself gone, a later recovery claims with `--expect recovering:<that thread>` and runs the same steps.
+
+To retire the admin, route or drop its waiting tickets, then run `$B set --intake ""`. Delete its schedules and clear each name. Send each coordinator `reports-to <coordinator> none`, and send a last update. Unpin its thread. Last, run `$B set --thread "" --replace --expect <this thread>`, so any later wake stops at the fence. Each coordinator takes a shared source back with `set --intake <source>` where the user wants it. Restarting a retired admin is recovery with `--expect ""` and `--stopped gone`.
+
+### What the user hears from the admin
+
+The user hears from one thread. The admin's level uses the same three values as a coordinator's.
+
+- `every-turn`. Reply after each wake.
+- `milestones`. Reply when any coordinator's work merges, when a review sends work back or blocks it, when the user has a decision to make, or when a failure arrives.
+- `digest`. Reply for a decision, a failure no coordinator can fix itself, one summary when every coordinator has drained, and the evening update.
+
+A ruling is never a reply occasion on its own at `milestones` or `digest`. A message from the user gets at least a one-line acknowledgment at every level, and a direct question gets an answer.
+
+Every admin reply follows [Digest messages](#digest-messages) at every level. A few plain sentences say what changed for each purpose, what is next, and what the user must decide, each decision with its default. Name each coordinator by its purpose, not its store name. List the rulings made since the last update in plain words, each with the rule that decided it, and say the user can overrule any of them by describing it. End with one line naming the full update, which `$B close --to-file` writes. That file holds each ruling's id and each coordinator's newest report.
