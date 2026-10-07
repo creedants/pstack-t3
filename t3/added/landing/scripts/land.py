@@ -1047,6 +1047,7 @@ def attempt(store, integration, entries):
     applied, bounced, landed = [], [], []
     for entry in entries:
         reason = integration.apply(entry)
+        candidate = "" if reason else integration.head()
         with store.tx() as db:
             if reason == "already-in-trunk":
                 settle_landed(store, db, entry["id"], base, "already in trunk")
@@ -1055,7 +1056,7 @@ def attempt(store, integration, entries):
                 settle_bounced(store, db, entry["id"], reason)
                 bounced.append(entry["id"])
             else:
-                store.set_entry(db, entry["id"], "landing", candidate=integration.head())
+                store.set_entry(db, entry["id"], "landing", candidate=candidate)
                 applied.append(entry)
     if not applied:
         return landed, bounced, [], base
@@ -1095,14 +1096,15 @@ def land_human(store, integration, entry):
     """Human mode: rebase onto trunk, check, push to a queue-owned branch, open its PR. Returns True when opened."""
     contract = store.contract
     git("fetch", contract["remote"], contract["trunk"], cwd=store.repo)
-    integration.reset(git("rev-parse", trunk_ref(contract), cwd=store.repo).stdout.strip())
+    base = git("rev-parse", trunk_ref(contract), cwd=store.repo).stdout.strip()
+    integration.reset(base)
     reason = integration.apply(entry)
     if not reason:
         reason = integration.check()
         reason = f"checks failed: {reason}" if reason else None
     if reason == "already-in-trunk":
         with store.tx() as db:
-            settle_landed(store, db, entry["id"], integration.head(), "already in trunk")
+            settle_landed(store, db, entry["id"], base, "already in trunk")
         return False
     if reason:
         with store.tx() as db:
@@ -1530,11 +1532,14 @@ def take_pr(store, entry, landed, bounced):
 
 
 def poll_human(store):
-    landed, bounced, adopted = [], [], []
+    landed, bounced, adopted, opened = [], [], [], []
     for entry in store.entries("awaiting-merge"):
         if not entry["pr"]:
-            if ensure_pr(store, entry) == "adopted":
+            outcome = ensure_pr(store, entry)
+            if outcome == "adopted":
                 adopted.append(entry["id"])
+            elif outcome == "created":
+                opened.append(entry["id"])
             entry = entry_row(store, entry["id"])
         if take_pr(store, entry, landed, bounced):
             continue
@@ -1566,7 +1571,7 @@ def poll_human(store):
             if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
                 break
             time.sleep(0.5)
-    return landed, bounced, adopted
+    return landed, bounced, adopted, opened
 
 
 def second_of(row):
@@ -1707,12 +1712,19 @@ def land(store):
                 return report(store, [], [], [])
             if store.contract["mode"] == "merge":
                 advance_drain(store)
-            landed, bounced, adopted = poll_human(store)
+            polled_landed, polled_bounced, polled_adopted, polled_opened = poll_human(store)
+            landed.extend(polled_landed)
+            bounced.extend(polled_bounced)
+            adopted.extend(polled_adopted)
+            opened.extend(polled_opened)
             for entry in unheld_queued(store):
                 (opened if land_human(store, integration, entry) else bounced).append(entry["id"])
             if store.contract["mode"] == "merge" and opened:
-                more_landed, more_bounced, more_adopted = poll_human(store)
-                landed, bounced, adopted = landed + more_landed, bounced + more_bounced, adopted + more_adopted
+                more_landed, more_bounced, more_adopted, more_opened = poll_human(store)
+                landed.extend(more_landed)
+                bounced.extend(more_bounced)
+                adopted.extend(more_adopted)
+                opened.extend(more_opened)
             states = {row["id"]: row["state"] for row in store.db.execute("SELECT id, state FROM entry")}
             bounced += [ident for ident in opened if states[ident] == "bounced" and ident not in bounced]
             opened = [ident for ident in opened if states[ident] == "awaiting-merge"]
