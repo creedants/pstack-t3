@@ -2344,6 +2344,10 @@ class AdminTest(StoresTest):
         """The admin's relay rows as (store@offset, the copied row)."""
         return [(row[2], json.loads(row[4])) for row in self.rows(".admin", "log.tsv") if row[1] == "relay"]
 
+    def ruling_events(self):
+        """Ruling log rows as (id, state, note)."""
+        return [tuple(row[2:5]) for row in self.rows(".admin", "log.tsv") if row[1] == "ruling"]
+
     def cursor(self, name):
         return self.meta(".admin").get("cursors", {}).get(f"app/{name}", 0)
 
@@ -2517,6 +2521,80 @@ class AdminTest(StoresTest):
         self.assertEqual(self.admin("rule", "list", "--state", "in-force"), "no rulings")
         self.assertIn("invalid choice: 'guess'", self.admin("rule", "add", "--kind", "ownership", "--parties", "docs",
                                                           "--question", "q", "--rule", "guess", "--decision", "d", ok=False))
+
+    def _ruling_section(self, *lines):
+        return "\n".join(["## Rulings", "", *lines])
+
+    def test_a_ruling_killed_before_its_log_row_is_named_by_the_next_close(self):
+        self.open_admin()
+        died = self.child("die-before-log", ".admin", "rule", "add", "--kind", "ownership", "--parties", "docs",
+                          "--question", "Who owns this?", "--rule", "priority", "--decision", "docs")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.admin("rule", "list"),
+                         "R1 in-force ownership (docs): Who owns this? Decided by priority: docs.")
+        section = self._ruling_section(
+            "- R1 in-force ownership (docs): Who owns this? Decided by priority: docs.")
+        self.assertIn(section, self.admin("close", "--dry-run"))
+        self.assertEqual(self.ruling_events(), [])
+        self.assertIn(section, self.admin("close"))
+        self.assertEqual(self.ruling_events(), [("R1", "in-force", "docs")])
+        self.assertNotIn("## Rulings", self.admin("close"))
+
+    def test_an_overrule_killed_before_its_log_rows_is_named_by_the_next_close(self):
+        self.open_admin()
+        self.admin("rule", "add", "--kind", "contested-paths", "--parties", "docs,engine",
+                   "--question", "Who claims README.md next?", "--rule", "age",
+                   "--decision", "docs claims README.md next")
+        died = self.child("die-before-log", ".admin", "rule", "overrule", "R1", "--decision", "engine goes first")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.admin("rule", "list"), "\n".join([
+            "R1 overruled contested-paths (docs, engine): Who claims README.md next? Decided by age: docs claims README.md next.",
+            "R2 in-force contested-paths (docs, engine): Who claims README.md next? Decided by user: engine goes first. Supersedes R1.",
+        ]))
+        section = self._ruling_section(
+            "- R1 overruled contested-paths (docs, engine): Who claims README.md next? Decided by age: docs claims README.md next.",
+            "- R2 in-force contested-paths (docs, engine): Who claims README.md next? Decided by user: engine goes first. Supersedes R1.",
+        )
+        self.assertIn(section, self.admin("close", "--dry-run"))
+        self.assertEqual(self.ruling_events(), [("R1", "in-force", "docs claims README.md next")])
+        self.assertIn(section, self.admin("close"))
+        self.assertEqual(self.ruling_events(), [
+            ("R1", "in-force", "docs claims README.md next"),
+            ("R2", "in-force", "engine goes first"),
+            ("R1", "overruled", "replaced by R2"),
+        ])
+        self.assertNotIn("## Rulings", self.admin("close"))
+
+    def test_an_ended_ruling_killed_before_its_log_row_is_named_by_the_next_close(self):
+        self.open_admin()
+        self.admin("rule", "add", "--kind", "ownership", "--parties", "docs",
+                   "--question", "Who owns this?", "--rule", "priority", "--decision", "docs")
+        died = self.child("die-before-log", ".admin", "rule", "set", "R1", "--state", "done")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.admin("rule", "list"),
+                         "R1 done ownership (docs): Who owns this? Decided by priority: docs.")
+        section = self._ruling_section(
+            "- R1 done ownership (docs): Who owns this? Decided by priority: docs.")
+        self.assertIn(section, self.admin("close", "--dry-run"))
+        self.assertEqual(self.ruling_events(), [("R1", "in-force", "docs")])
+        self.assertIn(section, self.admin("close"))
+        self.assertEqual(self.ruling_events(), [
+            ("R1", "in-force", "docs"),
+            ("R1", "done", "docs (done)"),
+        ])
+        self.assertNotIn("## Rulings", self.admin("close"))
+
+    def test_the_next_rule_add_logs_a_killed_ruling_once(self):
+        self.open_admin()
+        died = self.child("die-before-log", ".admin", "rule", "add", "--kind", "ownership", "--parties", "docs",
+                          "--question", "Who owns this?", "--rule", "priority", "--decision", "docs")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.admin("rule", "add", "--kind", "ownership", "--parties", "engine",
+                                    "--question", "Who owns T4?", "--rule", "priority", "--decision", "engine"), "R2")
+        self.assertEqual(self.ruling_events(), [
+            ("R1", "in-force", "docs"),
+            ("R2", "in-force", "engine"),
+        ])
 
     # Requests.
 
