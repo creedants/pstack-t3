@@ -73,10 +73,28 @@ expand_home() {
 }
 
 # T3 trims the data dir and settings paths before it expands ~.
+# JavaScript String.prototype.trim, as UTF-8 bytes. [:space:] follows the
+# locale and keeps U+00A0 and U+FEFF. Python str.strip() keeps U+FEFF.
 trim() {
-	local s="$1"
-	s="${s#"${s%%[![:space:]]*}"}"
-	s="${s%"${s##*[![:space:]]}"}"
+	local s="$1" prev="" w
+	while [ "$s" != "$prev" ]; do
+		prev="$s"
+		for w in \
+			$'\t' $'\n' $'\v' $'\f' $'\r' ' ' \
+			$'\xc2\xa0' \
+			$'\xe1\x9a\x80' \
+			$'\xe2\x80\x80' $'\xe2\x80\x81' $'\xe2\x80\x82' $'\xe2\x80\x83' \
+			$'\xe2\x80\x84' $'\xe2\x80\x85' $'\xe2\x80\x86' $'\xe2\x80\x87' \
+			$'\xe2\x80\x88' $'\xe2\x80\x89' $'\xe2\x80\x8a' \
+			$'\xe2\x80\xa8' $'\xe2\x80\xa9' $'\xe2\x80\xaf' \
+			$'\xe2\x81\x9f' \
+			$'\xe3\x80\x80' \
+			$'\xef\xbb\xbf'
+		do
+			s="${s#"$w"}"
+			s="${s%"$w"}"
+		done
+	done
 	printf '%s\n' "$s"
 }
 
