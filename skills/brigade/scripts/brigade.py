@@ -1042,13 +1042,14 @@ def watch(restaurant):
     item_lines, answered = [], True
     for dish in dishes:
         found = progress.get(dish["id"], [])
-        if dish["lease"] and dish["state"] in LEASED_STATES:
+        entry = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else None
+        # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
+        submitted = dish["state"] == "passed" and entry and entry.endswith("mark it queued")
+        if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
             line, ok = renew_line(restaurant, dish)
             answered = answered and ok
             found += [line] if line else []
-        if dish["state"] in ("passed", "queued"):
-            line = entry_line(restaurant, dish)
-            found += [line] if line else []
+        found += [entry] if entry else []
         item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
     for ident, note in blocked:
         lines.append(blocked_watch_line(root, prefix, ident, note, running, cap, next_dish))
@@ -1066,7 +1067,7 @@ def drop(restaurant, ident, stopped):
     with restaurant.checked():
         restaurant.fence()
         _, dish = restaurant.find("dishes.tsv", ident)
-        lease = dish["lease"] if dish["state"] in LEASED_STATES else ""
+        lease = dish["lease"] if dish["state"] not in ("merged", "dropped") else ""
         if lease and dish["thread"] and not stopped:
             raise BrigadeError(f"{ident} holds {lease} and its worker may still be running; "
                                "wait for its run with t3_thread_wait, then pass --stopped <run id>")
@@ -1085,14 +1086,14 @@ def drop(restaurant, ident, stopped):
 
 
 def next_owner(meta, thread, replace):
-    """The generation set --thread records, and whether it replaces a recorded thread."""
+    """The generation set --thread records, and whether it changes the recorded thread."""
     current = (meta.get("thread") or "").strip()
     generation = meta.get("generation")
     if current and thread != current:
         if not replace:
             raise BrigadeError(f"thread {current} already recorded")
         return (generation or 1) + 1, True
-    return generation or 1, False
+    return generation or 1, not current
 
 
 def set_thread(restaurant, args):
@@ -1100,8 +1101,8 @@ def set_thread(restaurant, args):
     while True:
         with restaurant.locked():
             target = next_owner(restaurant.meta, args.thread, args.replace)
-        generation, replacing = target
-        if replacing:
+        generation, changing = target
+        if changing and generation > 1:
             prefix = f"{slug(restaurant.meta['restaurant'])}/"
             result = land_result(restaurant.meta["projectRoot"], "owner", "--prefix", prefix, "--generation", str(generation))
             error = result.stderr.strip().removeprefix("land: ")
@@ -1111,7 +1112,8 @@ def set_thread(restaurant, args):
         with restaurant.checked():
             if next_owner(restaurant.meta, args.thread, args.replace) != target:
                 continue
-            restaurant.unfenced = True
+            # Recording the same thread again is an ordinary write, so it keeps the fence.
+            restaurant.unfenced = changing
             return command(restaurant, args)
 
 

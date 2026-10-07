@@ -297,12 +297,22 @@ exit 0
         finally:
             store.db.close()
 
+    def owner_state(self):
+        store = land.Store.for_repo(self.work)
+        try:
+            return ([tuple(row) for row in store.db.execute("SELECT * FROM owner")],
+                    store.db.execute("SELECT count(*) FROM log").fetchone()[0])
+        finally:
+            store.db.close()
+
     def test_an_owner_floor_rises_and_never_lowers(self):
         self.init()
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
+        before = self.owner_state()
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "2"), "docs/ at generation 2")
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "1", ok=False),
                          "land: docs/ is at generation 2; a floor never lowers")
+        self.assertEqual(self.owner_state(), before)
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "3"), "docs/ at generation 3")
 
     def test_lease_writes_refuse_an_owner_below_the_floor_and_change_nothing(self):

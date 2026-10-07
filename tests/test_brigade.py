@@ -1361,18 +1361,19 @@ class BrigadeTest(unittest.TestCase):
                          f"D1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
 
-    def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line(self):
+    def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line_and_renew(self):
         self.started()
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
-        self.assertEqual(self.brigade("watch"), "D1: in review")
         verdict = ("pass", "record", "D1", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
-        self.brigade(*verdict, "send-back")
-        self.assertEqual(self.brigade("watch"), "D1: sent back")
-        self.brigade(*verdict, "blocked")
-        self.assertEqual(self.brigade("watch"), "D1: parked")
-        self.brigade(*verdict, "pass")
-        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
-        self.assertGreater(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
+        steps = [(("dish", "D1", "--state", "in-review", "--sha", "abc1234"), "D1: in review"),
+                 ((*verdict, "send-back"), "D1: sent back"),
+                 ((*verdict, "blocked"), "D1: parked"),
+                 ((*verdict, "pass"), "D1: passed, not submitted")]
+        for command, line in steps:
+            self.brigade(*command)
+            self.land("lease", "renew", "L1", "--ttl-hours", "0.01")
+            self.assertEqual(self.brigade("watch"), line)
+            self.assertGreater(self.lease_row(1)["expires"],
+                               (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat(), line)
 
     def test_a_passed_item_with_a_submitted_entry_says_mark_it_queued(self):
         self.started()
@@ -1380,6 +1381,26 @@ class BrigadeTest(unittest.TestCase):
         self.passed(sha)
         self.assertEqual(self.submit(sha), "E1")
         self.assertEqual(self.brigade("watch"), "D1: E1 already submitted; mark it queued")
+
+    def test_a_passed_item_whose_entry_landed_is_not_told_to_claim_again(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "fast\n"})
+        self.passed(sha)
+        self.submit(sha)
+        self.land("land")
+        self.assertEqual(self.brigade("watch"), "D1: E1 already submitted; mark it queued")
+
+    def test_dropping_a_queued_item_whose_entry_bounced_releases_its_lease(self):
+        self.started("--check", "test ! -e BROKEN", paths="README.md,BROKEN")
+        self.brigade("dish", "D1", "--thread", "w1")
+        sha = self.worker_commit("perf/d1", {"BROKEN": "x\n"})
+        self.passed(sha)
+        self.submit(sha)
+        self.brigade("dish", "D1", "--state", "queued")
+        self.land("land")
+        self.assertIn("D1 holds L1", self.brigade("dish", "D1", "--state", "dropped", ok=False))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "idle"), "D1 dropped")
+        self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_an_entry_another_run_landed_says_mark_it_merged(self):
         self.started()
@@ -1490,13 +1511,15 @@ class BrigadeTest(unittest.TestCase):
             _wait_for_path(case / "paused", timeout=20)
         self.run_at(docs, "set", "--thread", "t2", "--replace")
         self.assertIn("owner t2@2", self.run_at(docs, "--owner", "t2@2", "status"))
-        tables = ("rail.tsv", "log.tsv", "restaurant.json")
+        tables = ("rail.tsv", "log.tsv", "dishes.tsv", "restaurant.json")
         after_replace = {name: (docs / name).read_bytes() for name in tables}
         row = self.lease_row(1)
         for case, proc, message in running:
             (case / "proceed").touch()
             code, _, err = self._finish_race(proc)
             self.assertEqual((code, err), (1, message))
+        self.assertEqual(self.run_at(docs, *old, "set", "--thread", "t2", "--workers", "9", ok=False), stale_brigade)
+        self.assertEqual(self.run_at(docs, *old, "set", "--thread", "t1", ok=False), "brigade: thread t2 already recorded")
         self.assertEqual({name: (docs / name).read_bytes() for name in tables}, after_replace)
         self.assertEqual(self.lease_row(1), row)
         new = ("--owner", "t2@2")
