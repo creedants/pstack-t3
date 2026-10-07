@@ -2598,6 +2598,37 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.claim("docs/D3", "c.txt"), "L4")
         self.assertEqual([(row["prefix"], row["count"]) for row in self.ruling_rows("share")], [("engine/", 2)])
 
+    def test_a_cap_below_the_share_sum_is_refused_and_zero_still_clears(self):
+        self.init()
+        self.land("cap", "4")
+        self.share("docs/", 2)
+        self.share("engine/", 2)
+
+        def snapshot():
+            store = land.Store.for_repo(self.work)
+            try:
+                shares = [(row["prefix"], row["count"]) for row in store.db.execute(
+                    "SELECT prefix, count FROM share ORDER BY prefix")]
+                log = [(row["kind"], row["id"], row["state"], row["note"]) for row in store.db.execute(
+                    "SELECT kind, id, state, note FROM log ORDER BY at")]
+                return store.contract.get("cap"), shares, log
+            finally:
+                store.db.close()
+
+        before = snapshot()
+        refusal = "land: shares add up to 4 (docs/ 2, engine/ 2), over the cap of 3"
+        self.assertEqual(self.land("cap", "3", ok=False), refusal)
+        self.assertEqual(snapshot(), before)
+        self.assertIn("changes in flight: 0 of 4", self.land("status"))
+        self.assertEqual(self.land("cap", "4"), "repository cap is now 4 changes in flight")
+        self.assertEqual(self.land("cap", "0"), "repository cap cleared")
+        cap, shares, _log = snapshot()
+        self.assertIsNone(cap)
+        self.assertEqual(shares, [("docs/", 2), ("engine/", 2)])
+        self.assertNotIn("of ", self.land("status"))
+        self.assertEqual(self.land("cap", "3", ok=False), refusal)
+        self.assertEqual(self.land("cap", "4"), "repository cap is now 4 changes in flight")
+
     def test_an_armed_reservation_counts_toward_its_prefixs_share_until_the_winner_claims(self):
         self.init()
         self.share("docs/", 1)
