@@ -1847,7 +1847,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.land("land")
             (self.base / "checks").write_text("failed")
             self.assertEqual(self.land("land"), "queue paused: required checks failed on https://github.com/o/r/pull/9: test (3.12). "
-                                                "Auto-merge is still enabled: API unavailable. Fix it, then run land.py resume")
+                                                "Auto-merge is still enabled: API unavailable. Turn auto-merge off on https://github.com/o/r/pull/9, "
+                                                "then run land.py resume and land.py land")
             self.assertTrue(self.land("status", "E1").startswith("E1 awaiting-merge"))
             self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
@@ -2414,6 +2415,60 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.claim("docs/D9", "b.txt", ok=False), "land: docs/ is at its share: 1 of 1")
         self.assertEqual(self.claim("docs/D9", "a.txt"), "L1")
         self.assertEqual(self.claim("docs/D10", "b.txt", ok=False), "land: docs/ is at its share: 1 of 1")
+
+    def reservation_counts_again_after_its_lease_ends(self, end, limit, refused, outsider):
+        self.init()
+        limit()
+        self.assertEqual(self.reserve("docs/", "a.txt,b.txt", "R4"), "S1")
+        self.assertEqual(self.claim("docs/D7", "a.txt", *(["--ttl-hours", "0"] if end == "expire" else [])), "L1")
+        if end == "release":
+            self.assertEqual(self.land("lease", "release", "L1"), "L1 released")
+        self.assertEqual(self.listed(), ["S1 armed docs/ by R4: b.txt"])
+        self.assertEqual(self.claim(outsider, "lib", ok=False), f"land: {refused}")
+        self.assertEqual(self.lease_check(outsider, "lib"), (1, refused))
+        self.assertEqual(self.claim("docs/D7", "b.txt"), "L2")
+        self.assertEqual(self.listed(), ["L2 active docs/D7: b.txt"])
+        self.assertEqual(self.ruling_rows("reservation")[0]["state"], "claimed")
+
+    def test_a_reservation_counts_toward_the_cap_again_after_its_taken_lease_is_released(self):
+        self.reservation_counts_again_after_its_lease_ends(
+            "release", lambda: self.land("cap", "1"), "repository at its cap: 1 of 1 changes in flight (S1 for docs/)", "engine/D3")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 1.")
+
+    def test_a_reservation_counts_toward_the_cap_again_after_its_taken_lease_expires(self):
+        self.reservation_counts_again_after_its_lease_ends(
+            "expire", lambda: self.land("cap", "1"), "repository at its cap: 1 of 1 changes in flight (S1 for docs/)", "engine/D3")
+
+    def test_a_reservation_counts_toward_its_share_again_after_its_taken_lease_is_released(self):
+        self.reservation_counts_again_after_its_lease_ends(
+            "release", lambda: self.share("docs/", 1), "docs/ is at its share: 1 of 1", "docs/D8")
+
+    def test_a_reservation_counts_toward_its_share_again_after_its_taken_lease_expires(self):
+        self.reservation_counts_again_after_its_lease_ends(
+            "expire", lambda: self.share("docs/", 1), "docs/ is at its share: 1 of 1", "docs/D8")
+
+    def test_a_reservation_stays_out_of_the_count_while_any_lease_taken_from_it_is_live(self):
+        self.init()
+        self.land("cap", "2")
+        self.reserve("docs/", "a.txt,b.txt,c.txt", "R4")
+        self.assertEqual(self.claim("docs/D7", "a.txt"), "L1")
+        self.assertEqual(self.claim("docs/D7", "b.txt"), "L2")
+        self.land("lease", "release", "L1")
+        self.assertEqual(self.claim("engine/D3", "lib"), "L3")
+        self.land("lease", "release", "L2")
+        self.assertEqual(self.claim("ops/D1", "d.txt", ok=False),
+                         "land: repository at its cap: 2 of 2 changes in flight (engine/D3, S1 for docs/)")
+        self.assertEqual(self.claim("docs/D7", "c.txt"), "L4")
+        self.assertEqual(self.listed(), ["L3 active engine/D3: lib", "L4 active docs/D7: c.txt"])
+
+    def test_the_winner_renews_its_expired_lease_taken_from_a_reservation_at_a_full_cap(self):
+        self.init()
+        self.land("cap", "1")
+        self.reserve("docs/", "a.txt,b.txt", "R4")
+        self.assertEqual(self.claim("docs/D7", "a.txt", "--ttl-hours", "0"), "L1")
+        self.assertEqual(self.land("lease", "renew", "L1"), "L1 renewed")
+        self.assertEqual(self.claim("engine/D3", "lib", ok=False), "land: repository at its cap: 1 of 1 changes in flight (docs/D7)")
+        self.assertEqual(self.listed(), ["L1 active docs/D7: a.txt", "S1 armed docs/ by R4: b.txt"])
 
     def contest_holds_both_holders(self, mode, **extra):
         self.init(mode=mode, **extra)
