@@ -341,7 +341,7 @@ The rules read three inputs. Each coordinator's `menu.md`, with its purpose and 
 | `shares` | How many of the repository's changes in flight each coordinator may hold, out of the cap | 1. Each coordinator with waiting work gets one, by priorities, then age, until the cap runs out (`floor`). 2. The rest go by priorities, highest first, up to each coordinator's waiting work (`priority`). 3. A tie goes to the older waiting work (`age`). |
 | `queue-order` | Which of two coordinators' passed items lands first when one would break or conflict with the other | 1. An item the other depends on, as a `contest` line stated, lands first (`dependency`). 2. The user's priorities (`priority`). 3. The older `contest` side (`age`). |
 
-Age decides only when the earlier rules leave the parties level. Different ages then decide by `age`. Equal ages tie at the age rule. Equal ages with priorities that rank one side higher are a `priority` ruling, because priority separates them first. The admin escalates only when no rule separates the parties. So every ruling has one outcome or escalates.
+Age decides only when the earlier rules leave the parties level. Different ages then decide by `age`. Equal ages tie at the age rule. When priorities rank one side higher, the ruling is `priority` even when the ages are equal, because priority comes before age. The admin escalates only when no rule separates the parties. So every ruling has one outcome or escalates.
 
 A live lease is never taken away. A contested-path ruling decides who claims next when the lease frees, and keeps the holder from starting new work on those paths while the winner waits. A share counts changes in flight, as the cap does. Shrinking a share stops no running work.
 
