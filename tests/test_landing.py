@@ -495,6 +495,37 @@ exit 0
         self.assertEqual(self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", fixed, "--lease", "L2", "--reviewer", REVIEWER), "E3")
         self.assertEqual(self.land("land"), "landed E3 (r/D2)")
 
+    def rebuild_entry_without_autoincrement(self):
+        """Rewrite entry as an older database: the same rows, and no AUTOINCREMENT."""
+        store = land.Store.for_repo(self.work)
+        try:
+            rows = [dict(row) for row in store.db.execute("SELECT * FROM entry")]
+            store.db.execute("DROP TABLE entry")
+            store.db.executescript(land.SCHEMA.replace(" AUTOINCREMENT", ""))
+            columns = [info["name"] for info in store.db.execute("PRAGMA table_info(entry)")]
+            for row in rows:
+                present = [name for name in columns if name in row]
+                store.db.execute(
+                    f"INSERT INTO entry ({', '.join(present)}) VALUES ({', '.join('?' * len(present))})",
+                    [row[name] for name in present])
+            if store.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
+                store.db.execute("DELETE FROM sqlite_sequence WHERE name = 'entry'")
+        finally:
+            store.db.close()
+
+    def test_a_bounced_entry_resubmitted_gets_a_new_id(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "BROKEN\n"})
+        self.claim("r/D1", "a.txt")
+        submit = ["submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER]
+        self.assertEqual(self.land(*submit), "E1")
+        self.assertIn("bounced E1 (r/D1): checks failed: `./check.sh` exited 1", self.land("land"))
+        self.rebuild_entry_without_autoincrement()
+        self.assertIn("E1 bounced", self.land("status", "E1"))
+        self.assertEqual(self.land(*submit), "E2")
+        self.assertEqual(self.land("status", "E1", ok=False), "land: no E1")
+        self.assertIn("E2 queued", self.land("status", "E2"))
+
     def use_non_english_locale(self):
         """Set LANG and LC_ALL to de_DE.UTF-8 for the rest of this test.
 
@@ -909,9 +940,13 @@ elif args[:2] == ["pr", "view"] and "--json" in args and "url" in args[args.inde
     target = args[2] if len(args) > 2 and not args[2].startswith("-") else ""
     state = "OPEN"
     head_oid = ""
-    legacy_state = base / "legacy-pr-state"
-    if target.startswith("landing/q") and legacy_state.exists():
-        parts = legacy_state.read_text().strip().split()
+    prior = None
+    if target.startswith("landing/q"):
+        prior = base / "legacy-pr-state"
+    elif target.startswith("landing/e"):
+        prior = base / "entry-pr-state"
+    if prior is not None and prior.exists():
+        parts = prior.read_text().strip().split()
         if parts:
             state = parts[0] or "OPEN"
         if len(parts) > 1:
@@ -1228,6 +1263,28 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertIn("awaiting-merge", status)
         self.assertIn("https://github.com/o/r/pull/10", status)
         self.assertNotIn("https://github.com/o/r/pull/9", status)
+
+    def test_a_merged_pr_on_landing_e_at_another_head_is_not_adopted(self):
+        """A fresh contract opens its own PR when landing/e1 is an earlier contract's merged PR."""
+        with self.fake_gh():
+            self.record_created_pr_branch()
+            self.require_pr_head_on_origin()
+            self.init(mode="human")
+            other = "0123456789abcdef0123456789abcdef01234567"
+            (self.base / "pr-url").write_text("https://github.com/o/r/pull/9\n")
+            (self.base / "pr-head").write_text("landing/e1")
+            (self.base / "pr-seq").write_text("10\n")
+            (self.base / "entry-pr-state").write_text(f"MERGED {other}\n")
+            self.queue_one()
+            reported = self.land("land")
+        self.assertEqual(self.created_heads(), ["landing/e1"], reported)
+        self.assertNotIn("pull/9", reported)
+        status = self.land("status", "E1")
+        self.assertIn("awaiting-merge", status)
+        self.assertIn("https://github.com/o/r/pull/10", status)
+        self.assertNotIn("https://github.com/o/r/pull/9", status)
+        remote = self.base / "origin.git"
+        self.assertNotEqual(sh("git", "rev-parse", "refs/heads/landing/e1", cwd=remote), other)
 
     def test_a_merged_pr_on_landing_q_at_the_candidate_lands(self):
         with self.fake_gh():
@@ -2440,8 +2497,31 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.lease_check("engine/D2", "b.txt"), (1, waiting))
         self.assertEqual(self.ruling_rows("reservation")[0]["armed"], "")
         self.land("lease", "release", "L1")
+        self.assertEqual(self.listed(), ["S1 armed docs/ by R4: a.txt, b.txt"])
         self.assertEqual(self.lease_check("ops/D1", "c.txt"), (0, "free"))
         self.assertEqual(self.listed(), ["S1 armed docs/ by R4: a.txt, b.txt"])
+
+    def test_releasing_one_lease_leaves_a_reservation_waiting_on_another(self):
+        self.init()
+        self.claim("engine/D1", "a.txt")
+        self.claim("ops/D1", "b.txt")
+        self.assertEqual(self.reserve("docs/", "a.txt,b.txt", "R4"), "S1")
+        self.land("lease", "release", "L1")
+        self.assertEqual(self.listed(), [
+            "L2 active ops/D1: b.txt",
+            "S1 waiting docs/ by R4: a.txt, b.txt",
+        ])
+        self.land("lease", "release", "L2")
+        self.assertEqual(self.listed(), ["S1 armed docs/ by R4: a.txt, b.txt"])
+
+    def test_landing_an_entry_arms_a_reservation_that_was_waiting_on_its_lease(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "landed\n"})
+        self.claim("engine/D1", "a.txt")
+        self.assertEqual(self.reserve("docs/", "a.txt", "R4"), "S1")
+        self.land("submit", "--holder", "engine/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (engine/D1)")
+        self.assertEqual(self.listed(), ["S1 armed docs/ by R4: a.txt"])
         armed = next(row for row in self.ruling_rows("reservation") if row["id"] == 1)
         left = datetime.fromisoformat(armed["expires"]) - datetime.now(timezone.utc)
         self.assertLess(abs(left - timedelta(hours=2)), timedelta(minutes=1))
