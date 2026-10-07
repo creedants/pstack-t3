@@ -1,3 +1,5 @@
+import contextlib
+import inspect
 import json
 import os
 import re
@@ -680,6 +682,67 @@ exit 0
         self.assertIn("recovered after an interrupted run", self.land("status", "E1"))
         self.assertEqual(self.origin_log(), ["w1", "init"])
 
+    def subprocesses_during_land(self):
+        """Commands this land run starts while a write transaction is open."""
+        store = land.Store.for_repo(self.work)
+        depth = {"n": 0}
+        hits = []
+        original_tx = land.Store.tx
+        original_run = land.subprocess.run
+        original_popen = land.subprocess.Popen
+
+        @contextlib.contextmanager
+        def watching_tx(store_self):
+            depth["n"] += 1
+            try:
+                with original_tx(store_self) as db:
+                    yield db
+            finally:
+                depth["n"] -= 1
+
+        def record(command):
+            if isinstance(command, (list, tuple)):
+                hits.append(" ".join(str(part) for part in command))
+            else:
+                hits.append(str(command))
+
+        def watching_run(*args, **kwargs):
+            if depth["n"]:
+                record(args[0] if args else kwargs.get("args"))
+            return original_run(*args, **kwargs)
+
+        def watching_popen(*args, **kwargs):
+            # subprocess.run calls Popen for the same command. Record a direct Popen only.
+            if depth["n"] and inspect.stack()[1].function != "run":
+                record(args[0] if args else kwargs.get("args"))
+            return original_popen(*args, **kwargs)
+
+        with mock.patch.object(land.Store, "tx", watching_tx), \
+             mock.patch.object(land.subprocess, "run", watching_run), \
+             mock.patch.object(land.subprocess, "Popen", watching_popen):
+            land.land(store)
+        return hits
+
+    def test_a_land_run_runs_no_subprocess_inside_a_write_transaction(self):
+        self.init()
+        self.queue_one()
+        hits = self.subprocesses_during_land()
+        self.assertEqual(self.origin_log()[0], "w1")
+        self.assertIn("E1 landed", self.land("status", "E1"))
+        self.land("mode", "human")
+        sh("git", "fetch", "-q", "origin", cwd=self.work)
+        sh("git", "merge", "-q", "--ff-only", "origin/main", cwd=self.work)
+        sha = self.worker("w2", {"b.txt": "same\n"})
+        (self.work / "b.txt").write_text("same\n")
+        self.commit("human")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        lease = self.land("lease", "claim", "--holder", "r/D2", "--paths", "b.txt")
+        self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
+        with self.fake_gh():
+            hits += self.subprocesses_during_land()
+        self.assertIn("already in trunk", self.land("status", "E2"))
+        self.assertEqual(hits, [])
+
     def test_a_held_queue_lock_reports_busy(self):
         self.init()
         store = land.Store.for_repo(self.work)
@@ -1223,6 +1286,42 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
             self.assertFalse(self.ref_exists("refs/remotes/origin/landing/e1", self.work))
             self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def leave_awaiting_merge_without_a_pr(self):
+        """Push landing/e<n>, mark the entry awaiting merge, and die before gh pr create."""
+        store = land.Store.for_repo(self.work)
+        with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                land.land(store)
+        status = self.land("status", "E1")
+        self.assertIn("awaiting-merge", status)
+        self.assertNotIn("pull/", status)
+        self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+
+    def test_a_pr_opened_for_an_entry_left_without_one_is_reported(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.queue_one()
+            self.leave_awaiting_merge_without_a_pr()
+            reported = self.land("land")
+            self.assertEqual(reported, "opened PRs for E1 (r/D1) https://github.com/o/r/pull/9")
+            status = self.land("status", "E1")
+            self.assertIn("awaiting-merge", status)
+            self.assertIn("https://github.com/o/r/pull/9", status)
+            self.assertEqual(self.land("land"), "nothing to land")
+
+    def test_merge_mode_reports_a_pr_opened_for_an_entry_left_without_one(self):
+        with self.fake_gh():
+            (self.base / "checks").write_text("pending")
+            self.init(mode="merge")
+            self.queue_one()
+            self.leave_awaiting_merge_without_a_pr()
+            reported = self.land("land")
+            self.assertEqual(
+                reported,
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9")
+            self.assertIn("waiting for required checks", self.land("status", "E1"))
+            self.assertEqual(self.land("land"), "nothing to land")
 
     def test_merge_mode_merges_its_own_pr_when_there_are_no_checks_to_wait_for(self):
         with self.fake_gh():
