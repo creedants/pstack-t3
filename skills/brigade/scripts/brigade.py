@@ -1985,7 +1985,7 @@ def run(argv):
 def command(restaurant, args, contract=None):
     if args.command == "set":
         meta = restaurant.meta
-        changes, drop, recorded = {}, [], None
+        changes, drop = {}, []
         if args.intake is not None:
             changes["intake"] = set_intake(restaurant, intake_list(args.intake))["intake"]
         if args.thread is not None and (args.thread or args.expect is not None):
@@ -1995,8 +1995,12 @@ def command(restaurant, args, contract=None):
             if changing and current and not current.startswith("recovering:"):
                 changes["previousThread"] = current
             if changing and is_admin(meta):
-                recorded = f"replaced {current}" if current else ("restarted" if meta.get("generation") else "first thread")
-                recorded += f"; stopped {clean(args.stopped)}" if args.stopped else ""
+                # The row is the transition record. A crash before the metadata write keeps the stop evidence, and a retry finds the row.
+                note = f"replaced {current}" if current else ("restarted" if meta.get("generation") else "first thread")
+                note += f"; stopped {clean(args.stopped)}" if args.stopped else ""
+                ident = f"{args.thread}@{generation}"
+                if not any(row["kind"] == "thread" and row["id"] == ident for row in restaurant.rows("log.tsv")):
+                    restaurant.log("thread", ident, "recorded", note)
         if args.reporting:
             changes["reporting"] = args.reporting
         if args.workers is not None:
@@ -2019,10 +2023,6 @@ def command(restaurant, args, contract=None):
                     schedules.pop(name, None)
             changes["schedules"] = schedules
         meta = restaurant.change_meta(drop, **changes)
-        if recorded:
-            # The audit row for a change of the admin's owner, with the stop evidence the recovering thread asserted.
-            restaurant.log("thread", args.thread, "recorded", recorded)
-            meta = restaurant.meta
         return json.dumps(meta, indent=2)
 
     if args.command == "inbox":
