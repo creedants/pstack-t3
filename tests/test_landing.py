@@ -1836,7 +1836,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertTrue(self.land("lease", "list").startswith("L1 active r/D1"))
             self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
 
-    def test_merge_mode_reports_a_failure_to_disable_auto_merge_on_bounce(self):
+    def test_merge_mode_pauses_when_it_cannot_disable_auto_merge_on_a_failed_pr(self):
         with self.fake_gh():
             (self.base / "required-checks").write_text("")
             (self.base / "disable-auto-fails").write_text("API unavailable")
@@ -1846,10 +1846,14 @@ os.execv({real!r}, [{real!r}, *args])
             self.land("land")
             self.land("land")
             (self.base / "checks").write_text("failed")
-            out = self.land("land")
-            self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", out)
-            self.assertIn("auto-merge still enabled: API unavailable", out)
+            self.assertEqual(self.land("land"), "queue paused: required checks failed on https://github.com/o/r/pull/9: test (3.12). "
+                                                "Auto-merge is still enabled: API unavailable. Fix it, then run land.py resume")
+            self.assertTrue(self.land("status", "E1").startswith("E1 awaiting-merge"))
             self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            (self.base / "auto-merge-request.json").unlink()
+            self.land("resume")
+            self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", self.land("land"))
             self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
     def test_merge_mode_skips_disable_auto_when_auto_merge_request_is_null(self):
@@ -1865,7 +1869,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertNotIn("auto-merge still enabled", self.land("status", "E1"))
             self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
-    def test_merge_mode_reports_disable_auto_failure_when_auto_merge_request_is_set(self):
+    def test_merge_mode_pauses_on_a_disable_auto_failure_when_auto_merge_request_is_set(self):
         with self.fake_gh():
             (self.base / "required-checks").write_text("")
             self.arm_auto_merge()
@@ -1876,8 +1880,9 @@ os.execv({real!r}, [{real!r}, *args])
             self.land("land")
             (self.base / "checks").write_text("failed")
             out = self.land("land")
-            self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", out)
-            self.assertIn("auto-merge still enabled: GraphQL: Auto merge is not enabled for this pull request", out)
+            self.assertIn("queue paused: required checks failed on https://github.com/o/r/pull/9: test (3.12). "
+                          "Auto-merge is still enabled: GraphQL: Auto merge is not enabled for this pull request", out)
+            self.assertTrue(self.land("status", "E1").startswith("E1 awaiting-merge"))
             self.assertIn("pr merge https://github.com/o/r/pull/9 --disable-auto", (self.base / "merge-calls").read_text())
             self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
 
@@ -2616,7 +2621,7 @@ os.execv({real!r}, [{real!r}, *args])
                              "land: repository does not allow merge; allowed: squash")
             self.assertEqual(self.stored_merge_method(), "squash")
 
-    def test_a_settled_contest_keeps_its_order_while_a_bounced_pr_still_has_auto_merge(self):
+    def test_a_settled_contest_keeps_its_order_while_a_failed_pr_still_has_auto_merge(self):
         with self.fake_gh():
             (self.base / "required-checks").write_text("")
             (self.base / "disable-auto-fails").write_text("API unavailable")
@@ -2629,9 +2634,12 @@ os.execv({real!r}, [{real!r}, *args])
             self.land("land")
             self.land("land")
             (self.base / "checks").write_text("failed")
-            self.assertIn("auto-merge still enabled: API unavailable", self.land("land"))
+            self.assertIn("Auto-merge is still enabled: API unavailable", self.land("land"))
+            sha = self.land("status", "--holder", "docs/D7").split(", ")[1][:12]
+            self.assertEqual(self.land("submit", "--holder", "docs/D7", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER),
+                             "E1 already awaiting-merge")
             self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
-                             "land: C1 cannot put engine/D3 first: docs/D7 has E1 bounced with auto-merge still enabled")
+                             "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--paused-child"]:
