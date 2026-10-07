@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -186,3 +187,466 @@ class CheckBriefCliTest(unittest.TestCase):
             path = Path(directory) / "missing.md"
             completed = run_check_brief(path)
         self.assert_check(completed, 2, "", f"error: {path}: brief not found\n")
+
+
+CATALOG = ROOT / "tests/fixtures/catalog.json"
+FOUR_PATHS = [
+    "**/migrations/**",
+    "t3/added/landing/scripts/land.py",
+    "t3/added/brigade/scripts/brigade.py",
+    "scripts/install.py",
+]
+SET_EXAMPLES = [
+    "judgment and prose=claudeAgent/claude-opus-5-5?effort=xhigh",
+    "swarm workers=grok/grok-4.7?reasoningEffort=xhigh",
+    "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh",
+]
+SETUP_DESCRIPTION = (
+    'Configure which T3 providers and models pstack uses per role, at what reasoning budget, '
+    'and whether mode is full or light. Reads the live T3 catalog and writes a roles file that '
+    'every pstack skill reads. Use for /setup-pstack, "configure pstack models", "pstack budget", '
+    '"pstack mode", or changing pstack\'s model choices.'
+)
+
+
+class Repo:
+    def __init__(self, directory):
+        self.directory = Path(directory)
+        (self.directory / ".git").mkdir()
+        self.user = self.directory / "pstack-t3" / "roles.json"
+        self.project = self.directory.resolve() / ".pstack" / "t3-roles.json"
+
+    def put(self, path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def run(self, *args):
+        env = {**os.environ, "XDG_CONFIG_HOME": str(self.directory)}
+        return subprocess.run(
+            [sys.executable, str(ROOT / "t3/scripts/roles.py"), *args, "--cwd", str(self.directory)],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    def show_bug_fix(self):
+        return self.run(
+            "show",
+            "--catalog",
+            str(CATALOG),
+            "--parent",
+            "claudeAgent/claude-opus-5-5",
+            "--role",
+            "bug-fix",
+        )
+
+    def write(self, *args):
+        return self.run("write", "--catalog", str(CATALOG), *args)
+
+
+def bug_fix_show(mode, mode_source, escalate, budget="default"):
+    return {
+        "budget": budget,
+        "mode": mode,
+        "modeSource": mode_source,
+        "escalate": escalate,
+        "catalog": True,
+        "roles": {"bug-fix": {"source": "default", "seats": [GROK_SEAT]}},
+    }
+
+
+class ModeCliTest(unittest.TestCase):
+    def open_repo(self):
+        return tempfile.TemporaryDirectory()
+
+    def test_project_mode_wins(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            repo.put(repo.project, {"mode": "full", "escalate": FOUR_PATHS})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(list(payload), ["budget", "mode", "modeSource", "escalate", "catalog", "roles"])
+        self.assertEqual(payload, bug_fix_show("full", str(repo.project), FOUR_PATHS))
+
+    def test_missing_mode_defaults_to_full(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload, bug_fix_show("full", "default", None))
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+
+    def test_project_without_mode_uses_the_user_mode(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), bug_fix_show("light", str(repo.user), None))
+
+    def test_user_escalate_list_is_ignored(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "escalate": ["**/migrations/**"]})
+            repo.put(repo.project, {})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["escalate"], None)
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(payload["modeSource"], str(repo.user))
+
+    def test_unknown_user_mode_exits_1(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "turbo"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.user}: mode 'turbo' is not one of full, light\n",
+        )
+
+    def test_unknown_project_mode_exits_1(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "turbo"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.project}: mode 'turbo' is not one of full, light\n",
+        )
+
+    def test_escalate_string_exits_1(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"escalate": "**/migrations/**"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.project}: escalate must be a list of strings\n",
+        )
+
+    def test_escalate_empty_string_exits_1(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"escalate": ["ok", ""]})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.project}: escalate must be a list of strings\n",
+        )
+
+    def test_escalate_non_string_exits_1(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"escalate": [1]})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.project}: escalate must be a list of strings\n",
+        )
+
+    def test_light_mode_keeps_bug_fix_seat(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload, bug_fix_show("light", str(repo.user), None))
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"][0]["options"]["reasoningEffort"], "xhigh")
+
+    def test_bad_budget_still_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"budget": "huge"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: {repo.user}: budget 'huge' is not one of default, small, medium, large, unlimited\n",
+        )
+
+    def test_bad_mode_flag_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--mode", "bogus")
+            self.assertEqual(completed.returncode, 2)
+            self.assertFalse(repo.user.exists())
+            self.assertFalse(repo.project.exists())
+
+    def test_project_rewrite_drops_mode_and_keeps_escalate(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            first = repo.write("--project", "--mode", "light", "--escalate", "**/migrations/**")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            second = repo.write("--project", "--set", "bug-fix=inherit")
+            self.assertEqual(second.returncode, 0, second.stderr)
+            document = json.loads(repo.project.read_text())
+            self.assertEqual(list(document), ["version", "roles", "escalate"])
+            self.assertEqual(document["roles"]["bug-fix"], ["inherit"])
+            self.assertEqual(document["escalate"], ["**/migrations/**"])
+            self.assertNotIn("mode", document)
+            self.assertNotIn("budget", document)
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(payload["modeSource"], str(repo.user))
+        self.assertEqual(payload["escalate"], ["**/migrations/**"])
+
+    def test_user_write_without_mode_resets_to_full(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            first = repo.write("--mode", "light")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(json.loads(repo.user.read_text())["mode"], "light")
+            second = repo.write("--budget", "small")
+            self.assertEqual(second.returncode, 0, second.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertEqual(list(document), ["version", "roles", "budget", "mode"])
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+
+    def test_keep_preserves_user_mode(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.write("--keep", "--budget", "small")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertEqual(document["mode"], "light")
+        self.assertEqual(document["budget"], "small")
+
+    def test_project_escalate_write_is_idempotent(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            args = ("--project", "--escalate", "**/migrations/**", "--escalate", "scripts/install.py")
+            first = repo.write(*args)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            written = repo.project.read_text()
+            second = repo.write(*args)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(repo.project.read_text(), written)
+            self.assertEqual(
+                json.loads(written)["escalate"],
+                ["**/migrations/**", "scripts/install.py"],
+            )
+            third = repo.write("--project", "--mode", "light")
+            self.assertEqual(third.returncode, 0, third.stderr)
+            document = json.loads(repo.project.read_text())
+        self.assertEqual(document["escalate"], ["**/migrations/**", "scripts/install.py"])
+        self.assertEqual(document["mode"], "light")
+        self.assertEqual(list(document), ["version", "roles", "mode", "escalate"])
+
+    def test_clear_escalate_is_idempotent(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"version": 1, "roles": {}, "mode": "light", "escalate": ["**/migrations/**"]})
+            first = repo.write("--project", "--clear-escalate", "--keep")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            document = json.loads(repo.project.read_text())
+            self.assertNotIn("escalate", document)
+            self.assertEqual(document["mode"], "light")
+            written = repo.project.read_text()
+            second = repo.write("--project", "--clear-escalate", "--keep")
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(repo.project.read_text(), written)
+
+    def test_escalate_without_project_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--escalate", "**/migrations/**")
+            self.assertEqual(completed.returncode, 2)
+            self.assertFalse(repo.user.exists())
+            self.assertFalse(repo.project.exists())
+
+    def test_clear_escalate_without_project_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--clear-escalate")
+            self.assertEqual(completed.returncode, 2)
+            self.assertFalse(repo.user.exists())
+            self.assertFalse(repo.project.exists())
+
+    def test_escalate_and_clear_together_exit_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"version": 1, "roles": {"bug-fix": ["inherit"]}})
+            before = repo.project.read_text()
+            completed = repo.write("--project", "--escalate", "**/migrations/**", "--clear-escalate")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(repo.project.read_text(), before)
+            self.assertFalse(repo.user.exists())
+
+    def test_write_without_keep_replaces_invalid_json(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text("{not json", encoding="utf-8")
+            completed = repo.write("--budget", "small")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+
+    def test_keep_on_invalid_json_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text("{not json", encoding="utf-8")
+            before = repo.user.read_text()
+            completed = repo.write("--keep", "--budget", "small")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(repo.user.read_text(), before)
+
+    def test_write_without_keep_replaces_a_non_object(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text("[]\n", encoding="utf-8")
+            completed = repo.write("--mode", "light")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "default", "mode": "light"})
+
+    def test_keep_on_a_non_object_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text("[]\n", encoding="utf-8")
+            completed = repo.write("--keep", "--budget", "small")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(repo.user.read_text(), "[]\n")
+
+    def test_user_keep_drops_a_stored_escalate_list(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {"bug-fix": ["inherit"]},
+                "budget": "large",
+                "mode": "light",
+                "escalate": ["**/migrations/**"],
+            })
+            completed = repo.write("--keep")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertNotIn("escalate", document)
+        self.assertEqual(document["mode"], "light")
+        self.assertEqual(document["budget"], "large")
+        self.assertEqual(document["roles"], {"bug-fix": ["inherit"]})
+
+    def test_project_keep_copies_stored_mode(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {
+                "version": 1,
+                "roles": {},
+                "mode": "light",
+                "escalate": ["**/migrations/**"],
+            })
+            completed = repo.write("--project", "--keep", "--set", "bug-fix=inherit")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.project.read_text())
+        self.assertEqual(document["mode"], "light")
+        self.assertEqual(document["escalate"], ["**/migrations/**"])
+        self.assertEqual(document["roles"]["bug-fix"], ["inherit"])
+        self.assertNotIn("budget", document)
+
+    def test_mode_full_repairs_stored_turbo_without_keep(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "turbo", "roles": {}})
+            completed = repo.write("--mode", "full")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(repo.user.read_text())["mode"], "full")
+
+    def test_keep_rejects_stored_turbo(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "turbo"})
+            before = repo.user.read_text()
+            completed = repo.write("--keep", "--budget", "small")
+            self.assertEqual(completed.returncode, 1)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.user}: mode 'turbo' is not one of full, light\n",
+            )
+            self.assertEqual(repo.user.read_text(), before)
+
+    def test_project_write_rejects_a_stored_bad_escalate_list(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"escalate": "nope", "roles": {}})
+            before = repo.project.read_text()
+            completed = repo.write("--project", "--set", "bug-fix=inherit")
+            self.assertEqual(completed.returncode, 1)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                f"error: {repo.project}: escalate must be a list of strings\n",
+            )
+            self.assertEqual(repo.project.read_text(), before)
+
+    def test_escalate_flag_replaces_a_bad_stored_list(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"escalate": "nope"})
+            completed = repo.write("--project", "--escalate", "**/migrations/**")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.project.read_text())
+        self.assertEqual(document["escalate"], ["**/migrations/**"])
+        self.assertNotIn("mode", document)
+
+    def test_escalate_keeps_duplicates(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.write("--project", "--escalate", "**/migrations/**", "--escalate", "**/migrations/**")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(
+                json.loads(repo.project.read_text())["escalate"],
+                ["**/migrations/**", "**/migrations/**"],
+            )
+
+    def test_setup_asks_for_mode_before_proposing_roles(self):
+        text = (ROOT / "t3/setup.md").read_text(encoding="utf-8")
+        propose = text.index("**(b) Propose roles.**")
+        head = text[:propose]
+        self.assertIn("**(c) Confirm.**", text)
+        self.assertIn("full — recommended when no provider is near its limit", head)
+        self.assertIn("- `light`", head)
+        self.assertLess(
+            head.index("full — recommended when no provider is near its limit"),
+            head.index("- `light`"),
+        )
+        for path in (
+            "**/migrations/**",
+            "t3/added/landing/scripts/land.py",
+            "t3/added/brigade/scripts/brigade.py",
+            "scripts/install.py",
+        ):
+            self.assertIn(path, head)
+        self.assertNotIn("AskQuestion", text)
+        self.assertEqual(re.findall(r'--set "([^"]+)"', text), SET_EXAMPLES)
+        self.assertIn("--budget large --mode full", text)
+        self.assertIn(f"description: {SETUP_DESCRIPTION}", text)
+        self.assertIn("A user write without `--mode` stores `full`.", text)
+        self.assertIn("A project write without `--mode` omits the key.", text)
+        self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
+        self.assertIn("Tell the user which file was written, the budget, the mode,", text)
