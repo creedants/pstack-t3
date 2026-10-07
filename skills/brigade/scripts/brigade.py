@@ -1536,13 +1536,19 @@ def relayed(admin):
     return {row["id"]: json.loads(row["note"]) for row in admin.rows("log.tsv") if row["kind"] == "relay"}
 
 
-def republish(admin):
-    """Publish again each request whose file is gone and whose inbox-done row sync has not yet copied."""
-    done = {(ident.rpartition("@")[0], row["id"]) for ident, row in relayed(admin).items() if row["kind"] == "inbox-done"}
+def finished_by_coordinator(admin):
+    """Each coordinator's finished requests, read from its own log.tsv. Run it before the admin's lock, as sync reads."""
+    names = {name for _, name, _ in admin_requests(admin)}
+    return {name: finished_requests(Restaurant(admin.dir.parent / name)) for name in names
+            if (admin.dir.parent / name / "restaurant.json").is_file()}
+
+
+def republish(admin, finished):
+    """Publish again each request whose file is gone and whose coordinator has no inbox-done row for it."""
     lines = []
     for ident, name, line in admin_requests(admin):
         path = admin.dir.parent / name / "inbox" / f"{ident}.line"
-        if path.exists() or (store_path(path.parent.parent), ident) in done:
+        if path.exists() or ident in finished.get(name, ()):
             continue
         admin.publish(path, line + "\n")
         lines.append(f"{ident} republished for {name}")
@@ -1966,6 +1972,12 @@ def run(argv):
                 print(text)
             raise BrigadeError("\nbrigade: ".join(failures))
         return text or "nothing new"
+    if args.command == "request" and args.republish:
+        if args.to or args.line:
+            raise BrigadeError("request --republish takes no --to or line")
+        finished = finished_by_coordinator(restaurant)
+        with restaurant.checked():
+            return republish(restaurant, finished)
     if args.command == "status":
         # land.py can wait on the landing database, so the contract is read before the store lock.
         contract = contract_mode(restaurant.meta["projectRoot"])
@@ -2053,10 +2065,6 @@ def command(restaurant, args, contract=None, rails=None):
         return finish_request(restaurant, args.id)
 
     if args.command == "request":
-        if args.republish:
-            if args.to or args.line:
-                raise BrigadeError("request --republish takes no --to or line")
-            return republish(restaurant)
         if not args.to or args.line is None:
             raise BrigadeError('request needs --to <coordinator> "<line>", or --republish')
         return send_request(restaurant, args.to, args.line)
