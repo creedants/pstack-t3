@@ -41,6 +41,7 @@ PANEL_ROLES = [
 ]
 ROLES = SINGLE_ROLES + PANEL_ROLES
 BUDGETS = {"default": None, "small": "medium", "medium": "high", "large": "xhigh", "unlimited": "max"}
+MODES = ("full", "light")
 EFFORT_IDS = ("effort", "reasoningEffort", "reasoning_effort", "reasoning")
 LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "extra-high": 5, "extra_high": 5, "max": 6, "ultra": 7}
 SPECIAL = {"ultracode", "ultrathink"}
@@ -52,6 +53,10 @@ DEFAULT_PANEL = "default-panel"
 
 class RolesError(Exception):
     pass
+
+
+class ModeSettingsError(RolesError):
+    """A roles file has a mode or escalate value this version rejects."""
 
 
 @dataclass(frozen=True)
@@ -169,6 +174,12 @@ def check_shape(config, origin):
     budget = config.get("budget", "default")
     if budget not in BUDGETS:
         raise RolesError(f"{origin}: budget {budget!r} is not one of {', '.join(BUDGETS)}")
+    if "mode" in config and config["mode"] not in MODES:
+        raise ModeSettingsError(f"{origin}: mode {config['mode']!r} is not one of {', '.join(MODES)}")
+    if "escalate" in config:
+        escalate = config["escalate"]
+        if not isinstance(escalate, list) or not all(isinstance(item, str) and item for item in escalate):
+            raise ModeSettingsError(f"{origin}: escalate must be a list of strings")
     roles = config.get("roles", {})
     if not isinstance(roles, dict):
         raise RolesError(f"{origin}: roles must be an object")
@@ -197,8 +208,22 @@ def merged_config(cwd, user_path=None, project_path=None):
         for name, seats in config.get("roles", {}).items():
             roles[name] = seats
             sources[name] = str(origin)
+    if "mode" in project:
+        mode, mode_source = project["mode"], str(project_path)
+    elif "mode" in user:
+        mode, mode_source = user["mode"], str(user_path)
+    else:
+        mode, mode_source = "full", "default"
+    escalate = list(project["escalate"]) if "escalate" in project else None
     budget = project["budget"] if "budget" in project else user.get("budget", "default")
-    return {"budget": budget, "roles": roles, "sources": sources}
+    return {
+        "budget": budget,
+        "mode": mode,
+        "modeSource": mode_source,
+        "escalate": escalate,
+        "roles": roles,
+        "sources": sources,
+    }
 
 
 def providers_by_id(catalog):
@@ -484,7 +509,14 @@ def resolve_seat(seat, catalog, budget):
 
 def resolve(config, catalog=None, names=None):
     names = names or ROLES
-    result = {"budget": config["budget"], "catalog": bool(catalog), "roles": {}}
+    result = {
+        "budget": config["budget"],
+        "mode": config["mode"] if "mode" in config else "full",
+        "modeSource": config["modeSource"] if "modeSource" in config else "default",
+        "escalate": config["escalate"] if "escalate" in config else None,
+        "catalog": bool(catalog),
+        "roles": {},
+    }
     for name in names:
         if name not in ROLES:
             raise RolesError(f"unknown role {name!r}")
@@ -563,7 +595,22 @@ def command_validate(args):
 def command_write(args):
     catalog = load_catalog(args.catalog)
     target = project_config_path(args.cwd) if args.project else (Path(args.config) if args.config else user_config_path())
-    existing = check_shape(load_json(target) or {}, target) if args.keep else {}
+    try:
+        loaded = load_json(target)
+    except RolesError:
+        if args.keep:
+            raise
+        loaded = None
+    if loaded is None:
+        loaded = {}
+    if args.keep:
+        raw = check_shape(loaded, target)
+    elif isinstance(loaded, dict):
+        raw = loaded
+    else:
+        raw = {}
+    # Budget and roles survive a rewrite only with --keep. Escalate is separate.
+    existing = raw if args.keep else {}
     roles = dict(existing.get("roles", {}))
     for assignment in args.set or []:
         name, equals, value = assignment.partition("=")
@@ -577,7 +624,20 @@ def command_write(args):
         config["budget"] = budget
     elif not args.project:
         config["budget"] = "default"
+    if args.mode:
+        config["mode"] = args.mode
+    elif args.keep and "mode" in raw:
+        config["mode"] = raw["mode"]
+    elif not args.project:
+        config["mode"] = "full"
+    if args.project and not args.clear_escalate:
+        if args.escalate is not None:
+            config["escalate"] = list(args.escalate)
+        elif "escalate" in raw:
+            config["escalate"] = raw["escalate"]
     check_shape(config, target)
+    if "escalate" in config:
+        config["escalate"] = list(config["escalate"])
     problems = validate({"budget": config.get("budget", "default"), "roles": roles, "sources": {}}, catalog)
     if problems and not args.force:
         raise RolesError("refusing to write; these seats do not match the catalog:\n" + "\n".join(problems))
@@ -703,6 +763,11 @@ def main(argv=None):
     sub.choices["show"].add_argument("--parent", help="this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel)")
     write = sub.choices["write"]
     write.add_argument("--budget", choices=list(BUDGETS))
+    write.add_argument("--mode", choices=MODES)
+    group = write.add_mutually_exclusive_group()
+    # None means the flag was omitted. An empty list would replace a stored project list.
+    group.add_argument("--escalate", action="append", default=None)
+    group.add_argument("--clear-escalate", action="store_true")
     write.add_argument("--set", action="append", help="'<role>=<seat>[;<seat>]', seat = inherit | provider/model[?option=value]")
     write.add_argument("--project", action="store_true", help="write the project file instead of the user file")
     write.add_argument("--keep", action="store_true", help="keep roles already in the target file")
@@ -710,6 +775,8 @@ def main(argv=None):
     check_brief = sub.add_parser("check-brief")
     check_brief.add_argument("brief", help="brief file to check")
     args = parser.parse_args(argv)
+    if args.command == "write" and not args.project and (args.escalate is not None or args.clear_escalate):
+        parser.error("--escalate and --clear-escalate require --project")
     try:
         return {
             "show": command_show,
@@ -717,6 +784,9 @@ def main(argv=None):
             "write": command_write,
             "check-brief": command_check_brief,
         }[args.command](args) or 0
+    except ModeSettingsError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     except RolesError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -1,6 +1,6 @@
 ---
 name: setup-pstack
-description: Configure which T3 providers and models pstack uses per role and at what reasoning budget. Reads the live T3 catalog and writes a roles file that every pstack skill reads. Use for /setup-pstack, "configure pstack models", "pstack budget", or changing pstack's model choices.
+description: Configure which T3 providers and models pstack uses per role, at what reasoning budget, and whether mode is full or light. Reads the live T3 catalog and writes a roles file that every pstack skill reads. Use for /setup-pstack, "configure pstack models", "pstack budget", "pstack mode", or changing pstack's model choices.
 ---
 
 # Setup pstack
@@ -29,7 +29,7 @@ List the runnable providers (`canRunChildTask: true`) with their first three mod
 python3 <runtime>/scripts/roles.py show --cwd "$PWD" --catalog /tmp/pstack-t3-catalog.json
 ```
 
-This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. `notes` name seats that no longer match, such as a model T3 dropped.
+This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped.
 
 ### 3. Budget, map, and confirm
 
@@ -43,6 +43,13 @@ This prints every role with its seats and `source` (`default`, the user file, or
 
 The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_effort`, or `reasoning`). A seat at or below the cap keeps its level. A seat above the cap drops to the cap, or the closest lower level the model offers. A seat that names no level receives the cap. `default` leaves a built-in or configured level as it is. The ladder stops at max. `unlimited` raises a built-in preferred seat to the model's highest level at or below max. The default Opus seat moves from xhigh to max. Grok's ladder tops out at xhigh, so the default Grok seat stays at xhigh. `unlimited` lowers a configured `ultra` seat to max when the model offers a level at or below max. `default` keeps a configured `ultra` seat. When every offered level is above the cap, the seat gets the lowest level. A configured seat that names its own level keeps that level when it is at or below the cap. A model without such an option is unaffected. `ultracode` and `ultrathink` are never set by a budget.
 
+**Ask for a mode.** Use the host's question tool. Name the current `mode` and `modeSource` from step 2. Offer these options, in this order.
+
+- `full — recommended when no provider is near its limit`
+- `light`
+
+Store the chosen value beside the budget. When the write target is the project file, name the current `escalate` from `show`. `null` means none. Suggest `**/migrations/**` plus that repository's own lock and installer scripts. In this repository those scripts are `t3/added/landing/scripts/land.py`, `t3/added/brigade/scripts/brigade.py`, and `scripts/install.py`. Do not suggest those three paths for any other repository. Pass one `--escalate` per pattern the user keeps. Omitting both escalate flags leaves a stored project list in place. `--clear-escalate` removes it.
+
 **(b) Propose roles.** The built-in defaults are Claude Opus (`claude-opus-5-5`) at xhigh for judgment roles and Grok (`grok-4.7`) at xhigh for code roles. Under `unlimited`, those seats rise as step 3(a) describes. Opus moves to max, and Grok stays at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats, judgment first. `skill tests` and `verifiers` stay on their catalog rules. Start from `roles.py show` in step 2. Keep configured roles unless the user changes them. Use the built-in seats for roles with `source: "default"`. Offer `large` for a new setup. It matches the built-in xhigh ceiling. Show each fallback note beside its role and seat. Codex and every other runnable configured provider remain available as user choices. Leave `skill tests` unset so its adaptive default stays.
 
 **(c) Confirm.** Show every role with its seats. Ask whether to accept as-is or change specific roles. For panel roles the seat count is the panel size.
@@ -52,7 +59,7 @@ The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_ef
 Build one `--set` per role you are writing. A seat is `inherit` or `provider/model`, with options as a query string. Separate panel seats with `;`.
 
 ```bash
-python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json --budget large \
+python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json --budget large --mode full \
   --set "judgment and prose=claudeAgent/claude-opus-5-5?effort=xhigh" \
   --set "swarm workers=grok/grok-4.7?reasoningEffort=xhigh" \
   --set "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh"
@@ -60,7 +67,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
 
 The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when the chosen model is in the grok family and declares that boolean option. A fallback to another family does not set it.
 
-- The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass.
+- The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass. A user write without `--mode` stores `full`. A project write without `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
 - It refuses to write a seat that does not match the catalog and prints why. Fix the seat and rerun. Do not pass `--force` unless the user asks.
 - Add `--project` to write `.pstack/t3-roles.json` for this repository instead.
 - A user-level write also saves the catalog snapshot to `~/.config/pstack-t3/catalog.json`, which `roles.py show` uses later to resolve fallbacks.
@@ -71,7 +78,7 @@ Run `python3 <runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedPr
 
 ### 6. Confirm
 
-Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, any provider they could enable in T3 settings to widen `verifiers`, and that new sessions pick it up immediately. Re-running this skill updates it.
+Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, the mode, any provider they could enable in T3 settings to widen `verifiers`, and that new sessions pick it up immediately. Re-running this skill updates it.
 
 ### 7. Offer a verification skill (optional)
 

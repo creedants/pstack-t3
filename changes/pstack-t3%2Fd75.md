@@ -1,0 +1,1 @@
+- roles.py stores full or light beside the budget, show prints mode, modeSource, and the project's escalate list, and setup-pstack asks for the mode after the budget.
