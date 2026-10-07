@@ -522,7 +522,8 @@ class BrigadeTest(unittest.TestCase):
         report = f"{self.at}/reports/D1.md"
         for part in ("PURPOSE: Make startup fast.", "TICKETS: T1: Startup is slow", "branch `perf/d1`, started from `origin/main`",
                      "leased to you as L4: src/boot.ts", "- Median cold start below 400 ms", "slot --exclusive --",
-                     "TIMEBOX: 60 minutes", f"Write it to {report}", "1. Write in plain engineering prose.",
+                     "TIMEBOX: 60 minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
+                     f"Write it to {report}", "1. Write in plain engineering prose.",
                      f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
