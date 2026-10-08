@@ -96,7 +96,7 @@ Print the merged roles for the current project with:
 python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>" [--brief-mode <value> | --session-mode light]
 ```
 
-When the brief this call seats has a `Mode:` line, replace the bracket with `--brief-mode <value>`. Copy that line's bare value, and pass no other mode flag. When the brief has no `Mode:` line and the session is light, replace the bracket with `--session-mode light`. Otherwise delete the bracket. A call with no mode flag takes its mode from the roles files.
+When the brief this call seats has a `Mode:` line, replace the bracket with `--brief-mode <value>`. Copy that line's bare value, and pass no other mode flag. When the brief has no `Mode:` line and the session is light, replace the bracket with `--session-mode light`, except for a user's explicit reflect, which passes `--session-mode full`. Otherwise delete the bracket. A call with no mode flag takes its mode from the roles files.
 
 Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, the verifier panel treats no seat as this thread's own, and `show` cannot refuse an `inherit` seat on a thread that runs a capped model. `show`, `validate`, and `write` reject a malformed `--parent`. See [Prompt caps](#prompt-caps).
 
@@ -197,8 +197,9 @@ pstack-t3 runs each piece of work in `full` or `light` mode. Full mode runs ever
 `roles.py mode` and `roles.py show` resolve one effective mode. The highest level present wins. The order is the brief, then the session, then the coordinator, then the project file `.pstack/t3-roles.json`, then the user file `roles.json`, then `full`.
 
 - A brief's `Mode:` line is the frozen decision. A child copies that line's bare value into `--brief-mode` on every `roles.py mode` and `roles.py show` call it makes, and passes no other mode flag. It never resolves the mode again.
-- The user's words set the session. `$poteto-mode light`, "light mode", or "use light mode" in a request sets this thread to light. "full mode" sets it back. A light session passes `--session-mode light` on every `roles.py` call that has no brief value.
+- The user's words set the session. `$poteto-mode light`, "light mode", or "use light mode" in a request sets this thread to light. "full mode" sets it back. A light session passes `--session-mode light` on every `roles.py` call that has no brief value, except the explicit reflect below.
 - With neither, pass no mode flag. The roles files decide, and a missing key is `full`.
+- A user's explicit reflect passes `--session-mode full` on every `roles.py show` call it makes, whatever the session or the roles files say. A call with no mode flag would fall through to a roles file that stores light. The session stays light after it.
 
 Every brief whose child resolves seats or spawns carries the mode. Get the lines from `roles.py mode`, never from memory.
 
@@ -207,7 +208,11 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
 ```
 
 - A code delegate's brief passes `--playbook <name> --attempt <kind>`. `<kind>` is `first` for new work, `fix` after a send-back, and `bounce` after a queue bounce. Paste the printed lines unchanged under the persona body. They start with the `Playbook:` line, so write no `Playbook:` line of your own. See [Delegation](#delegation) step 4.
-- An owner, sub-coordinator, unit worker, visual-parity owner, or landing writer is not a code delegate. Run the command without `--playbook` and `--attempt`, and paste its `Mode:` and `Mode source:` lines into the brief or the `message`.
+- An owner, sub-coordinator, unit worker, visual-parity owner, or landing writer is not a code delegate. Run the command without `--playbook` and `--attempt`, and paste its `Mode:` and `Mode source:` lines into the brief or the `message`. Right after them, paste the seat rule below unchanged. A launched thread has no parent to ask, and a `Mode source: session` line reads like a session of its own without it.
+
+  ```text
+  Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's decision came from. It does not make this thread a session.
+  ```
 - A read-only leaf, such as a `how` explainer or a reviewer, gets no `Mode:` line. It resolves no seat.
 - A light session with no brief runs the same command with `--playbook <name> --attempt first` for its own playbook. Its `Waived by mode:` line names the steps this thread skips.
 
@@ -235,20 +240,20 @@ In light mode, run the row for the spawn you are about to make. A step its row d
 | Description eval | Run it only when the change edits a `description`. |
 | `swarm` | Spawn at most 3 workers. A respawn replaces a worker and does not raise the count. |
 | Trail reviewer | When a gate review runs at the hand-back head SHA, it reads the trail and no trail reviewer runs. A code delegate never launches one, because its parent's gate reads the trail. With no gate at that head, the trail reviewer runs and is the gate, under [Gate review](#gate-review) steps 1 to 4. |
-| `reflect` | A scheduled reflect, such as a coordinator's weekly service, does not run. A user's explicit reflect runs in full. |
+| `reflect` | A scheduled reflect, such as a coordinator's weekly service, does not run. A user's explicit reflect runs in full. Its `roles.py show` calls pass `--session-mode full`, so the light `medium` cap does not apply. |
 | `recall` | Spawn at most 3 slice children. Run no `why` wave unless the user asks for one. |
-| `automate-me` | Spawn one miner over the whole history window. |
+| `automate-me` | Spawn one miner over the whole history window. Its brief lists every `threadId` the parent kept in the window and tells the miner to read each one. |
 | Verification source wave | Spawn at most 3 source children, each reading a batch of feature files. |
 | Multi-phase exploration | Spawn one read-only explorer. |
-| Multi-phase verification | Write the plan's lane checklist as the playbook and `check-plan.mjs` require. At each code-ready head, launch the gates lane, one live lane per surface, and one audit lane on another model family. That audit lane is the gate review and runs [Gate review](#gate-review) steps 1 to 4. |
-| Autopilot owner | One owner per PR. Each owner `message`, including a replacement's, carries the mode lines. |
+| Multi-phase verification | Write the plan's lane checklist as the playbook and `check-plan.mjs` require. At each code-ready head, launch the gates lane, one live lane per surface, and one audit lane on another model family. That audit lane is the gate review and runs [Gate review](#gate-review) steps 1 to 4. Each live lane's brief carries the boot recipe and every **Verify, live** lane box that drives its surface, and tells the lane to run and report each box. Launch no perf lane. The perf boxes stay in the plan and are not a merge gate. |
+| Autopilot owner | One owner per PR. Each owner `message`, including a replacement's, carries the mode lines and the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode). |
 | Autopilot verification | Two lane children per round. The gates lane reruns the gates at that SHA and keeps the patch-id rule in `playbooks/shipping.md`. One audit lane on another model family is the gate review. It runs [Gate review](#gate-review) steps 1 to 4 at every new head SHA. |
-| Orchestrate sub-coordinator, worker, and long-lived owner | Keep them. Each brief or `message` carries the mode lines. |
+| Orchestrate sub-coordinator, worker, and long-lived owner | Keep them. Each brief or `message` carries the mode lines and the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode). |
 | Orchestrate verifier | Keep it when verification is expensive. A cheap unit's merge still needs the gate review at its head, per [Gate review](#gate-review) steps 1 to 4. |
 | Shipping verifier | One per PR. It is the gate review. It runs [Gate review](#gate-review) steps 1 to 4 with Shipping's live test as its own tasks, and it reuses a verdict only per [Gate review](#gate-review). |
-| Visual parity owner | One owner per component, at most 3 in flight. Each `message` carries the mode lines. |
+| Visual parity owner | One owner per component, at most 3 in flight. Each `message` carries the mode lines and the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode). |
 | Worktree cleanup summarizer | Spawn none. The parent reads the last page of each long thread with `t3_thread_read` and `limit`. |
-| Landing writer | One writer per unit. Its brief or `message` carries the mode lines. |
+| Landing writer | One writer per unit. Its brief or `message` carries the mode lines and the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode). |
 | Autonomous run watcher | Keep it. |
 | Setup smoke test | Keep one per provider. |
 

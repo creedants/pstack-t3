@@ -1073,6 +1073,43 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(payload["modeSource"], "session")
         self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_MEDIUM])
 
+    def test_session_mode_full_over_project_light_lifts_the_cap(self):
+        role = "bug-fix"
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "full"})
+            full = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--role", role,
+            )
+            repo.put(repo.project, {"mode": "light"})
+            lifted = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--session-mode", "full",
+                "--role", role,
+            )
+            capped = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--role", role,
+            )
+        self.assertEqual(full.returncode, 0, full.stderr)
+        self.assertEqual(lifted.returncode, 0, lifted.stderr)
+        self.assertEqual(capped.returncode, 0, capped.stderr)
+        full_seats = json.loads(full.stdout)["roles"][role]["seats"]
+        lifted_payload = json.loads(lifted.stdout)
+        capped_seats = json.loads(capped.stdout)["roles"][role]["seats"]
+        self.assertEqual((lifted_payload["mode"], lifted_payload["modeSource"]), ("full", "session"))
+        self.assertEqual(lifted_payload["roles"][role]["seats"], [GROK_SEAT])
+        self.assertEqual(lifted_payload["roles"][role]["seats"], full_seats)
+        self.assertEqual(capped_seats, [GROK_MEDIUM])
+        self.assertNotEqual(capped_seats, lifted_payload["roles"][role]["seats"])
+
     def test_brief_mode_full_over_session_mode_light(self):
         with self.open_repo() as directory:
             repo = Repo(directory)

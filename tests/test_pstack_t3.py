@@ -1072,10 +1072,24 @@ Report each comment the persona would delete as a send-back finding with its pat
 End with pass, send-back, or blocked, the full head SHA, the author, and the verifier.
 """
 
+SEAT_RULE = """\
+Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's decision came from. It does not make this thread a session.
+"""
+
 
 def gate_contract(runtime):
     start = runtime.index("2. **Brief.**")
     window = runtime[start:].split("\n3. **Verdict.**", 1)[0]
+    lines = window.splitlines()
+    open_at = next(i for i, line in enumerate(lines) if line.strip() == "```text")
+    close_at = next(i for i, line in enumerate(lines) if i > open_at and line.strip() == "```")
+    body = "\n".join(lines[open_at + 1:close_at]) + "\n"
+    return textwrap.dedent(body)
+
+
+def seat_rule(runtime):
+    start = runtime.index("is not a code delegate")
+    window = runtime[start:].split("\n- A read-only leaf", 1)[0]
     lines = window.splitlines()
     open_at = next(i for i, line in enumerate(lines) if line.strip() == "```text")
     close_at = next(i for i, line in enumerate(lines) if i > open_at and line.strip() == "```")
@@ -1112,6 +1126,13 @@ def light_behavior_rows(runtime):
             continue
         rows.append(stripped)
     return rows
+
+
+def light_row(runtime, spawn):
+    matches = [row for row in light_behavior_rows(runtime) if row.split("|", 2)[1].strip() == spawn]
+    if len(matches) != 1:
+        raise AssertionError(f"{spawn}: expected 1 light row, found {len(matches)}")
+    return matches[0]
 
 
 class ModesTest(unittest.TestCase):
@@ -1189,6 +1210,56 @@ class ModesTest(unittest.TestCase):
 
     def test_gate_contract_is_literal(self):
         self.assertEqual(gate_contract(self.runtime), GATE_CONTRACT)
+
+    def test_seat_rule_is_literal(self):
+        self.assertEqual(seat_rule(self.runtime), SEAT_RULE)
+
+    def test_every_owner_row_carries_the_seat_rule(self):
+        rows = [row for row in light_behavior_rows(self.runtime) if "mode lines" in row]
+        self.assertGreaterEqual(len(rows), 4)
+        for row in rows:
+            self.assertIn(
+                "the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode)",
+                row,
+            )
+
+    def test_child_facing_light_rows(self):
+        self.assertIn(
+            "lists every `threadId` the parent kept in the window and tells the miner to read each one",
+            light_row(self.runtime, "`automate-me`"),
+        )
+        self.assertIn("pass `--session-mode full`", light_row(self.runtime, "`reflect`"))
+        verification = light_row(self.runtime, "Multi-phase verification")
+        self.assertIn("every **Verify, live** lane box that drives its surface", verification)
+        self.assertIn("Launch no perf lane.", verification)
+        self.assertIn("(#gate-review)", verification)
+
+    def test_explicit_reflect_names_session_full_at_both_flag_sites(self):
+        roles = self.runtime.split("### Where roles live", 1)[1].split("\n### ", 1)[0]
+        paragraph = next(block for block in roles.split("\n\n") if block.startswith("When the brief this call seats"))
+        self.assertIn(
+            "except for a user's explicit reflect, which passes `--session-mode full`",
+            paragraph,
+        )
+        resolve = self.runtime.split("### Resolve and carry the mode", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("except the explicit reflect below", resolve)
+        self.assertIn(
+            "A user's explicit reflect passes `--session-mode full` on every `roles.py show` call",
+            resolve,
+        )
+
+    def test_automate_me_brief_lists_every_assigned_thread(self):
+        text = (ROOT / "skills/automate-me/SKILL.md").read_text()
+        self.assertIn("brief lists every `threadId` in its assignment", text)
+        self.assertNotIn("gets its slice", text)
+
+    def test_autopilot_owner_message_carries_the_seat_rule(self):
+        text = (ROOT / "skills/poteto-mode/playbooks/autopilot-full.md").read_text()
+        self.assertIn(
+            "Each owner `message`, including a replacement's, carries the mode lines and the seat rule "
+            "from [Resolve and carry the mode](../../pstack-runtime/SKILL.md#resolve-and-carry-the-mode).",
+            text,
+        )
 
     def test_gate_brief_pastes_persona_then_contract(self):
         paragraph = brief_paragraph(self.runtime)
