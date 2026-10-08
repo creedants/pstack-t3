@@ -53,13 +53,9 @@ TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
 
 
 def light_waiver_cells():
-    """Every multi-step waiver list roles.py prints. No roles.py gives none, so a synthetic tree still lints."""
-    try:
-        spec = importlib.util.spec_from_file_location("pstack_roles", ROLES_PY)
-        roles = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(roles)
-    except (OSError, ImportError, SyntaxError):
-        return ()
+    spec = importlib.util.spec_from_file_location("pstack_roles", ROLES_PY)
+    roles = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(roles)
     return tuple(sorted({", ".join(steps) for steps in roles.LIGHT_WAIVERS.values() if len(steps) >= 2}))
 
 
@@ -68,7 +64,6 @@ def _header_cells(line):
 
 
 def light_table_findings(rel_s, text, cells):
-    """The light table lives in the runtime. A copy elsewhere drifts from LIGHT_WAIVERS."""
     findings = []
     lines = text.splitlines()
     for number, line in enumerate(lines, 1):

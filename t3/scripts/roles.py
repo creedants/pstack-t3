@@ -1390,7 +1390,6 @@ MISSING_MODE = (
 
 
 def mode_problems(text, stem):
-    """Problems with the Mode block. No Mode line is one problem, with no Attempt or waiver noise."""
     lines = _grammar_lines(text)
     if not lines["Mode"]:
         return [MISSING_MODE]
