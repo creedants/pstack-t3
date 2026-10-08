@@ -1197,6 +1197,7 @@ def brief_problems(text, persona_body, playbooks):
         )
     names = ", ".join(sorted(playbooks))
     values = playbook_values(text)
+    stem = None
     if not values:
         problems.append(
             "missing playbook: add one line 'Playbook: playbooks/<name>.md', where <name> is one of: " + names
@@ -1204,9 +1205,12 @@ def brief_problems(text, persona_body, playbooks):
     elif len(values) > 1:
         problems.append("more than one Playbook line: keep one")
     else:
-        stem = playbook_stem(values[0])
-        if stem not in playbooks:
+        candidate = playbook_stem(values[0])
+        if candidate in playbooks:
+            stem = candidate
+        else:
             problems.append(f"unknown playbook '{values[0]}': expected one of: {names}")
+    problems.extend(mode_problems(text, stem))
     return problems
 
 
@@ -1328,6 +1332,21 @@ def durable_reason(text):
     return text.strip()
 
 
+# The colon sits in the match so "Mode source" is not a "Mode" line.
+GRAMMAR_LABELS = ("Mode", "Mode source", "Attempt", "Waived by mode", "Gate")
+_GRAMMAR_LINE = re.compile("(" + "|".join(map(re.escape, GRAMMAR_LABELS)) + r"):(.*)")
+
+
+def waived_value(mode, key):
+    """Waiver text for one item, or None when the brief carries no such line.
+
+    Full mode returns None and does not read key. An empty light tuple is None.
+    """
+    if mode != "light":
+        return None
+    return ", ".join(LIGHT_WAIVERS[key]) or None
+
+
 def brief_lines(decision, key):
     """Playbook, Mode, Mode source, Attempt, and Waived by mode, each when it applies."""
     lines = [] if key is None else [f"Playbook: playbooks/{key[0]}.md"]
@@ -1335,10 +1354,78 @@ def brief_lines(decision, key):
     lines.append(f"Mode source: {decision.label}")
     if key is not None:
         lines.append(f"Attempt: {key[1]}")
-        waived = LIGHT_WAIVERS[key] if decision.mode == "light" else ()
-        if waived:
-            lines.append("Waived by mode: " + ", ".join(waived))
+        value = waived_value(decision.mode, key)
+        if value is not None:
+            lines.append(f"Waived by mode: {value}")
     return lines
+
+
+def _grammar_lines(text):
+    """Label to stripped values, in brief order."""
+    found = {label: [] for label in GRAMMAR_LABELS}
+    for line in text.splitlines():
+        match = _GRAMMAR_LINE.fullmatch(line)
+        if match:
+            found[match.group(1)].append(match.group(2).strip())
+    return found
+
+
+def _waiver_problem(mode, key, expected, actual):
+    if expected is None:
+        if mode == "full":
+            return "unexpected Waived by mode line: Mode: full waives nothing, remove it"
+        return (
+            f"unexpected Waived by mode line: playbooks/{key[0]}.md "
+            f"waives nothing on attempt {key[1]}, remove it"
+        )
+    if actual is None:
+        return f"missing Waived by mode line: add 'Waived by mode: {expected}'"
+    return f"wrong Waived by mode line: expected 'Waived by mode: {expected}'"
+
+
+def mode_problems(text, stem):
+    """Problems with the Mode block. No Mode line leaves the brief checked as before."""
+    lines = _grammar_lines(text)
+    if not lines["Mode"]:
+        return []
+    problems = [
+        f"more than one {label} line: keep one"
+        for label in GRAMMAR_LABELS
+        if len(lines[label]) > 1
+    ]
+    if len(lines["Mode"]) > 1:
+        return problems
+    mode = lines["Mode"][0]
+    if mode not in MODES:
+        problems.append(f"bad Mode value '{mode}': expected {' or '.join(MODES)}")
+        return problems
+
+    attempt = None
+    attempts = lines["Attempt"]
+    if len(attempts) == 1:
+        if attempts[0] in ATTEMPTS:
+            attempt = attempts[0]
+        else:
+            problems.append(
+                f"bad Attempt value '{attempts[0]}': expected one of: {', '.join(ATTEMPTS)}"
+            )
+    elif not attempts and mode == "light":
+        problems.append(
+            "missing Attempt: Mode: light needs one line 'Attempt: <kind>', "
+            f"where <kind> is one of: {', '.join(ATTEMPTS)}"
+        )
+
+    waived = lines["Waived by mode"]
+    if len(waived) > 1:
+        return problems
+    if mode == "light" and (stem is None or attempt is None):
+        return problems
+    key = None if mode == "full" else (stem, attempt)
+    expected = waived_value(mode, key)
+    actual = waived[0] if waived else None
+    if actual != expected:
+        problems.append(_waiver_problem(mode, key, expected, actual))
+    return problems
 
 
 def work_key(playbook, attempt):
