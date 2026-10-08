@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -879,6 +880,15 @@ def report(restaurant, write=True):
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 LAND = Path(__file__).resolve().parents[2] / "landing" / "scripts" / "land.py"
+# The built skill tree first, then the source checkout.
+ROLES = (Path(__file__).resolve().parents[2] / "pstack-runtime" / "scripts" / "roles.py",
+         Path(__file__).resolve().parents[3] / "scripts" / "roles.py")
+ESCALATED = "escalated: "
+ATTEMPT_AFTER = {"sent-back": "fix", "queued": "bounce"}
+MODE_RESOLUTIONS = 3
+SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
+             "and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's decision came "
+             "from. It does not make this thread a session.")
 
 
 def holder(restaurant, dish):
@@ -1185,8 +1195,39 @@ def menu_purpose(restaurant):
     return purpose
 
 
-def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
-    """The worker brief, assembled from the store so no field is left out or left as a placeholder."""
+def attempt_kind(events, ident):
+    """first, fix after a send-back, or bounce after a queue bounce. A replaced worker keeps the kind it replaced."""
+    kind = "first"
+    for event in events:
+        if event["kind"] == "dish" and event["id"] == ident:
+            kind = ATTEMPT_AFTER.get(event["state"], kind)
+    return kind
+
+
+@dataclass(frozen=True)
+class ModeInputs:
+    """What roles.py mode reads from the store for one brief, and the dish and owner the brief is written for."""
+    project_root: str
+    station: str
+    attempt: str
+    paths: str
+    send_backs: int
+    coordinator: str
+    escalated: str
+    dish: dict
+    thread: str
+    generation: int
+
+
+@dataclass(frozen=True)
+class ModeLines:
+    lines: tuple
+    mode: str
+    escalation: str
+
+
+def brief_dish(restaurant, ident, paths, lease, acceptance):
+    """The dish, its leased paths and lease, and the coordinator thread, or the refusal a brief gets."""
     _, dish = restaurant.find("dishes.tsv", ident)
     paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
     if not paths or not lease:
@@ -1198,6 +1239,73 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
     thread = (restaurant.meta.get("thread") or "").strip()
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
+    menu_purpose(restaurant)
+    return dish, paths, lease, thread
+
+
+def mode_inputs(restaurant, dish, paths, thread):
+    meta = restaurant.meta
+    events = restaurant.rows("log.tsv")
+    send_backs = sum(row["dish"] == dish["id"] and row["verdict"] == "send-back" for row in restaurant.rows("pass.tsv"))
+    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, send_backs,
+                      meta.get("mode") if meta.get("mode") in MODES else None, latest_mode_note(events, dish["id"]),
+                      dish, thread, meta.get("generation"))
+
+
+def roles_script():
+    for path in ROLES:
+        if path.is_file():
+            return path
+    raise BrigadeError(f"cannot find roles.py at {ROLES[0]} or {ROLES[1]}; build or reinstall pstack-t3")
+
+
+def roles_mode(inputs):
+    """roles.py mode's lines for this item. It may run git, so call it with no store lock held."""
+    argv = [sys.executable, str(roles_script()), "mode", "--cwd", inputs.project_root, "--paths", inputs.paths,
+            "--send-backs", str(inputs.send_backs)]
+    if inputs.coordinator:
+        argv += ["--coordinator-mode", inputs.coordinator]
+    if inputs.escalated is not None:
+        argv += ["--escalated", inputs.escalated]
+    result = subprocess.run(argv + ["--playbook", inputs.station, "--attempt", inputs.attempt], capture_output=True, text=True)
+    if result.returncode and "unknown playbook" in result.stderr:
+        # A station such as correct runs no poteto-mode playbook, so its brief carries only the mode.
+        result = subprocess.run(argv, capture_output=True, text=True)
+    if result.returncode:
+        raise BrigadeError(f"roles.py mode refused the brief: {result.stderr.strip().removeprefix('error: ')}")
+    lines = tuple(result.stdout.splitlines())
+    modes = [line.removeprefix("Mode: ") for line in lines if line.startswith("Mode: ")]
+    if len(modes) != 1 or modes[0] not in MODES:
+        raise BrigadeError("roles.py mode printed no Mode: full or Mode: light line")
+    source = next((line.removeprefix("Mode source: ") for line in lines if line.startswith("Mode source: ")), "")
+    return ModeLines(lines, modes[0], source.removeprefix(ESCALATED) if source.startswith(ESCALATED) else None)
+
+
+def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
+    """The worker brief, assembled from the store so no field is left out or left as a placeholder.
+
+    roles.py runs between two store locks. A store change in that gap asks it again, so the brief and the
+    escalation it records match the rows it was resolved from.
+    """
+    for _ in range(MODE_RESOLUTIONS):
+        with restaurant.checked():
+            restaurant.fence()
+            dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
+            inputs = mode_inputs(restaurant, dish, used_paths, thread)
+        mode = roles_mode(inputs)
+        with restaurant.checked():
+            restaurant.fence()
+            dish, used_paths, used_lease, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
+            if mode_inputs(restaurant, dish, used_paths, thread) != inputs:
+                continue
+            if inputs.escalated is None and mode.escalation:
+                record_escalation(restaurant, ident, mode.escalation)
+            return write_brief(restaurant, dish, mode, goal, acceptance, verify, used_paths, used_lease, base, context, thread)
+    raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
+
+
+def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, base, context, thread):
+    ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -1205,7 +1313,7 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
     report = restaurant.dir / "reports" / f"{ident}.md"
     findings = restaurant.dir / "reports" / f"{ident}-review.md"
     lines = [
-        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", "",
+        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
         f"PURPOSE: {menu_purpose(restaurant)}",
         f"TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
@@ -1223,6 +1331,9 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
         "", "REPORT:",
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
+        "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
+        *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
+          if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
@@ -2078,8 +2189,7 @@ def run(argv):
     if args.command == "brief":
         # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
         fields = _brief_fields(args)
-        with restaurant.checked():
-            return brief(restaurant, args.id, **fields)
+        return brief(restaurant, args.id, **fields)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
