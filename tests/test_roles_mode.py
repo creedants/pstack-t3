@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "t3/added/landing/scripts"))
 
 import land  # noqa: E402
 import roles  # noqa: E402
-from tests.test_roles_cli import FOUR_PATHS, PLAYBOOK_NAMES, Repo  # noqa: E402
+from tests.test_roles_cli import FOUR_PATHS, PLAYBOOK_NAMES, ROOT_ALIASES, Repo  # noqa: E402
 
 LIGHT_USER = "Mode: light\nMode source: roles.json\n"
 LIGHT_PROJECT = "Mode: light\nMode source: .pstack/t3-roles.json\n"
@@ -345,19 +345,50 @@ class ModeCommandTest(unittest.TestCase):
             f"error: {repo.project}: escalate pattern '../x' leaves the repository\n",
         )
 
-    def test_escalate_pattern_at_the_root_exits_1(self):
-        for pattern in (".", "/"):
+    def test_root_normalized_escalate_patterns_keep_mode_resolution(self):
+        for pattern in ROOT_ALIASES:
             with self.subTest(pattern=pattern):
                 with tempfile.TemporaryDirectory() as directory:
                     repo = Repo(directory)
-                    repo.put(repo.project, {"escalate": [pattern]})
+                    repo.put(repo.project, {"mode": "light", "escalate": [pattern]})
                     completed = run_mode(directory)
-                self.assertEqual(completed.returncode, 1)
-                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.returncode, 0)
+                self.assertEqual(completed.stdout, LIGHT_PROJECT)
+                self.assertEqual(completed.stderr, "")
+
+    def test_root_normalized_escalate_patterns_do_not_match_tracked_files(self):
+        for pattern in ROOT_ALIASES:
+            with self.subTest(pattern=pattern):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = GitRepo(directory, ("scripts/install.py",))
+                    repo.put(repo.project, {"mode": "light", "escalate": [pattern]})
+                    root = repo.run("--paths", ".")
+                    tracked = repo.run("--paths", "scripts/install.py")
+                for completed in (root, tracked):
+                    self.assertEqual(completed.returncode, 0)
+                    self.assertEqual(completed.stdout, LIGHT_PROJECT)
+                    self.assertEqual(completed.stderr, "")
+
+    def test_escalate_pattern_aliases_normalize_before_segment_matching(self):
+        for pattern in (" ./scripts//install.py/ ", "scripts/old/../install.py", "scripts\\install.py"):
+            with self.subTest(pattern=pattern):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = GitRepo(directory, ("scripts/install.py", "scripts/tools/install.py"))
+                    repo.put(repo.project, {"mode": "light", "escalate": [pattern]})
+                    completed = repo.run("--paths", "scripts/install.py")
+                self.assertEqual(completed.returncode, 0)
                 self.assertEqual(
-                    completed.stderr,
-                    f"error: {repo.project}: escalate pattern {pattern!r} names the repository root; use '**'\n",
+                    completed.stdout,
+                    "Mode: full\nMode source: escalated: lease covers scripts/install.py\n",
                 )
+                self.assertEqual(completed.stderr, "")
+        with tempfile.TemporaryDirectory() as directory:
+            repo = GitRepo(directory, ("scripts/install.py", "scripts/tools/install.py"))
+            repo.put(repo.project, {"mode": "light", "escalate": [" ./scripts//*.py/ "]})
+            completed = repo.run("--paths", "scripts/tools/install.py")
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, LIGHT_PROJECT)
+        self.assertEqual(completed.stderr, "")
 
     def test_rule1_reads_root_from_subdirectory(self):
         with tempfile.TemporaryDirectory() as directory:

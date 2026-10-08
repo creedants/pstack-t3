@@ -228,6 +228,7 @@ FOUR_PATHS = [
     "t3/added/brigade/scripts/brigade.py",
     "scripts/install.py",
 ]
+ROOT_ALIASES = (".", "/", "a/..", " ", "//")
 SET_EXAMPLES = [
     "judgment and prose=claudeAgent/claude-opus-5-5?effort=xhigh",
     "swarm workers=grok/grok-4.7?reasoningEffort=xhigh",
@@ -381,6 +382,126 @@ class ModeCliTest(unittest.TestCase):
             completed.stderr,
             f"error: {repo.project}: escalate must be a list of strings\n",
         )
+
+    def test_show_preserves_root_normalized_escalate_patterns(self):
+        for pattern in ROOT_ALIASES:
+            with self.subTest(pattern=pattern):
+                with self.open_repo() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.project, {"mode": "full", "escalate": [pattern]})
+                    completed = repo.show_bug_fix()
+                expected = {
+                    "budget": "default",
+                    "mode": "full",
+                    "modeSource": str(repo.project),
+                    "escalate": [pattern],
+                    "catalog": True,
+                    "roles": {
+                        "bug-fix": {
+                            "source": "default",
+                            "seats": [{
+                                "providerInstanceId": "grok",
+                                "model": "grok-4.7",
+                                "options": {"reasoningEffort": "xhigh"},
+                            }],
+                        },
+                    },
+                }
+                self.assertEqual(completed.returncode, 0)
+                self.assertEqual(completed.stdout, json.dumps(expected, indent=2) + "\n")
+                self.assertEqual(completed.stderr, "")
+
+    def test_project_keep_preserves_root_normalized_escalate_patterns(self):
+        for pattern in ROOT_ALIASES:
+            with self.subTest(pattern=pattern):
+                with self.open_repo() as directory:
+                    repo = Repo(directory)
+                    repo.put(
+                        repo.project,
+                        {"version": 1, "roles": {}, "mode": "light", "escalate": [pattern]},
+                    )
+                    first = repo.write("--project", "--keep")
+                    self.assertEqual(first.returncode, 0)
+                    self.assertEqual(first.stdout, f"wrote {repo.project}\n")
+                    self.assertEqual(first.stderr, "")
+                    self.assertEqual(
+                        json.loads(repo.project.read_text()),
+                        {"version": 1, "roles": {}, "mode": "light", "escalate": [pattern]},
+                    )
+                    written = repo.project.read_bytes()
+                    second = repo.write("--project", "--keep")
+                    self.assertEqual(second.returncode, 0)
+                    self.assertEqual(second.stdout, f"wrote {repo.project}\n")
+                    self.assertEqual(second.stderr, "")
+                    self.assertEqual(repo.project.read_bytes(), written)
+
+    def test_project_rewrite_preserves_root_normalized_escalate_patterns(self):
+        for pattern in ROOT_ALIASES:
+            with self.subTest(pattern=pattern):
+                with self.open_repo() as directory:
+                    repo = Repo(directory)
+                    repo.put(
+                        repo.project,
+                        {"version": 1, "roles": {}, "mode": "light", "escalate": [pattern]},
+                    )
+                    completed = repo.write("--project")
+                    self.assertEqual(completed.returncode, 0)
+                    self.assertEqual(completed.stdout, f"wrote {repo.project}\n")
+                    self.assertEqual(completed.stderr, "")
+                    self.assertEqual(
+                        json.loads(repo.project.read_text()),
+                        {"version": 1, "roles": {}, "escalate": [pattern]},
+                    )
+
+    def test_normalized_traversal_stays_rejected(self):
+        for pattern in ("a/../../x", "..", " ../x "):
+            with self.subTest(pattern=pattern):
+                with self.open_repo() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.project, {"mode": "light", "escalate": [pattern]})
+                    before = repo.project.read_bytes()
+                    show = repo.show_bug_fix()
+                    write = repo.write("--project", "--keep")
+                    mode = repo.run("mode")
+                    after = repo.project.read_bytes()
+                message = f"error: {repo.project}: escalate pattern {pattern!r} leaves the repository\n"
+                for completed in (show, write, mode):
+                    self.assertEqual(completed.returncode, 1)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertEqual(completed.stderr, message)
+                self.assertEqual(after, before)
+
+    def test_mode_flags_print_their_help(self):
+        mode_flags = (
+            ("--brief-mode", "brief mode; overrides session, coordinator, project, and user modes"),
+            ("--session-mode", "session mode; used after brief and before coordinator, project, and user modes"),
+            ("--coordinator-mode", "coordinator mode; used after brief and session, before project and user modes"),
+        )
+        mode_only = (
+            ("--send-backs", "SEND_BACKS", "send-back count; 2 or more forces full mode"),
+            (
+                "--escalated",
+                "ESCALATED",
+                "recorded one-line escalation reason; forces full mode and wins over paths and send-backs",
+            ),
+        )
+        for command in ("show", "bounded-seat", "mode"):
+            with self.subTest(command=command):
+                completed = subprocess.run(
+                    [sys.executable, str(ROOT / "t3/scripts/roles.py"), command, "--help"],
+                    env={**os.environ, "COLUMNS": "200"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 0)
+                self.assertEqual(completed.stderr, "")
+                for flag, text in mode_flags:
+                    block = f"  {flag} {{full,light}}\n" + (" " * 24) + text + "\n"
+                    self.assertIn(block, completed.stdout)
+                if command == "mode":
+                    for flag, metavar, text in mode_only:
+                        block = f"  {flag} {metavar}\n" + (" " * 24) + text + "\n"
+                        self.assertIn(block, completed.stdout)
 
     def test_escalate_non_string_exits_1(self):
         with self.open_repo() as directory:
