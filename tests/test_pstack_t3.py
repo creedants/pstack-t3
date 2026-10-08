@@ -1014,6 +1014,127 @@ class CodeDelegateBriefTest(unittest.TestCase):
         self.assertIn("It never covers a code-writing child.", text)
 
 
+MODE_POINTER_SITES = {
+    **{f"{name}/SKILL.md": "skill" for name in (
+        "poteto-mode", "how", "why", "architect", "arena", "no-comments", "swarm", "interrogate",
+        "show-me-your-work", "recall", "automate-me", "maintain-verification-skill", "reflect",
+        "pstack-author-skill", "landing",
+    )},
+    **{f"poteto-mode/playbooks/{stem}.md": "playbook" for stem in (
+        "feature", "bug-fix", "refactoring", "perf-issue", "hillclimb", "opening-a-pr",
+        "autopilot-full", "autopilot-stack", "multi-phase-plan", "orchestrate", "shipping",
+        "visual-parity", "worktree-cleanup",
+    )},
+}
+MODES_UNCHANGED = {
+    "pstack-runtime/SKILL.md": "the Modes section's home",
+    "brigade/SKILL.md": "brigade's mode lands in its own change",
+    "setup-pstack/SKILL.md": "the smoke test is kept, one per provider",
+    "poteto-help/SKILL.md": "names delegate_task to explain the persona and spawns nothing",
+    "poteto-mode/playbooks/autonomous-run.md": "the watcher is kept",
+    "poteto-mode/playbooks/eval.md": "keeps arena and its judge, because comparing candidates is its purpose",
+}
+SPAWNS = re.compile(r"delegate_task|t3_thread_launch|create_threads")
+RUNTIME_LINK = re.compile(r"pstack-runtime/SKILL\.md#([^)\s]+)\)")
+
+
+def pointer_sentence(kind):
+    rel = "../pstack-runtime/SKILL.md" if kind == "skill" else "../../pstack-runtime/SKILL.md"
+    return (
+        f"[The runtime's Modes section]({rel}#modes) sets the mode lines of every brief "
+        f"this {kind} writes and how its spawns run in light mode."
+    )
+
+
+def unfenced_lines(text):
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            yield line
+
+
+def heading_slug(heading):
+    kept = "".join(char for char in heading.lower() if char.isalnum() or char in " -")
+    return kept.replace(" ", "-")
+
+
+class ModesTest(unittest.TestCase):
+    def setUp(self):
+        self.runtime = (ROOT / "skills/pstack-runtime/SKILL.md").read_text()
+
+    def test_every_pointer_site_holds_the_pointer_once_outside_a_fence(self):
+        for path, kind in MODE_POINTER_SITES.items():
+            text = (ROOT / "skills" / path).read_text()
+            sentence = pointer_sentence(kind)
+            with self.subTest(path=path):
+                self.assertEqual(text.count(sentence), 1)
+                self.assertIn(sentence, list(unfenced_lines(text)))
+
+    def test_every_spawning_file_points_at_modes_or_says_why_not(self):
+        skills = ROOT / "skills"
+        spawning = sorted(
+            str(path.relative_to(skills))
+            for path in [*skills.glob("*/SKILL.md"), *skills.glob("poteto-mode/playbooks/*.md")]
+            if SPAWNS.search(path.read_text())
+        )
+        self.assertEqual([path for path in spawning if path not in MODE_POINTER_SITES and path not in MODES_UNCHANGED], [])
+        self.assertEqual([path for path in MODES_UNCHANGED if not (skills / path).is_file()], [])
+        self.assertEqual(set(MODE_POINTER_SITES) & set(MODES_UNCHANGED), set())
+
+    def test_every_runtime_link_names_a_runtime_heading(self):
+        slugs = {heading_slug(line.lstrip("#").strip()) for line in unfenced_lines(self.runtime) if line.startswith("#")}
+        broken = []
+        for path in sorted((ROOT / "skills").rglob("*.md")):
+            for fragment in RUNTIME_LINK.findall(path.read_text()):
+                if fragment not in slugs:
+                    broken.append(f"{path.relative_to(ROOT)}#{fragment}")
+        for fragment in re.findall(r"\]\(#([^)\s]+)\)", self.runtime):
+            if fragment not in slugs:
+                broken.append(f"pstack-runtime/SKILL.md#{fragment}")
+        self.assertEqual(broken, [])
+        self.assertEqual(heading_slug("Resolve and carry the mode"), "resolve-and-carry-the-mode")
+
+    def test_runtime_has_one_modes_section_between_roles_and_isolation(self):
+        headings = [line for line in unfenced_lines(self.runtime) if line.startswith("## ") or line.startswith("### ")]
+        self.assertEqual(headings.count("## Modes"), 1)
+        modes = headings.index("## Modes")
+        self.assertLess(headings.index("## Roles"), modes)
+        isolation = headings.index("## Isolation")
+        self.assertEqual(headings[modes + 1:isolation], [
+            "### Resolve and carry the mode",
+            "### Light behavior",
+            "### Never cut",
+            "### Gate review",
+            "### Announcement",
+        ])
+        self.assertNotIn("pass check", self.runtime)
+
+    def test_deadlines_and_delegation_step_4_carry_the_mode_lines(self):
+        deadlines = self.runtime.split("## Deadlines", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "A step that the brief's `Waived by mode:` line names is not a skip, "
+            "because the mode removed it before the attempt started.",
+            deadlines,
+        )
+        step = next(line for line in self.runtime.splitlines() if line.startswith("4. A child starts with only its brief."))
+        for needed in ("roles.py mode --cwd", "Write no `Playbook:` line of your own", "--brief-mode"):
+            self.assertIn(needed, step)
+
+    def test_opening_a_pr_gates_light_prs_before_the_forge(self):
+        text = (ROOT / "skills/poteto-mode/playbooks/opening-a-pr.md").read_text()
+        blocks = text.split("\n\n")
+        lead = [block.split(" ", 1)[0] for block in blocks]
+        self.assertLess(lead.index("**Descriptions.**"), lead.index("**Gate.**"))
+        self.assertLess(lead.index("**Gate.**"), lead.index("**Forge.**"))
+        self.assertIn("(../../pstack-runtime/SKILL.md#gate-review)", blocks[lead.index("**Gate.**")])
+        child = next(block for block in blocks if block.startswith("A child task that opens a PR"))
+        self.assertIn("that child runs the **Gate** paragraph above in place of `interrogate` and `/no-comments`.", child)
+        self.assertIn("Run `/no-comments` before review.", text)
+
+
 class BuildTest(unittest.TestCase):
     def test_generated_tree_passes_check(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1186,6 +1307,76 @@ class BuildTest(unittest.TestCase):
             "demo/SKILL.md:11: catalog heredoc closer JSON has trailing whitespace. The closer is JSON with nothing after it",
             "demo/SKILL.md:12: catalog heredoc closer JSON is indented. Put JSON at column 0",
         ])
+
+    def light_findings(self, rel, body):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / rel
+            path.parent.mkdir(parents=True)
+            name = rel.split("/", 1)[0]
+            path.write_text(f"---\nname: {name}\ndescription: d\n---\n\n{body}\n" if rel.endswith("SKILL.md") else body)
+            return [finding for finding in check.check_tree(directory) if "light" in finding]
+
+    def test_check_rejects_a_pasted_waiver_table(self):
+        header = "| Playbook | `first` | `fix` and `bounce` |"
+        findings = self.light_findings("demo/SKILL.md", "\n".join([
+            header,
+            "| --- | --- | --- |",
+            "| Feature | Arena, Interrogate, Comment Sicko | How, Architect, Arena, Interrogate, Comment Sicko |",
+        ]))
+        self.assertIn(
+            f"demo/SKILL.md:6: light table restated. Link pstack-runtime/SKILL.md#modes instead of pasting it: {header}",
+            findings,
+        )
+
+    def test_check_rejects_a_census_with_a_light_column(self):
+        header = "| Census row | Full | Light | Kind |"
+        findings = self.light_findings("demo/SKILL.md", f"{header}\n| --- | --- | --- | --- |")
+        self.assertEqual(findings, [
+            f"demo/SKILL.md:6: light table restated. Link pstack-runtime/SKILL.md#modes instead of pasting it: {header}",
+        ])
+
+    def test_check_rejects_light_mode_prose_without_the_runtime_link(self):
+        findings = self.light_findings("demo/SKILL.md", "In light mode, launch at most 3 workers.")
+        self.assertEqual(findings, [
+            "demo/SKILL.md:6: names light mode without a link to the runtime's Modes section. "
+            "Link pstack-runtime/SKILL.md#modes: In light mode, launch at most 3 workers.",
+        ])
+
+    def test_check_accepts_the_modes_pointer(self):
+        pointer = (
+            "[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines "
+            "of every brief this skill writes and how its spawns run in light mode."
+        )
+        self.assertEqual(self.light_findings("demo/SKILL.md", pointer), [])
+
+    def test_check_lets_the_runtime_hold_the_light_table(self):
+        body = "\n".join([
+            "Call `watch_pull_request`. Call `unwatch_pull_request`.",
+            "",
+            "| Spawn | Light behavior |",
+            "| --- | --- |",
+            "| Feature | Arena, Interrogate, Comment Sicko |",
+            "",
+            "In light mode, launch at most 3 workers.",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "pstack-runtime"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(f"---\nname: pstack-runtime\ndescription: d\n---\n\n{body}\n")
+            self.assertEqual(check.check_tree(directory), [])
+
+    def test_check_ignores_waiver_names_outside_markdown(self):
+        findings = self.light_findings("demo/scripts/x.py", 'ROW = ("Arena", "Interrogate", "Comment Sicko")\n')
+        self.assertEqual(findings, [])
+
+    def test_check_accepts_an_unrelated_playbook_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: d\n---\n\n| Playbook | Purpose |\n| --- | --- |\n| Feature | New behavior |\n"
+            )
+            self.assertEqual(check.check_tree(directory), [])
 
 
 def fragment_name(branch):
