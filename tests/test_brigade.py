@@ -236,7 +236,9 @@ class BrigadeTest(unittest.TestCase):
         self.project = Path(self.temporary.name) / "Bridge Kit"
         self.project.mkdir()
         self.at = self.store / "bridge-kit" / "perf"
-        # Every subprocess inherits this, so roles.py never reads the developer's own roles.json.
+        self.isolate_roles_config()
+
+    def isolate_roles_config(self):
         patcher = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(self.temporary.name) / "config")})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -2364,6 +2366,14 @@ class BrigadeTest(unittest.TestCase):
         self.coordinator(station="correct")
         text = self.brigade(*self.BRIEF)
         self.assertEqual(text.split("\n\n", 1)[0], self.head("Mode: light", "Mode source: restaurant.json", station="correct"))
+
+    def test_roles_mode_refuses_to_run_under_a_store_lock(self):
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        glob["HELD_LOCKS"].append(Path("/store/held"))
+        with self.assertRaises(glob["BrigadeError"]) as caught:
+            glob["roles_mode"](None)
+        self.assertEqual(str(caught.exception),
+                         "roles.py may run git; release /store/held's store lock before resolving the mode")
 
     def test_a_roles_failure_refuses_the_brief_and_writes_nothing(self):
         self.coordinator()

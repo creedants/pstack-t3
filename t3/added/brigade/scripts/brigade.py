@@ -801,7 +801,6 @@ def cross_family(row):
 
 
 def latest_verdict(restaurant, dish_id, sha):
-    """The dish's last pass.tsv row at exactly this SHA, or None. A later verdict at the same SHA voids an earlier one."""
     restaurant.find("dishes.tsv", dish_id)
     verdicts = [row for row in restaurant.rows("pass.tsv") if row["dish"] == dish_id and row["sha"] == sha]
     return verdicts[-1] if verdicts else None
@@ -879,9 +878,8 @@ def report(restaurant, write=True):
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 LAND = Path(__file__).resolve().parents[2] / "landing" / "scripts" / "land.py"
-# The built skill tree first, then the source checkout.
-ROLES = (Path(__file__).resolve().parents[2] / "pstack-runtime" / "scripts" / "roles.py",
-         Path(__file__).resolve().parents[3] / "scripts" / "roles.py")
+BUILT_ROLES = Path(__file__).resolve().parents[2] / "pstack-runtime" / "scripts" / "roles.py"
+SOURCE_ROLES = Path(__file__).resolve().parents[3] / "scripts" / "roles.py"
 ESCALATED = "escalated: "
 ATTEMPT_AFTER = {"sent-back": "fix", "queued": "bounce"}
 MODE_RESOLUTIONS = 3
@@ -1175,6 +1173,10 @@ def latest_mode_note(events, ident):
 
 
 def record_escalation(restaurant, ident, reason):
+    restaurant.fence()
+    _, dish = restaurant.find("dishes.tsv", ident)
+    if dish["state"] not in LEASED_STATES:
+        raise BrigadeError(f"{ident} is {dish['state']}; only open work moves to full mode")
     recorded = latest_mode_note(restaurant.rows("log.tsv"), ident)
     if recorded is not None:
         return recorded
@@ -1192,7 +1194,6 @@ def menu_purpose(restaurant):
 
 
 def attempt_kind(events, ident):
-    """first, fix after a send-back, or bounce after a queue bounce. A replaced worker keeps the kind it replaced."""
     kind = "first"
     for event in events:
         if event["kind"] == "dish" and event["id"] == ident:
@@ -1202,7 +1203,6 @@ def attempt_kind(events, ident):
 
 @dataclass(frozen=True)
 class ModeInputs:
-    """What roles.py mode reads from the store for one brief, and the dish and owner the brief is written for."""
     project_root: str
     station: str
     attempt: str
@@ -1248,14 +1248,15 @@ def mode_inputs(restaurant, dish, paths, thread):
 
 
 def roles_script():
-    for path in ROLES:
+    for path in (BUILT_ROLES, SOURCE_ROLES):
         if path.is_file():
             return path
-    raise BrigadeError(f"cannot find roles.py at {ROLES[0]} or {ROLES[1]}; build or reinstall pstack-t3")
+    raise BrigadeError(f"cannot find roles.py at {BUILT_ROLES} or {SOURCE_ROLES}; build or reinstall pstack-t3")
 
 
 def roles_mode(inputs):
-    """roles.py mode's lines for this item. It may run git, so call it with no store lock held."""
+    if HELD_LOCKS:
+        raise BrigadeError(f"roles.py may run git; release {HELD_LOCKS[0]}'s store lock before resolving the mode")
     argv = [sys.executable, str(roles_script()), "mode", "--cwd", inputs.project_root, "--paths", inputs.paths,
             "--send-backs", str(inputs.send_backs)]
     if inputs.coordinator:
@@ -1264,7 +1265,6 @@ def roles_mode(inputs):
         argv += ["--escalated", inputs.escalated]
     result = subprocess.run(argv + ["--playbook", inputs.station, "--attempt", inputs.attempt], capture_output=True, text=True)
     if result.returncode and "unknown playbook" in result.stderr:
-        # A station such as correct runs no poteto-mode playbook, so its brief carries only the mode.
         result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode:
         raise BrigadeError(f"roles.py mode refused the brief: {result.stderr.strip().removeprefix('error: ')}")
@@ -1277,11 +1277,6 @@ def roles_mode(inputs):
 
 
 def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
-    """The worker brief, assembled from the store so no field is left out or left as a placeholder.
-
-    roles.py runs between two store locks. A store change in that gap asks it again, so the brief and the
-    escalation it records match the rows it was resolved from.
-    """
     for _ in range(MODE_RESOLUTIONS):
         with restaurant.checked():
             restaurant.fence()
@@ -2319,10 +2314,6 @@ def command(restaurant, args, contract=None, rails=None):
             raise BrigadeError(f"thread {thread} is an earlier attempt of {args.id}; a send-back launches a fresh worker")
         escalated = None
         if args.reason:
-            # A stale owner hears that it is stale even when the row it would append already exists.
-            restaurant.fence()
-            if current["state"] not in LEASED_STATES:
-                raise BrigadeError(f"{args.id} is {current['state']}; only open work moves to full mode")
             escalated = record_escalation(restaurant, args.id, args.reason)
         next_thread = current.get("thread", "") if thread is None else thread
         if current.get("thread") and next_thread != current["thread"] and (restart or next_thread):
