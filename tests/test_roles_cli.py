@@ -134,6 +134,10 @@ MISSING_PLAYBOOK = (
     "missing playbook: add one line 'Playbook: playbooks/<name>.md', "
     f"where <name> is one of: {PLAYBOOK_NAMES}\n"
 )
+MISSING_MODE = (
+    "missing Mode: paste the lines 'roles.py mode --playbook <name> --attempt <kind>' prints, "
+    "which include one line 'Mode: full' or 'Mode: light'\n"
+)
 
 
 def agent_body():
@@ -151,6 +155,18 @@ def run_check_brief(path):
     )
 
 
+def mode_output(*args):
+    with tempfile.TemporaryDirectory() as directory:
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "mode", "--cwd", directory, *args],
+            env={**os.environ, "XDG_CONFIG_HOME": directory},
+            capture_output=True,
+            text=True,
+        )
+    assert completed.returncode == 0 and completed.stderr == "", completed.stderr
+    return completed.stdout
+
+
 def check_text(text):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "brief.md"
@@ -166,10 +182,13 @@ class CheckBriefCliTest(unittest.TestCase):
 
     def test_d25_brief(self):
         completed = check_text(D25_BRIEF)
-        self.assert_check(completed, 1, MISSING_PERSONA + MISSING_PLAYBOOK)
+        self.assert_check(completed, 1, MISSING_PERSONA + MISSING_PLAYBOOK + MISSING_MODE)
 
     def test_passing_brief(self):
-        brief = f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n\nImplement the change described in the plan.\n"
+        brief = (
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
@@ -177,27 +196,27 @@ class CheckBriefCliTest(unittest.TestCase):
         body = agent_body()
         suffix = " Do not work from memory of the style."
         self.assertTrue(body.endswith(suffix), body[-80:])
-        brief = f"{body[:-len(suffix)]}\n\nPlaybook: playbooks/refactoring.md\n"
+        brief = f"{body[:-len(suffix)]}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_persona_after_other_text(self):
-        brief = f"Read this note first.\n\n{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n"
+        brief = f"Read this note first.\n\n{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_frontmatter_paste(self):
-        brief = PERSONA_PATH.read_text(encoding="utf-8") + "\nPlaybook: playbooks/refactoring.md\n"
+        brief = PERSONA_PATH.read_text(encoding="utf-8") + "\nPlaybook: playbooks/refactoring.md\nMode: full\n"
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_missing_playbook_line(self):
-        brief = f"{agent_body()}\n\nImplement the change described in the plan.\n"
+        brief = f"{agent_body()}\n\nMode: full\n\nImplement the change described in the plan.\n"
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_PLAYBOOK)
 
     def test_unknown_playbook_name(self):
-        brief = f"{agent_body()}\n\nPlaybook: playbooks/not-a-playbook.md\n"
+        brief = f"{agent_body()}\n\nPlaybook: playbooks/not-a-playbook.md\nMode: full\n"
         completed = check_text(brief)
         self.assert_check(
             completed,
@@ -210,6 +229,7 @@ class CheckBriefCliTest(unittest.TestCase):
             f"{agent_body()}\n\n"
             "Playbook: playbooks/refactoring.md\n"
             "Playbook: playbooks/feature.md\n"
+            "Mode: full\n"
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, "more than one Playbook line: keep one\n")
@@ -301,7 +321,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
             "where <kind> is one of: first, fix, bounce\n",
         )
 
-    def test_code_delegate_without_mode_passes(self):
+    def test_code_delegate_without_mode_fails(self):
         brief = (
             f"{agent_body()}\n\n"
             "Playbook: playbooks/refactoring.md\n"
@@ -310,7 +330,24 @@ class CheckBriefModeCliTest(unittest.TestCase):
             "Waived by mode: Arena, Interrogate, Comment Sicko\n"
             "\nImplement the change described in the plan.\n"
         )
-        self.assert_check(check_text(brief), 0, "ok playbooks/refactoring.md\n")
+        self.assert_check(check_text(brief), 1, MISSING_MODE)
+
+    def test_persona_and_playbook_only_fails(self):
+        brief = f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n"
+        self.assert_check(check_text(brief), 1, MISSING_MODE)
+
+    def test_pasted_light_session_output_passes(self):
+        lines = mode_output("--playbook", "feature", "--attempt", "first", "--session-mode", "light")
+        self.assert_check(check_text(f"{agent_body()}\n\n{lines}"), 0, "ok playbooks/feature.md\n")
+
+    def test_pasted_default_output_passes(self):
+        lines = mode_output("--playbook", "refactoring", "--attempt", "first")
+        self.assert_check(check_text(f"{agent_body()}\n\n{lines}"), 0, "ok playbooks/refactoring.md\n")
+
+    def test_own_playbook_line_beside_pasted_output_fails(self):
+        lines = mode_output("--playbook", "feature", "--attempt", "first", "--session-mode", "light")
+        brief = f"{agent_body()}\n\nPlaybook: playbooks/feature.md\n{lines}"
+        self.assert_check(check_text(brief), 1, "more than one Playbook line: keep one\n")
 
     def test_bad_attempt_no_traceback(self):
         brief = (

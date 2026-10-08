@@ -1383,11 +1383,17 @@ def _waiver_problem(mode, key, expected, actual):
     return f"wrong Waived by mode line: expected 'Waived by mode: {expected}'"
 
 
+MISSING_MODE = (
+    "missing Mode: paste the lines 'roles.py mode --playbook <name> --attempt <kind>' prints, "
+    "which include one line 'Mode: full' or 'Mode: light'"
+)
+
+
 def mode_problems(text, stem):
-    """Problems with the Mode block. No Mode line leaves the brief checked as before."""
+    """Problems with the Mode block. No Mode line is one problem, with no Attempt or waiver noise."""
     lines = _grammar_lines(text)
     if not lines["Mode"]:
-        return []
+        return [MISSING_MODE]
     problems = [
         f"more than one {label} line: keep one"
         for label in GRAMMAR_LABELS

@@ -1006,7 +1006,7 @@ class CodeDelegateBriefTest(unittest.TestCase):
             lines = (ROOT / "skills" / path).read_text().splitlines()
             matches = [line for line in lines if line.startswith(step)]
             self.assertEqual(len(matches), 1, (path, step))
-            for needed in ("pstack-runtime/SKILL.md#delegation)", "poteto-agent persona first", playbook_line, "`roles.py check-brief` before `delegate_task`"):
+            for needed in ("pstack-runtime/SKILL.md#delegation)", "poteto-agent persona first", playbook_line, "`roles.py mode --playbook ", "`roles.py check-brief` before `delegate_task`"):
                 self.assertIn(needed, matches[0], path)
 
     def test_routed_skill_exception_excludes_code_writing_children(self):

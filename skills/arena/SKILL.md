@@ -40,7 +40,7 @@ The quoted heredoc sends the JSON unchanged. The command does not write the cata
 
 ## Phase B: Fan out
 
-Spawn all N candidates in one message, one `delegate_task` call per seat, with `mode: "async"`, `role: "design"` (or `implementation` when the artifact is code), the seat's `target` (omitted for `inherit`), and a stable `clientRequestId` such as `arena-<slug>-<n>`. Each brief carries the task, the path to the shared grounding, its own output path, and instructions to produce both the artifact and a short rationale. A candidate that writes code for a poteto-mode playbook also follows step 4 of [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation): the poteto-agent persona first, the playbook's `Playbook: playbooks/<name>.md` line, and `roles.py check-brief` before `delegate_task`. Retain every returned `taskId`.
+Spawn all N candidates in one message, one `delegate_task` call per seat, with `mode: "async"`, `role: "design"` (or `implementation` when the artifact is code), the seat's `target` (omitted for `inherit`), and a stable `clientRequestId` such as `arena-<slug>-<n>`. Each brief carries the task, the path to the shared grounding, its own output path, and instructions to produce both the artifact and a short rationale. A candidate that writes code for a poteto-mode playbook also follows step 4 of [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation): the poteto-agent persona first, the lines `roles.py mode --playbook <name> --attempt <kind>` prints for the playbook it serves, which start with `Playbook: playbooks/<name>.md`, and `roles.py check-brief` before `delegate_task`. Retain every returned `taskId`.
 
 Each rationale names the alternatives the candidate considered and what it rejected.
 
