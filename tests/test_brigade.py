@@ -3586,7 +3586,7 @@ class SeatLaunchDocTest(unittest.TestCase):
 
     def test_step_6_reads_configuration_before_the_verdict(self):
         self.assertIn(
-            "Confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts",
+            "Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts",
             self.review,
         )
 
