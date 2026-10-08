@@ -787,12 +787,31 @@ def status_line(restaurant):
     return ", ".join(f"{label}: {value}" for label, value in counts(restaurant).items() if value) or "nothing on record"
 
 
-def pass_check(restaurant, dish_id, sha):
-    _, dish = restaurant.find("dishes.tsv", dish_id)
+def model_family(model):
+    """The last `/` segment of a provider/model, up to its first `-`, lowercased."""
+    return model.split("/")[-1].split("-")[0].lower()
+
+
+def cross_family(row):
+    return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
+
+
+def latest_verdict(restaurant, dish_id, sha):
+    """The dish's last pass.tsv row at exactly this SHA, or None. A later verdict at the same SHA voids an earlier one."""
+    restaurant.find("dishes.tsv", dish_id)
     verdicts = [row for row in restaurant.rows("pass.tsv") if row["dish"] == dish_id and row["sha"] == sha]
-    if not verdicts:
+    return verdicts[-1] if verdicts else None
+
+
+def pass_json(row):
+    return json.dumps({"verdict": row["verdict"], "author": row["author"], "verifier": row["verifier"],
+                       "note": row["note"], "crossFamily": cross_family(row)}, indent=2)
+
+
+def pass_check(restaurant, dish_id, sha):
+    latest = latest_verdict(restaurant, dish_id, sha)
+    if latest is None:
         return False, f"{dish_id} has no review verdict for {sha}"
-    latest = verdicts[-1]
     if latest["verdict"] != "pass":
         return False, f"{dish_id} at {sha}: {latest['verdict']} ({latest['note'] or 'no note'})"
     return True, f"{dish_id} at {sha} passed review by {latest['verifier']}"
@@ -801,8 +820,7 @@ def pass_check(restaurant, dish_id, sha):
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False):
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
-    family = lambda model: model.split("/")[-1].split("-")[0].lower()
-    if family(author) == family(verifier) and not same_family:
+    if model_family(author) == model_family(verifier) and not same_family:
         raise BrigadeError(f"verifier {verifier} is the same model family as author {author}; "
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
@@ -1828,6 +1846,7 @@ def parser():
     a = t.add_parser("check")
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
+    a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
 
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
@@ -2154,6 +2173,11 @@ def command(restaurant, args, contract=None, rails=None):
                               args.note, args.same_family)
             return f"{args.dish} {row['state']}"
         ok, why = pass_check(restaurant, args.dish, args.sha)
+        latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
+        if latest is not None:
+            if ok:
+                return pass_json(latest)
+            print(pass_json(latest))
         if not ok:
             raise BrigadeError(why)
         return why

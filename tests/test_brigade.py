@@ -310,6 +310,54 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued", ok=False),
                          "brigade: only reviewed work lands: D1 at abc: send-back (test asserts the bug)")
 
+    def check_json(self, sha):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 "pass", "check", "D1", "--sha", sha, "--json"], capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr.strip()
+
+    def record(self, sha, verdict, *extra, author=CLAUDE, verifier=CODEX):
+        self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", verdict, "--author", author, "--verifier", verifier, *extra)
+
+    def fired_bug_fix(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "s")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+
+    def test_pass_check_json_prints_a_cross_family_pass(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"verdict": "pass", "author": CLAUDE, "verifier": CODEX, "note": "", "crossFamily": True})
+        self.assertIn('"crossFamily": true', out)
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc"), f"D1 at abc passed review by {CODEX}")
+
+    def test_pass_check_json_exits_1_when_a_send_back_voids_the_pass(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass")
+        self.record("abc", "send-back", "--note", "test asserts the bug")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (1, "brigade: D1 at abc: send-back (test asserts the bug)"))
+        self.assertIn('"verdict": "send-back"', out)
+        self.assertEqual(json.loads(out)["note"], "test asserts the bug")
+
+    def test_pass_check_json_marks_a_same_family_pass(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass", "--same-family", verifier="cursor/claude-sonnet-5-5")
+        self.record("def", "pass", "--same-family")
+        with (self.at / "pass.tsv").open("a") as table:
+            table.write(f"2026-10-08T00:00:00+00:00\tD1\t\tghi\tpass\t{CLAUDE}\tcursor/claude-sonnet-5-5\t\n")
+        for sha, note in (("abc", "same model family;"), ("def", "same model family;"), ("ghi", "")):
+            code, out, err = self.check_json(sha)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn('"crossFamily": false', out)
+            self.assertEqual(json.loads(out)["note"], note)
+
+    def test_pass_check_json_at_another_sha_has_no_verdict(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass")
+        self.assertEqual(self.check_json("def"), (1, "", "brigade: D1 has no review verdict for def"))
+
     def test_report_lists_only_what_changed_since_the_last_report(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "Startup is slow")
