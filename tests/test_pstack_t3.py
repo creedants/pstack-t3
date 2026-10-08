@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -1061,6 +1062,58 @@ def heading_slug(heading):
     return kept.replace(" ", "-")
 
 
+GATE_CONTRACT = """\
+Gate review contract. These rules override the persona above and the tasks below where they differ.
+Do not edit files, commit, or push. Do not post on the PR. Return your report to the parent.
+Launch no child task, thread, or subagent. Do not run the how, why, architect, or interrogate skill. Do not launch show-me-your-work's trail reviewer.
+Read the whole diff and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
+When a claim or finding needs investigation beyond those reads, return send-back. Name the file, the line, the claim, and the question the fix must answer.
+Report each comment the persona would delete as a send-back finding with its path and line. Make no edit.
+End with pass, send-back, or blocked, the full head SHA, the author, and the verifier.
+"""
+
+
+def gate_contract(runtime):
+    start = runtime.index("2. **Brief.**")
+    window = runtime[start:].split("\n3. **Verdict.**", 1)[0]
+    lines = window.splitlines()
+    open_at = next(i for i, line in enumerate(lines) if line.strip() == "```text")
+    close_at = next(i for i, line in enumerate(lines) if i > open_at and line.strip() == "```")
+    body = "\n".join(lines[open_at + 1:close_at]) + "\n"
+    return textwrap.dedent(body)
+
+
+def brief_paragraph(runtime):
+    start = runtime.index("2. **Brief.**")
+    window = runtime[start:].split("\n3. **Verdict.**", 1)[0]
+    prose = []
+    for line in window.splitlines():
+        if line.strip().startswith("```"):
+            break
+        if prose and not line.strip():
+            break
+        if line.strip():
+            prose.append(line.strip())
+    return " ".join(prose)
+
+
+def light_behavior_rows(runtime):
+    section = runtime.split("### Light behavior", 1)[1].split("\n### ", 1)[0]
+    rows = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if rows:
+                break
+            continue
+        if not stripped.replace("|", "").replace(":", "").replace("-", "").strip():
+            continue
+        if stripped.strip("|").split("|", 1)[0].strip() == "Spawn":
+            continue
+        rows.append(stripped)
+    return rows
+
+
 class ModesTest(unittest.TestCase):
     def setUp(self):
         self.runtime = (ROOT / "skills/pstack-runtime/SKILL.md").read_text()
@@ -1133,6 +1186,26 @@ class ModesTest(unittest.TestCase):
         child = next(block for block in blocks if block.startswith("A child task that opens a PR"))
         self.assertIn("that child runs the **Gate** paragraph above in place of `interrogate` and `/no-comments`.", child)
         self.assertIn("Run `/no-comments` before review.", text)
+
+    def test_gate_contract_is_literal(self):
+        self.assertEqual(gate_contract(self.runtime), GATE_CONTRACT)
+
+    def test_gate_brief_pastes_persona_then_contract(self):
+        paragraph = brief_paragraph(self.runtime)
+        self.assertIn("Paste the body of `agents/comment-sicko.md` unchanged", paragraph)
+        self.assertIn("paste the gate contract below unchanged", paragraph)
+        self.assertNotIn("and ask for that skill's checks", self.runtime)
+
+    def test_every_gate_review_row_links_gate_review(self):
+        for row in light_behavior_rows(self.runtime):
+            if "gate review" not in row and "is the gate" not in row:
+                continue
+            spawn = row.split("|")[1].strip()
+            self.assertIn("(#gate-review)", row, spawn)
+
+    def test_full_mode_persona_keeps_investigation(self):
+        persona = (ROOT / "skills/pstack-runtime/agents/comment-sicko.md").read_text()
+        self.assertIn("I run the **how** skill, the **why** skill, or both", persona)
 
 
 class BuildTest(unittest.TestCase):
