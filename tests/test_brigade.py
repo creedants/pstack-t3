@@ -3721,6 +3721,19 @@ class LivenessIdleDocTest(unittest.TestCase):
         self.assertIn("nudge-<dish>-<that run id>", step)
         self.assertIn("goes to step 4", step)
 
+    def test_a_held_item_skips_liveness_steps_2_to_5(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        section = text.split("## Liveness check", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "`D1: open decision Q1: <question>; launch no worker or verifier until 86 answer Q1`",
+            section,
+        )
+        self.assertIn("Launch nothing and spawn nothing.", section)
+        self.assertIn("Skip Liveness steps 2 to 5 for that item.", section)
+        self.assertIn("Step 4.4 records that thread", section)
+        self.assertNotIn("Step 4.3 records that thread", section)
+        self.assertNotIn("Skip this line while `$B 86 list` parks that dish.", section)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--race-child":
