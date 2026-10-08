@@ -793,7 +793,6 @@ def status_line(restaurant):
 
 
 def model_family(model):
-    """The last `/` segment of a provider/model, up to its first `-`, lowercased."""
     return model.split("/")[-1].split("-")[0].lower()
 
 
@@ -1157,7 +1156,6 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
 
 
 def item_escalation(mode, reason):
-    """The reason an item's --mode full records, or None when neither flag was given."""
     if mode is None:
         if reason is not None:
             raise BrigadeError("--reason goes with --mode full")
@@ -1172,13 +1170,11 @@ def item_escalation(mode, reason):
 
 
 def latest_mode_note(events, ident):
-    """The reason in the item's latest `mode` row of log.tsv, or None when the item never moved to full."""
     notes = [event["note"] for event in events if event["kind"] == "mode" and event["id"] == ident]
     return notes[-1] if notes else None
 
 
 def record_escalation(restaurant, ident, reason):
-    """Append the item's mode row unless it has one. Returns the reason on record, the first one on a retry."""
     recorded = latest_mode_note(restaurant.rows("log.tsv"), ident)
     if recorded is not None:
         return recorded
@@ -1227,7 +1223,6 @@ class ModeLines:
 
 
 def brief_dish(restaurant, ident, paths, lease, acceptance):
-    """The dish, its leased paths and lease, and the coordinator thread, or the refusal a brief gets."""
     _, dish = restaurant.find("dishes.tsv", ident)
     paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
     if not paths or not lease:
