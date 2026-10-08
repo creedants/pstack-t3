@@ -325,6 +325,10 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
 
+## Machine capacity
+
+Children and launched threads run on this machine, not in the cloud. Keep code-writing children and launched writers in flight at or below the governor's slot count from the landing skill's [Capacity](../landing/SKILL.md#capacity) section, one slot per four cores and at most four by default. Run builds and tests under the landing skill's `land.py slot --`. Queue further units until a writer finishes.
+
 ## Top-level threads
 
 Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
@@ -344,6 +348,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - `t3_thread_launch` has no retry key. Retain the `threadId`. After an error or lost response, check `t3_thread_list` before retrying.
 - Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
 - A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
+- A report to a launcher or coordinator uses `mode: "auto"`. It starts an idle thread and steers a running turn, so many reports fold into one turn. `mode: "queue"` makes each report its own turn behind every turn ahead of it. With many owners, those turns pile up and arrive stale.
 - `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
 
 ## Scheduling
@@ -359,6 +364,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - The tick prompt must stand alone. Point it at the work log or store so a run can rebuild state from disk.
 - Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
 - Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
+- When the only open work waits on a user decision, ask once, pause the schedule, and end the turn. Resume it when the user answers. A tick that can only report the same open question again is not a cadence.
 - Do not schedule a tick to wait for a child task. Child completions wake this thread, and [Delegation](#delegation) step 5 bounds the wait for a child that never completes.
 - Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. A required heartbeat whose job is to notice a merge may use `900000`, as that section states.
 

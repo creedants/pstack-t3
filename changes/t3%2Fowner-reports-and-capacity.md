@@ -1,0 +1,3 @@
+- Owners report to their root or coordinator with `t3_thread_send` mode `auto`, not `queue`. Queued reports became one turn each and piled up stale under many owners.
+- Autopilot owners and code-writing children stay at or below the landing governor's slot count, because T3 runs them on this machine. Builds and tests run under `land.py slot --`.
+- A schedule pauses while the only open work waits on a user decision, instead of ticking the same question again.
