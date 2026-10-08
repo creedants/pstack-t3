@@ -1,0 +1,2 @@
+- Brigade briefs now carry the worker's `Mode:` and `Mode source:` lines from `roles.py mode`, counting the dish's send-backs, plus the runtime's seat rule and `Gate: brigade`. Workers no longer fall back to full mode or run a second gate.
+- Brigade intake reads the tracker the project's AGENTS.md names and files work there first. The rail stays execution bookkeeping.
