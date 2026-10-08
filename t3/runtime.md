@@ -213,7 +213,7 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
 
 Under light with budget `default`, `roles.py show` resolves seats as budget `small`, which caps reasoning at `medium`. An explicit budget wins. Light mode never sets `fastMode`. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat gets the cap.
 
-Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A worker running a brief stops at a verifiable point and reports `Contested: <reason>` under its status. A session switches that work to full, announces the escalation, and runs the step full mode prescribes. Nothing moves work from full to light mid-flight.
+Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`. Nothing moves work from full to light mid-flight.
 
 ### Light behavior
 
@@ -242,7 +242,7 @@ In light mode, run the row for the spawn you are about to make. A step its row d
 | Multi-phase exploration | Spawn one read-only explorer. |
 | Multi-phase verification | Write the plan's lane checklist as the playbook and `check-plan.mjs` require. At each code-ready head, launch the gates lane, one live lane per surface, and one audit lane on another model family. That audit lane is the gate review. |
 | Autopilot owner | One owner per PR. Each owner `message`, including a replacement's, carries the mode lines. |
-| Autopilot verification | Two lanes per round. The gates lane keeps the patch-id rule in `playbooks/shipping.md`. One audit lane on another model family is the gate review and runs at every new head SHA. |
+| Autopilot verification | Two lane children per round. The gates lane reruns the gates at that SHA and keeps the patch-id rule in `playbooks/shipping.md`. One audit lane on another model family is the gate review and runs at every new head SHA. |
 | Orchestrate sub-coordinator, worker, and long-lived owner | Keep them. Each brief or `message` carries the mode lines. |
 | Orchestrate verifier | Keep it when verification is expensive. A cheap unit's merge still needs the gate review at its head. |
 | Shipping verifier | One per PR. It is the gate review, and it reuses a verdict only per [Gate review](#gate-review). |
