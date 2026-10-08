@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ COUNTED_STATES = ("in-progress", "in-review")
 LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
+MODES = ("full", "light")
 OPEN_RUN_MINUTES = 10
 
 TABLES = {
@@ -59,6 +61,7 @@ SECTIONS = {
     ("dish", "queued"): "Waiting to land",
     ("dish", "sent-back"): "Sent back after review",
     ("dish", "blocked"): "Blocked",
+    ("mode", "full"): "Moved to full mode",
     ("dish", "in-progress"): "In progress",
     ("dish", "in-review"): "In progress",
     ("ticket", "waiting"): "New tickets, not started",
@@ -83,7 +86,7 @@ Work this restaurant does not take, even when asked.
 
 ## Budget
 
-The pstack roles budget (`default`, `small`, `medium`, `large`, `unlimited`) and any cap on parallel workers.
+Any cap on parallel workers, and whether a provider's usage limit switches this restaurant to light mode.
 """
 
 ADMIN_MENU = """# Menu: {restaurant}
@@ -721,7 +724,7 @@ def handed_count(restaurant):
     return len(list((restaurant.dir / "inbox").glob("*.json")))
 
 
-def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False):
+def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None):
     project_root = Path(project_root).resolve()
     if admin:
         name = ADMIN_NAME
@@ -758,6 +761,8 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
             "lastReportAt": None, "thread": None, "schedules": {}, "intake": list(intake)}
     if workers is not None:
         meta["workers"] = workers
+    if mode is not None:
+        meta["mode"] = mode
     if admin:
         meta["role"] = "admin"
     write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
@@ -787,12 +792,31 @@ def status_line(restaurant):
     return ", ".join(f"{label}: {value}" for label, value in counts(restaurant).items() if value) or "nothing on record"
 
 
-def pass_check(restaurant, dish_id, sha):
-    _, dish = restaurant.find("dishes.tsv", dish_id)
+def model_family(model):
+    """The last `/` segment of a provider/model, up to its first `-`, lowercased."""
+    return model.split("/")[-1].split("-")[0].lower()
+
+
+def cross_family(row):
+    return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
+
+
+def latest_verdict(restaurant, dish_id, sha):
+    """The dish's last pass.tsv row at exactly this SHA, or None. A later verdict at the same SHA voids an earlier one."""
+    restaurant.find("dishes.tsv", dish_id)
     verdicts = [row for row in restaurant.rows("pass.tsv") if row["dish"] == dish_id and row["sha"] == sha]
-    if not verdicts:
+    return verdicts[-1] if verdicts else None
+
+
+def pass_json(row):
+    return json.dumps({"verdict": row["verdict"], "author": row["author"], "verifier": row["verifier"],
+                       "note": row["note"], "crossFamily": cross_family(row)}, indent=2)
+
+
+def pass_check(restaurant, dish_id, sha):
+    latest = latest_verdict(restaurant, dish_id, sha)
+    if latest is None:
         return False, f"{dish_id} has no review verdict for {sha}"
-    latest = verdicts[-1]
     if latest["verdict"] != "pass":
         return False, f"{dish_id} at {sha}: {latest['verdict']} ({latest['note'] or 'no note'})"
     return True, f"{dish_id} at {sha} passed review by {latest['verifier']}"
@@ -801,8 +825,7 @@ def pass_check(restaurant, dish_id, sha):
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False):
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
-    family = lambda model: model.split("/")[-1].split("-")[0].lower()
-    if family(author) == family(verifier) and not same_family:
+    if model_family(author) == model_family(verifier) and not same_family:
         raise BrigadeError(f"verifier {verifier} is the same model family as author {author}; "
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
@@ -832,7 +855,7 @@ def report(restaurant, write=True):
             continue
         lines += [f"## {title}", ""]
         for event in items:
-            dish = dishes.get(event["id"], {}) if event["kind"] == "dish" else {}
+            dish = dishes.get(event["id"], {}) if event["kind"] in ("dish", "mode") else {}
             tickets = f" ({dish['tickets'].replace(',', ', ')})" if dish.get("tickets") else ""
             pr = f" {dish['pr']}" if dish.get("pr") else ""
             lines.append(f"- {event['id']}{tickets}: {event['note']}{pr}")
@@ -857,6 +880,15 @@ def report(restaurant, write=True):
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 LAND = Path(__file__).resolve().parents[2] / "landing" / "scripts" / "land.py"
+# The built skill tree first, then the source checkout.
+ROLES = (Path(__file__).resolve().parents[2] / "pstack-runtime" / "scripts" / "roles.py",
+         Path(__file__).resolve().parents[3] / "scripts" / "roles.py")
+ESCALATED = "escalated: "
+ATTEMPT_AFTER = {"sent-back": "fix", "queued": "bounce"}
+MODE_RESOLUTIONS = 3
+SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
+             "and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's decision came "
+             "from. It does not make this thread a session.")
 
 
 def holder(restaurant, dish):
@@ -912,17 +944,19 @@ def refusal_kind(message):
     return "lease"
 
 
-def block_note(kind, ids, station, summary, paths, timebox, branch=""):
+def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""):
     note = {"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
             "paths": paths, "timebox": timebox}
     if branch:
         note["branch"] = branch
+    if reason:
+        note["reason"] = reason
     return json.dumps(note, separators=(",", ":"))
 
 
-def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch=""):
+def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason=""):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
-    note = block_note(kind, ids, station, summary, paths, timebox, branch)
+    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -1003,6 +1037,8 @@ def fire_command(ident, note):
     if note.get("paths"):
         pairs.append(("paths", note["paths"]))
     pairs.append(("timebox", note.get("timebox", 60)))
+    if note.get("reason"):
+        pairs += [("mode", "full"), ("reason", note["reason"])]
     words = ["fire", *(f"--{name}={value}" for name, value in pairs)]
     return " ".join(shlex.quote(str(word)) for word in words)
 
@@ -1068,7 +1104,7 @@ def unfireable(restaurant, ids):
     return None
 
 
-def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths):
+def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None):
     while True:
         with restaurant.checked():
             restaurant.fence()
@@ -1080,7 +1116,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             leased = with_fragment(paths, known) if paths else ""
             full = workers_full(restaurant)
             if full:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
                 raise BrigadeError(f"nothing fired: {full}")
         # land.py can wait on the landing database, so the claim runs outside the store lock.
         # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
@@ -1088,7 +1124,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             lease = claim_lease(restaurant, dish, leased) if leased else ""
         except ClaimError as error:
             with restaurant.checked():
-                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch)
+                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason)
             raise BrigadeError(f"nothing fired: {error}") from error
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
@@ -1100,6 +1136,8 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                                                  "branch": branch, "summary": summary, "timebox": timebox,
                                                  "lease": lease, "paths": leased})
                 restaurant.log("dish", dish, "in-progress", summary)
+                if reason:
+                    record_escalation(restaurant, dish, reason)
                 rows = restaurant.rows("rail.tsv")
                 for row in rows:
                     if row["id"] in ids:
@@ -1110,12 +1148,42 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
                 return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
             if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
                 refusal = full
         if lease:
             release_lease(restaurant, lease)
         if refusal:
             raise BrigadeError(f"nothing fired: {refusal}")
+
+
+def item_escalation(mode, reason):
+    """The reason an item's --mode full records, or None when neither flag was given."""
+    if mode is None:
+        if reason is not None:
+            raise BrigadeError("--reason goes with --mode full")
+        return None
+    if mode == "light":
+        raise BrigadeError("an item's mode only moves to full; change the coordinator with set --mode light")
+    if mode != "full":
+        raise BrigadeError(f"--mode takes full, got {mode!r}")
+    if not clean(reason):
+        raise BrigadeError('--mode full needs --reason "<one line>"')
+    return clean(reason)
+
+
+def latest_mode_note(events, ident):
+    """The reason in the item's latest `mode` row of log.tsv, or None when the item never moved to full."""
+    notes = [event["note"] for event in events if event["kind"] == "mode" and event["id"] == ident]
+    return notes[-1] if notes else None
+
+
+def record_escalation(restaurant, ident, reason):
+    """Append the item's mode row unless it has one. Returns the reason on record, the first one on a retry."""
+    recorded = latest_mode_note(restaurant.rows("log.tsv"), ident)
+    if recorded is not None:
+        return recorded
+    restaurant.log("mode", ident, "full", reason)
+    return reason
 
 
 def menu_purpose(restaurant):
@@ -1127,8 +1195,39 @@ def menu_purpose(restaurant):
     return purpose
 
 
-def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
-    """The worker brief, assembled from the store so no field is left out or left as a placeholder."""
+def attempt_kind(events, ident):
+    """first, fix after a send-back, or bounce after a queue bounce. A replaced worker keeps the kind it replaced."""
+    kind = "first"
+    for event in events:
+        if event["kind"] == "dish" and event["id"] == ident:
+            kind = ATTEMPT_AFTER.get(event["state"], kind)
+    return kind
+
+
+@dataclass(frozen=True)
+class ModeInputs:
+    """What roles.py mode reads from the store for one brief, and the dish and owner the brief is written for."""
+    project_root: str
+    station: str
+    attempt: str
+    paths: str
+    send_backs: int
+    coordinator: str
+    escalated: str
+    dish: dict
+    thread: str
+    generation: int
+
+
+@dataclass(frozen=True)
+class ModeLines:
+    lines: tuple
+    mode: str
+    escalation: str
+
+
+def brief_dish(restaurant, ident, paths, lease, acceptance):
+    """The dish, its leased paths and lease, and the coordinator thread, or the refusal a brief gets."""
     _, dish = restaurant.find("dishes.tsv", ident)
     paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
     if not paths or not lease:
@@ -1140,6 +1239,73 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
     thread = (restaurant.meta.get("thread") or "").strip()
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
+    menu_purpose(restaurant)
+    return dish, paths, lease, thread
+
+
+def mode_inputs(restaurant, dish, paths, thread):
+    meta = restaurant.meta
+    events = restaurant.rows("log.tsv")
+    send_backs = sum(row["dish"] == dish["id"] and row["verdict"] == "send-back" for row in restaurant.rows("pass.tsv"))
+    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, send_backs,
+                      meta.get("mode") if meta.get("mode") in MODES else None, latest_mode_note(events, dish["id"]),
+                      dish, thread, meta.get("generation"))
+
+
+def roles_script():
+    for path in ROLES:
+        if path.is_file():
+            return path
+    raise BrigadeError(f"cannot find roles.py at {ROLES[0]} or {ROLES[1]}; build or reinstall pstack-t3")
+
+
+def roles_mode(inputs):
+    """roles.py mode's lines for this item. It may run git, so call it with no store lock held."""
+    argv = [sys.executable, str(roles_script()), "mode", "--cwd", inputs.project_root, "--paths", inputs.paths,
+            "--send-backs", str(inputs.send_backs)]
+    if inputs.coordinator:
+        argv += ["--coordinator-mode", inputs.coordinator]
+    if inputs.escalated is not None:
+        argv += ["--escalated", inputs.escalated]
+    result = subprocess.run(argv + ["--playbook", inputs.station, "--attempt", inputs.attempt], capture_output=True, text=True)
+    if result.returncode and "unknown playbook" in result.stderr:
+        # A station such as correct runs no poteto-mode playbook, so its brief carries only the mode.
+        result = subprocess.run(argv, capture_output=True, text=True)
+    if result.returncode:
+        raise BrigadeError(f"roles.py mode refused the brief: {result.stderr.strip().removeprefix('error: ')}")
+    lines = tuple(result.stdout.splitlines())
+    modes = [line.removeprefix("Mode: ") for line in lines if line.startswith("Mode: ")]
+    if len(modes) != 1 or modes[0] not in MODES:
+        raise BrigadeError("roles.py mode printed no Mode: full or Mode: light line")
+    source = next((line.removeprefix("Mode source: ") for line in lines if line.startswith("Mode source: ")), "")
+    return ModeLines(lines, modes[0], source.removeprefix(ESCALATED) if source.startswith(ESCALATED) else None)
+
+
+def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
+    """The worker brief, assembled from the store so no field is left out or left as a placeholder.
+
+    roles.py runs between two store locks. A store change in that gap asks it again, so the brief and the
+    escalation it records match the rows it was resolved from.
+    """
+    for _ in range(MODE_RESOLUTIONS):
+        with restaurant.checked():
+            restaurant.fence()
+            dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
+            inputs = mode_inputs(restaurant, dish, used_paths, thread)
+        mode = roles_mode(inputs)
+        with restaurant.checked():
+            restaurant.fence()
+            dish, used_paths, used_lease, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
+            if mode_inputs(restaurant, dish, used_paths, thread) != inputs:
+                continue
+            if inputs.escalated is None and mode.escalation:
+                record_escalation(restaurant, ident, mode.escalation)
+            return write_brief(restaurant, dish, mode, goal, acceptance, verify, used_paths, used_lease, base, context, thread)
+    raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
+
+
+def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, base, context, thread):
+    ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -1147,7 +1313,7 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
     report = restaurant.dir / "reports" / f"{ident}.md"
     findings = restaurant.dir / "reports" / f"{ident}-review.md"
     lines = [
-        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", "",
+        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
         f"PURPOSE: {menu_purpose(restaurant)}",
         f"TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
@@ -1165,6 +1331,9 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
         "", "REPORT:",
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
+        "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
+        *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
+          if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
@@ -1511,7 +1680,8 @@ def walk(root, stale_hours=24, repo=None):
             blocked = len(holding_blocks(restaurant))
             if blocked:
                 counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
-            lines.append(f"  {meta['restaurant']} (reports {reporting_of(meta)}){idle}: {counts}")
+            mode = f", mode {meta['mode']}" if meta.get("mode") else ""
+            lines.append(f"  {meta['restaurant']} (reports {reporting_of(meta)}{mode}){idle}: {counts}")
             leases = leases_for(listing, holder_prefix(meta))
             lease_text = f", leases {', '.join(leases)}" if leases else ""
             lines.append(f"    thread {meta.get('thread') or 'not recorded'}{lease_text}")
@@ -1746,6 +1916,7 @@ def parser():
                    help="how often the coordinator replies (default: milestones)")
     p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
+    p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
 
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
@@ -1757,6 +1928,7 @@ def parser():
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
+    p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
 
     p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -1783,6 +1955,8 @@ def parser():
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
     p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
+    p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
+    p.add_argument("--reason", help="one line: why the dish runs in full mode")
 
     p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
@@ -1813,6 +1987,8 @@ def parser():
     p.add_argument("--lease", help="record a lease id claimed again")
     p.add_argument("--paths", help="record the paths that lease covers")
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
+    p.add_argument("--mode", help="full, to move open work to full mode once; needs --reason")
+    p.add_argument("--reason", help="one line: why the dish moves to full mode")
 
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
@@ -1828,6 +2004,7 @@ def parser():
     a = t.add_parser("check")
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
+    a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
 
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
@@ -1872,7 +2049,7 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then reports to and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
@@ -1952,7 +2129,7 @@ def run(argv):
             raise BrigadeError("open needs --name, or --admin")
         require_workers(args.workers)
         restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
-                                              intake_list(args.intake), args.workers, args.admin)
+                                              intake_list(args.intake), args.workers, args.admin, args.mode)
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
         meta = restaurant.meta
         thread = (meta.get("thread") or "").strip()
@@ -1961,6 +2138,8 @@ def run(argv):
         intake = meta.get("intake") or []
         if not created and args.intake and intake_list(args.intake) != intake:
             lines.append(f"intake stays {', '.join(intake) or 'empty'}; change it with set --intake")
+        if not created and args.mode is not None and args.mode != meta.get("mode"):
+            lines.append(f"mode stays {meta.get('mode') or 'unset'}; change it with set --mode")
         lines.extend(sibling_lines(restaurant))
         if siblings(restaurant.dir, restaurant.meta.get("projectRoot")) and not is_admin(meta):
             cap = repository_cap(restaurant.meta["projectRoot"])
@@ -2001,17 +2180,20 @@ def run(argv):
         if args.thread is None:
             raise BrigadeError("--expect needs --thread")
         return set_thread(restaurant, args)
+    if args.command in ("fire", "dish"):
+        args.reason = item_escalation(args.mode, args.reason)
+        if args.reason and args.command == "dish" and args.state in ("queued", "merged", "dropped"):
+            raise BrigadeError(f"--mode full needs open work; run --state {args.state} without it")
     if args.command == "dish" and args.state == "dropped":
         return drop(restaurant, args.id, args.stopped)
     if args.command == "brief":
         # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
         fields = _brief_fields(args)
-        with restaurant.checked():
-            return brief(restaurant, args.id, **fields)
+        return brief(restaurant, args.id, **fields)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
-                    args.paths)
+                    args.paths, args.reason)
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "ticket" and args.action == "list":
@@ -2054,6 +2236,13 @@ def command(restaurant, args, contract=None, rails=None):
         if args.workers is not None:
             require_workers(args.workers)
             changes["workers"] = args.workers
+        if args.mode is not None:
+            if args.mode in MODES:
+                changes["mode"] = args.mode
+            elif args.mode == "":
+                drop.append("mode")
+            else:
+                raise BrigadeError('--mode takes full, light, or ""')
         if args.reports_to is not None:
             if clean(args.reports_to):
                 changes["reportsTo"] = clean(args.reports_to)
@@ -2133,6 +2322,13 @@ def command(restaurant, args, contract=None, rails=None):
             earlier.add(current["thread"])
         if thread and thread in earlier:
             raise BrigadeError(f"thread {thread} is an earlier attempt of {args.id}; a send-back launches a fresh worker")
+        escalated = None
+        if args.reason:
+            # A stale owner hears that it is stale even when the row it would append already exists.
+            restaurant.fence()
+            if current["state"] not in LEASED_STATES:
+                raise BrigadeError(f"{args.id} is {current['state']}; only open work moves to full mode")
+            escalated = record_escalation(restaurant, args.id, args.reason)
         next_thread = current.get("thread", "") if thread is None else thread
         if current.get("thread") and next_thread != current["thread"] and (restart or next_thread):
             if current["thread"] not in recorded:
@@ -2146,6 +2342,8 @@ def command(restaurant, args, contract=None, rails=None):
         if args.state == "merged":
             for ticket in filter(None, row["tickets"].split(",")):
                 restaurant.update("rail.tsv", ticket, "ticket", state="done")
+        if escalated is not None:
+            return f"{args.id} {row['state']}, mode full: {escalated}"
         return f"{args.id} {row['state']}"
 
     if args.command == "pass":
@@ -2154,6 +2352,11 @@ def command(restaurant, args, contract=None, rails=None):
                               args.note, args.same_family)
             return f"{args.dish} {row['state']}"
         ok, why = pass_check(restaurant, args.dish, args.sha)
+        latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
+        if latest is not None:
+            if ok:
+                return pass_json(latest)
+            print(pass_json(latest))
         if not ok:
             raise BrigadeError(why)
         return why
@@ -2183,6 +2386,8 @@ def command(restaurant, args, contract=None, rails=None):
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")
+        if meta.get("mode"):
+            lines.append(f"mode {meta['mode']}")
         if meta.get("generation") is not None:
             lines.append(f"owner {thread}@{meta['generation']}")
         return "\n".join(lines)
