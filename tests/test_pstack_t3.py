@@ -1184,7 +1184,7 @@ class ModesTest(unittest.TestCase):
             "### Gate review",
             "### Announcement",
         ])
-        self.assertNotIn("pass check", self.runtime)
+        self.assertIn("pass check <item> --sha <head> --json", self.runtime)
 
     def test_deadlines_and_delegation_step_4_carry_the_mode_lines(self):
         deadlines = self.runtime.split("## Deadlines", 1)[1].split("\n## ", 1)[0]
