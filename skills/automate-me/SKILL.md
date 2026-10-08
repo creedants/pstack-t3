@@ -13,6 +13,8 @@ This skill orchestrates three others: an inline mining pass (see step 1), the [`
 
 ## Flow
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ### 0. Check for an existing skill
 
 Look recursively for `*-mode/SKILL.md` matching the user's handle in every place a T3 provider loads skills from (table in step 4), plus `~/.config/pstack-t3/personal/`. In the project, check `.claude/skills/**` and `.agents/skills/**`. Mode skills can live in a personal category directory (`<skills dir>/<handle>/`), not only at the top level. Resolve symlinks (`readlink -f`) so one skill linked into four provider dirs counts once, and edit its real file. If one exists, confirm intent with the host's question tool (unless they already said "update my skill" or similar):

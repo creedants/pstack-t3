@@ -79,6 +79,8 @@ Checks are the repository's own gates: test, type check, lint. `--setup` install
 
 ## Run writers through it
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 For every unit of writing work:
 
 1. **Claim.** `lease claim` the files and directories the unit will change, before delegating. When the claim is refused, fold the unit into the holder's work or hold it until that lease is released. A cap refusal names every holder in flight. Hold the unit until one of them releases. Never claim `.` unless the unit really touches everything. `lease renew` extends a live lease. Renewing an expired lease is a new claim on its paths. It is refused when another holder's lease now overlaps or the cap is full, and the refusal names which. `--if-live` refuses an expired lease instead, so admitting it again is always a separate step taken after the old worker stopped.

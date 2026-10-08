@@ -2,6 +2,8 @@
 
 **You own what lands. Verify each PR independently, land only the verified run from the root, then keep your hands off the queue.**
 
+[The runtime's Modes section](../../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this playbook writes and how its spawns run in light mode.
+
 This is the half after `playbooks/babysit.md`.
 
 1. **Resolve the forge, then verify every PR independently.** GitHub CLI (`gh`) is the default. Origin is an optional merge CLI. When an `origin` CLI is available (`command -v origin` succeeds) and Origin can resolve the repository, use `origin pr ...` for PR view, watch, edit, and merge operations. Otherwise stay on `gh` and record the fallback. Never require Graphite (`gt`). Register every PR in the run with `link_pull_request` per [the runtime's Pull requests section](../../pstack-runtime/SKILL.md#pull-requests). One child task per PR, not batched, each a `delegate_task` call with `mode: "async"` on a seat of the `verifiers` role per [the runtime's Delegation section](../../pstack-runtime/SKILL.md#delegation). Each child checks out its PR head in its own git worktree per [Isolation](../../pstack-runtime/SKILL.md#isolation) and exercises the real surface with the matching control skill (`control-ui` or `control-cli` if installed, otherwise T3's preview tools or the terminal per [Verification surfaces](../../pstack-runtime/SKILL.md#verification-surfaces)) against parent versus head. Each returns `PASS`, `PASS+NOTES` or `FAIL` and posts that verdict on its own PR. The brief forbids code edits, commits, and pushes. Posting the verdict is the child's only write. Safe means a verdict from an agent that did not write the code. CI green is not a verdict, and an approving bot review is not a verdict.

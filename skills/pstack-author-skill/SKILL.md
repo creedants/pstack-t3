@@ -49,6 +49,8 @@ description: "<what it does>. Use for '<trigger phrase>', '<trigger phrase>', or
 
 ## 4. Test it on a fresh child
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 A skill nobody has run is a draft. Test it with a child that has never seen it.
 
 1. Check the install: every link resolves (`readlink -f`), the frontmatter parses, every linked reference and script exists, and the skill appears in T3's `$` skill picker.

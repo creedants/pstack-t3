@@ -14,6 +14,8 @@ Defer to Comment Sicko's fresh perspective.
 
 Use the caller's files or diff. Otherwise use the current diff against the base branch, default `main`, including the working tree.
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ## Steps
 
 1. Resolve the Comment Sicko reviewer on the `judgment and prose` role. Run `python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "judgment and prose"`. Set `target` to that seat, or omit `target` when the seat is `inherit`. If `delegate_task` rejects the target, apply the runtime's fallback and say which seat changed and why. Spawn Comment Sicko as a fresh child with `delegate_task` (`role: "review"`, `title: "Comment Sicko: <scope>"`, that `target`). Paste the body of [the Comment Sicko persona](../pstack-runtime/agents/comment-sicko.md) (everything after its frontmatter) at the top of the brief, then the scope as exact paths or the base ref and diff command. Do not restate its rules. The child sees none of this conversation, so the scope is the whole brief after the persona. It edits comments in the shared checkout, so run it alone: no other writer touches the scoped files until its report lands. Use `mode: "wait"` when step 2 is the next thing to do, otherwise `mode: "async"` and collect it per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation).

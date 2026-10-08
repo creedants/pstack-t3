@@ -12,6 +12,8 @@ Companion to the `how` skill. `how` answers what the code does and how it works.
 
 Each spawn below names a role. Resolve its seat per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles) and spawn with `delegate_task`. Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed.
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ## Operating Posture
 
 Operate as a **careful, cautious, and precise investigator**. Be honest about what you know vs what you're inferring. Read `references/epistemics.md` for the full confidence framework and phrasing guide. The synthesizer must follow it.

@@ -9,6 +9,8 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 Fan out N parallel attempts at the same task. Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ## Start
 
 Open a todolist with one entry per phase before launching anything.

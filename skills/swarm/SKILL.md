@@ -9,6 +9,8 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 Fan out N parallel child tasks. They may cover separate slices, race the same brief, or mix both. The parent waits, aggregates, and returns one report.
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ## Start
 
 Open a todolist with one entry per phase before launching anything.

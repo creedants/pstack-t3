@@ -2,6 +2,8 @@
 
 **You own pixel-exact equivalence. The baseline is the spec. You do not touch it.** Equivalence is verified by image diff, not by eye.
 
+[The runtime's Modes section](../../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this playbook writes and how its spawns run in light mode.
+
 1. Establish the baseline first, before any migration: a visual regression harness that screenshots the current component across its states, plus the target when matching two implementations. No baseline, no parity claim. A blocking prerequisite, not a follow-up.
 2. Anti-shortcut clauses, stated and held: no harness modifications, no baseline tampering, no component restructuring to make a diff pass. If the baseline looks wrong, stop and ask, don't edit it.
 3. Migrate one component at a time. Parallelize across worktrees, one owner child task per component, each in its own worktree per [Isolation](../../pstack-runtime/SKILL.md#isolation) (the **separate-before-serializing-shared-state** principle skill). Shared primitives migrate first as a blocking phase.

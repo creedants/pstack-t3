@@ -15,6 +15,8 @@ Invoke when the user says "reflect" or "/reflect". Skip when the conversation is
 
 ## Process
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ### 1. Locate the active thread
 
 The parent finds its own T3 thread before fanning out. The session is a T3 thread, and the reviewers read it with `t3_thread_read` (see the runtime's [History section](../pstack-runtime/SKILL.md#history)). Stay inside the current project. Do not read threads from other projects. That reads private chats from unrelated work.

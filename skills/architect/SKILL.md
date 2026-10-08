@@ -19,6 +19,8 @@ Open a todolist with one entry per phase before starting.
 4. Implement
 5. Scrap
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 ## Phase A: Ground the problem
 
 Build a real mental model of every system the new code touches. Run the **how** skill over the relevant subsystems.

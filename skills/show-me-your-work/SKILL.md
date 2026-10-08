@@ -65,6 +65,8 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
+[The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
+
 Before handing back, spawn a child with `delegate_task` (`role: "review"`, a read-only brief) whose `target` is on a different model family from the one that did the work. Pick it from `orchestrator_capabilities`, preferring a provider other than this thread's (the runtime's [Roles section](../pstack-runtime/SKILL.md#roles)). Self-review is not a substitute. Give it the log path and this run's `threadId`. The child reads the audit trail and the run's thread with `t3_thread_read`, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
 
 - Decisions logged with weak or absent evidence.
