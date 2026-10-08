@@ -11,6 +11,38 @@ ROOT = Path(__file__).resolve().parents[1]
 
 GROK_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}
 OPUS_SEAT = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
+GROK_MEDIUM = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}
+OPUS_MEDIUM = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}
+HAIKU_5_MEDIUM = {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "medium"}}
+NO_CATALOG_INFO = (
+    "info: light mode caps reasoning at medium, but show had no catalog, "
+    "so no seat was capped. Rerun with --catalog and --parent.\n"
+)
+NO_PARENT_INFO = (
+    "info: light mode caps reasoning at medium, but show had no --parent, "
+    "so an inherit seat may keep the parent's reasoning. Rerun with --parent.\n"
+)
+LAUNCH_MODELS = {
+    "feature, refactoring": ["grok-4.7"],
+    "bug-fix": ["grok-4.7"],
+    "perf-issue": ["grok-4.7"],
+    "hillclimb": ["grok-4.7"],
+    "judgment and prose": ["claude-opus-5-5"],
+    "hardest tasks": ["claude-opus-5-5"],
+    "how explorer": ["grok-4.7"],
+    "how explainer": ["claude-opus-5-5"],
+    "why investigators": ["grok-4.7"],
+    "why synthesizer": ["claude-opus-5-5"],
+    "reflect tooling": ["grok-4.7"],
+    "reflect judgment, divergent, synthesizer": ["claude-opus-5-5"],
+    "swarm workers": ["grok-4.7"],
+    "skill tests": ["gpt-6-luna"],
+    "arena runners": ["claude-opus-5-5", "grok-4.7"],
+    "arena cross-judge pool": ["claude-opus-5-5", "grok-4.7"],
+    "architect runners": ["claude-opus-5-5", "grok-4.7"],
+    "interrogate reviewers": ["claude-opus-5-5", "grok-4.7"],
+    "verifiers": ["claude-opus-5-5", "gpt-6.1-sol", "grok-4.7"],
+}
 
 
 def show(*role_names):
@@ -244,14 +276,14 @@ class Repo:
         return self.run("write", "--catalog", str(CATALOG), *args)
 
 
-def bug_fix_show(mode, mode_source, escalate, budget="default"):
+def bug_fix_show(mode, mode_source, escalate, budget="default", seat=GROK_SEAT):
     return {
         "budget": budget,
         "mode": mode,
         "modeSource": mode_source,
         "escalate": escalate,
         "catalog": True,
-        "roles": {"bug-fix": {"source": "default", "seats": [GROK_SEAT]}},
+        "roles": {"bug-fix": {"source": "default", "seats": [seat]}},
     }
 
 
@@ -285,7 +317,10 @@ class ModeCliTest(unittest.TestCase):
             repo.put(repo.user, {"mode": "light"})
             completed = repo.show_bug_fix()
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), bug_fix_show("light", str(repo.user), None))
+        self.assertEqual(
+            json.loads(completed.stdout),
+            bug_fix_show("light", str(repo.user), None, seat=GROK_MEDIUM),
+        )
 
     def test_user_escalate_list_is_ignored(self):
         with self.open_repo() as directory:
@@ -359,16 +394,14 @@ class ModeCliTest(unittest.TestCase):
             f"error: {repo.project}: escalate must be a list of strings\n",
         )
 
-    def test_light_mode_keeps_bug_fix_seat(self):
+    def test_light_mode_caps_bug_fix_seat(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"mode": "light"})
             completed = repo.show_bug_fix()
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload, bug_fix_show("light", str(repo.user), None))
-        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_SEAT])
-        self.assertEqual(payload["roles"]["bug-fix"]["seats"][0]["options"]["reasoningEffort"], "xhigh")
+        self.assertEqual(payload, bug_fix_show("light", str(repo.user), None, seat=GROK_MEDIUM))
 
     def test_bad_budget_still_exits_2(self):
         with self.open_repo() as directory:
@@ -650,6 +683,238 @@ class ModeCliTest(unittest.TestCase):
         self.assertIn("A project write without `--mode` omits the key.", text)
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
+
+    def test_coordinator_mode_light_caps_a_configured_verifier(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "full", "roles": {"verifiers": [OPUS_SEAT, GROK_SEAT]}})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--coordinator-mode", "light",
+                "--role", "verifiers",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(payload["modeSource"], "restaurant.json")
+        self.assertEqual(payload["roles"]["verifiers"]["seats"], [OPUS_MEDIUM, GROK_MEDIUM])
+        self.assertEqual(completed.stderr, "")
+
+    def test_brief_mode_full_keeps_a_configured_verifier(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "light", "roles": {"verifiers": [OPUS_SEAT, GROK_SEAT]}})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief-mode", "full",
+                "--role", "verifiers",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["mode"], "full")
+        self.assertEqual(payload["modeSource"], "brief")
+        self.assertEqual(payload["roles"]["verifiers"]["seats"], [OPUS_SEAT, GROK_SEAT])
+
+    def test_session_mode_light_over_project_full(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "full"})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--session-mode", "light",
+                "--role", "bug-fix",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(payload["modeSource"], "session")
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_MEDIUM])
+
+    def test_brief_mode_full_over_session_mode_light(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.project, {"mode": "full"})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief-mode", "full",
+                "--session-mode", "light",
+                "--role", "bug-fix",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["mode"], "full")
+        self.assertEqual(payload["modeSource"], "brief")
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+
+    def test_show_keeps_its_keys_under_mode_flags(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--session-mode", "light",
+                "--role", "bug-fix",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(list(payload), ["budget", "mode", "modeSource", "escalate", "catalog", "roles"])
+        self.assertEqual(payload["budget"], "default")
+
+    def test_light_inherit_becomes_explicit_medium(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "roles": {"judgment and prose": ["inherit"]}})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--role", "judgment and prose",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["judgment and prose"]
+        self.assertEqual(entry["seats"], [OPUS_MEDIUM])
+        self.assertEqual(
+            entry["info"],
+            ["inherit made explicit as claudeAgent/claude-opus-5-5 so the small budget applies"],
+        )
+
+    def test_light_with_large_budget_keeps_xhigh(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "budget": "large"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), bug_fix_show("light", str(repo.user), None, budget="large"))
+
+    def test_full_with_small_budget_keeps_medium(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"budget": "small"})
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["roles"]["bug-fix"]["seats"], [GROK_MEDIUM])
+        self.assertEqual(payload["mode"], "full")
+
+    def test_light_without_parent_prints_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, NO_PARENT_INFO)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [GROK_MEDIUM])
+
+    def test_light_without_catalog_prints_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, NO_CATALOG_INFO)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], "catalog-required")
+
+    def test_full_without_parent_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_with_large_budget_without_parent_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "budget": "large"})
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_worktree_reads_the_brief_mode(self):
+        with self.open_repo() as directory:
+            root = Path(directory)
+            main = root / "main"
+            (main / ".git").mkdir(parents=True)
+            project = main / ".pstack" / "t3-roles.json"
+            project.parent.mkdir(parents=True)
+            project.write_text(json.dumps({"mode": "full"}) + "\n", encoding="utf-8")
+            worktree = main / "wt"
+            worktree.mkdir()
+            (worktree / ".git").write_text("gitdir: ../.git/worktrees/wt\n", encoding="utf-8")
+            env = {**os.environ, "XDG_CONFIG_HOME": str(root)}
+
+            def invoke(*extra):
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "t3/scripts/roles.py"),
+                        "show",
+                        "--cwd", str(worktree),
+                        "--catalog", str(CATALOG),
+                        "--parent", "claudeAgent/claude-opus-5-5",
+                        "--role", "bug-fix",
+                        *extra,
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
+
+            capped = invoke("--brief-mode", "light")
+            plain = invoke()
+        self.assertEqual(capped.returncode, 0, capped.stderr)
+        capped_payload = json.loads(capped.stdout)
+        self.assertEqual(capped_payload["mode"], "light")
+        self.assertEqual(capped_payload["modeSource"], "brief")
+        self.assertEqual(capped_payload["roles"]["bug-fix"]["seats"], [GROK_MEDIUM])
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        plain_payload = json.loads(plain.stdout)
+        self.assertEqual(plain_payload["mode"], "full")
+        self.assertEqual(plain_payload["modeSource"], "default")
+        self.assertEqual(plain_payload["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+
+    def test_bad_brief_mode_exits_2(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            completed = repo.run("show", "--brief-mode", "turbo", "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+
+    def test_light_does_not_enable_fast_mode(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "roles": {"bug-fix": [{
+                "providerInstanceId": "claudeAgent",
+                "model": "claude-opus-5-5",
+                "options": {"effort": "xhigh", "fastMode": False},
+            }]}})
+            held = repo.show_bug_fix()
+            repo.put(repo.user, {"mode": "light", "roles": {"bug-fix": [{
+                "providerInstanceId": "claudeAgent",
+                "model": "claude-opus-5-5",
+                "options": {"effort": "xhigh"},
+            }]}})
+            absent = repo.show_bug_fix()
+        self.assertEqual(held.returncode, 0, held.stderr)
+        self.assertEqual(absent.returncode, 0, absent.stderr)
+        self.assertEqual(json.loads(held.stdout)["roles"]["bug-fix"]["seats"], [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-opus-5-5",
+            "options": {"effort": "medium", "fastMode": False},
+        }])
+        self.assertEqual(json.loads(absent.stdout)["roles"]["bug-fix"]["seats"], [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-opus-5-5",
+            "options": {"effort": "medium"},
+        }])
 
 
 HAIKU_CAP = (
@@ -1297,6 +1562,122 @@ class PromptCapCliTest(unittest.TestCase):
             "tokens": 41022,
             "target": None,
         })
+
+    def test_light_mode_keeps_every_launch_model(self):
+        def launch_models(payload):
+            found = {}
+            for name, entry in payload["roles"].items():
+                models = []
+                for seat in entry["seats"]:
+                    models.append("claude-opus-5-5" if seat == "inherit" else seat["model"])
+                found[name] = models
+            return found
+
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            full = repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5")
+            repo.put(repo.user, {"mode": "light"})
+            light = repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5")
+        for completed in (full, light):
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(launch_models(json.loads(completed.stdout)), LAUNCH_MODELS)
+            self.assertNotIn("claude-haiku-5-5", completed.stdout)
+
+    def test_light_mode_refuses_a_haiku_parent_for_bug_fix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "roles": {"bug-fix": ["inherit"]}})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "claudeAgent/claude-haiku-5-5",
+                "--role", "bug-fix",
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, f"error: {INHERIT_CAP}\n")
+
+    def test_light_skill_tests_show_replaces_haiku_5_5(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light", "roles": {"skill tests": [{
+                "providerInstanceId": "claudeAgent",
+                "model": "claude-haiku-5-5",
+            }]}})
+            completed = repo.run(
+                "show",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--role", "skill tests",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [HAIKU_4_SEAT])
+        self.assertEqual(entry["note"], SKILL_TESTS_NOTE)
+
+    def test_bounded_seat_caps_a_light_haiku(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            brief = repo.directory / "brief.txt"
+            read = repo.directory / "read.txt"
+            brief.write_bytes(b"y" * 1000)
+            read.write_bytes(b"x" * 2000)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--read", str(read),
+                "--session-mode", "light",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        body = json.loads(completed.stdout)
+        self.assertEqual(body["seat"], HAIKU_5_MEDIUM)
+        self.assertEqual(body["capped"], True)
+        self.assertEqual(body["estimate"]["tokens"], 41750)
+        self.assertEqual(body["estimate"]["target"], 100000)
+
+    def test_bounded_seat_brief_mode_full_keeps_the_bare_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"y" * 1000)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--brief-mode", "full",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            json.loads(completed.stdout)["seat"],
+            {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+        )
+
+    def test_light_show_keeps_an_uncapped_model_when_grok_is_absent(self):
+        catalog = json.loads(CATALOG.read_text())
+        catalog["providers"] = [
+            provider for provider in catalog["providers"] if provider["providerInstanceId"] != "grok"
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--role", "bug-fix",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-opus-5-5",
+            "options": {"effort": "medium"},
+        }])
 
 
 INHERIT_CAP = (

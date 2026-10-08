@@ -65,6 +65,56 @@ class ModeSettingsError(RolesError):
 
 
 @dataclass(frozen=True)
+class ModeDecision:
+    """One mode decision and where it came from.
+
+    label is the brief grammar's Mode source value. where is what show prints
+    as modeSource. A file level uses the file path. Every other level uses the label.
+    """
+
+    mode: str
+    label: str
+    where: str
+
+
+DEFAULT_MODE = ModeDecision("full", "default", "default")
+
+
+def effective_mode(config, brief=None, session=None, coordinator=None):
+    """Brief, then session, then coordinator, then the merged file level, then full."""
+    for value, label in ((brief, "brief"), (session, "session"), (coordinator, "restaurant.json")):
+        if value is not None:
+            return ModeDecision(value, label, label)
+    return config.get("mode", DEFAULT_MODE)
+
+
+def seat_budget(budget, mode):
+    """Light caps only a default budget. An explicit budget wins both ways."""
+    return "small" if mode == "light" and budget == "default" else budget
+
+
+NO_CATALOG_INFO = (
+    "info: light mode caps reasoning at medium, but show had no catalog, "
+    "so no seat was capped. Rerun with --catalog and --parent."
+)
+NO_PARENT_INFO = (
+    "info: light mode caps reasoning at medium, but show had no --parent, "
+    "so an inherit seat may keep the parent's reasoning. Rerun with --parent."
+)
+
+
+def light_cap_gap(decision, budget, has_catalog, has_parent):
+    """The info line show prints when the light cap may not have reached every seat."""
+    if seat_budget(budget, decision.mode) == budget:
+        return None
+    if not has_catalog:
+        return NO_CATALOG_INFO
+    if not has_parent:
+        return NO_PARENT_INFO
+    return None
+
+
+@dataclass(frozen=True)
 class Parent:
     provider: str
     model: str
@@ -355,17 +405,16 @@ def merged_config(cwd, user_path=None, project_path=None):
             roles[name] = seats
             sources[name] = str(origin)
     if "mode" in project:
-        mode, mode_source = project["mode"], str(project_path)
+        mode = ModeDecision(project["mode"], ".pstack/t3-roles.json", str(project_path))
     elif "mode" in user:
-        mode, mode_source = user["mode"], str(user_path)
+        mode = ModeDecision(user["mode"], "roles.json", str(user_path))
     else:
-        mode, mode_source = "full", "default"
+        mode = DEFAULT_MODE
     escalate = list(project["escalate"]) if "escalate" in project else None
     budget = project["budget"] if "budget" in project else user.get("budget", "default")
     return {
         "budget": budget,
         "mode": mode,
-        "modeSource": mode_source,
         "escalate": escalate,
         "roles": roles,
         "sources": sources,
@@ -793,8 +842,8 @@ def settle_caps(name, seats, catalog, parent, budget):
     return seats, None
 
 
-def _store_settled(entry, name, catalog, parent, config):
-    seats, note = settle_caps(name, entry["seats"], catalog, parent, config["budget"])
+def _store_settled(entry, name, catalog, parent, budget):
+    seats, note = settle_caps(name, entry["seats"], catalog, parent, budget)
     entry["seats"] = seats
     if note:
         entry["note"] = note
@@ -802,14 +851,16 @@ def _store_settled(entry, name, catalog, parent, config):
 
 def resolve(config, catalog=None, names=None, parent=None):
     names = names or ROLES
+    decision = config.get("mode", DEFAULT_MODE)
+    budget = seat_budget(config["budget"], decision.mode)
     if catalog is not None:
         if parent is None:
             parent = inherit_parent(catalog)
         catalog = stamp_parent(catalog, parent)
     result = {
         "budget": config["budget"],
-        "mode": config["mode"] if "mode" in config else "full",
-        "modeSource": config["modeSource"] if "modeSource" in config else "default",
+        "mode": decision.mode,
+        "modeSource": decision.where,
         "escalate": config["escalate"] if "escalate" in config else None,
         "catalog": bool(catalog),
         "roles": {},
@@ -820,12 +871,12 @@ def resolve(config, catalog=None, names=None, parent=None):
         configured = config["roles"].get(name)
         entry = {"source": config["sources"].get(name, "default")}
         if configured is None:
-            selection = default_seats(name, catalog, config["budget"])
+            selection = default_seats(name, catalog, budget)
             if isinstance(selection.seats, str):
                 entry["seats"] = selection.seats
                 if selection.notes:
                     entry["note"] = selection.notes[0]
-                _store_settled(entry, name, catalog, parent, config)
+                _store_settled(entry, name, catalog, parent, budget)
                 result["roles"][name] = entry
                 continue
             seats = list(selection.seats)
@@ -838,7 +889,7 @@ def resolve(config, catalog=None, names=None, parent=None):
         else:
             resolved, notes = [], []
             for seat in seats:
-                value, seat_notes, _ = resolve_seat(seat, catalog, config["budget"], name)
+                value, seat_notes, _ = resolve_seat(seat, catalog, budget, name)
                 resolved.append(value)
                 notes.extend(seat_notes)
             entry["seats"] = resolved
@@ -848,7 +899,7 @@ def resolve(config, catalog=None, names=None, parent=None):
                 entry["notes"] = problems
             if info:
                 entry["info"] = info
-        _store_settled(entry, name, catalog, parent, config)
+        _store_settled(entry, name, catalog, parent, budget)
         result["roles"][name] = entry
     return result
 
@@ -890,9 +941,14 @@ def catalog_for_check(args, catalog, catalog_path):
 def command_show(args):
     given_parent(args)
     config = merged_config(args.cwd, args.config, args.project_config)
+    decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
+    config["mode"] = decision
     catalog_path, catalog = load_show_catalog(args)
     parent, catalog = catalog_for_check(args, catalog, catalog_path)
     print(json.dumps(resolve(config, catalog, args.role, parent), indent=2))
+    line = light_cap_gap(decision, config["budget"], catalog is not None, args.parent is not None)
+    if line:
+        print(line, file=sys.stderr)
 
 
 def command_validate(args):
@@ -1010,7 +1066,8 @@ def command_bounded_seat(args):
         raise RolesError(f"{args.brief}: brief not found")
     reads = args.read or []
     check_reads(reads)
-    budget = config["budget"]
+    decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
+    budget = seat_budget(config["budget"], decision.mode)
     configured = (config.get("roles") or {}).get("skill tests")
     candidate = configured[0] if configured else skill_tests_seat(catalog, allow_capped=True)
 
@@ -1177,6 +1234,10 @@ def main(argv=None):
     bounded.add_argument("--parent", required=True, help="this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel)")
     bounded.add_argument("--brief", required=True, help="brief file whose bytes are counted toward the cap")
     bounded.add_argument("--read", action="append", help="file counted toward the estimate")
+    for command in (sub.choices["show"], bounded):
+        command.add_argument("--brief-mode", choices=MODES)
+        command.add_argument("--session-mode", choices=MODES)
+        command.add_argument("--coordinator-mode", choices=MODES)
     check_brief = sub.add_parser("check-brief")
     check_brief.add_argument("brief", help="brief file to check")
     args = parser.parse_args(argv)
