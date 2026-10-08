@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/brigade.py"
 CODEX = "codex/gpt-6.1-sol"
 CLAUDE = "claudeAgent/claude-opus-5-5"
+HELD_QUESTION = "D1: grok could not pass the seat's options: refused. Move this coordinator to a provider that passes them?"
+HELD_LINE = (
+    "D1: open decision Q1: D1: grok could not pass the seat's options: refused. "
+    "Move this coordinator to a provider that passes them?; "
+    "launch no worker or verifier until 86 answer Q1"
+)
 
 
 def _wait_for_path(path, timeout=8):
@@ -1811,6 +1817,27 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", paths),
                          "D1 (lease L1 held by perf/D1)")
 
+    def backdate_attempt(self, minutes, ident="D1"):
+        start = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        log = self.at / "log.tsv"
+        lines = log.read_text().splitlines()
+        rewritten = [lines[0]]
+        found = False
+        for line in lines[1:]:
+            fields = line.split("\t")
+            if fields[1:4] == ["dish", ident, "in-progress"]:
+                fields[0] = start
+                line = "\t".join(fields)
+                found = True
+            rewritten.append(line)
+        self.assertTrue(found, ident)
+        log.write_text("\n".join(rewritten) + "\n")
+
+    def park_item(self, question=HELD_QUESTION, dish="D1"):
+        dish_args = ("--dish", dish) if dish else ()
+        return self.brigade("86", "add", *dish_args, "--question", question,
+                            "--options", "moved, keep parked", "--default", "keep parked")
+
     def landing_db(self):
         import sqlite3
         database = next((Path(self.temporary.name) / "state").glob("pstack-t3/landing/*/land.db"))
@@ -1910,6 +1937,100 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade("watch"), line)
             self.assertGreater(self.lease_row(1)["expires"],
                                (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat(), line)
+
+    def test_an_open_item_decision_replaces_an_over_timebox_line_and_renews_the_lease(self):
+        self.started()
+        self.brigade("dish", "D1", "--timebox", "30")
+        self.backdate_attempt(45)
+        self.land("lease", "renew", "L1", "--ttl-hours", "0.01")
+        self.assertLess(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+        self.assertEqual(self.park_item(), "Q1")
+        before = json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"]
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertGreater(self.lease_row(1)["expires"],
+                           (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
+        self.assertGreater(json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"], before)
+
+    def test_an_open_item_decision_replaces_the_no_worker_line(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+
+    def test_an_open_item_decision_replaces_the_in_review_line(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+
+    def test_an_expired_lease_under_a_held_item_follows_the_decision_line(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.land("lease", "renew", "L1", "--ttl-hours", "0")
+        self.assertEqual(self.brigade("watch").splitlines(), [
+            HELD_LINE,
+            "D1: lease L1 expired; stop its worker, then run lease renew L1",
+        ])
+
+    def test_answering_an_item_decision_restores_the_over_timebox_line(self):
+        self.started()
+        self.brigade("dish", "D1", "--timebox", "30")
+        self.backdate_attempt(45)
+        self.park_item()
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
+        self.assertRegex(
+            self.brigade("watch"),
+            r"^D1: over its 30m timebox at \d+m with no report; read its thread and decide \(no worker recorded\)$",
+        )
+
+    def test_answering_an_item_decision_restores_the_no_worker_line(self):
+        self.started()
+        self.park_item()
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
+        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+
+    def test_answering_an_item_decision_restores_the_in_review_line(self):
+        self.started()
+        self.park_item()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
+        self.assertEqual(self.brigade("watch"), "D1: in review")
+
+    def test_86_list_names_the_item_and_keeps_a_blank_dish_in_the_old_format(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.assertEqual(self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no"), "Q2")
+        self.assertEqual(self.brigade("86", "list"), "\n".join([
+            f"Q1 for D1: {HELD_QUESTION} Options: moved, keep parked. Default: keep parked.",
+            "Q2: Ship it? Options: yes, no. Default: no.",
+        ]))
+
+    def test_a_blank_dish_decision_does_not_hold_the_item(self):
+        self.started()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.assertEqual(self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no"), "Q1")
+        self.assertEqual(self.brigade("86", "list"), "Q1: Ship it? Options: yes, no. Default: no.")
+        self.assertEqual(self.brigade("watch"), "D1: in review")
+
+    def test_a_second_86_add_for_a_held_item_prints_the_open_id_and_appends_nothing(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        table = (self.at / "86.tsv").read_text()
+        decisions = [row for row in self.log_rows() if row["kind"] == "decision"]
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(len([line for line in table.splitlines() if line]) - 1, 1)
+        other = "D1: cursor could not pass the seat's options: refused again. Move this coordinator to a provider that passes them?"
+        self.assertEqual(self.park_item(other), "Q1")
+        self.assertEqual((self.at / "86.tsv").read_text(), table)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "decision"], decisions)
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
 
     def test_a_passed_item_with_a_submitted_entry_says_mark_it_queued(self):
         self.started()

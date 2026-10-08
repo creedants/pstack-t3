@@ -1394,6 +1394,15 @@ def entry_line(restaurant, dish):
     return f"{ident}: E{number} {state}", True
 
 
+def open_item_decisions(rows):
+    decisions = {}
+    for row in rows:
+        dish = row["dish"]
+        if row["state"] == "open" and dish and dish not in decisions:
+            decisions[dish] = row
+    return decisions
+
+
 def watch(restaurant):
     rails = sibling_rails(restaurant)
     with restaurant.checked():
@@ -1401,6 +1410,7 @@ def watch(restaurant):
         progress = {}
         moment = datetime.now(timezone.utc)
         dishes = [dish for dish in restaurant.rows("dishes.tsv") if dish["state"] not in ("merged", "dropped")]
+        decisions = open_item_decisions(restaurant.rows("86.tsv"))
         for dish in dishes:
             if dish["state"] != "in-progress":
                 continue
@@ -1449,7 +1459,8 @@ def watch(restaurant):
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
-        found = progress.get(dish["id"], [])
+        decision = decisions.get(dish["id"])
+        found = [] if decision else progress.get(dish["id"], [])
         entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
         if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
@@ -1457,7 +1468,12 @@ def watch(restaurant):
             answered = answered and ok
             found += [line] if line else []
         found += [entry] if entry else []
-        item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
+        if decision:
+            item_lines.append(f"{dish['id']}: open decision {decision['id']}: {decision['question']}; "
+                              f"launch no worker or verifier until 86 answer {decision['id']}")
+            item_lines += found
+        else:
+            item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
     for ident, note, held in recheck_blocks(restaurant, inputs):
         lines.append(f"{ident}: {held[1]}" if held else f"{ident}: unblocked; run {fire_command(ident, note)}")
     if answered:
@@ -2349,6 +2365,9 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "86":
         if args.action == "add":
+            open_row = open_item_decisions(restaurant.rows("86.tsv")).get(args.dish)
+            if open_row:
+                return open_row["id"]
             ident = restaurant.next_id("86.tsv")
             restaurant.append("86.tsv", {"id": ident, "at": now(), "state": "open", "dish": args.dish,
                                          "question": args.question, "options": args.options, "default": args.default})
@@ -2357,8 +2376,13 @@ def command(restaurant, args, contract=None, rails=None):
         if args.action == "answer":
             restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
             return f"{args.id} answered"
-        rows = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
-        return "\n".join(f"{q['id']}: {q['question']} Options: {q['options']}. Default: {q['default']}." for q in rows) or "no open decisions"
+        lines = []
+        for row in restaurant.rows("86.tsv"):
+            if row["state"] != "open":
+                continue
+            label = f"{row['id']} for {row['dish']}" if row["dish"] else row["id"]
+            lines.append(f"{label}: {row['question']} Options: {row['options']}. Default: {row['default']}.")
+        return "\n".join(lines) or "no open decisions"
 
     if args.command == "hang":
         return record_hang(restaurant, args.id, args.provider, args.minutes, args.attempt)
