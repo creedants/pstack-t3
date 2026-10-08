@@ -421,7 +421,7 @@ class BrigadeTest(unittest.TestCase):
         env = os.environ | {"COLUMNS": "200"}
         result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("status              the thread line first, then counts, then reports to and owner when present", result.stdout)
+        self.assertIn("status              the thread line first, then counts, then reports to, mode, and owner when present", result.stdout)
         self.assertNotIn("one line of counts", result.stdout)
 
     def test_status_and_walk_speak_plain_engineering_prose(self):
@@ -2076,6 +2076,123 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("ticket", "add", "--summary", "unowned", ok=False, owner=False),
                          "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
         self.assertEqual(self.brigade("--owner", "t1@1", "ticket", "add", "--summary", "owned"), "T2")
+
+
+    def mode_rows(self):
+        return [line.split("\t")[1:] for line in (self.at / "log.tsv").read_text().splitlines()[1:]
+                if line.split("\t")[1] == "mode"]
+
+    def test_open_mode_records_light_and_set_mode_clears_it(self):
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "light"),
+                         f"opened {self.at}")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["mode"], "light")
+        self.assertIn("## Budget\n\nAny cap on parallel workers, and whether a provider's usage limit switches this restaurant "
+                      "to light mode.\n", (self.at / "menu.md").read_text())
+        self.brigade("set", "--thread", "c1")
+        self.assertEqual(self.brigade("status"),
+                         "thread c1\nreporting: milestones, no landing contract\nmode light\nowner c1@1")
+        self.assertIn("  Perf (reports milestones, mode light): nothing on record", self.brigade("walk"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
+                         f"exists {self.at}\nthread c1 already recorded\nmode stays light; change it with set --mode")
+        self.assertEqual(json.loads(self.brigade("set", "--mode", "full"))["mode"], "full")
+        self.assertEqual(self.brigade("set", "--mode", "fast", ok=False), 'brigade: --mode takes full, light, or ""')
+        self.assertNotIn("mode", json.loads(self.brigade("set", "--mode", "")))
+        self.assertEqual(self.brigade("status"), "thread c1\nreporting: milestones, no landing contract\nowner c1@1")
+        self.assertIn("  Perf (reports milestones): nothing on record", self.brigade("walk"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
+                         f"exists {self.at}\nthread c1 already recorded\nmode stays unset; change it with set --mode")
+
+    def test_item_mode_flags_refuse_light_and_a_missing_reason_with_exit_1(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--summary", "t")
+        before = (self.at / "log.tsv").read_bytes()
+        refusals = [
+            (("dish", "D1", "--mode", "light", "--reason", "r"),
+             "brigade: an item's mode only moves to full; change the coordinator with set --mode light"),
+            (("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "t", "--mode", "light", "--reason", "r"),
+             "brigade: an item's mode only moves to full; change the coordinator with set --mode light"),
+            (("dish", "D1", "--mode", "full"), 'brigade: --mode full needs --reason "<one line>"'),
+            (("dish", "D1", "--mode", "full", "--reason", " "), 'brigade: --mode full needs --reason "<one line>"'),
+            (("dish", "D1", "--reason", "r"), "brigade: --reason goes with --mode full"),
+            (("dish", "D1", "--mode", "fast", "--reason", "r"), "brigade: --mode takes full, got 'fast'"),
+            (("dish", "D1", "--mode", "full", "--reason", "r", "--state", "dropped"),
+             "brigade: --mode full needs open work; run --state dropped without it"),
+            (("dish", "D1", "--mode", "full", "--reason", "r", "--state", "queued"),
+             "brigade: --mode full needs open work; run --state queued without it"),
+        ]
+        for args, message in refusals:
+            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
+                                    capture_output=True, text=True)
+            self.assertEqual((result.returncode, result.stderr.strip()), (1, message), args)
+        self.assertEqual((self.at / "log.tsv").read_bytes(), before)
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] t")
+
+    def test_dish_mode_full_twice_keeps_the_first_reason(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.brigade("dish", "D1", "--mode", "full", "--reason", "contested: x"),
+                         "D1 in-progress, mode full: contested: x")
+        self.assertEqual(self.brigade("dish", "D1", "--mode", "full", "--reason", "y"),
+                         "D1 in-progress, mode full: contested: x")
+        self.assertEqual([row[:4] for row in self.mode_rows()], [["mode", "D1", "full", "contested: x"]])
+        self.assertEqual(self.brigade("dish", "D1", "--state", "blocked", "--mode", "full", "--reason", "y"),
+                         "D1 blocked, mode full: contested: x")
+        self.record("abc", "pass")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.assertEqual(self.brigade("dish", "D1", "--mode", "full", "--reason", "z", ok=False),
+                         "brigade: D1 is queued; only open work moves to full mode")
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual(self.brigade("dish", "D1", "--mode", "full", "--reason", "z", ok=False),
+                         "brigade: D1 is merged; only open work moves to full mode")
+        self.assertEqual(len(self.mode_rows()), 1)
+
+    def test_dish_mode_full_with_a_stale_owner_appends_nothing(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--thread", "c1")
+        self.brigade("set", "--thread", "c2", "--replace")
+        stale = "brigade: owner c1@1 is stale; this store is owned by c2@2"
+        before = (self.at / "log.tsv").read_bytes()
+        self.assertEqual(self.brigade("--owner", "c1@1", "dish", "D1", "--mode", "full", "--reason", "r", ok=False), stale)
+        self.assertEqual((self.at / "log.tsv").read_bytes(), before)
+        self.brigade("dish", "D1", "--mode", "full", "--reason", "r")
+        after = (self.at / "log.tsv").read_bytes()
+        self.assertEqual(self.brigade("--owner", "c1@1", "dish", "D1", "--mode", "full", "--reason", "r", ok=False), stale)
+        self.assertEqual((self.at / "log.tsv").read_bytes(), after)
+        self.record("abc", "pass")
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual(self.brigade("--owner", "c1@1", "dish", "D1", "--mode", "full", "--reason", "r", ok=False), stale)
+
+    def test_fire_mode_full_records_the_escalation_after_the_dish_row(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "lock order")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the lock order",
+                                      "--mode", "full", "--reason", "tickets name a lock"), "D1")
+        rows = [line.split("\t")[1:4] for line in (self.at / "log.tsv").read_text().splitlines()[1:]]
+        self.assertEqual(rows[-3:], [["dish", "D1", "in-progress"], ["mode", "D1", "full"], ["ticket", "T1", "assigned"]])
+        self.assertEqual(self.mode_rows()[0][3], "tickets name a lock")
+
+    def test_a_refused_fire_mode_full_keeps_the_reason_in_the_unblocked_command(self):
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--summary", "one")
+        self.brigade("ticket", "add", "--summary", "two")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "a")
+        self.assertIn("nothing fired: 1 of 1 workers running",
+                      self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix the lock order",
+                                   "--mode", "full", "--reason", "tickets name a lock", ok=False))
+        self.brigade("dish", "D1", "--state", "blocked")
+        line = next(line for line in self.brigade("watch").splitlines() if line.startswith("T2:"))
+        self.assertEqual(line, "T2: unblocked; run fire --tickets=T2 --station=bug-fix '--summary=Fix the lock order' "
+                               "--timebox=60 --mode=full '--reason=tickets name a lock'")
+        result = self.bash_unblocked(self.at, line)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "D2"), result.stderr)
+        self.assertEqual([row[:4] for row in self.mode_rows()], [["mode", "D2", "full", "tickets name a lock"]])
+
+    def test_close_lists_an_escalation_with_its_tickets(self):
+        self.fired_bug_fix()
+        self.brigade("close")
+        self.brigade("dish", "D1", "--mode", "full", "--reason", "contested: two owners")
+        text = self.brigade("close", "--dry-run")
+        self.assertEqual(text.split("\n\n", 2)[2], "## Moved to full mode\n\n- D1 (T1): contested: two owners")
 
 
 class StoresTest(unittest.TestCase):
