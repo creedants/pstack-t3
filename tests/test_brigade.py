@@ -3572,6 +3572,25 @@ class AdminTest(StoresTest):
         self.assertEqual((land("lease", "list"), land("status")), before)
 
 
+class SeatLaunchDocTest(unittest.TestCase):
+    def setUp(self):
+        self.skill = (ROOT / "skills/brigade/SKILL.md").read_text()
+        service = self.skill.split("## Run a service", 1)[1].split("\n## ", 1)[0]
+        self.launch = next(line for line in service.splitlines() if line.startswith("   3. Launch the worker"))
+        self.review = next(line for line in service.splitlines() if line.startswith("6. **Review.**"))
+
+    def test_step_4_3_links_both_runtime_anchors_and_records_after_the_match(self):
+        self.assertIn("../pstack-runtime/SKILL.md#top-level-threads", self.launch)
+        self.assertIn("../pstack-runtime/SKILL.md#delegation", self.launch)
+        self.assertIn("Step 4.4 records the thread only after the readback matches.", self.launch)
+
+    def test_step_6_reads_configuration_before_the_verdict(self):
+        self.assertIn(
+            "Confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts",
+            self.review,
+        )
+
+
 class LivenessIdleDocTest(unittest.TestCase):
     def test_step_5_nudges_an_idle_worker_with_its_timebox_open(self):
         text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
