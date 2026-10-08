@@ -392,13 +392,9 @@ def check_shape(config, origin):
             raise ModeSettingsError(f"{origin}: escalate must be a list of strings")
         for item in escalate:
             try:
-                normalized = canonical(item, "escalate pattern")
+                canonical(item, "escalate pattern")  # traversal check only; the stored pattern stays raw
             except ModeSettingsError:
                 raise ModeSettingsError(f"{origin}: escalate pattern {item!r} leaves the repository") from None
-            if normalized == "":
-                raise ModeSettingsError(
-                    f"{origin}: escalate pattern {item!r} names the repository root; use '**'"
-                )
     roles = config.get("roles", {})
     if not isinstance(roles, dict):
         raise RolesError(f"{origin}: roles must be an object")
@@ -1435,14 +1431,19 @@ def main(argv=None):
     mode.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")
     mode.add_argument("--project-config", help="project roles file (default <repo>/.pstack/t3-roles.json)")
     mode.add_argument("--paths", help="comma-separated leases")
-    mode.add_argument("--send-backs", type=non_negative_int, default=0)
-    mode.add_argument("--escalated")
+    mode.add_argument("--send-backs", type=non_negative_int, default=0,
+                      help="send-back count; 2 or more forces full mode")
+    mode.add_argument("--escalated",
+                      help="recorded one-line escalation reason; forces full mode and wins over paths and send-backs")
     mode.add_argument("--playbook", help="playbook stem, such as bug-fix")
     mode.add_argument("--attempt", choices=ATTEMPTS)
     for command in (sub.choices["show"], bounded, mode):
-        command.add_argument("--brief-mode", choices=MODES)
-        command.add_argument("--session-mode", choices=MODES)
-        command.add_argument("--coordinator-mode", choices=MODES)
+        command.add_argument("--brief-mode", choices=MODES,
+                             help="brief mode; overrides session, coordinator, project, and user modes")
+        command.add_argument("--session-mode", choices=MODES,
+                             help="session mode; used after brief and before coordinator, project, and user modes")
+        command.add_argument("--coordinator-mode", choices=MODES,
+                             help="coordinator mode; used after brief and session, before project and user modes")
     check_brief = sub.add_parser("check-brief")
     check_brief.add_argument("brief", help="brief file to check")
     args = parser.parse_args(argv)
