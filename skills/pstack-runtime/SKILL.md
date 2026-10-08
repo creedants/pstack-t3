@@ -234,7 +234,7 @@ In light mode, run the row for the spawn you are about to make. A step its row d
 | Fresh-child skill tests | Run one executing test per changed spawn or coordination behavior, on the `skill tests` seat. A leaf test may forbid spawning only when the behavior needs no delegation. Skip the second-provider test. |
 | Description eval | Run it only when the change edits a `description`. |
 | `swarm` | Spawn at most 3 workers. A respawn replaces a worker and does not raise the count. |
-| Trail reviewer | When a gate review runs at the hand-back head SHA, it reads the trail and no trail reviewer runs. With no gate at that head, the trail reviewer runs and is the gate. |
+| Trail reviewer | When a gate review runs at the hand-back head SHA, it reads the trail and no trail reviewer runs. A code delegate never launches one, because its parent's gate reads the trail. With no gate at that head, the trail reviewer runs and is the gate. |
 | `reflect` | A scheduled reflect, such as a coordinator's weekly service, does not run. A user's explicit reflect runs in full. |
 | `recall` | Spawn at most 3 slice children. Run no `why` wave unless the user asks for one. |
 | `automate-me` | Spawn one miner over the whole history window. |
