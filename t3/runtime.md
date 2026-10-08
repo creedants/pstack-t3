@@ -32,7 +32,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 
 ## Deadlines
 
-A deadline or timebox sets the order of work. It never waives a step. This holds for Autopilot's early red-test-and-PR target, a brigade or Orchestrate timebox, and any "aim for N minutes" in a brief. Start the deliverable the deadline names first, then run every step the playbook prescribes before the next gate, such as `CODE-READY` or the final report. That includes How, Architect, investigation, and the code delegate. The clock is never a `skip:` reason. When the remaining steps cannot fit, stop at a verifiable point and report the steps that remain instead of skipping them.
+A deadline or timebox sets the order of work. It never waives a step. This holds for Autopilot's early red-test-and-PR target, a brigade or Orchestrate timebox, and any "aim for N minutes" in a brief. Start the deliverable the deadline names first, then run every step the playbook prescribes before the next gate, such as `CODE-READY` or the final report. That includes How, Architect, investigation, and the code delegate. The clock is never a `skip:` reason. When the remaining steps cannot fit, stop at a verifiable point and report the steps that remain instead of skipping them. A step that the brief's `Waived by mode:` line names is not a skip, because the mode removed it before the attempt started.
 
 ## Delegation
 
@@ -55,7 +55,7 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
    - Omit `target` for an `inherit` seat.
    - Use a stable `clientRequestId` so a retried call does not spawn a duplicate.
    - Retain every returned `taskId` in your todo list or work log.
-4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body. Below it, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints. They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Write no `Playbook:` line of your own, because a second one fails the check. Under `Mode: light` the lines include `Attempt:` and any `Waived by mode:` line. Under `Mode: full` there is no `Waived by mode:` line, and the brief must not add one. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
+4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body. Below it, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints, per [Modes](#modes). They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Write no `Playbook:` line of your own, because a second one fails the check. Under `Mode: light` the lines include `Attempt:` and any `Waived by mode:` line. Under `Mode: full` there is no `Waived by mode:` line, and the brief must not add one. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
 5. Collect results.
    - If nothing else in this turn depends on the results, and this thread has a schedule of its own that wakes it, end the turn. Each completion wakes this thread.
    - A completion arrives only when the child's run ends. A child stalled on an approval request, or a run that stays open after its final message, never ends, so no wake comes. A thread with no schedule of its own, such as a worker running a brief, does not end its turn while a child is open. A coordinator's liveness check is not this thread's schedule. Call `t3_thread_wait` on the child's `childThreadId` with `timeoutMs: 300000`. When it returns a terminal status, call `task_status` to read and acknowledge the result, because `t3_thread_wait` does not acknowledge it. When it returns `timedOut: true`, read the child with `t3_thread_read`, `view: "activity"`, and `afterPosition`. A child with no new item for 10 minutes is stalled. Handle it per [Failure handling](#failure-handling), then wait on the next open child.
@@ -187,6 +187,116 @@ python3 <pstack-runtime>/scripts/roles.py bounded-seat --cwd "$PWD" --catalog <f
 2. `bounded-seat` resolves the configured or adaptive `skill tests` seat the way `show` does, per [Fallback](#fallback), before the cap check. The cap check uses the model the launch runs, which is this thread's model for `inherit`. It estimates the prompt as a 41,000-token harness allowance plus the brief and the listed files at 4 bytes per token. The allowance comes from a real T3 Claude Haiku 5.5 child whose first request was 40,427 tokens. A bare Cursor CLI request measured 29,539 tokens.
 3. It prints one JSON object. `notes` lists each change resolution made to the seat. When `capped` is true, launch `seat` with your brief and `mode: "async"`, even where a skill says `mode: "wait"`. Tell the child to read only the listed files. When `capped` is false, launch `seat` and read `reason` and `notes`. Over the target, `seat` is the adaptive uncapped seat, or `inherit` when no runnable model is uncapped and this thread's model is uncapped. When neither exists, it exits 2 with `role 'skill tests' has no uncapped seat for this test`. Launch nothing. Trim the brief or the listed files and run it again.
 4. Watch a capped child. Wait with `t3_thread_wait` and `timeoutMs: 60000`. After each timeout, read it with `t3_thread_read`, `view: "activity"`. Past 15 activity items, call `task_cancel` and rerun the test once on the `show` seat.
+
+## Modes
+
+pstack-t3 runs each piece of work in `full` or `light` mode. Full mode runs every step as each skill says. Light mode keeps every check that decides whether code lands and cuts the fan-out around it. A skill or playbook that spawns links here. Its light behavior is the row below that names it, and its full behavior is its own text.
+
+### Resolve and carry the mode
+
+`roles.py mode` and `roles.py show` resolve one effective mode. The highest level present wins. The order is the brief, then the session, then the coordinator, then the project file `.pstack/t3-roles.json`, then the user file `roles.json`, then `full`.
+
+- A brief's `Mode:` line is the frozen decision. A child copies that line's bare value into `--brief-mode` on every `roles.py mode` and `roles.py show` call it makes, and passes no other mode flag. It never resolves the mode again.
+- The user's words set the session. `$poteto-mode light`, "light mode", or "use light mode" in a request sets this thread to light. "full mode" sets it back. A light session passes `--session-mode light` on every `roles.py` call that has no brief value.
+- With neither, pass no mode flag. The roles files decide, and a missing key is `full`.
+
+Every brief whose child resolves seats or spawns carries the mode. Get the lines from `roles.py mode`, never from memory.
+
+```bash
+python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> --attempt <kind>] [--brief-mode <value> | --session-mode light]
+```
+
+- A code delegate's brief passes `--playbook <name> --attempt <kind>`. `<kind>` is `first` for new work, `fix` after a send-back, and `bounce` after a queue bounce. Paste the printed lines unchanged under the persona body. They start with the `Playbook:` line, so write no `Playbook:` line of your own. See [Delegation](#delegation) step 4.
+- An owner, sub-coordinator, unit worker, visual-parity owner, or landing writer is not a code delegate. Run the command without `--playbook` and `--attempt`, and paste its `Mode:` and `Mode source:` lines into the brief or the `message`.
+- A read-only leaf, such as a `how` explainer or a reviewer, gets no `Mode:` line. It resolves no seat.
+- A light session with no brief runs the same command with `--playbook <name> --attempt first` for its own playbook. Its `Waived by mode:` line names the steps this thread skips.
+
+Under light with budget `default`, `roles.py show` resolves seats as budget `small`, which caps reasoning at `medium`. An explicit budget wins. Light mode never sets `fastMode`. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat gets the cap.
+
+Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A worker running a brief stops at a verifiable point and reports `Contested: <reason>` under its status. A session switches that work to full, announces the escalation, and runs the step full mode prescribes. Nothing moves work from full to light mid-flight.
+
+### Light behavior
+
+In light mode, run the row for the spawn you are about to make. A step its row does not change runs as the skill says. A smaller fan-out in a row is how that step runs, not a waiver. Waived steps come only from the brief's `Waived by mode:` line, which `roles.py mode` prints from `LIGHT_WAIVERS`. Never add a waiver of your own. No light fan-out wave has more than 3 children in flight. A wave with more slices batches them into 3 briefs and keeps every slice covered.
+
+| Spawn | Light behavior |
+| --- | --- |
+| `how` | Take the simple path for every question. Spawn one `how explainer`. Spawn no `how explorer`. |
+| `why` | Spawn the source-control investigator only. Spawn no synthesizer. The parent writes the synthesis under `why`'s evidence and confidence rules. |
+| `architect` grounding | Reuse the `how` output the calling playbook already holds. Run `how` once only when there is none. |
+| `architect` runners | Spawn one runner on the first `architect runners` seat and ask it for two structurally distinct sketches. Screen both against `references/design-red-flags.md`. The parent picks one. |
+| Arena cross-judge | Spawn no judge. The parent picks. The gate review reads the chosen design. |
+| Arena candidates | Hand code to the single code delegate. Eval keeps arena and its judge, because comparing candidates is its whole purpose. |
+| Code delegate | Keep it, with the persona, the `roles.py mode` lines, and `roles.py check-brief`. Hillclimb runs one live hypothesis at a time. |
+| Comment Sicko | Spawn no Comment Sicko child. The worker applies `agents/comment-sicko.md` to its own diff. The gate review checks the same rules. |
+| Comment Sicko follow-ups | Spawn no follow-up `how`, `why`, rerun, or `architect`. A finding that needs one goes into the gate verdict as a send-back. |
+| `interrogate` | No playbook runs it. A contested design escalates per [Resolve and carry the mode](#resolve-and-carry-the-mode). A child that opens a PR runs the gate review in its place. |
+| Fresh-child skill tests | Run one executing test per changed spawn or coordination behavior, on the `skill tests` seat. A leaf test may forbid spawning only when the behavior needs no delegation. Skip the second-provider test. |
+| Description eval | Run it only when the change edits a `description`. |
+| `swarm` | Spawn at most 3 workers. A respawn replaces a worker and does not raise the count. |
+| Trail reviewer | When a gate review runs at the hand-back head SHA, it reads the trail and no trail reviewer runs. With no gate at that head, the trail reviewer runs and is the gate. |
+| `reflect` | A scheduled reflect, such as a coordinator's weekly service, does not run. A user's explicit reflect runs in full. |
+| `recall` | Spawn at most 3 slice children. Run no `why` wave unless the user asks for one. |
+| `automate-me` | Spawn one miner over the whole history window. |
+| Verification source wave | Spawn at most 3 source children, each reading a batch of feature files. |
+| Multi-phase exploration | Spawn one read-only explorer. |
+| Multi-phase verification | Write the plan's lane checklist as the playbook and `check-plan.mjs` require. At each code-ready head, launch the gates lane, one live lane per surface, and one audit lane on another model family. That audit lane is the gate review. |
+| Autopilot owner | One owner per PR. Each owner `message`, including a replacement's, carries the mode lines. |
+| Autopilot verification | Two lanes per round. The gates lane keeps the patch-id rule in `playbooks/shipping.md`. One audit lane on another model family is the gate review and runs at every new head SHA. |
+| Orchestrate sub-coordinator, worker, and long-lived owner | Keep them. Each brief or `message` carries the mode lines. |
+| Orchestrate verifier | Keep it when verification is expensive. A cheap unit's merge still needs the gate review at its head. |
+| Shipping verifier | One per PR. It is the gate review, and it reuses a verdict only per [Gate review](#gate-review). |
+| Visual parity owner | One owner per component, at most 3 in flight. Each `message` carries the mode lines. |
+| Worktree cleanup summarizer | Spawn none. The parent reads the last page of each long thread with `t3_thread_read` and `limit`. |
+| Landing writer | One writer per unit. Its brief or `message` carries the mode lines. |
+| Autonomous run watcher | Keep it. |
+| Setup smoke test | Keep one per provider. |
+
+A send-back in light mode is a fix attempt with a fresh worker. Its brief carries the findings, the old head, and the `Attempt: fix` lines `roles.py mode` prints.
+
+### Never cut
+
+- Tests and the build. The worker runs the project's test command and build before every gate review, and the landing queue reruns them.
+- The landing queue's checks.
+- One review by another model family at every head SHA before merge, per [Gate review](#gate-review).
+- A fix attempt's review reads the whole diff against its base, not only the change since the last review.
+- Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
+- A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
+- The code delegate, with the persona, the `roles.py mode` lines, and `roles.py check-brief`.
+- One executing fresh-child test per changed spawn or coordination behavior.
+
+### Gate review
+
+Light mode removes the panels that give full mode its model diversity. The gate review puts one read by another model family back before merge. Full mode keeps each playbook's own review steps.
+
+1. **Seat.** Resolve `verifiers` per [Roles](#roles) with this work's mode flag. Take the first seat whose model family differs from the author's. The author is the code delegate's `providerInstanceId/model`, or this thread's when it wrote the code. When several models wrote the diff, the verifier's family differs from all of them. When no runnable seat qualifies, the verdict is `blocked`.
+2. **Brief.** A read-only brief that says "do not edit files, commit, or push." Give the base ref and the full head SHA, and ask for a read of `git diff <base>...<head>`, the whole diff. Paste the body of `agents/comment-sicko.md` and ask for its findings on the diff. Name the chosen design's path when the light architect step picked one of two sketches. Name the decision log path and the run's `threadId` when the run kept a trail per `show-me-your-work`, and ask for that skill's checks. Flag weak evidence, skipped or unproven verification, misleading readiness, and a shell success that hides a failed check.
+3. **Verdict.** `pass`, `send-back`, or `blocked`, with the full head SHA, the author, and the verifier. Record it in this run's work log.
+4. **After.** A `send-back` or `blocked` stops the PR. A fresh code delegate fixes the findings, and a new gate runs at the new head SHA. On `pass`, write `Gate: pass at <short sha> by <provider/model>` under the PR body's `## Verification`. The SHA is the PR's current head. Keep one `Gate:` line.
+
+A worker whose brief carries `Gate: brigade` runs no gate of its own, because the coordinator's verifier is its gate.
+
+Launch a new gate unless a current qualifying verdict exists at the exact head SHA.
+
+- **Current.** It is the latest verdict for that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier `pass`.
+- **Qualifying.** It is `pass`, and the author and verifier are of different model families.
+
+One source can show both today.
+
+1. A verdict this run launched at that exact SHA. A Shipping or Autopilot root's own verdict at that SHA counts.
+
+A coordinator's pass record joins this list only in a later change that gives its store a cross-family check for one item and SHA. Until then, no other record qualifies.
+
+- A verdict at another head SHA does not qualify, even when the two heads share a `git patch-id`. A patch-id ignores whitespace, so it does not prove the same behavior.
+- An Orchestrate `ledger.tsv` row does not qualify. It records verification levels and no author.
+- A verdict from another run does not qualify.
+- A `Gate:` line in a brief or a PR body is not a verdict.
+
+Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks. Light mode keeps that policy for lane receipts only, such as a tests, build, or mergeability result. A lane receipt never stands in for the gate review. Read the head again right before you create the PR, mark it ready, or merge. When it moved, apply this section again.
+
+### Announcement
+
+When light mode applies, say so once, at the start, in two or three short sentences. Name the source from the `Mode source:` line, what this work cuts, and what still runs, as in "Light mode is on, from this session. This change gets one design sketch and no separate comment review. Tests, the build, and a review by another model family still run." On an escalation, name the rule, as in "This change runs in full mode because its lease covers `land.py`." A worker's report repeats its brief's `Mode:` and `Waived by mode:` lines under its status. A step that line names is not a deviation. Name the mode again only when it changes.
 
 ## Isolation
 
