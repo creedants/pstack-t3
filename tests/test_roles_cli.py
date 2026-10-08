@@ -221,6 +221,185 @@ class CheckBriefCliTest(unittest.TestCase):
         self.assert_check(completed, 2, "", f"error: {path}: brief not found\n")
 
 
+class CheckBriefModeCliTest(unittest.TestCase):
+    def assert_check(self, completed, code, stdout, stderr=""):
+        self.assertEqual(completed.returncode, code, completed.stderr)
+        self.assertEqual(completed.stdout, stdout)
+        self.assertEqual(completed.stderr, stderr)
+
+    def test_light_feature_first_passes(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light\n"
+            "Attempt: first\n"
+            "Waived by mode: Arena, Interrogate, Comment Sicko\n"
+        )
+        self.assert_check(check_text(brief), 0, "ok playbooks/feature.md\n")
+
+    def test_two_mode_lines(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light\n"
+            "Mode: light\n"
+            "Attempt: retry\n"
+        )
+        self.assert_check(check_text(brief), 1, "more than one Mode line: keep one\n")
+
+    def test_mode_with_trailing_words(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light (from restaurant.json)\n"
+            "Attempt: retry\n"
+            "Waived by mode: How\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            "bad Mode value 'light (from restaurant.json)': expected full or light\n",
+        )
+
+    def test_waiver_under_full(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: full\n"
+            "Waived by mode: How\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            "unexpected Waived by mode line: Mode: full waives nothing, remove it\n",
+        )
+
+    def test_wrong_waivers_feature_first(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light\n"
+            "Attempt: first\n"
+            "Waived by mode: How\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            "wrong Waived by mode line: expected 'Waived by mode: Arena, Interrogate, Comment Sicko'\n",
+        )
+
+    def test_light_without_attempt(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            "missing Attempt: Mode: light needs one line 'Attempt: <kind>', "
+            "where <kind> is one of: first, fix, bounce\n",
+        )
+
+    def test_code_delegate_without_mode_passes(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/refactoring.md\n"
+            "Attempt: nonsense\n"
+            "Waived by mode: How\n"
+            "Waived by mode: Arena, Interrogate, Comment Sicko\n"
+            "\nImplement the change described in the plan.\n"
+        )
+        self.assert_check(check_text(brief), 0, "ok playbooks/refactoring.md\n")
+
+    def test_bad_attempt_no_traceback(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/feature.md\n"
+            "Mode: light\n"
+            "Attempt: retry\n"
+            "Waived by mode: How\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            "bad Attempt value 'retry': expected one of: first, fix, bounce\n",
+        )
+
+    def test_unknown_playbook_skips_waivers(self):
+        brief = (
+            f"{agent_body()}\n\n"
+            "Playbook: playbooks/nope.md\n"
+            "Mode: light\n"
+            "Attempt: first\n"
+            "Waived by mode: How\n"
+        )
+        self.assert_check(
+            check_text(brief),
+            1,
+            f"unknown playbook 'playbooks/nope.md': expected one of: {PLAYBOOK_NAMES}\n",
+        )
+
+    def test_mode_output_round_trips(self):
+        rows = (
+            ("feature", "first"),
+            ("feature", "fix"),
+            ("feature", "bounce"),
+            ("bug-fix", "first"),
+            ("bug-fix", "fix"),
+            ("bug-fix", "bounce"),
+            ("refactoring", "first"),
+            ("refactoring", "fix"),
+            ("refactoring", "bounce"),
+            ("perf-issue", "first"),
+            ("perf-issue", "fix"),
+            ("perf-issue", "bounce"),
+            ("hillclimb", "first"),
+            ("hillclimb", "fix"),
+            ("hillclimb", "bounce"),
+            ("authoring-a-skill", "first"),
+            ("authoring-a-skill", "fix"),
+            ("authoring-a-skill", "bounce"),
+            ("investigation", "first"),
+        )
+        body = agent_body()
+        for stem, attempt in rows:
+            with self.subTest(stem=stem, attempt=attempt):
+                with tempfile.TemporaryDirectory() as directory:
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "t3/scripts/roles.py"),
+                            "mode",
+                            "--brief-mode",
+                            "light",
+                            "--playbook",
+                            stem,
+                            "--attempt",
+                            attempt,
+                            "--cwd",
+                            directory,
+                        ],
+                        env={**os.environ, "XDG_CONFIG_HOME": directory},
+                        capture_output=True,
+                        text=True,
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                checked = check_text(f"{body}\n\n{completed.stdout}")
+                self.assert_check(checked, 0, f"ok playbooks/{stem}.md\n")
+
+    def test_problem_order_persona_playbook_mode(self):
+        brief = "Playbook: playbooks/not-a-playbook.md\nMode: light (from restaurant.json)\n"
+        self.assert_check(
+            check_text(brief),
+            1,
+            MISSING_PERSONA
+            + f"unknown playbook 'playbooks/not-a-playbook.md': expected one of: {PLAYBOOK_NAMES}\n"
+            + "bad Mode value 'light (from restaurant.json)': expected full or light\n",
+        )
+
+
 CATALOG = ROOT / "tests/fixtures/catalog.json"
 FOUR_PATHS = [
     "**/migrations/**",
