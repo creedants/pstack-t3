@@ -1225,7 +1225,7 @@ class ModesTest(unittest.TestCase):
 
     def test_child_facing_light_rows(self):
         self.assertIn(
-            "lists every `threadId` the parent kept in the window and tells the miner to read each one",
+            "Its brief lists every `threadId` that `t3_thread_list` returns in the window, across every page. The parent filters and samples none",
             light_row(self.runtime, "`automate-me`"),
         )
         self.assertIn("pass `--session-mode full`", light_row(self.runtime, "`reflect`"))
@@ -1251,6 +1251,7 @@ class ModesTest(unittest.TestCase):
     def test_automate_me_brief_lists_every_assigned_thread(self):
         text = (ROOT / "skills/automate-me/SKILL.md").read_text()
         self.assertIn("brief lists every `threadId` in its assignment", text)
+        self.assertIn("An assignment is never a sample or a pick of the relevant threads.", text)
         self.assertNotIn("gets its slice", text)
 
     def test_autopilot_owner_message_carries_the_seat_rule(self):
