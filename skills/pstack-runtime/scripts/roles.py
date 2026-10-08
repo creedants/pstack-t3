@@ -773,7 +773,10 @@ def _seats_include_capped(seats):
 
 
 def settle_caps(name, seats, catalog, parent, budget):
-    """Keep a capped model out of every emitted seat. A known capped parent cannot be inherited outside skill tests."""
+    """Settle show's output: keep a capped model out of every emitted seat, and refuse a known capped parent outside skill tests.
+
+    bounded-seat deliberately skips this so a capped seat under the target still launches.
+    """
     capped_parent = parent is not None and prompt_cap(parent.model) is not None
     if _seats_include_inherit(seats) and capped_parent:
         if name in BOUNDED_ROLES:
@@ -980,24 +983,21 @@ def prompt_estimate(brief_bytes, read_bytes, model_id):
     }
 
 
-def emit_bounded(seat, capped, estimate, reason):
+def launch_model(seat, parent):
+    """Model a launch of this resolved seat runs: the target's model, or the parent's for inherit."""
+    if seat == INHERIT:
+        return parent.model
+    return seat["model"]
+
+
+def emit_bounded(seat, capped, estimate, reason, notes):
     print(json.dumps({
         "seat": seat,
         "capped": capped,
         "estimate": estimate,
         "reason": reason,
+        "notes": notes,
     }, indent=2))
-
-
-def bounded_candidate(config, catalog, parent):
-    """Configured skill tests seat, or the adaptive seat that may be capped."""
-    configured = (config.get("roles") or {}).get("skill tests")
-    if configured:
-        seat = configured[0]
-        if seat == INHERIT and parent is not None and prompt_cap(parent.model) is not None:
-            return {"providerInstanceId": parent.provider, "model": parent.model}
-        return seat
-    return skill_tests_seat(catalog, allow_capped=True)
 
 
 def command_bounded_seat(args):
@@ -1010,23 +1010,37 @@ def command_bounded_seat(args):
         raise RolesError(f"{args.brief}: brief not found")
     reads = args.read or []
     check_reads(reads)
-    seat = bounded_candidate(config, catalog, parent)
-    model_id = seat.get("model") if isinstance(seat, dict) else None
-    read_bytes = sum(Path(path).stat().st_size for path in reads)
-    estimate = prompt_estimate(brief.stat().st_size, read_bytes, model_id)
     budget = config["budget"]
-    if prompt_cap(model_id) is None:
-        emit_bounded(present_seat(seat, catalog, budget), False, estimate, None)
+    configured = (config.get("roles") or {}).get("skill tests")
+    candidate = configured[0] if configured else skill_tests_seat(catalog, allow_capped=True)
+
+    def resolved(seat):
+        value, raw_notes, _problems = resolve_seat(seat, catalog, budget, "skill tests")
+        notes = [note["info"] if isinstance(note, dict) else note for note in raw_notes]
+        return value, notes
+
+    seat, notes = resolved(candidate)
+    model = launch_model(seat, parent)
+    read_bytes = sum(Path(path).stat().st_size for path in reads)
+    estimate = prompt_estimate(brief.stat().st_size, read_bytes, model)
+    if prompt_cap(model) is None:
+        emit_bounded(seat, False, estimate, None, notes)
         return 0
     if estimate["tokens"] <= estimate["target"]:
-        emit_bounded(present_seat(seat, catalog, budget), True, estimate, None)
+        emit_bounded(seat, True, estimate, None, notes)
         return 0
-    fallback = skill_tests_seat(catalog, allow_capped=False)
     reason = (
         f"estimate {estimate['tokens']} tokens is over the {estimate['target']}-token target "
-        f"for {bare_id(model_id)}"
+        f"for {bare_id(model)}"
     )
-    emit_bounded(present_seat(fallback, catalog, budget), False, estimate, reason)
+    fallback, more = resolved(skill_tests_seat(catalog, allow_capped=False))
+    if prompt_cap(launch_model(fallback, parent)) is not None:
+        raise RolesError(
+            "role 'skill tests' has no uncapped seat for this test: "
+            f"{reason}, no runnable model in the catalog is uncapped, "
+            f"and the parent {parent.provider}/{parent.model} is capped"
+        )
+    emit_bounded(fallback, False, estimate, reason, notes + more)
     return 0
 
 

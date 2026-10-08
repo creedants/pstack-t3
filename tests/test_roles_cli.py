@@ -857,9 +857,10 @@ class PromptCapCliTest(unittest.TestCase):
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         body = json.loads(completed.stdout)
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason"])
+        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
         self.assertEqual(body["capped"], True)
         self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], [])
         self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"})
         self.assertEqual(body["estimate"], {
             "overheadTokens": 41000,
@@ -887,6 +888,7 @@ class PromptCapCliTest(unittest.TestCase):
         body = json.loads(completed.stdout)
         self.assertEqual(body["capped"], False)
         self.assertEqual(body["seat"], HAIKU_4_SEAT)
+        self.assertEqual(body["notes"], [])
         self.assertEqual(body["reason"], "estimate 100001 tokens is over the 100000-token target for claude-haiku-5-5")
         self.assertEqual(body["estimate"], {
             "overheadTokens": 41000,
@@ -931,6 +933,7 @@ class PromptCapCliTest(unittest.TestCase):
         body = json.loads(completed.stdout)
         self.assertEqual(body["capped"], True)
         self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], [])
         self.assertEqual(body["seat"], {
             "providerInstanceId": "cursor",
             "model": "claude-haiku-5-5",
@@ -962,6 +965,7 @@ class PromptCapCliTest(unittest.TestCase):
         body = json.loads(completed.stdout)
         self.assertEqual(body["capped"], False)
         self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], [])
         self.assertEqual(body["seat"], {"providerInstanceId": "grok", "model": "grok-4.7"})
         self.assertEqual(body["estimate"], {
             "overheadTokens": 41000,
@@ -1037,10 +1041,261 @@ class PromptCapCliTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         body = json.loads(completed.stdout)
         self.assertEqual(body["capped"], True)
+        self.assertEqual(body["notes"], [])
         self.assertEqual(body["seat"], {
             "providerInstanceId": "claudeAgent",
             "model": "anthropic/claude-haiku-5-5",
             "options": {"contextWindow": "300k"},
+        })
+
+    def test_bounded_seat_refuses_an_over_target_haiku_parent_without_an_uncapped_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog = repo.directory / "cap-only.json"
+            brief = repo.directory / "brief.txt"
+            read = repo.directory / "read.txt"
+            repo.put(catalog, cap_only_catalog())
+            brief.write_bytes(b"y" * 86)
+            read.write_bytes(b"x" * 600000)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(catalog),
+                "--parent", "claudeAgent/claude-haiku-5-5",
+                "--brief", str(brief),
+                "--read", str(read),
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            "error: role 'skill tests' has no uncapped seat for this test: "
+            "estimate 191022 tokens is over the 100000-token target for claude-haiku-5-5, "
+            "no runnable model in the catalog is uncapped, "
+            "and the parent claudeAgent/claude-haiku-5-5 is capped\n",
+        )
+
+    def test_bounded_seat_inherits_an_uncapped_parent_when_every_runnable_model_is_capped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog = repo.directory / "cap-only.json"
+            brief = repo.directory / "brief.txt"
+            read = repo.directory / "read.txt"
+            repo.put(catalog, cap_only_catalog())
+            brief.write_bytes(b"y" * 86)
+            read.write_bytes(b"x" * 600000)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(catalog),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--read", str(read),
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        body = json.loads(completed.stdout)
+        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+        self.assertEqual(body["seat"], "inherit")
+        self.assertEqual(body["capped"], False)
+        self.assertEqual(body["reason"], "estimate 191022 tokens is over the 100000-token target for claude-haiku-5-5")
+        self.assertEqual(body["notes"], [])
+        self.assertEqual(body["estimate"], {
+            "overheadTokens": 41000,
+            "briefBytes": 86,
+            "readBytes": 600000,
+            "tokens": 191022,
+            "target": 100000,
+        })
+
+    def test_bounded_seat_resolves_a_missing_configured_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"skill tests": [
+                {"providerInstanceId": "claudeAgent", "model": "claude-haiku-old"},
+            ]}})
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"y" * 86)
+            show = repo.run(
+                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
+            )
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+            )
+        self.assertEqual(show.returncode, 0, show.stderr)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        shown = json.loads(show.stdout)["roles"]["skill tests"]
+        body = json.loads(completed.stdout)
+        seat = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        self.assertEqual(shown["seats"], [seat])
+        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+        self.assertEqual(body["seat"], seat)
+        self.assertEqual(body["seat"], shown["seats"][0])
+        self.assertEqual(body["capped"], False)
+        self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], [
+            "claudeAgent/claude-haiku-old is not in the catalog; using claude-opus-5-5",
+        ])
+        self.assertEqual(body["notes"], shown["notes"])
+        self.assertEqual(body["estimate"], {
+            "overheadTokens": 41000,
+            "briefBytes": 86,
+            "readBytes": 0,
+            "tokens": 41022,
+            "target": None,
+        })
+
+    def test_bounded_seat_inherits_for_an_unrunnable_configured_provider(self):
+        cases = (
+            (
+                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
+                "cursor is not runnable (Provider is not authenticated.); seat inherits the parent",
+            ),
+            (
+                {"providerInstanceId": "disabled-provider", "model": "claude-haiku-5-5"},
+                "disabled-provider is not runnable (not in catalog); seat inherits the parent",
+            ),
+        )
+        for configured, note in cases:
+            with self.subTest(provider=configured["providerInstanceId"]):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"roles": {"skill tests": [configured]}})
+                    brief = repo.directory / "brief.txt"
+                    brief.write_bytes(b"y" * 86)
+                    completed = repo.run(
+                        "bounded-seat",
+                        "--catalog", str(CATALOG),
+                        "--parent", "grok/grok-4.7",
+                        "--brief", str(brief),
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                body = json.loads(completed.stdout)
+                self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+                self.assertEqual(body["seat"], "inherit")
+                self.assertEqual(body["capped"], False)
+                self.assertIsNone(body["reason"])
+                self.assertEqual(body["notes"], [note])
+                self.assertEqual(body["estimate"], {
+                    "overheadTokens": 41000,
+                    "briefBytes": 86,
+                    "readBytes": 0,
+                    "tokens": 41022,
+                    "target": None,
+                })
+
+    def test_bounded_seat_gates_a_configured_inherit_on_a_haiku_parent(self):
+        cases = (
+            (2000, "inherit", True, None, 41750),
+            (
+                235004,
+                {"providerInstanceId": "codex", "model": "gpt-6-luna"},
+                False,
+                "estimate 100001 tokens is over the 100000-token target for claude-haiku-5-5",
+                100001,
+            ),
+        )
+        for read_bytes, seat, capped, reason, tokens in cases:
+            with self.subTest(tokens=tokens):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"roles": {"skill tests": ["inherit"]}})
+                    brief = repo.directory / "brief.txt"
+                    read = repo.directory / "read.txt"
+                    brief.write_bytes(b"y" * 1000)
+                    read.write_bytes(b"z" * read_bytes)
+                    completed = repo.run(
+                        "bounded-seat",
+                        "--catalog", str(CATALOG),
+                        "--parent", "claudeAgent/claude-haiku-5-5",
+                        "--brief", str(brief),
+                        "--read", str(read),
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                body = json.loads(completed.stdout)
+                self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+                self.assertEqual(body["seat"], seat)
+                self.assertEqual(body["capped"], capped)
+                self.assertEqual(body["reason"], reason)
+                self.assertEqual(body["notes"], [])
+                self.assertEqual(body["estimate"], {
+                    "overheadTokens": 41000,
+                    "briefBytes": 1000,
+                    "readBytes": read_bytes,
+                    "tokens": tokens,
+                    "target": 100000,
+                })
+
+    def test_bounded_seat_keeps_under_target_haiku_when_every_model_is_capped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog = repo.directory / "cap-only.json"
+            brief = repo.directory / "brief.txt"
+            repo.put(catalog, cap_only_catalog())
+            brief.write_bytes(b"y" * 86)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(catalog),
+                "--parent", "claudeAgent/claude-haiku-5-5",
+                "--brief", str(brief),
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        body = json.loads(completed.stdout)
+        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+        self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"})
+        self.assertEqual(body["capped"], True)
+        self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], [])
+        self.assertEqual(body["estimate"], {
+            "overheadTokens": 41000,
+            "briefBytes": 86,
+            "readBytes": 0,
+            "tokens": 41022,
+            "target": 100000,
+        })
+
+    def test_bounded_seat_drops_an_unknown_option(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"skill tests": [
+                {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"nope": "x"}},
+            ]}})
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"y" * 86)
+            show = repo.run(
+                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
+            )
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+            )
+        self.assertEqual(show.returncode, 0, show.stderr)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        shown = json.loads(show.stdout)["roles"]["skill tests"]
+        body = json.loads(completed.stdout)
+        seat = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        self.assertEqual(shown["seats"], [seat])
+        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
+        self.assertEqual(body["seat"], seat)
+        self.assertEqual(body["seat"], shown["seats"][0])
+        self.assertEqual(body["capped"], False)
+        self.assertIsNone(body["reason"])
+        self.assertEqual(body["notes"], ["dropped unknown options nope"])
+        self.assertEqual(body["notes"], shown["notes"])
+        self.assertEqual(body["estimate"], {
+            "overheadTokens": 41000,
+            "briefBytes": 86,
+            "readBytes": 0,
+            "tokens": 41022,
+            "target": None,
         })
 
 
@@ -1069,6 +1324,16 @@ def runnable_haiku_catalog():
             "providerInstanceId": "claudeAgent",
             "canRunChildTask": True,
             "constraints": [],
+            "models": [{"id": "claude-haiku-5-5", "options": []}],
+        }],
+    }
+
+
+def cap_only_catalog():
+    return {
+        "providers": [{
+            "providerInstanceId": "claudeAgent",
+            "canRunChildTask": True,
             "models": [{"id": "claude-haiku-5-5", "options": []}],
         }],
     }
