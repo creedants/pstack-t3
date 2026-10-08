@@ -133,13 +133,32 @@ class RolesTest(unittest.TestCase):
 
     def test_skill_tests_uses_a_small_model_inside_the_only_family(self):
         catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
-        seats = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"}])
-        capped = roles.resolve(config("small"), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(capped, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "medium"}}])
+        seat = {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"}
+        note = "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits"
+        entry = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [seat])
+        self.assertEqual(entry["note"], note)
+        capped = roles.resolve(config("small"), catalog, ["skill tests"])["roles"]["skill tests"]
+        self.assertEqual(capped["seats"], [seat])
+        self.assertEqual(capped["note"], note)
 
-    def test_skill_tests_without_a_catalog_inherits(self):
-        self.assertEqual(roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]["seats"], ["inherit"])
+    def test_skill_tests_without_a_catalog_asks_for_one_when_the_parent_is_capped(self):
+        plain = roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]
+        self.assertEqual(plain["seats"], ["inherit"])
+        self.assertNotIn("note", plain)
+        note = "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits"
+        inherited = roles.resolve(
+            config(), None, ["skill tests"], roles.Parent("claudeAgent", "claude-haiku-5-5"),
+        )["roles"]["skill tests"]
+        self.assertEqual(inherited["seats"], "catalog-required")
+        self.assertEqual(inherited["note"], note)
+        stored = roles.resolve(
+            config(**{"skill tests": [{"providerInstanceId": "cursor", "model": "claude-haiku-5-5"}]}),
+            None,
+            ["skill tests"],
+        )["roles"]["skill tests"]
+        self.assertEqual(stored["seats"], "catalog-required")
+        self.assertEqual(stored["note"], note)
 
     def test_runtime_role_table_lists_the_same_names_as_the_role_list(self):
         text = (ROOT / "t3/runtime.md").read_text()
@@ -330,9 +349,16 @@ class RolesTest(unittest.TestCase):
         ])
 
     def test_without_catalog_panels_are_reported_for_the_agent_to_expand(self):
-        entry = roles.resolve(config(), None, ["verifiers"])["roles"]["verifiers"]
-        self.assertEqual(entry["seats"], "default-panel")
-        self.assertIn("orchestrator_capabilities", entry["note"])
+        note = (
+            "expand from orchestrator_capabilities: this thread inherits, "
+            "then one seat per runnable provider whose first model is a new model family"
+        )
+        unknown = roles.resolve(config(), None, ["verifiers"])["roles"]["verifiers"]
+        self.assertEqual(unknown["seats"], "default-panel")
+        self.assertEqual(unknown["note"], note)
+        named = roles.resolve(config(), None, ["verifiers"], roles.Parent("grok", "grok-4.7"))["roles"]["verifiers"]
+        self.assertEqual(named["seats"], "default-panel")
+        self.assertEqual(named["note"], note)
 
     def test_preferred_roles_without_a_catalog_ask_for_one(self):
         entry = roles.resolve(config(), None, ["bug-fix"])["roles"]["bug-fix"]
@@ -343,9 +369,8 @@ class RolesTest(unittest.TestCase):
         skill = roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]
         self.assertEqual(skill["seats"], ["inherit"])
         self.assertNotIn("note", skill)
-        configured = roles.resolve(config(**{"bug-fix": ["inherit"]}), None, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(configured["seats"], ["inherit"])
-        self.assertEqual(configured["source"], "test")
+        inherited = roles.resolve(config(**{"bug-fix": ["inherit"]}), None, ["bug-fix"])["roles"]["bug-fix"]
+        self.assertEqual(inherited["seats"], ["inherit"])
 
     def test_unrunnable_provider_falls_back_to_inherit_with_a_note(self):
         entry = roles.resolve(config(**{"swarm workers": [{"providerInstanceId": "cursor", "model": "default"}]}), CATALOG, ["swarm workers"])["roles"]["swarm workers"]
@@ -620,7 +645,7 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(roles.model_version("glm-5p3-flash"), (5, 3))
         self.assertEqual(roles.model_version("anthropic/claude-haiku-5-5"), (5, 5))
 
-    def test_skill_tests_picks_the_newest_haiku_on_the_winning_line(self):
+    def test_skill_tests_returns_the_uncapped_haiku_on_the_winning_line(self):
         thinking = [{"id": "thinking", "type": "boolean"}]
         effort = [{"id": "effort", "type": "select", "options": [{"id": "medium", "isDefault": True}, {"id": "high"}]}]
         haiku_4 = {"id": "claude-haiku-4-5", "options": thinking}
@@ -633,35 +658,12 @@ class RolesTest(unittest.TestCase):
                 "models": [haiku_4, haiku_5],
             }],
         }
-        seats = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"}])
-
-    def test_skill_tests_uses_cursor_when_only_cursor_lists_haiku_5_5(self):
-        thinking = [{"id": "thinking", "type": "boolean"}]
-        window = [
-            {"id": "contextWindow", "type": "select", "options": [{"id": "300k"}, {"id": "1m", "isDefault": True}]},
-            {"id": "thinking", "type": "boolean"},
-            {"id": "reasoning_effort", "type": "select", "options": [{"id": "high", "isDefault": True}]},
-        ]
-        catalog = {
-            "inheritedProviderInstanceId": "grok",
-            "inheritedModel": "grok-4.7",
-            "providers": [
-                {"providerInstanceId": "claudeAgent", "canRunChildTask": True, "constraints": [],
-                 "models": [{"id": "claude-haiku-4-5", "options": thinking}]},
-                {"providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
-                 "models": [
-                     {"id": "claude-haiku-4-5", "options": thinking},
-                     {"id": "claude-haiku-5-5", "options": window},
-                 ]},
-            ],
-        }
-        seats = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(seats, [{
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"contextWindow": "300k"},
-        }])
+        entry = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"}])
+        self.assertEqual(
+            entry["note"],
+            "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits",
+        )
 
     def test_skill_tests_picks_gpt_6_luna_over_an_earlier_gpt_5_6_luna(self):
         effort = [{"id": "reasoningEffort", "type": "select", "options": [{"id": "medium", "isDefault": True}, {"id": "high"}]}]
@@ -707,8 +709,13 @@ class RolesTest(unittest.TestCase):
             "role 'how explorer' cannot inherit claudeAgent/claude-haiku-5-5: "
             "claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model",
         )
-        skill = roles.resolve(config(**{"skill tests": ["inherit"]}), catalog, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(skill["seats"], ["inherit"])
+        with self.assertRaises(roles.RolesError) as skill:
+            roles.resolve(config(**{"skill tests": ["inherit"]}), catalog, ["skill tests"])
+        self.assertEqual(
+            str(skill.exception),
+            "role 'skill tests' has no seat: every runnable model in the catalog is capped "
+            "(claude-haiku-5-5 at 100000 prompt tokens), and only skill tests may run a capped model",
+        )
 
     def test_unrunnable_provider_refuses_to_inherit_a_capped_parent(self):
         catalog = {
@@ -836,75 +843,6 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(seats, [
             {"providerInstanceId": "cursor", "model": "gpt-5.4-mini"},
             {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
-        ])
-
-    def test_capped_cursor_seat_resolves_to_the_smallest_context_window(self):
-        cursor = {
-            "providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
-            "models": [{"id": "claude-haiku-5-5", "options": [
-                {"id": "contextWindow", "type": "select", "options": [{"id": "300k"}, {"id": "1m", "isDefault": True}]},
-                {"id": "thinking", "type": "boolean"},
-                {"id": "reasoning_effort", "type": "select", "options": [{"id": "high", "isDefault": True}]},
-            ]}],
-        }
-        catalog = {"inheritedProviderInstanceId": "grok", "inheritedModel": "grok-4.7", "providers": [cursor]}
-        seat = {"providerInstanceId": "cursor", "model": "claude-haiku-5-5", "options": {"contextWindow": "1m"}}
-        resolved = roles.resolve(config(**{"skill tests": [seat]}), catalog, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(resolved, [{
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"contextWindow": "300k"},
-        }])
-        sized = {
-            "inheritedProviderInstanceId": "cursor",
-            "inheritedModel": "claude-haiku-5-5",
-            "providers": [{
-                "providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
-                "models": [{"id": "claude-haiku-5-5", "options": [
-                    {"id": "contextWindow", "type": "select", "options": [
-                        {"id": "1M"}, {"id": "500k"}, {"id": "272K"}, {"id": "256k"}, {"id": "200k"},
-                    ]},
-                ]}],
-            }],
-        }
-        wide = {"providerInstanceId": "cursor", "model": "claude-haiku-5-5", "options": {"contextWindow": "1M"}}
-        sized_seat = roles.resolve(config(**{"skill tests": [wide]}), sized, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(sized_seat, [{
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"contextWindow": "200k"},
-        }])
-
-    def test_skill_tests_inherit_of_a_capped_parent_takes_the_smallest_window(self):
-        catalog = {
-            "inheritedProviderInstanceId": "cursor",
-            "inheritedModel": "claude-haiku-5-5",
-            "providers": [{
-                "providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
-                "models": [{"id": "claude-haiku-5-5", "options": [
-                    {"id": "contextWindow", "type": "select", "options": [{"id": "300k"}, {"id": "1m", "isDefault": True}]},
-                    {"id": "thinking", "type": "boolean"},
-                    {"id": "reasoning_effort", "type": "select", "options": [
-                        {"id": "low"}, {"id": "medium"}, {"id": "high", "isDefault": True},
-                    ]},
-                ]}],
-            }],
-        }
-        plain = roles.resolve(config(**{"skill tests": ["inherit"]}), catalog, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(plain["seats"], [{
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"contextWindow": "300k"},
-        }])
-        self.assertNotIn("info", plain)
-        budgeted = roles.resolve(config("small", **{"skill tests": ["inherit"]}), catalog, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(budgeted["seats"], [{
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"reasoning_effort": "medium", "contextWindow": "300k"},
-        }])
-        self.assertEqual(budgeted["info"], [
-            "inherit made explicit as cursor/claude-haiku-5-5 so the small budget applies",
         ])
 
     def test_resolve_refuses_a_capped_seat_with_no_catalog(self):
