@@ -3870,6 +3870,14 @@ class LivenessIdleDocTest(unittest.TestCase):
         self.assertNotIn("Skip this line while `$B 86 list` parks that dish.", section)
 
 
+class AnswerRelayDocTest(unittest.TestCase):
+    def test_the_requests_answer_row_names_still_open(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        requests = text.split("**Requests.**", 1)[1].split("\n**", 1)[0]
+        row = next(line for line in requests.splitlines() if line.startswith("| `answer "))
+        self.assertIn("still open", row)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--race-child":
         try:
