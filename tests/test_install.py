@@ -515,16 +515,18 @@ def squat_uninstall(home, checkout, path, payload, *args):
         "module = importlib.util.module_from_spec(spec)\n"
         "sys.modules[spec.name] = module\n"
         "spec.loader.exec_module(module)\n"
-        "original = os.unlink\n"
         "changed = False\n"
-        "def race_unlink(target, *args, **kwargs):\n"
-        "    global changed\n"
-        "    result = original(target, *args, **kwargs)\n"
-        f"    if str(target) == {str(path)!r} and not changed:\n"
-        "        changed = True\n"
-        f"        Path(target).write_bytes({payload!r})\n"
-        "    return result\n"
-        "os.unlink = race_unlink\n"
+        "def after(original):\n"
+        "    def race(target, *args, **kwargs):\n"
+        "        global changed\n"
+        "        result = original(target, *args, **kwargs)\n"
+        f"        if str(target) == {str(path)!r} and not changed:\n"
+        "            changed = True\n"
+        f"            Path(target).write_bytes({payload!r})\n"
+        "        return result\n"
+        "    return race\n"
+        "os.rename = after(os.rename)\n"
+        "os.unlink = after(os.unlink)\n"
         "sys.exit(module.main())\n"
     )
     return subprocess.run(
@@ -561,6 +563,46 @@ def run_failing(home, checkout, call, path, *args):
         capture_output=True,
         text=True,
     )
+
+
+def interleave_removal(home, checkout, paths, call, *args, occupy=None):
+    """Run `call` once, just before this installer first moves or deletes any of `paths`, then write `occupy` there."""
+    wrapper = home / f"interleave-{checkout.name}.py"
+    installer = str(checkout / "scripts" / "install.py")
+    wrapper.write_text(
+        "import importlib.util, os, subprocess, sys\n"
+        f"spec = importlib.util.spec_from_file_location('installer', {installer!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = module\n"
+        "spec.loader.exec_module(module)\n"
+        "fired = False\n"
+        "def before(original):\n"
+        "    def hooked(target, *args, **kwargs):\n"
+        "        global fired\n"
+        f"        if not fired and str(target) in {[str(path) for path in paths]!r}:\n"
+        "            fired = True\n"
+        f"            child = subprocess.run({[str(part) for part in call]!r}, env=os.environ, capture_output=True, text=True)\n"
+        "            assert child.returncode == 0, child.stdout + child.stderr\n"
+        "            result = original(target, *args, **kwargs)\n"
+        f"            if {occupy!r} is not None:\n"
+        f"                open(target, 'wb').write({occupy!r})\n"
+        "            return result\n"
+        "        return original(target, *args, **kwargs)\n"
+        "    return hooked\n"
+        "os.rename = before(os.rename)\n"
+        "os.unlink = before(os.unlink)\n"
+        "status = module.main()\n"
+        "assert fired, 'the interleaved call never ran'\n"
+        "sys.exit(status)\n"
+    )
+    return subprocess.run(
+        [sys.executable, str(wrapper), *args],
+        env=_env(home),
+        cwd=home,
+        capture_output=True,
+        text=True,
+    )
+
 
 class OwnershipTest(unittest.TestCase):
     def setUp(self):
@@ -1686,3 +1728,66 @@ class OwnershipTest(unittest.TestCase):
         rows = read_legacy(self.home)["backups"]
         self.assertEqual([row["original"] for row in rows], [str(swarm)])
         self.assertEqual((Path(rows[0]["backup"]) / "SKILL.md").read_text(), "precious\n")
+
+    def test_old_replace_before_a_removal_keeps_its_link_and_our_claim(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b", old=True)
+        self.ok(run(self.home, a, "--harness", "grok"))
+        replace = [sys.executable, b / "scripts" / "install.py", "--harness", "grok", "--replace"]
+        raced = interleave_removal(self.home, a, grok_paths(self.home), replace, "--harness", "grok", "uninstall")
+        self.ok(raced, "removed 0 links, restored 0 entries", KEPT.format(n=3))
+        self.assert_grok_text(b)
+        self.assert_claims(a, grok_paths(self.home))
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assertIsNone(read_owner(self.home, a))
+        self.assertEqual(sorted(os.listdir(provider_link(self.home, "grok", "swarm").parent)), [])
+
+    def test_old_replace_and_a_new_occupant_keep_the_moved_link_aside(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b", old=True)
+        self.ok(run(self.home, a, "--harness", "grok"))
+        alpha = provider_link(self.home, "grok", "alpha")
+        replace = [sys.executable, b / "scripts" / "install.py", "--harness", "grok", "--replace"]
+        raced = interleave_removal(self.home, a, [alpha], replace, "--harness", "grok", "uninstall", occupy=b"occupant\x00")
+        self.ok(raced, "removed 0 links, restored 0 entries", KEPT.format(n=3))
+        aside = [name for name in os.listdir(alpha.parent) if name.startswith(".alpha.")]
+        self.assertEqual(len(aside), 1, aside)
+        self.assertIn(
+            f"skipped unlink {alpha}: the link no longer matches the recorded checkout and {alpha} was taken again; "
+            f"it is kept at {alpha.parent / aside[0]}",
+            raced.stdout.splitlines(),
+        )
+        self.assertEqual(os.readlink(alpha.parent / aside[0]), str(b / "skills" / "alpha"))
+        self.assertEqual(alpha.read_bytes(), b"occupant\x00")
+        self.assert_grok_text(b, ("pstack-runtime", "swarm"))
+        self.assert_claims(a, grok_paths(self.home))
+
+    def test_entry_moved_into_a_backup_during_uninstall_keeps_its_claim(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b", old=True)
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        for name in NAMES:
+            provider_link(self.home, "grok", name).unlink()
+        relink_then_replace = (
+            "import os, subprocess, sys\n"
+            f"for name in {list(NAMES)!r}:\n"
+            f"    os.symlink(os.path.join({str(a / 'skills')!r}, name), os.path.join({str(provider_link(self.home, 'grok', 'x').parent)!r}, name))\n"
+            f"subprocess.run([sys.executable, {str(b / 'scripts' / 'install.py')!r}, '--harness', 'grok', '--replace'], check=True)\n"
+        )
+        layer = str(self.backup_dir())
+        withdrawn = [os.path.join(layer, name) for name in NAMES]
+        raced = interleave_removal(
+            self.home, a, withdrawn, [sys.executable, "-c", relink_then_replace], "--harness", "grok", "uninstall"
+        )
+        self.ok(raced, "removed 3 links, restored 0 entries", KEPT.format(n=3))
+        self.assert_grok_text(b)
+        self.assert_claims(a, grok_paths(self.home))
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assertIsNone(read_owner(self.home, a))

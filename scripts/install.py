@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import sys
 import tempfile
@@ -583,7 +584,50 @@ def skip_note(step):
     return f"skipped {subject(step)}: {reason}" if reason else None
 
 
+def put_back(aside, path):
+    """Return the entry at `aside` to `path` only while `path` is still empty."""
+    try:
+        # A hard link of the link itself fails on a taken path, where a rename would replace it.
+        os.link(aside, path, follow_symlinks=False)
+    except FileExistsError:
+        return False
+    except (OSError, NotImplementedError):
+        if os.path.lexists(path):
+            return False
+        os.rename(aside, path)
+        return True
+    os.unlink(aside)
+    return True
+
+
+def remove_link(path, root):
+    """Move the link aside, then delete it only if it is this checkout's. Return why it was kept."""
+    aside = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.pstack-t3-{os.getpid()}-{secrets.token_hex(4)}")
+    # Another installer can replace the link after the plan proved it; the rename takes whatever is there now.
+    os.rename(path, aside)
+    if proves(root, aside, path):
+        os.unlink(aside)
+        return None
+    if put_back(aside, path):
+        return "the link no longer matches the recorded checkout"
+    return f"the link no longer matches the recorded checkout and {path} was taken again; it is kept at {aside}"
+
+
+def buried(state, root, path):
+    """Whether a backup row now holds this checkout's entry for the slot of `path`."""
+    file = Path(state) / LEGACY_NAME
+    if not file.exists():
+        return False
+    _data, _links, backups = legacy_lists(file)
+    return any(
+        isinstance(row, dict) and isinstance(row.get("original"), str) and isinstance(row.get("backup"), str)
+        and slot_of(row["original"]) == slot_of(path) and proves(root, row["backup"], row["original"])
+        for row in backups
+    )
+
+
 def act(step, root):
+    """Do the step's change. Return why it was not done when it declined without an error."""
     if step.kind == "create":
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
         os.symlink(link_target(root, step.path), step.path, target_is_directory=True)
@@ -591,7 +635,7 @@ def act(step, root):
         os.makedirs(os.path.dirname(step.backup), exist_ok=True)
         shutil.move(step.path, step.backup)
     elif step.kind == "unlink":
-        os.unlink(step.path)
+        return remove_link(step.path, root)
     elif step.kind == "withdraw":
         os.unlink(step.backup)
     elif step.kind == "restore":
@@ -611,7 +655,8 @@ def execute(plan, state, root):
                 stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
             backup = os.path.join(stamp, step.place)
             step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
-        if step.kind == "forget" and step.path in failed:
+        # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
+        if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
             counts["kept_extra"] += len(step.remove_claims)
             continue
         if not ready(step, root):
@@ -622,12 +667,17 @@ def execute(plan, state, root):
             continue
         undo = add_records(step, state, root)
         try:
-            act(step, root)
+            declined = act(step, root)
         except OSError as error:
             # A move can fail after copying part of the entry, and then the row is the only record of that copy.
             if not (step.kind == "move" and os.path.lexists(step.backup)):
                 undo()
             print(f"skipped {subject(step)}: {error}")
+            failed.add(step.path)
+            continue
+        if declined:
+            undo()
+            print(f"skipped {subject(step)}: {declined}")
             failed.add(step.path)
             continue
         remove_records(step, state, root)
