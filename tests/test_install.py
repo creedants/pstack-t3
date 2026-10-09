@@ -761,9 +761,6 @@ class OwnershipTest(unittest.TestCase):
         alias = self.alias_of(a)
         self.ok(run(self.home, a, "--harness", "grok"))
         paths = grok_paths(self.home)
-        v2 = state_dir(self.home) / "install-manifest-v2.json"
-        if v2.exists():
-            v2.unlink()
         owner = owner_file(self.home, a)
         if owner.exists():
             owner.unlink()
@@ -952,9 +949,6 @@ class OwnershipTest(unittest.TestCase):
         a = make_checkout(self.home, "a")
         self.ok(run(self.home, a, "--harness", "grok"))
         paths = grok_paths(self.home)
-        v2 = state_dir(self.home) / "install-manifest-v2.json"
-        if v2.exists():
-            v2.unlink()
         owner = owner_file(self.home, a)
         if owner.exists():
             owner.unlink()
