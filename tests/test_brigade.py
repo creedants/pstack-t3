@@ -2518,7 +2518,8 @@ class BrigadeTest(unittest.TestCase):
             "is stalled after two minutes with no new activity, per step 5. If that wait returns at once while workState is "
             "still working or waiting_for_children, the child's run ended with its task open. Then wait between task_status "
             "checks with t3_thread_wait and timeoutMs 120000 on your own thread, the parentThreadId from "
-            "orchestrator_capabilities, never a shell sleep, and count ten minutes from its last activity item. "
+            "orchestrator_capabilities, with runId set to its activeRunId from t3_thread_read, never a shell sleep, and "
+            "count ten minutes from its last activity item. "
             "A child task is open while its workState is working or "
             "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child task with task_cancel when it runs "
             "past its budget or stalls, per the runtime's Failure handling. A thread you launched with t3_thread_launch "
@@ -2566,6 +2567,7 @@ class BrigadeTest(unittest.TestCase):
         for phrase in (
             "returns at once while workState is still working or waiting_for_children",
             "t3_thread_wait and timeoutMs 120000 on your own thread",
+            "with runId set to its activeRunId from t3_thread_read",
             "never a shell sleep",
             "whose run is still open and whose last message holds the result is stalled after two minutes with no new activity, per step 5",
             "count ten minutes from its last activity item",

@@ -2209,7 +2209,8 @@ class StalledChildDocTest(unittest.TestCase):
             ended,
             "returns at once, because an idle thread returns immediately",
             "`waiting_for_children`",
-            "the `parentThreadId` from `orchestrator_capabilities`",
+            "Read the `activeRunId` of the `parentThreadId` from `orchestrator_capabilities` with `t3_thread_read`, and pass them as `threadId` and `runId`.",
+            "Without `runId`, the call picks this thread's latest run, which can be a queued run already cancelled, and returns at once.",
             "returns `timedOut: true` after 120 seconds",
             "Never wait with a shell `sleep`",
             "a `task_status` check does not",
@@ -2320,7 +2321,7 @@ class FastGrokDocTest(unittest.TestCase):
         for phrase in (
             "`grok-4.7-build-fast`",
             "`grok-build` has no `fast` token",
-            "A pickable model is one that is not a fast Grok id and not capped",
+            "A pickable model is one that is not a fast Grok id and, for every role but `skill tests`, not capped",
             '"fastMode": false',
             "No mode and no budget sets it to `true`.",
             "`validate` lists each one and exits 1.",
