@@ -1,0 +1,1 @@
+- Autopilot-full, Autopilot-stack, and Orchestrate owners send their report lines with `t3_thread_send` mode `auto`, which starts an idle root, steers a running turn, or queues behind one that cannot accept steering yet. The root still checks each reported head, and brigade's executive-admin events stay on `queue`.

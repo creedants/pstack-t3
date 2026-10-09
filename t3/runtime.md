@@ -347,6 +347,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - `t3_thread_launch` has no retry key. Retain the `threadId`. After an error or lost response, check `t3_thread_list` before retrying. Report it to the user as a thread link per [History](#history).
 - Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
 - A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
+- Autopilot-full, Autopilot-stack, and Orchestrate owners send their report lines to the root or coordinator with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle recipient, steers a fully active turn, and queues behind a turn that cannot accept steering yet. It does not merge reports into one turn. The recipient handles every report, steered or queued, and runs the playbook's head-specific checks on the head each report names. Arrival order never makes a head current. Brigade's event lines to an executive admin stay on `mode: "queue"`, as [Reporting to an executive admin](../brigade/SKILL.md#reporting-to-an-executive-admin) states.
 - `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
 
 ## Scheduling
