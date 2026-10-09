@@ -529,7 +529,7 @@ def default_effort_rank(model):
     return rank(default["id"])
 
 
-def skill_tests_seat(catalog, allow_capped=False):
+def skill_tests_seat(catalog, allow_capped=False, launches_seats=False):
     """One bare seat. Prefer another family, then a small-tier id, then a lower default effort.
 
     The winning row names a model line. The seat is the newest version of that line.
@@ -538,6 +538,8 @@ def skill_tests_seat(catalog, allow_capped=False):
     parent_family = family(parent) if parent else None
     rows = []
     for provider_index, provider in enumerate(catalog["providers"]):
+        if launches_seats and provider["providerInstanceId"] == "cursor":
+            continue
         if not runnable(provider):
             continue
         for model_index, model in enumerate(models_of(provider)):
@@ -1070,6 +1072,13 @@ def launch_model(seat, parent):
     return seat["model"]
 
 
+def launch_provider(seat, parent):
+    """Provider a launch of this resolved seat runs: the target's provider, or the parent's for inherit."""
+    if seat == INHERIT:
+        return parent.provider
+    return seat["providerInstanceId"]
+
+
 def emit_bounded(seat, capped, estimate, reason, notes):
     print(json.dumps({
         "seat": seat,
@@ -1092,12 +1101,26 @@ def command_bounded_seat(args):
     check_reads(reads)
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
     budget = seat_budget(config["budget"], decision.mode)
+    launches_seats = args.launches_seats
     configured = (config.get("roles") or {}).get("skill tests")
-    candidate = configured[0] if configured else skill_tests_seat(catalog, allow_capped=True)
+    configured_cursor = (
+        launches_seats
+        and configured
+        and isinstance(configured[0], dict)
+        and configured[0]["providerInstanceId"] == "cursor"
+    )
+    if configured_cursor:
+        candidate = skill_tests_seat(catalog, allow_capped=True, launches_seats=True)
+    else:
+        candidate = configured[0] if configured else skill_tests_seat(
+            catalog, allow_capped=True, launches_seats=launches_seats,
+        )
 
     def resolved(seat):
         value, raw_notes, _problems = resolve_seat(seat, catalog, budget, "skill tests")
         notes = [note["info"] if isinstance(note, dict) else note for note in raw_notes]
+        if launches_seats and launch_provider(value, parent) == "cursor":
+            raise RolesError("role 'skill tests' has no non-cursor seat for a child that launches seats")
         return value, notes
 
     seat, notes = resolved(candidate)
@@ -1114,7 +1137,7 @@ def command_bounded_seat(args):
         f"estimate {estimate['tokens']} tokens is over the {estimate['target']}-token target "
         f"for {bare_id(model)}"
     )
-    fallback, more = resolved(skill_tests_seat(catalog, allow_capped=False))
+    fallback, more = resolved(skill_tests_seat(catalog, allow_capped=False, launches_seats=launches_seats))
     if prompt_cap(launch_model(fallback, parent)) is not None:
         raise RolesError(
             "role 'skill tests' has no uncapped seat for this test: "
@@ -1518,6 +1541,8 @@ def main(argv=None):
     bounded.add_argument("--parent", required=True, help="this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel)")
     bounded.add_argument("--brief", required=True, help="brief file whose bytes are counted toward the cap")
     bounded.add_argument("--read", action="append", help="file counted toward the estimate")
+    bounded.add_argument("--launches-seats", action="store_true",
+                         help="skip cursor provider seats; the child will launch seats")
     mode = sub.add_parser("mode")
     mode.add_argument("--cwd", default=os.getcwd())
     mode.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")

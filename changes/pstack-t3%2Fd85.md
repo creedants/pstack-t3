@@ -1,0 +1,1 @@
+- `bounded-seat --launches-seats` skips cursor provider seats, keeps the Haiku cap, and leaves `show` unchanged.
