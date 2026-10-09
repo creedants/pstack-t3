@@ -1,0 +1,1 @@
+- A coordinator reads open work from the tracker AGENTS.md names, and keeps that item's reference on the rail. GitHub Issues is the backlog only when AGENTS.md names no other tracker. An existing item is reused. A new tracker record is created only when the project's filing rules allow it. The executive admin files and routes that same reference.
