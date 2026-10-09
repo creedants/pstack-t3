@@ -9,16 +9,17 @@ moved aside is recorded in a manifest so `uninstall` restores the prior state.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import fcntl
 import hashlib
 import json
 import os
-import secrets
 import shutil
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -584,33 +585,69 @@ def skip_note(step):
     return f"skipped {subject(step)}: {reason}" if reason else None
 
 
+RENAME_NOREPLACE = 1
+AT_FDCWD = -100
+
+
+def rename_noreplace(source, target):
+    """Rename `source` to `target` only while `target` is empty. Return 0, or the errno that stopped it."""
+    if not sys.platform.startswith("linux"):
+        return errno.ENOSYS
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except (OSError, AttributeError):
+        return errno.ENOSYS
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    if renameat2(AT_FDCWD, os.fsencode(source), AT_FDCWD, os.fsencode(target), RENAME_NOREPLACE) == 0:
+        return 0
+    return ctypes.get_errno()
+
+
 def put_back(aside, path):
-    """Return the entry at `aside` to `path` only while `path` is still empty."""
+    """Return the entry at `aside` to `path` only while `path` is still empty. Return why it stayed aside."""
     try:
         # A hard link of the link itself fails on a taken path, where a rename would replace it.
         os.link(aside, path, follow_symlinks=False)
     except FileExistsError:
-        return False
+        return f"{path} was taken again"
     except (OSError, NotImplementedError):
-        if os.path.lexists(path):
-            return False
-        os.rename(aside, path)
-        return True
+        # A directory cannot be hard linked. A plain rename would replace whatever took the path since.
+        code = rename_noreplace(aside, path)
+        if code == 0:
+            return None
+        if code in (errno.EEXIST, errno.ENOTEMPTY):
+            return f"{path} was taken again"
+        return f"{path} cannot be refilled without risking an overwrite ({os.strerror(code)})"
     os.unlink(aside)
-    return True
+    return None
 
 
 def remove_link(path, root):
     """Move the link aside, then delete it only if it is this checkout's. Return why it was kept."""
-    aside = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.pstack-t3-{os.getpid()}-{secrets.token_hex(4)}")
-    # Another installer can replace the link after the plan proved it; the rename takes whatever is there now.
-    os.rename(path, aside)
+    parent, name = os.path.split(path)
+    # A directory this call just created holds nothing yet, so the move cannot land on an existing entry.
+    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    aside = os.path.join(holder, name)
+    try:
+        # Another installer can replace the link after the plan proved it; the rename takes whatever is there now.
+        os.rename(path, aside)
+    except OSError:
+        with suppress(OSError):
+            os.rmdir(holder)
+        raise
     if proves(root, aside, path):
         os.unlink(aside)
-        return None
-    if put_back(aside, path):
-        return "the link no longer matches the recorded checkout"
-    return f"the link no longer matches the recorded checkout and {path} was taken again; it is kept at {aside}"
+        reason = None
+    else:
+        reason = put_back(aside, path)
+        if reason is not None:
+            return f"the link no longer matches the recorded checkout and {reason}; it is kept at {aside}"
+        reason = "the link no longer matches the recorded checkout"
+    # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
+    with suppress(OSError):
+        os.rmdir(holder)
+    return reason
 
 
 def buried(state, root, path):
