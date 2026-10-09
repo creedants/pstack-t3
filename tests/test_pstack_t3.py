@@ -2178,7 +2178,8 @@ class OpenCodeLongCommandDocTest(unittest.TestCase):
         step = runtime_section("3. Spawn every independent child", "\n4. A child starts")
         cursor = "A Cursor harness sent `options` as a string, T3 refused the call, and the child then dropped the options."
         rule = step.split(cursor, 1)[1].split("\n   - ", 2)[1]
-        self.assertIn("OpenCode, and only OpenCode, moves a long command to the background", rule)
+        self.assertTrue(rule.startswith("OpenCode moves a long command to the background, tells the model to end its turn"))
+        self.assertNotIn("only OpenCode", rule)
         self.assertIn("T3 publishes the task's result when the first turn ends, and the later turn does not reopen the task.", rule)
         self.assertIn("Paste this paragraph unchanged into the brief of every child seated on OpenCode.", rule)
         self.assertIn("     > " + " ".join(self.PARAGRAPH) + "\n", rule)
