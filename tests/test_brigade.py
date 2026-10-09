@@ -3256,6 +3256,27 @@ class AdminTest(StoresTest):
         self.brigade("engine", "ticket", "set", "T1", "--state", "done")
         self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "Fix", "--source", "github", "--ref", ref), "T3")
 
+    def test_a_tracker_ref_the_admin_files_is_refused_again_and_reaches_the_coordinator_unchanged(self):
+        ref = "app-7f3"
+        self.open("engine")
+        self.open_admin("--intake", "beads")
+
+        def refused(store, ident, where=""):
+            self.assertEqual(self.brigade(store, "ticket", "add", "--summary", "again", "--source", "user", "--ref", ref,
+                                          ok=False), f"brigade: {ref} is already {ident}{where}; nothing added")
+
+        self.assertEqual(self.admin("ticket", "add", "--summary", "Fix login", "--source", "beads", "--ref", ref), "T1")
+        self.assertEqual(self.brigade("engine", "ticket", "add", "--summary", "Fix login", "--source", "beads", "--ref", ref,
+                                      ok=False), "brigade: .admin owns intake from beads; ask it to file this and move it here")
+        refused(".admin", "T1", " (waiting)")
+        refused("engine", "T1", " in .admin (waiting)")
+        self.assertEqual(self.admin("ticket", "move", "T1", "--to", "engine"), "T1 moved to engine; no thread recorded for engine")
+        refused(".admin", "T1", " (moved)")
+        self.assertEqual(self.brigade("engine", "inbox", "take"), "T1 from app/.admin/T1: Fix login")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [beads (from app/.admin/T1)] Fix login app-7f3")
+        refused("engine", "T1", " (waiting)")
+        refused(".admin", "T1", " (moved)")
+
     def test_rule_overrule_leaves_two_rows_and_close_lists_both(self):
         self.open("docs")
         self.open_admin()
