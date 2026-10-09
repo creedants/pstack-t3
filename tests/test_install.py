@@ -735,6 +735,50 @@ def restore_race(path, occupy, link_error=False, rename=None):
     )
 
 
+def cross_device(backups, path, occupy=None, rename=None):
+    """Hook code that fails every move out of `backups` the way a move onto another filesystem fails.
+
+    `occupy` is a "file" or a "directory" that fills `path` just before the first call that would write
+    anything else onto it. `rename` takes the no-replace rename away as in `put_back_race`. At exit the
+    run records how many moves it failed, read back with `crossings`.
+    """
+    return (
+        "import atexit, ctypes, errno, shutil, tempfile\n"
+        f"backups = {str(backups) + os.sep!r}\n"
+        f"target = {str(path)!r}\n"
+        f"occupy = {occupy!r}\n"
+        "crossed = 0\n"
+        "filled = False\n"
+        "def crossing(original, raises=False):\n"
+        "    def call(source, destination, *args, **kwargs):\n"
+        "        global crossed, filled\n"
+        "        if str(source).startswith(backups):\n"
+        "            crossed += 1\n"
+        "            if raises:\n"
+        "                raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))\n"
+        "            return errno.EXDEV\n"
+        "        if occupy and not filled and str(destination) == target:\n"
+        "            filled = True\n"
+        "            if occupy == 'file':\n"
+        "                Path(target).write_bytes(b'occupant\\x00\\xff')\n"
+        "            else:\n"
+        "                os.mkdir(target)\n"
+        "                Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
+        "        return original(source, destination, *args, **kwargs)\n"
+        "    return call\n"
+        "os.link = crossing(os.link, raises=True)\n"
+        "os.rename = crossing(os.rename, raises=True)\n"
+        + without_noreplace(hooked="crossing", link_error=False, rename=rename)
+        + "atexit.register(lambda: Path(os.getcwd(), 'crossed').write_text(str(crossed)))\n"
+        + "atexit.register(lambda: Path(os.getcwd(), 'filled').write_text(str(filled)))\n"
+    )
+
+
+def crossings(home):
+    """How many moves out of the backups a `cross_device` run failed."""
+    return int((home / "crossed").read_text())
+
+
 def noreplace_result(home):
     """What the installer's no-replace rename returned in a `put_back_race` run: 0 when it renames, else the errno."""
     return int((home / "noreplace-result").read_text())
@@ -2082,6 +2126,8 @@ class OwnershipTest(unittest.TestCase):
         if kind == "directory":
             swarm.mkdir()
             (swarm / "SKILL.md").write_bytes(b"displaced\x00\xfe")
+        elif kind == "link":
+            os.symlink("/foreign/displaced", swarm)
         else:
             swarm.write_bytes(b"displaced\x00\xfe")
         self.ok(run(self.home, a, "--harness", "grok", "--replace"), "linked 3 skills into grok")
@@ -2093,6 +2139,8 @@ class OwnershipTest(unittest.TestCase):
         if kind == "directory":
             self.assertEqual(os.listdir(path), ["SKILL.md"])
             self.assertEqual((path / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
+        elif kind == "link":
+            self.assertEqual(os.readlink(path), "/foreign/displaced")
         else:
             self.assertFalse(path.is_symlink())
             self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
@@ -2193,3 +2241,88 @@ class OwnershipTest(unittest.TestCase):
         self.assertFalse(os.path.lexists(swarm))
         self.assertEqual(Path(backup).read_bytes(), b"swapped\x00")
         self.assertEqual(read_legacy(self.home)["backups"], rows)
+
+    def cross_device_uninstall(self, swarm, a, occupy=None, rename=None):
+        hook = cross_device(state_dir(self.home) / "backups", swarm, occupy=occupy, rename=rename)
+        raced = uninstall_hooked(self.home, a, hook)
+        self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+        return raced
+
+    def assert_no_copy_left(self, swarm):
+        self.assertEqual(list(swarm.parent.glob(".pstack-t3-*")), [])
+
+    def test_a_restore_across_filesystems_copies_the_backup_into_place(self):
+        times = (1_500_000_000_123_456_789, 1_600_000_000_123_456_789)
+        for kind in ("file", "link", "directory"):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                backup = Path(rows[0]["backup"])
+                if kind == "file":
+                    os.chmod(backup, 0o604)
+                    os.utime(backup, ns=times)
+                elif kind == "directory":
+                    os.symlink("SKILL.md", backup / "alias")
+                    os.symlink("/foreign/dangling", backup / "dangling")
+                    os.chmod(backup / "SKILL.md", 0o604)
+                    os.utime(backup / "SKILL.md", ns=times)
+                raced = self.cross_device_uninstall(swarm, a)
+                self.ok(raced, "removed 3 links, restored 1 entries")
+                if kind == "file":
+                    self.assert_displaced(swarm, kind)
+                    self.assertEqual(swarm.stat().st_mode & 0o777, 0o604)
+                    self.assertEqual(swarm.stat().st_mtime_ns, times[1])
+                elif kind == "link":
+                    self.assert_displaced(swarm, kind)
+                else:
+                    self.assertFalse(swarm.is_symlink())
+                    self.assertEqual(sorted(os.listdir(swarm)), ["SKILL.md", "alias", "dangling"])
+                    self.assertEqual((swarm / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
+                    self.assertEqual((swarm / "SKILL.md").stat().st_mode & 0o777, 0o604)
+                    self.assertEqual((swarm / "SKILL.md").stat().st_mtime_ns, times[1])
+                    self.assertEqual(os.readlink(swarm / "alias"), "SKILL.md")
+                    self.assertEqual(os.readlink(swarm / "dangling"), "/foreign/dangling")
+                self.assertFalse(os.path.lexists(backup))
+                self.assert_no_copy_left(swarm)
+                self.assert_empty_records()
+
+    def test_a_restore_across_filesystems_never_replaces_an_entry_that_took_the_path(self):
+        for kind in ("file", "link", "directory"):
+            for occupy in ("file", "directory"):
+                with self.subTest(kind=kind, occupy=occupy):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    backup = Path(rows[0]["backup"])
+                    raced = self.cross_device_uninstall(swarm, a, occupy=occupy)
+                    self.assert_restore_kept(raced, swarm, rows, kind, f"{swarm} was taken again")
+                    self.assert_no_copy_left(swarm)
+                    if occupy == "file":
+                        self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+                        swarm.unlink()
+                    else:
+                        self.assertEqual(os.listdir(swarm), ["precious"])
+                        self.assertEqual((swarm / "precious").read_bytes(), b"directory bytes\x00")
+                        shutil.rmtree(swarm)
+                    self.ok(self.cross_device_uninstall(swarm, a), "removed 0 links, restored 1 entries")
+                    self.assert_displaced(swarm, kind)
+                    self.assertFalse(os.path.lexists(backup))
+                    self.assert_no_copy_left(swarm)
+                    self.assert_empty_records()
+
+    def test_a_restore_across_filesystems_with_no_safe_rename_keeps_the_backup(self):
+        for rename in ("platform", "symbol"):
+            with self.subTest(rename=rename):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by("directory")
+                backup = Path(rows[0]["backup"])
+                raced = self.cross_device_uninstall(swarm, a, rename=rename)
+                code = self.noreplace(rename)
+                self.ok(
+                    raced,
+                    "removed 3 links, restored 0 entries",
+                    f"skipped restore {backup}: {swarm} cannot be refilled without risking an overwrite ({os.strerror(code)})",
+                )
+                self.assertFalse(os.path.lexists(swarm))
+                self.assert_displaced(backup, "directory")
+                self.assertEqual(read_legacy(self.home)["backups"], rows)
+                self.assert_no_copy_left(swarm)

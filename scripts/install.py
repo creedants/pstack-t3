@@ -614,23 +614,62 @@ def rename_noreplace(source, target):
     return ctypes.get_errno()
 
 
-def put_back(aside, path):
-    """Return the entry at `aside` to `path` only while `path` is still empty. Return why it stayed aside."""
+def place(source, path):
+    """Move the entry at `source` to `path` only while `path` is still empty. Return 0, or the errno that stopped it."""
     try:
         # A hard link of the link itself fails on a taken path, where a rename would replace it.
-        os.link(aside, path, follow_symlinks=False)
+        os.link(source, path, follow_symlinks=False)
     except FileExistsError:
-        return f"{path} was taken again"
-    except (OSError, NotImplementedError):
+        return errno.EEXIST
+    except (OSError, NotImplementedError) as error:
+        # A rename cannot cross a filesystem that a hard link cannot.
+        if getattr(error, "errno", None) == errno.EXDEV:
+            return errno.EXDEV
         # A directory cannot be hard linked. A plain rename would replace whatever took the path since.
-        code = rename_noreplace(aside, path)
-        if code == 0:
-            return None
-        if code in (errno.EEXIST, errno.ENOTEMPTY):
-            return f"{path} was taken again"
-        return f"{path} cannot be refilled without risking an overwrite ({os.strerror(code)})"
-    os.unlink(aside)
-    return None
+        return rename_noreplace(source, path)
+    os.unlink(source)
+    return 0
+
+
+def refusal(path, code):
+    """Why `place` left its entry where it was, or None when it moved it."""
+    if code == 0:
+        return None
+    if code in (errno.EEXIST, errno.ENOTEMPTY):
+        return f"{path} was taken again"
+    return f"{path} cannot be refilled without risking an overwrite ({os.strerror(code)})"
+
+
+def put_back(aside, path):
+    """Return the entry at `aside` to `path` only while `path` is still empty. Return why it stayed aside."""
+    return refusal(path, place(aside, path))
+
+
+def discard(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.unlink(path)
+
+
+def place_copy(source, path):
+    """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
+    parent, name = os.path.split(path)
+    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    copy = os.path.join(holder, name)
+    try:
+        if os.path.isdir(source) and not os.path.islink(source):
+            shutil.copytree(source, copy, symlinks=True)
+        else:
+            shutil.copy2(source, copy, follow_symlinks=False)
+        return place(copy, path)
+    finally:
+        # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
+        if os.path.lexists(copy):
+            discard(copy)
+        # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
+        with suppress(OSError):
+            os.rmdir(holder)
 
 
 def remove_link(path, root):
@@ -664,8 +703,14 @@ def restore_backup(backup, path, entry):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan read. Return why it was kept."""
     if identity(backup) != entry:
         return "the backup is no longer the entry uninstall read"
-    # Another installer can take the path after the plan saw it empty; put_back refuses it instead of replacing it.
-    return put_back(backup, path)
+    # Another installer can take the path after the plan saw it empty; place refuses it instead of replacing it.
+    code = place(backup, path)
+    if code == errno.EXDEV:
+        # The backup is on another filesystem. A copy beside the path takes the same put-back, and the backup goes once the copy is in place.
+        code = place_copy(backup, path)
+        if code == 0:
+            discard(backup)
+    return refusal(path, code)
 
 
 def buried(state, root, path):
