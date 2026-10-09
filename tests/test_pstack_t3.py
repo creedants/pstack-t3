@@ -2364,11 +2364,11 @@ class PromoteQueuedCorrectionDocTest(unittest.TestCase):
         report = next(i for i, line in enumerate(lines) if line.startswith("- Autopilot-full, Autopilot-stack, and Orchestrate owners"))
         self.assertTrue(lines[report + 1].startswith("- A correction you queued earlier"))
 
-    def test_promote_names_both_ids_and_reads_delivery(self):
+    def test_promote_names_the_tool_keys_and_reads_delivery(self):
         for sentence in (
             "call `t3_queue_list` on the recipient and find the `queuedRunId` of that exact message.",
             "Read the recipient's `activeRunId` with `t3_thread_read`.",
-            "Call `t3_queue_promote_to_steer` with both IDs and the recipient's `threadId`.",
+            "Call `t3_queue_promote_to_steer` with that `queuedRunId`, the `activeRunId` as `targetRunId`, and the recipient's `threadId`.",
             "Its `sequence` result means T3 accepted the call, not that the run received the message.",
             "Until that read shows it, the delivery is unresolved.",
             "A `cancelled` queued run alone proves nothing.",
