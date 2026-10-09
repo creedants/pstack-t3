@@ -498,7 +498,7 @@ class OwnershipTest(unittest.TestCase):
 
     def legacy_shape(self, shape):
         a, paths = self.plant_legacy(shape)
-        self.ok(run(self.home, a, "--harness", "grok"), "nothing (already installed)")
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)")
         self.assertFalse(legacy_file(self.home).exists())
         data = read_v2(self.home)
         self.assertEqual(len(data["links"]), 3)
@@ -564,7 +564,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(sentinel.read_text(), "keep\n")
         self.ok(
             run(self.home, a, "--harness", "grok"),
-            "nothing (already installed)",
+            "linked 0 skills into nothing (already installed)",
             "3 links already point at this checkout but are not tracked; uninstall leaves them",
         )
         self.assertFalse(v2_file(self.home).exists())
@@ -647,7 +647,7 @@ class OwnershipTest(unittest.TestCase):
         a = make_checkout(self.home, "a")
         agents = self.share_cursor_with_agents()
         self.ok(run(self.home, a, "--harness", "codex", "--replace"))
-        self.ok(run(self.home, a, "--harness", "cursor"), "nothing (already installed)")
+        self.ok(run(self.home, a, "--harness", "cursor"), "linked 0 skills into nothing (already installed)")
         text = os.readlink(agents / "swarm")
         self.assertEqual(text, str(a / "skills" / "swarm"))
         saved = [path.read_bytes() for path in (state_dir(self.home) / "backups").rglob("swarm") if path.is_file()]
