@@ -886,13 +886,18 @@ MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
              "and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's decision came "
              "from. It does not make this thread a session.")
-WAIT_RULE = ("- Never end your turn while a child task or thread you launched is still running, per step 5 of the "
-             "pstack-runtime skill's Delegation section. This overrides any tool text that says to end the turn and wait "
-             "for a notification. A completion wakes you only when the child's run ends, and a stalled child or a run left "
-             "open never ends. Wait on each open child with t3_thread_wait on its childThreadId and timeoutMs 300000. For a "
-             "child task, then read it with task_status. A child task is open while its workState is working or "
-             "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child with task_cancel when it runs past its "
-             "budget or stalls, per the runtime's Failure handling. Write the report only once every child is terminal.")
+WAIT_RULE = ("- Never end your turn while a child task you started with delegate_task is still open, per step 5 of the "
+             "pstack-runtime skill's Delegation section. This overrides delegate_task's text that says to end the turn and "
+             "wait for a notification. A completion wakes you only when the child's run ends, and a stalled child or a run "
+             "left open never ends. Wait on each open child task with t3_thread_wait on its childThreadId and timeoutMs "
+             "300000, then read it with task_status. A child task is open while its workState is working or "
+             "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child task with task_cancel when it runs past "
+             "its budget or stalls, per the runtime's Failure handling. A thread you launched with t3_thread_launch has no "
+             "parent, so its finished turn never wakes you. Wait on it with t3_thread_wait on its threadId and timeoutMs "
+             "300000, read it with t3_thread_read, and stop it with t3_thread_interrupt and then t3_thread_wait. A long-lived "
+             "owner your playbook supervises, such as an Orchestrate PR owner, follows the runtime's Top-level threads section "
+             "and its playbook instead, and does not hold your report. Write the report only once every child task and every "
+             "other thread you launched is terminal.")
 
 
 def holder(restaurant, dish):
