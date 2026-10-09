@@ -114,9 +114,6 @@ def render(destination):
     for skill_md in sorted(destination.glob("*/SKILL.md")):
         skill = skill_md.parent.name
         skill_md.write_text(normalize_skill(skill_md.read_text(), skill))
-    for script in destination.rglob("*"):
-        if script.suffix in (".sh", ".py", ".mjs") or script.name == "orch.ts":
-            script.chmod(0o755)
 
 
 def build(destination, update_lock=False, skip_lock=False):
