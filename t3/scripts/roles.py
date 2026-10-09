@@ -56,6 +56,7 @@ BYTES_PER_TOKEN = 4                          # rough, for prose and code
 OVERHEAD_TOKENS = 41000                      # harness allowance: a real T3 Claude Haiku 5.5 child's first request was 40,427 tokens on 2026-10-07
 BOUNDED_ROLES = frozenset({"skill tests"})
 CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
+FAST_GROK_OPTIONS = frozenset({"fastMode"})  # the user never runs a Grok model in its fast variant
 SKILL_TESTS_CAP_NOTE = "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits"
 CATALOG_REQUIRED = "catalog-required"
 DEFAULT_PANEL = "default-panel"
@@ -129,7 +130,6 @@ class Parent:
 class PreferredSeat:
     model_id: str
     effort_ceiling: str = "xhigh"
-    prefer_fast: bool = False
 
 
 class AdaptiveDefault(Enum):
@@ -138,7 +138,7 @@ class AdaptiveDefault(Enum):
 
 
 OPUS = PreferredSeat("claude-opus-5-5")
-GROK = PreferredSeat("grok-4.7", prefer_fast=True)
+GROK = PreferredSeat("grok-4.7")
 
 ROLE_DEFAULTS = {
     "feature, refactoring": (GROK,),
@@ -242,6 +242,43 @@ def prompt_cap(model_id):
     if not isinstance(model_id, str) or not model_id:
         return None
     return PROMPT_CAPS.get(bare_id(model_id))
+
+
+def fast_grok(model_id):
+    """A Grok id whose name marks its fast variant: grok-4.7-build-fast, x-ai/grok-code-fast-1."""
+    if not isinstance(model_id, str) or not model_id:
+        return False
+    return family(bare_id(model_id)) == "grok" and "fast" in model_tokens(bare_id(model_id))
+
+
+def pickable(model_id, allow_capped=False):
+    """An automatic picker may choose this model."""
+    return not fast_grok(model_id) and (allow_capped or prompt_cap(model_id) is None)
+
+
+def fast_options(model):
+    """Fast boolean options this Grok model declares. Empty for every other family."""
+    if family(bare_id(model["id"])) != "grok":
+        return []
+    return [item["id"] for item in options_of(model) if item.get("id") in FAST_GROK_OPTIONS and item.get("type") == "boolean"]
+
+
+def without_fast(seat, model, honor):
+    """Pin each declared fast option off. honor keeps an explicit true from roles.json and returns a note."""
+    options = dict(seat.get("options") or {})
+    label = f"{seat['providerInstanceId']}/{seat['model']}"
+    kept = []
+    if fast_grok(seat["model"]):
+        kept.append(label)
+    for key in fast_options(model):
+        if options.get(key) is True and honor:
+            kept.append(f"{label}?{key}=true")
+            continue
+        options[key] = False
+    seat = {**seat, "options": options} if options else seat
+    if not kept:
+        return seat, None
+    return seat, f"kept {', '.join(kept)} from roles.json; pstack never picks a fast Grok variant itself"
 
 
 def _line_text(model_id):
@@ -476,6 +513,11 @@ def family(model_id):
     return head or model_id.lower()
 
 
+DEFAULT_FAMILIES = frozenset(
+    family(preference.model_id) for policy in ROLE_DEFAULTS.values() if isinstance(policy, tuple) for preference in policy
+)
+
+
 def effort_option(model):
     return next((option for option in options_of(model) if option["id"] in EFFORT_IDS and option.get("type") == "select"), None)
 
@@ -545,7 +587,7 @@ def skill_tests_seat(catalog, allow_capped=False, providers=None):
             continue
         for model_index, model in enumerate(models_of(provider)):
             model_id = model["id"]
-            if prompt_cap(model_id) is not None and not allow_capped:
+            if not pickable(model_id, allow_capped):
                 continue
             other = parent_family is None or family(model_id) != parent_family
             small = bool(set(model_tokens(model_id)) & SMALL_TIER)
@@ -565,7 +607,7 @@ def _runnable_rows(catalog):
         if not runnable(provider):
             continue
         for model in models_of(provider):
-            if prompt_cap(model["id"]) is None:
+            if pickable(model["id"]):
                 rows.append((provider, model))
     return rows
 
@@ -604,7 +646,7 @@ def _preferred_seat(preference, catalog, budget="default", role=None):
             parent_model_id = catalog.get("inheritedModel")
             parent = providers_by_id(catalog).get(parent_id) if parent_id else None
             parent_model = find_model(parent, parent_model_id) if runnable(parent) and parent_model_id else None
-            if parent_model is not None and prompt_cap(parent_model_id) is None:
+            if parent_model is not None and pickable(parent_model_id):
                 provider, model = parent, parent_model
             else:
                 provider, model = rows[0]
@@ -619,14 +661,11 @@ def _preferred_seat(preference, catalog, budget="default", role=None):
     chosen = (seat.get("options") or {}).get(option["id"]) if option else None
     if chosen is not None and rank(chosen) is not None and rank(preference.effort_ceiling) is not None and rank(chosen) < rank(preference.effort_ceiling):
         notes.append(f"wanted {preference.effort_ceiling}, using {chosen}")
-    declares_fast = any(item.get("id") == "fastMode" and item.get("type") == "boolean" for item in options_of(model))
-    if preference.prefer_fast and declares_fast and family(model["id"]) == family(preference.model_id):
-        seat = {**seat, "options": {**(seat.get("options") or {}), "fastMode": True}}
     return seat, tuple(notes)
 
 
-def _first_uncapped(provider):
-    return next((model for model in models_of(provider) if prompt_cap(model["id"]) is None), None)
+def _first_pickable(provider, allow_capped=False):
+    return next((model for model in models_of(provider) if pickable(model["id"], allow_capped)), None)
 
 
 def _verifier_seats(catalog, role="verifiers"):
@@ -646,7 +685,7 @@ def _verifier_seats(catalog, role="verifiers"):
         # A capped parent has no inherit seat, so that provider still contributes its first uncapped model.
         if parent_runs and not parent_capped and provider["providerInstanceId"] == parent:
             continue
-        model = _first_uncapped(provider)
+        model = _first_pickable(provider)
         if model is None:
             continue
         model_id = model["id"]
@@ -786,12 +825,13 @@ def resolve_seat(seat, catalog, budget, name):
         return value, [note] + ([{"info": budget_note}] if budget_note else []), [note]
     notes, problems = [], []
     model = find_model(provider, seat["model"])
+    configured = model is not None
     if model is None:
-        if name in BOUNDED_ROLES:
-            model = models_of(provider)[0]
-        else:
-            model = _first_uncapped(provider)
-            if model is None:
+        model = _first_pickable(provider, allow_capped=name in BOUNDED_ROLES)
+        if model is None:
+            if name in BOUNDED_ROLES:
+                raise RolesError(f"{provider['providerInstanceId']} has no model pstack may pick for {name!r}")
+            else:
                 first = models_of(provider)[0]
                 raise RolesError(cap_refusal(name, provider["providerInstanceId"], first["id"]))
         note = f"{seat['providerInstanceId']}/{seat['model']} is not in the catalog; using {model['id']}"
@@ -812,7 +852,10 @@ def resolve_seat(seat, catalog, budget, name):
     seat = {key: value for key, value in seat.items() if key != "options"}
     if options:
         seat["options"] = options
-    return _with_window(apply_budget(seat, model, budget), model), notes, problems
+    seat, note = finish_seat(seat, model, budget, honor=configured)
+    if note:
+        notes.append(note)
+    return seat, notes, problems
 
 
 def present_seat(seat, catalog, budget):
@@ -822,7 +865,13 @@ def present_seat(seat, catalog, budget):
     model = find_model(provider, seat["model"]) if provider else None
     if model is None:
         return seat
-    return _with_window(apply_budget(dict(seat), model, budget), model)
+    return finish_seat(dict(seat), model, budget, honor=False)[0]
+
+
+def finish_seat(seat, model, budget, honor):
+    """Budget, context window, and the fast Grok exclusion for one resolved seat."""
+    seat, note = without_fast(seat, model, honor)
+    return _with_window(apply_budget(seat, model, budget), model), note
 
 
 def skill_tests_replacement(catalog, budget):
@@ -1073,14 +1122,39 @@ def launch_model(seat, parent):
     return seat["model"]
 
 
-def launch_providers(config, catalog):
+def launch_refusal(detail):
+    return (
+        f"role 'skill tests' has no seat for a child that launches seats: "
+        f"{', '.join(sorted(CANNOT_LAUNCH_SEATS))} cannot launch seats, and {detail}"
+    )
+
+
+def launch_providers(config, catalog, parent):
+    """Providers proven to launch seats.
+
+    The configured single-role seats, else the runnable providers that serve a built-in default
+    family plus the parent's provider. A provider pstack never launches by default stays out.
+    """
     configured = {
         seat["providerInstanceId"]
         for name in SINGLE_ROLES
         for seat in config["roles"].get(name) or []
         if isinstance(seat, dict)
     } - CANNOT_LAUNCH_SEATS
-    return configured or {provider["providerInstanceId"] for provider in catalog["providers"]} - CANNOT_LAUNCH_SEATS
+    if configured:
+        return configured
+    defaults = {
+        provider["providerInstanceId"]
+        for provider in catalog["providers"]
+        if runnable(provider)
+        and any(family(model["id"]) in DEFAULT_FAMILIES and pickable(model["id"], True) for model in models_of(provider))
+    }
+    proven = (defaults | ({parent.provider} if parent else set())) - CANNOT_LAUNCH_SEATS
+    if not proven:
+        raise RolesError(launch_refusal(
+            "no single-role seat in roles.json, built-in default family, or parent names another provider"
+        ))
+    return proven
 
 
 def launch_provider(seat, parent):
@@ -1112,7 +1186,7 @@ def command_bounded_seat(args):
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
     budget = seat_budget(config["budget"], decision.mode)
     launches_seats = args.launches_seats
-    providers = launch_providers(config, catalog) if launches_seats else None
+    providers = launch_providers(config, catalog, parent) if launches_seats else None
     configured = (config.get("roles") or {}).get("skill tests")
     configured_cursor = (
         launches_seats
@@ -1129,7 +1203,7 @@ def command_bounded_seat(args):
         value, raw_notes, _problems = resolve_seat(seat, catalog, budget, "skill tests")
         notes = [note["info"] if isinstance(note, dict) else note for note in raw_notes]
         if launches_seats and launch_provider(value, parent) in CANNOT_LAUNCH_SEATS:
-            raise RolesError("role 'skill tests' has no non-cursor seat for a child that launches seats")
+            raise RolesError(launch_refusal(f"the seat resolved to {launch_provider(value, parent)}"))
         return value, notes
 
     seat, notes = resolved(candidate)
@@ -1551,7 +1625,7 @@ def main(argv=None):
     bounded.add_argument("--brief", required=True, help="brief file whose bytes are counted toward the cap")
     bounded.add_argument("--read", action="append", help="file counted toward the estimate")
     bounded.add_argument("--launches-seats", action="store_true",
-                         help="rank the user's single-role providers, or every provider but cursor")
+                         help="rank the user's single-role providers, else a built-in default family or the parent")
     mode = sub.add_parser("mode")
     mode.add_argument("--cwd", default=os.getcwd())
     mode.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")

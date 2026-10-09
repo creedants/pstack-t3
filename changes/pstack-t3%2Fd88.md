@@ -1,0 +1,1 @@
+- Automatic seats skip a fast Grok model id, and a Grok model that declares `fastMode` gets that option set to false. A seat the roles file names keeps a fast Grok id or an explicit `fastMode` true, and `show` records that it was kept. `bounded-seat --launches-seats` uses the configured single-role providers, or a built-in default family plus the parent.
