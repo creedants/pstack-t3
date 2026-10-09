@@ -1920,9 +1920,27 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
         section = runtime_section("### Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
         self.assertIn("never cursor", section)
+        self.assertIn("cannot launch seats", section)
+        self.assertIn("sends `target.options` as a JSON string", section)
         self.assertIn(roles.HAIKU_BRIEF[0], section)
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
+
+    def test_delegation_step_4_pastes_haiku_brief_and_the_modes_bullet_does_not(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        step = text.split("4. A child starts with only its brief.", 1)[1].split("\n5. Collect results.", 1)[0]
+        self.assertIn(
+            "When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, "
+            "paste its paragraphs unchanged, in order, at the end of the brief, "
+            "per [Claude Haiku 5.5](#claude-haiku-55).",
+            step,
+        )
+        modes = runtime_section("## Modes")
+        bullet = next(
+            line for line in modes.splitlines()
+            if line.startswith("- A code delegate's brief passes `--playbook <name> --attempt <kind>`")
+        )
+        self.assertNotIn("haikuBrief", bullet)
 
 
 class MuseDocTest(unittest.TestCase):
