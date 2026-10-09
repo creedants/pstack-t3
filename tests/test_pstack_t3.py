@@ -503,7 +503,7 @@ class RolesTest(unittest.TestCase):
         providers = [blocked if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
         providers.append(custom)
         entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "acme", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh", "fastMode": True}}])
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "acme", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh", "fastMode": False}}])
         self.assertNotIn("notes", entry)
 
     def test_unauthenticated_only_copy_falls_back_to_the_parent(self):

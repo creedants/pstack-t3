@@ -2593,13 +2593,17 @@ SHORT_ESTIMATE = {
     "tokens": 41003,
     "target": None,
 }
+FAST_RULE = "pstack never runs a fast Grok model as a seat or a worker"
 
 
 class FastGrokCliTest(unittest.TestCase):
-    def show(self, repo, catalog, role, parent="claudeAgent/claude-opus-5-5"):
+    def show(self, repo, catalog, role, parent="claudeAgent/claude-opus-5-5", brief_mode=None):
         path = repo.directory / "catalog.json"
         repo.put(path, catalog)
-        return repo.run("show", "--catalog", str(path), "--parent", parent, "--role", role), path
+        args = ["show", "--catalog", str(path), "--parent", parent, "--role", role]
+        if brief_mode is not None:
+            args.extend(["--brief-mode", brief_mode])
+        return repo.run(*args), path
 
     def test_fast_grok_truth_table(self):
         cases = (
@@ -2726,7 +2730,11 @@ class FastGrokCliTest(unittest.TestCase):
             {"providerInstanceId": "grok", "model": "grok-4.6"},
         ])
 
-    def test_configured_fast_id_is_kept_and_noted(self):
+    def test_configured_fast_id_is_skipped_and_refused(self):
+        line = (
+            "bug-fix: grok/grok-4.7-build-fast: "
+            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}"
+        )
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"roles": {"bug-fix": [
@@ -2738,24 +2746,44 @@ class FastGrokCliTest(unittest.TestCase):
                 "--catalog", str(path),
                 "--parent", "claudeAgent/claude-opus-5-5",
             )
-            written = repo.run(
-                "write",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--set", "bug-fix=grok/grok-4.7-build-fast",
-            )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}])
-        self.assertEqual(entry["notes"], [
-            "kept grok/grok-4.7-build-fast from roles.json; pstack never picks a fast Grok variant itself",
-        ])
-        self.assertEqual(checked.returncode, 0, checked.stderr)
-        self.assertEqual(checked.stdout, "ok\n")
-        self.assertEqual(written.returncode, 0, written.stderr)
-        self.assertEqual(written.stdout, f"wrote {repo.user}\n")
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"], {
+            "source": "default",
+            "seats": [{
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "xhigh"},
+            }],
+            "notes": [
+                "skipped configured seat grok/grok-4.7-build-fast: "
+                f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}",
+            ],
+        })
+        self.assertEqual(checked.returncode, 1)
+        self.assertEqual(checked.stdout, line + "\n")
+        self.assertEqual(checked.stderr, "")
+        refusal = "error: refusing to write, even with --force:\n" + line + "\n"
+        for force in ((), ("--force",)):
+            with self.subTest(force=force):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    written = repo.run(
+                        "write",
+                        "--catalog", str(CATALOG),
+                        "--parent", "claudeAgent/claude-opus-5-5",
+                        *force,
+                        "--set", "bug-fix=grok/grok-4.7-build-fast",
+                    )
+                    self.assertFalse(repo.user.exists())
+                self.assertEqual(written.returncode, 2)
+                self.assertEqual(written.stdout, "")
+                self.assertEqual(written.stderr, refusal)
 
-    def test_configured_fast_mode_true_is_kept_and_noted(self):
+    def test_configured_fast_mode_true_is_skipped(self):
+        line = (
+            "bug-fix: cursor/grok-4.7: "
+            f"fastMode=true runs grok-4.7 fast, and {FAST_RULE}"
+        )
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"roles": {"bug-fix": [{
@@ -2763,17 +2791,44 @@ class FastGrokCliTest(unittest.TestCase):
                 "model": "grok-4.7",
                 "options": {"fastMode": True},
             }]}})
-            completed, _path = self.show(repo, cursor_grok_catalog(), "bug-fix")
+            completed, path = self.show(repo, cursor_grok_catalog(), "bug-fix")
+            checked = repo.run(
+                "validate",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+            )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{
-            "providerInstanceId": "cursor",
-            "model": "grok-4.7",
-            "options": {"fastMode": True},
-        }])
-        self.assertEqual(entry["notes"], [
-            "kept cursor/grok-4.7?fastMode=true from roles.json; pstack never picks a fast Grok variant itself",
-        ])
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"], {
+            "source": "default",
+            "seats": [{
+                "providerInstanceId": "cursor",
+                "model": "grok-4.7",
+                "options": {"reasoning_effort": "xhigh", "fastMode": False},
+            }],
+            "notes": [
+                "skipped configured seat cursor/grok-4.7: "
+                f"fastMode=true runs grok-4.7 fast, and {FAST_RULE}",
+            ],
+        })
+        self.assertEqual(checked.returncode, 1)
+        self.assertEqual(checked.stdout, line + "\n")
+        self.assertEqual(checked.stderr, "")
+        refusal = "error: refusing to write, even with --force:\n" + line + "\n"
+        for force in ((), ("--force",)):
+            with self.subTest(force=force):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    written = repo.run(
+                        "write",
+                        "--catalog", str(CATALOG),
+                        "--parent", "claudeAgent/claude-opus-5-5",
+                        *force,
+                        "--set", "bug-fix=cursor/grok-4.7?fastMode=true",
+                    )
+                    self.assertFalse(repo.user.exists())
+                self.assertEqual(written.returncode, 2)
+                self.assertEqual(written.stdout, "")
+                self.assertEqual(written.stderr, refusal)
 
     def test_configured_fast_mode_false_has_no_note(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2804,11 +2859,18 @@ class FastGrokCliTest(unittest.TestCase):
             completed, _path = self.show(repo, cursor_grok_catalog(), "bug-fix")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         entry = json.loads(completed.stdout)["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{
-            "providerInstanceId": "cursor",
-            "model": "grok-4.7",
-            "options": {"fastMode": False},
-        }])
+        self.assertEqual(entry, {
+            "source": "default",
+            "seats": [{
+                "providerInstanceId": "cursor",
+                "model": "grok-4.7",
+                "options": {"reasoning_effort": "xhigh", "fastMode": False},
+            }],
+            "notes": [
+                "skipped configured seat cursor/grok-9: "
+                f"fastMode=true runs grok-9 fast, and {FAST_RULE}",
+            ],
+        })
 
     def test_launches_seats_skips_a_free_model_outside_default_families(self):
         cursor = {"providerInstanceId": "cursor", "model": "gemini-3.8-flash"}
@@ -2879,3 +2941,327 @@ class FastGrokCliTest(unittest.TestCase):
             json.loads(grok_parent.stdout)["seat"],
             {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
         )
+
+    def test_fast_parent_verifiers_use_the_providers_safe_model(self):
+        catalog = json.loads(CATALOG.read_text())
+        for provider in catalog["providers"]:
+            if provider["providerInstanceId"] == "grok":
+                provider["models"].insert(0, {"id": "grok-4.7-build-fast", "options": []})
+        note = (
+            "skipped inherit of grok/grok-4.7-build-fast: "
+            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}"
+        )
+        expected = {
+            "full": {
+                "source": "default",
+                "seats": [
+                    {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                    {"providerInstanceId": "grok", "model": "grok-4.7"},
+                ],
+                "notes": [note],
+            },
+            "light": {
+                "source": "default",
+                "seats": [
+                    {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
+                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+                    {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}},
+                ],
+                "notes": [note],
+            },
+        }
+        for mode, entry in expected.items():
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    completed, _path = self.show(
+                        repo, catalog, "verifiers", parent="grok/grok-4.7-build-fast", brief_mode=mode,
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                self.assertEqual(json.loads(completed.stdout)["roles"]["verifiers"], entry)
+
+    def test_fast_mode_parent_verifiers_are_explicit(self):
+        expected = {
+            "full": (
+                {"providerInstanceId": "cursor", "model": "grok-4.7", "options": {"fastMode": False}},
+                "inherit made explicit as cursor/grok-4.7 so fastMode stays false",
+            ),
+            "light": (
+                {
+                    "providerInstanceId": "cursor",
+                    "model": "grok-4.7",
+                    "options": {"fastMode": False, "reasoning_effort": "medium"},
+                },
+                "inherit made explicit as cursor/grok-4.7 so the small budget applies and fastMode stays false",
+            ),
+        }
+        for mode, (seat, info) in expected.items():
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    completed, _path = self.show(
+                        repo, cursor_grok_catalog(), "verifiers", parent="cursor/grok-4.7", brief_mode=mode,
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                self.assertEqual(json.loads(completed.stdout)["roles"]["verifiers"], {
+                    "source": "default",
+                    "seats": [seat, seat, seat],
+                    "info": [info, info, info],
+                })
+
+    def test_safe_parents_keep_inherit(self):
+        expected = {
+            "claudeAgent/claude-opus-5-5": [
+                "inherit",
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                {"providerInstanceId": "grok", "model": "grok-4.7"},
+            ],
+            "grok/grok-4.7": [
+                "inherit",
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+            ],
+            "codex/gpt-6.1-sol": [
+                "inherit",
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "grok", "model": "grok-4.7"},
+            ],
+        }
+        catalog = json.loads(CATALOG.read_text())
+        for parent, seats in expected.items():
+            with self.subTest(parent=parent):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    completed, _path = self.show(
+                        repo, catalog, "verifiers", parent=parent, brief_mode="full",
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                self.assertEqual(json.loads(completed.stdout)["roles"]["verifiers"], {
+                    "source": "default",
+                    "seats": seats,
+                })
+
+    def test_bounded_seat_refuses_a_fast_only_parent(self):
+        catalog = {"providers": [{
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "grok-4.7-build-fast", "options": []}],
+        }]}
+        stderr = (
+            "error: role 'skill tests' cannot inherit grok/grok-4.7-build-fast: "
+            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}; "
+            "grok has no other model pstack may pick\n"
+        )
+        for flag in ((), ("--launches-seats",)):
+            with self.subTest(flag=flag):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    path = repo.directory / "catalog.json"
+                    repo.put(path, catalog)
+                    brief = repo.directory / "brief.txt"
+                    brief.write_bytes(b"short brief\n")
+                    completed = repo.run(
+                        "bounded-seat",
+                        "--catalog", str(path),
+                        "--parent", "grok/grok-4.7-build-fast",
+                        "--brief", str(brief),
+                        "--brief-mode", "full",
+                        *flag,
+                    )
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, stderr)
+
+    def test_bounded_seat_empty_pool_uses_the_parent_safe_model(self):
+        catalog = {"providers": [
+            {
+                "providerInstanceId": "acme",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "grok-4.7-build-fast", "options": []}],
+            },
+            {
+                "providerInstanceId": "grok",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [
+                    {"id": "grok-4.7-build-fast", "options": []},
+                    {"id": "grok-4.7", "options": []},
+                ],
+            },
+        ]}
+        replaced = (
+            "inherit replaced by grok/grok-4.7: "
+            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}"
+        )
+        seat = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        plain = {"seat": seat, "capped": False, "estimate": SHORT_ESTIMATE, "reason": None, "notes": []}
+        launched = {**plain, "notes": [replaced]}
+        expected = {(): plain, ("--launches-seats",): launched}
+        for flag, body in expected.items():
+            with self.subTest(flag=flag):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"roles": {"bug-fix": [
+                        {"providerInstanceId": "acme", "model": "grok-4.7-build-fast"},
+                    ]}})
+                    path = repo.directory / "catalog.json"
+                    repo.put(path, catalog)
+                    brief = repo.directory / "brief.txt"
+                    brief.write_bytes(b"short brief\n")
+                    completed = repo.run(
+                        "bounded-seat",
+                        "--catalog", str(path),
+                        "--parent", "grok/grok-4.7-build-fast",
+                        "--brief", str(brief),
+                        "--brief-mode", "full",
+                        *flag,
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stderr, "")
+                self.assertEqual(json.loads(completed.stdout), body)
+
+    def test_unrunnable_provider_with_a_fast_parent_uses_the_safe_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [
+                {"providerInstanceId": "pi", "model": "default"},
+            ]}})
+            completed, _path = self.show(
+                repo, json.loads(CATALOG.read_text()), "bug-fix", parent="grok/grok-4.7-build-fast",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"], {
+            "source": str(repo.user),
+            "seats": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
+            "notes": [
+                "pi is not runnable (not in catalog); seat inherits the parent",
+                "inherit replaced by grok/grok-4.7: "
+                f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}",
+            ],
+        })
+
+    def test_bounded_seat_skips_a_configured_fast_skill_tests_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"skill tests": [
+                {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"},
+            ]}})
+            path = repo.directory / "catalog.json"
+            repo.put(path, grok_claude_fast_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), {
+            "seat": {"providerInstanceId": "grok", "model": "grok-build"},
+            "capped": False,
+            "estimate": SHORT_ESTIMATE,
+            "reason": None,
+            "notes": [
+                "skipped configured seat grok/grok-4.7-build-fast: "
+                f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}",
+            ],
+        })
+
+    def test_no_catalog_fast_parent_needs_the_catalog(self):
+        note = (
+            "the parent grok/grok-4.7-build-fast is a fast Grok variant, so inherit needs the catalog: "
+            "call orchestrator_capabilities and rerun roles.py show --catalog, "
+            f"and {FAST_RULE}"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            verifiers = repo.run("show", "--parent", "grok/grok-4.7-build-fast", "--role", "verifiers")
+            skill_tests = repo.run("show", "--parent", "grok/grok-4.7-build-fast", "--role", "skill tests")
+            bug_fix = repo.run("show", "--parent", "grok/grok-4.7-build-fast", "--role", "bug-fix")
+        for completed in (verifiers, skill_tests, bug_fix):
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(verifiers.stdout)["roles"]["verifiers"], {
+            "source": "default",
+            "seats": "catalog-required",
+            "note": note,
+        })
+        self.assertEqual(json.loads(skill_tests.stdout)["roles"]["skill tests"], {
+            "source": "default",
+            "seats": "catalog-required",
+            "note": note,
+        })
+        self.assertEqual(json.loads(bug_fix.stdout)["roles"]["bug-fix"], {
+            "source": "default",
+            "seats": "catalog-required",
+            "note": "call orchestrator_capabilities and rerun roles.py show --catalog",
+        })
+
+    def test_provider_with_only_fast_models_names_the_rule(self):
+        catalog = {"providers": [{
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "grok-4.7-build-fast", "options": []}],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [
+                {"providerInstanceId": "grok", "model": "grok-9"},
+            ]}})
+            completed, _path = self.show(repo, catalog, "bug-fix")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            "error: role 'bug-fix' cannot use grok/grok-4.7-build-fast: "
+            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}\n",
+        )
+
+    def test_fast_only_catalog_names_the_rule(self):
+        fast_only = {"providers": [{
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "grok-4.7-build-fast", "options": []}],
+        }]}
+        mixed = {"providers": [
+            {
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "claude-haiku-5-5", "options": []}],
+            },
+            {
+                "providerInstanceId": "grok",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "grok-4.7-build-fast", "options": []}],
+            },
+        ]}
+        cases = {
+            "fast": (
+                fast_only,
+                "error: role 'bug-fix' has no seat: every runnable model in the catalog is a fast Grok variant "
+                f"(grok-4.7-build-fast), and {FAST_RULE}\n",
+            ),
+            "mixed": (
+                mixed,
+                "error: role 'bug-fix' has no seat: every runnable model in the catalog is capped or a fast Grok variant "
+                f"(claude-haiku-5-5 at 100000, grok-4.7-build-fast), and {FAST_RULE}\n",
+            ),
+        }
+        for name, (catalog, stderr) in cases.items():
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    completed, _path = self.show(repo, catalog, "bug-fix")
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, stderr)
