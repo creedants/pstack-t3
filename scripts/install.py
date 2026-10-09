@@ -624,7 +624,9 @@ def execute(plan, state, root):
         try:
             act(step, root)
         except OSError as error:
-            undo()
+            # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+            if not (step.kind == "move" and os.path.lexists(step.backup)):
+                undo()
             print(f"skipped {subject(step)}: {error}")
             failed.add(step.path)
             continue
