@@ -1980,6 +1980,152 @@ class WorktreeAuditTest(unittest.TestCase):
         self.assertIn("replaces those settings roots", text)
 
 
+def runtime_section(start, end="\n## "):
+    text = (ROOT / "t3/runtime.md").read_text()
+    return text.split(start, 1)[1].split(end, 1)[0]
+
+
+def _context_catalog(provider_id, model_options):
+    return {
+        "providers": [{
+            "providerInstanceId": provider_id,
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "claude-opus-5-5", "options": model_options}],
+        }],
+    }
+
+
+_EFFORT_OPTION = {
+    "id": "effort",
+    "type": "select",
+    "options": [{"id": "low"}, {"id": "medium"}, {"id": "high"}, {"id": "xhigh"}, {"id": "max"}],
+}
+_WINDOW_OPTION = {
+    "id": "contextWindow",
+    "type": "select",
+    "options": [{"id": "300k"}, {"id": "1m"}],
+}
+
+
+class ThreadLifecycleDocTest(unittest.TestCase):
+    def test_history_names_snooze_fields_and_filter(self):
+        section = runtime_section("## History")
+        for sentence in (
+            "`t3_thread_list` and `t3_thread_read` report `snoozed` and `snoozedUntil`.",
+            "Pass `snoozed: true` to `t3_thread_list` to find snoozed owners.",
+            '`t3_thread_organize` with `action: "snooze"` requires `snoozedUntil`.',
+            "A snoozed thread wakes early when it asks for something, fails, or completes.",
+            "Snooze is a sidebar state.",
+            "It is not a schedule, a completion, or a settle.",
+            "Wait with `schedule_task` or `watch_pull_request`, never with `snoozedUntil`.",
+        ):
+            self.assertIn(sentence, section)
+
+    def test_history_states_the_thread_link_in_a_form_check_accepts(self):
+        section = runtime_section("## History")
+        self.assertIn("whose target is `t3-thread://v1/<threadId>`", section)
+        self.assertIn("Do not URL-encode it, decode its `%` escapes, or add an environment ID.", section)
+        self.assertIn("carry no `link` field", section)
+        launch = runtime_section("## Top-level threads")
+        self.assertIn("Report it to the user as a thread link per [History](#history).", launch)
+        self.assertEqual(check.LINK.findall("[t](t3-thread://v1/abc)"), ["t3-thread://v1/abc"])
+        targets = check.LINK.findall((ROOT / "t3/runtime.md").read_text())
+        self.assertFalse(any(target.startswith("t3-thread:") for target in targets))
+
+    def test_self_settle_is_a_request_not_a_settle(self):
+        section = runtime_section("## Pull request watching")
+        for phrase in (
+            "`settlesWhenTurnEnds: true`",
+            "an accepted request, not a settled thread",
+            "or a queued message, leaves the thread active",
+            "a T3 restart before the turn ends drops the request",
+            "Never settle an owner whose PR watch or `schedule_task` loop is still needed",
+        ):
+            self.assertIn(phrase, section)
+
+    def test_isolation_names_the_settle_action(self):
+        section = runtime_section("## Isolation")
+        for phrase in (
+            "`runOnSettle: true`",
+            "A thread in the main checkout skips it.",
+            "Read `t3.json` before you settle a worktree thread, so you know what that script will run.",
+            "never schedule a tick to watch for it",
+            "T3 storage cleanup can remove that worktree after the thread ends.",
+        ):
+            self.assertIn(phrase, section)
+
+    def test_local_state_does_not_promise_worktrees_persist(self):
+        section = runtime_section("## Local state")
+        self.assertNotIn("Pushed branches, worktrees, launched threads, and schedules persist.", section)
+        self.assertIn("unless the project enables storage cleanup", section)
+        self.assertIn("by squash or rebase at the worktree's head SHA", section)
+        self.assertIn("check that `worktreePath` exists before you use a saved path", section)
+
+
+class FixedContextWindowTest(unittest.TestCase):
+    def _entry(self, provider_id, model_options, saved_options):
+        seat = {"providerInstanceId": provider_id, "model": "claude-opus-5-5", "options": saved_options}
+        catalog = _context_catalog(provider_id, model_options)
+        return roles.resolve(config(**{"judgment and prose": [seat]}), catalog, ["judgment and prose"])["roles"]["judgment and prose"]
+
+    def test_native_claude_5_drops_a_saved_context_window(self):
+        entry = self._entry("claudeAgent", [_EFFORT_OPTION], {"effort": "xhigh", "contextWindow": "1m"})
+        self.assertEqual(entry["seats"], [OPUS_SEAT])
+        self.assertEqual(entry["notes"], ["dropped unknown options contextWindow"])
+        setup = (ROOT / "t3/setup.md").read_text()
+        self.assertIn("`dropped unknown options contextWindow`", setup)
+        self.assertIn("0.0.46-nightly.20261008.2801", setup)
+
+    def test_keeps_context_window_when_the_catalog_offers_it(self):
+        saved = {"effort": "xhigh", "contextWindow": "1m"}
+        entry = self._entry("claudeAgent", [_EFFORT_OPTION, _WINDOW_OPTION], saved)
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": saved}])
+        self.assertNotIn("notes", entry)
+        setup = (ROOT / "t3/setup.md").read_text()
+        self.assertIn("Write `contextWindow` only for a model whose catalog entry offers it.", setup)
+
+    def test_cursor_claude_5_keeps_a_saved_context_window(self):
+        saved = {"effort": "xhigh", "contextWindow": "300k"}
+        entry = self._entry("cursor", [_EFFORT_OPTION, _WINDOW_OPTION], saved)
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "cursor", "model": "claude-opus-5-5", "options": saved}])
+        self.assertNotIn("notes", entry)
+        self.assertEqual(entry["seats"][0]["options"]["contextWindow"], "300k")
+        setup = (ROOT / "t3/setup.md").read_text()
+        self.assertIn("Cursor's Claude 5 models still offer it.", setup)
+
+    def test_prompt_caps_state_the_fixed_native_context(self):
+        section = runtime_section("### Prompt caps")
+        self.assertIn("fixed 1M-token context and offer no `contextWindow` option", section)
+        self.assertIn("The cap is about price, not capacity", section)
+
+
+class MuseDocTest(unittest.TestCase):
+    def test_runtime_names_muse_and_limits_its_modes(self):
+        runtime = (ROOT / "t3/runtime.md").read_text()
+        intro = next(line for line in runtime.splitlines() if "Every provider T3 drives" in line)
+        self.assertIn("OpenCode, Muse, ACP agents", intro)
+        permissions = runtime_section("### Permissions", "\n### ")
+        self.assertIn("Muse supports only `approval-required` and `full-access`.", permissions)
+        self.assertIn("Read `runtimeMode` from `orchestrator_capabilities` before you seat Muse.", permissions)
+        self.assertIn('replace the Muse seat with `"inherit"` per [Fallback](#fallback)', permissions)
+        self.assertIn("never lower it", permissions)
+
+    def test_skill_locations_exclude_muse_from_the_picker(self):
+        section = runtime_section("## Skill locations")
+        self.assertIn("except Muse's", section)
+        self.assertIn("`muse skills`", section)
+
+    def test_setup_does_not_treat_a_cached_muse_catalog_as_proof(self):
+        text = (ROOT / "t3/setup.md").read_text()
+        step1 = text.split("### 1. Check the host", 1)[1].split("\n### 2. ", 1)[0]
+        self.assertIn("does not prove a Muse seat works", step1)
+        self.assertIn('`driverKind: "muse"`', step1)
+        step5 = text.split("### 5. Verify", 1)[1].split("\n### 6. ", 1)[0]
+        self.assertIn("does not prove a Muse child can work under this thread's runtime mode", step5)
+        self.assertIn("(../pstack-runtime/SKILL.md#permissions)", step5)
+
+
 class PreviewToolDocTest(unittest.TestCase):
     def test_runtime_names_hover_drag_select_upload_and_dialog(self):
         text = (ROOT / "t3/runtime.md").read_text()
@@ -2026,6 +2172,26 @@ class StalledChildDocTest(unittest.TestCase):
         missing = [name for name, runtime in sources.items()
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
         self.assertEqual(missing, [])
+
+    def test_failure_handling_decides_completion_by_work_state(self):
+        section = runtime_section("### Failure handling", "\n### ")
+        self.assertNotIn("that child is still running nested work", section)
+        for phrase in (
+            "Decide completion by `workState` alone.",
+            "it does not reopen the task",
+            "0.0.46-nightly.20261008.2813",
+            "startup recovery",
+            "a turn held in a stopped queue does not count",
+            "A stalled child",
+        ):
+            self.assertIn(phrase, section)
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("`hasPendingChildRuns` does not change that.", step)
+
+    def test_local_state_reads_a_finished_result_after_restart(self):
+        section = runtime_section("## Local state")
+        self.assertIn("A task in `result_available` finished", section)
+        self.assertIn("before you respawn its slice", section)
 
 
 class SeatLaunchDocTest(unittest.TestCase):

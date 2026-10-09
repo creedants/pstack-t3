@@ -21,7 +21,7 @@ If `watch_pull_request` is absent, stop setup before writing roles or a saved ca
 
 Call `orchestrator_capabilities`. Save its JSON result verbatim to a temporary file, for example `/tmp/pstack-t3-catalog.json`. That file is the only source of valid providers, models, and options. Never write a seat that is not in it. Keep the file for the commands in this skill. `show` and `write` both read it, and a user-level `write` saves a copy as the snapshot. A skill that only resolves a role from a tool result uses the quoted heredoc in [Where roles live](../pstack-runtime/SKILL.md#where-roles-live) instead of a file.
 
-List the runnable providers (`canRunChildTask: true`) with their first three models. List the providers that are not runnable with their `constraints`, such as "Provider is not authenticated", so the user knows what to fix in T3 settings.
+List the runnable providers (`canRunChildTask: true`) with their first three models. List the providers that are not runnable with their `constraints`, such as "Provider is not authenticated", so the user knows what to fix in T3 settings. Muse is beta and disabled by default. Its status can come from a cached catalog without a login or model check, so `canRunChildTask: true` does not prove a Muse seat works. Step 5's smoke delegation decides it. Match a Muse instance by `driverKind: "muse"`, not by the ID `muse`.
 
 ### 2. Load current state
 
@@ -29,7 +29,7 @@ List the runnable providers (`canRunChildTask: true`) with their first three mod
 python3 <runtime>/scripts/roles.py show --cwd "$PWD" --catalog /tmp/pstack-t3-catalog.json
 ```
 
-This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped.
+This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped. A saved `contextWindow` on a native Claude 5 seat shows as `dropped unknown options contextWindow`, because T3 Code 0.0.46-nightly.20261008.2801 fixed those models at 1M context. Rewrite that seat without it in step 4.
 
 ### 3. Budget, map, and confirm
 
@@ -65,7 +65,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
   --set "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh"
 ```
 
-The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when the chosen model is in the grok family and declares that boolean option. A fallback to another family does not set it.
+The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when the chosen model is in the grok family and declares that boolean option. A fallback to another family does not set it. Write `contextWindow` only for a model whose catalog entry offers it. Cursor's Claude 5 models still offer it. T3's native Claude 5 models do not.
 
 - The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass. A user write without `--mode` stores `full`. A project write without `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
 - It refuses to write a seat that does not match the catalog and prints why. Fix the seat and rerun. Do not pass `--force` unless the user asks.
@@ -74,7 +74,7 @@ The provider, model, and option IDs above are examples. Use IDs from step 1. Add
 
 ### 5. Verify
 
-Run `python3 <runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>"`. Check that configured seats resolve with no mismatch notes. For unset roles, review and report each default fallback note. A default fallback does not invalidate an otherwise runnable setup. `info` lines, such as an `inherit` seat made explicit for the budget, are expected. Then run one smoke delegation to each distinct provider in the table: `delegate_task` with `mode: "wait"`, `timeoutMs: 120000`, the seat's target, and the task "Reply with the single word ready." A seat that fails here is not usable. Fix it and rerun step 4.
+Run `python3 <runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>"`. Check that configured seats resolve with no mismatch notes. For unset roles, review and report each default fallback note. A default fallback does not invalidate an otherwise runnable setup. `info` lines, such as an `inherit` seat made explicit for the budget, are expected. Then run one smoke delegation to each distinct provider in the table: `delegate_task` with `mode: "wait"`, `timeoutMs: 120000`, the seat's target, and the task "Reply with the single word ready." A seat that fails here is not usable. Fix it and rerun step 4. The smoke task runs no command, so it does not prove a Muse child can work under this thread's runtime mode. Check that per [Permissions](../pstack-runtime/SKILL.md#permissions).
 
 ### 6. Confirm
 

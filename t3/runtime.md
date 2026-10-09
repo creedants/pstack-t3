@@ -5,7 +5,7 @@ description: How pstack-t3 skills delegate, pick models, isolate work, schedule,
 
 # pstack-t3 runtime
 
-pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, OpenCode, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
+pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, OpenCode, Muse, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
 
 Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If the T3 tools do not appear in your first tool scan, make one direct call to `orchestrator_capabilities` before concluding they are missing. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback).
 
@@ -60,7 +60,7 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
 5. Collect results.
    - If nothing else in this turn depends on the results, and this thread has a schedule of its own that wakes it, end the turn. Each completion wakes this thread.
    - A completion arrives only when the child's run ends. A child stalled on an approval request, or a run that stays open after its final message, never ends, so no wake comes. A thread with no schedule of its own, such as a worker running a brief, does not end its turn while a child is open. A coordinator's liveness check is not this thread's schedule. Call `t3_thread_wait` on the child's `childThreadId` with `timeoutMs: 300000`. When it returns a terminal status, call `task_status` to read and acknowledge the result, because `t3_thread_wait` does not acknowledge it. When it returns `timedOut: true`, read the child with `t3_thread_read`, `view: "activity"`, and `afterPosition`. A child with no new item for 10 minutes is stalled. Handle it per [Failure handling](#failure-handling), then wait on the next open child.
-   - If you need a result now, call `task_status` with the `taskId`. Reading a terminal result this way acknowledges it, so no completion notification follows. Process that result immediately, as if the notification had arrived. `workState: "result_available"` means done, and `summary` holds the result. `working` and `waiting_for_children` mean not done. Do not busy-poll. Do other work between checks.
+   - If you need a result now, call `task_status` with the `taskId`. Reading a terminal result this way acknowledges it, so no completion notification follows. Process that result immediately, as if the notification had arrived. `workState: "result_available"` means done, and `summary` holds the result. `working` and `waiting_for_children` mean not done. `hasPendingChildRuns` does not change that. See [Failure handling](#failure-handling). Do not busy-poll. Do other work between checks.
    - `mode: "wait"` blocks for at most `timeoutMs`, ten minutes by default. Use it only for short children whose result gates the very next step. `waitTimedOut: true` does not cancel the child. Keep the `taskId`.
 6. You own every child's output. Read the diff or the evidence yourself before you report it. A child's "done" is a claim, not a verification.
 
@@ -68,13 +68,13 @@ Same-provider native subagent tools (Claude's Agent tool, Codex's subagents) are
 
 ### Permissions
 
-Children inherit this thread's runtime mode and interaction mode. Omit `runtimeMode` so the child inherits. Never raise it above the parent's, and never lower it. A child in `approval-required` stops at its first command on an approval request that no tool can answer, so it never finishes. A read-only reviewer is a read-only brief: say "do not edit files, commit, or push" in the task. T3 has no read-only flag that keeps MCP access, so the brief carries the constraint.
+Children inherit this thread's runtime mode and interaction mode. Omit `runtimeMode` so the child inherits. Never raise it above the parent's, and never lower it. A child in `approval-required` stops at its first command on an approval request that no tool can answer, so it never finishes. A read-only reviewer is a read-only brief: say "do not edit files, commit, or push" in the task. T3 has no read-only flag that keeps MCP access, so the brief carries the constraint. Muse supports only `approval-required` and `full-access`. Under any other parent mode T3 runs a Muse child or launched Muse thread as `approval-required`, so it stalls at its first command. Read `runtimeMode` from `orchestrator_capabilities` before you seat Muse. Under a mode Muse lacks, replace the Muse seat with `"inherit"` per [Fallback](#fallback) and say why.
 
 ### Failure handling
 
 - A target is rejected: call `orchestrator_capabilities`, then fall back per [Roles](#roles), and say which seat changed and why.
 - A child fails or returns nothing usable: proceed with N-1 and record the dropout. Respawn once with a fresh child for a required slice. Never resume a failed child to fix its own work.
-- `task_status` shows `hasPendingChildRuns`: that child is still running nested work. It is not finished.
+- `hasPendingChildRuns` on `task_status` does not mean the child is still running. It reports later turns on the child's thread, even after the task ended, and it does not reopen the task. Decide completion by `workState` alone. On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
 - A stalled child (see [Delegation](#delegation) step 5): read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
 
 ### Fresh children by default
@@ -173,7 +173,7 @@ Built-in preferred seats use the numbered notes from [Built-in defaults](#built-
 
 ### Prompt caps
 
-Claude Haiku 5.5 (`claude-haiku-5-5`, on any provider) should not receive a prompt over 100,000 tokens, because its price rises fivefold past that. `PROMPT_CAPS` in `roles.py` holds that target. T3 records no token counts, so the parent estimates the prompt before launch and runs Haiku 5.5 only on a short leaf task whose estimate is at or under the target.
+Claude Haiku 5.5 (`claude-haiku-5-5`, on any provider) should not receive a prompt over 100,000 tokens, because its price rises fivefold past that. `PROMPT_CAPS` in `roles.py` holds that target. T3 records no token counts, so the parent estimates the prompt before launch and runs Haiku 5.5 only on a short leaf task whose estimate is at or under the target. T3's native `claudeAgent` Claude 5 models run a fixed 1M-token context and offer no `contextWindow` option. The cap is about price, not capacity, so it holds at every context size.
 
 - `roles.py show` never returns a capped model. A capped `skill tests` seat, configured or adaptive, comes back as the adaptive `skill tests` seat from [Built-in defaults](#built-in-defaults) with capped models skipped, which can be another model line, with the note `claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits`.
 - Every other role refuses a capped model, including an `inherit` seat on a thread that `--parent` names as Haiku 5.5, with `role '<role>' cannot use <provider>/claude-haiku-5-5: claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model`. `show`, `validate`, and `write` refuse it with or without a catalog. `--force` does not override it. Built-in defaults and fallbacks skip capped models. When every runnable model is capped, the error says so.
@@ -321,9 +321,10 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 
 - Read-only children share the current checkout.
 - A writing child that may overlap with another writer gets its own git worktree, which the parent creates before delegating: `git worktree add <path> -b <branch> <base>`. `delegate_task` has no workspace argument, so the child's thread stays bound to this checkout and its default working directory is still here. The brief must say: "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check the child's diff landed in the worktree and not in this checkout before integrating. The parent removes the worktree afterwards.
-- When a writer's isolation must not depend on the brief being obeyed, or the work is a long-lived independent unit, launch a top-level thread with a worktree strategy instead, where [Top-level threads](#top-level-threads) allows it.
+- When a writer's isolation must not depend on the brief being obeyed, or the work is a long-lived independent unit, launch a top-level thread with a worktree strategy instead, where [Top-level threads](#top-level-threads) allows it. T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
+- A project script in `t3.json` at the repository root with `runOnSettle: true` runs each time a thread settles in its own worktree, including auto-settlement. A thread in the main checkout skips it. Read `t3.json` before you settle a worktree thread, so you know what that script will run. The script can run beside another terminal command. Its terminal closes on success and stays open on failure. It is a cleanup hook, not a wake, so never schedule a tick to watch for it.
 
 ## Top-level threads
 
@@ -343,7 +344,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - For a stack, `baseRef` is the parent branch and `startFromOrigin` is false.
 - Omitted `workspaceStrategy` means the project root, not your worktree.
 - `t3_thread_launch` requires a full-access or default caller. In `approval-required` or `auto-accept-edits` it fails. Then fall back to child tasks isolated per [Isolation](#isolation), and tell the user that owners are children rather than threads.
-- `t3_thread_launch` has no retry key. Retain the `threadId`. After an error or lost response, check `t3_thread_list` before retrying.
+- `t3_thread_launch` has no retry key. Retain the `threadId`. After an error or lost response, check `t3_thread_list` before retrying. Report it to the user as a thread link per [History](#history).
 - Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
 - A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
 - `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
@@ -370,7 +371,7 @@ Private working state that must survive the session but never be committed lives
 
 Resume notes from Pause safely go to `.pstack/resume/<slug>.md` in the repository, untracked (add `.pstack/` to `.git/info/exclude`), and are also posted as the thread's final message.
 
-After a T3 restart, assume a child is gone unless `task_status` shows `working` or `waiting_for_children`. Pushed branches, worktrees, launched threads, and schedules persist. Reattach through `t3_thread_list` and `list_scheduled_tasks`.
+After a T3 restart, assume a child is gone unless `task_status` shows `working` or `waiting_for_children`. A task in `result_available` finished, so read its `summary` with `task_status` before you respawn its slice. Pushed branches, launched threads, thread history, and schedules persist. A T3-managed worktree persists unless the project enables storage cleanup. Storage cleanup removes a safe worktree after its thread completes, is interrupted, cancelled, or rolled back, or after its PR merges into the default branch by squash or rebase at the worktree's head SHA. The branch and thread survive, and a new turn on that thread recreates the checkout. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path. Reattach through `t3_thread_list` and `list_scheduled_tasks`.
 
 ## Verification surfaces
 
@@ -386,6 +387,8 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
 - `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
+- `t3_thread_list` and `t3_thread_read` report `snoozed` and `snoozedUntil`. Pass `snoozed: true` to `t3_thread_list` to find snoozed owners. `t3_thread_organize` with `action: "snooze"` requires `snoozedUntil`. A snoozed thread wakes early when it asks for something, fails, or completes. Snooze is a sidebar state. It is not a schedule, a completion, or a settle. Wait with `schedule_task` or `watch_pull_request`, never with `snoozedUntil`.
+- Link a thread in a user-facing report as a Markdown link whose text is the thread's title and whose target is `t3-thread://v1/<threadId>`. Copy the `threadId` exactly as a tool returned it. Do not URL-encode it, decode its `%` escapes, or add an environment ID. T3 Code shows the thread's current title. List, read, and launch results carry no `link` field, so build the link from `threadId` or `childThreadId`.
 
 ## Pull requests
 
@@ -407,7 +410,7 @@ Call `unwatch_pull_request` when this thread stops driving the PR and hands that
 
 A merge ends the watch and does not wake the thread. A close ends the watch and does wake the thread. Watching also ends when the thread settles or is archived, when the user stops the thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. A watch ends after 10 wakes in a row that bring only comments, and that end posts a wake. Call `watch_pull_request` again after that wake when the loop is still running.
 
-If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` first. A settled thread's new watch ends on the next pass and posts no wake. A pinned thread does not auto-settle. A pinned coordinator runs that action only when someone settled the thread by hand.
+If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` first. A settled thread's new watch ends on the next pass and posts no wake. A pinned thread does not auto-settle. A pinned coordinator runs that action only when someone settled the thread by hand. `t3_thread_organize` with `action: "settle"` and no `threadId` settles this thread when the turn completes, and returns `settlesWhenTurnEnds: true`. That return is an accepted request, not a settled thread. A failed or interrupted turn, or a queued message, leaves the thread active, and a T3 restart before the turn ends drops the request. Settle this thread only as the last call of a turn whose work is done. Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
 
 pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick that waits for CI, a review, or a conflict all become this call. The forge commands that classify a verdict stay. Run them after a wake. They are not the wait.
 
@@ -436,7 +439,7 @@ If neither the tools nor the ACP bridge exist, you are not running in T3. Use th
 
 ## Skill locations
 
-T3's `$` picker lists each provider's native skills. A skill meant for every provider is written once and linked into each directory.
+T3's `$` picker lists each provider's native skills, except Muse's. Muse still loads its own skills. Run `muse skills` in the terminal to manage them. A skill meant for every provider is written once and linked into each directory.
 
 | Provider | User | Project |
 | --- | --- | --- |
