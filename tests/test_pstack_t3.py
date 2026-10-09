@@ -2047,13 +2047,18 @@ class ThreadLifecycleDocTest(unittest.TestCase):
     def test_isolation_names_the_settle_action(self):
         section = runtime_section("## Isolation")
         for phrase in (
-            "`runOnSettle: true`",
+            "T3 runs the first effective project action with `runOnSettle: true`",
             "A thread in the main checkout skips it.",
-            "Read `t3.json` before you settle a worktree thread, so you know what that script will run.",
+            "The effective list is the project's override, else the environment defaults.",
+            "Actions in a repository `t3.json` count only once imported into project settings",
+            "`t3_project_read` returns the project's saved `scripts`, which can differ from the effective list.",
+            "Take `projectSettingsOverrides.<projectId>.defaultProjectScripts` when present, else `defaultProjectScripts`",
+            "When `projectSettingsFolded` is not `true`, older saved lists still count",
             "never schedule a tick to watch for it",
             "T3 storage cleanup can remove that worktree after the thread ends.",
         ):
             self.assertIn(phrase, section)
+        self.assertNotIn("Read `t3.json` before you settle", section)
 
     def test_local_state_does_not_promise_worktrees_persist(self):
         section = runtime_section("## Local state")
