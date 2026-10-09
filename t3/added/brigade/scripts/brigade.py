@@ -2385,10 +2385,8 @@ def command(restaurant, args, contract=None, rails=None):
             if open_row:
                 return open_row["id"]
             if args.dish:
-                listed = [option.strip() for option in args.options.split(",") if option.strip()]
-                probe = {"dish": args.dish, "options": args.options, "default": args.default}
-                default_listed = option_key(args.default) in {option_key(option) for option in listed}
-                if not default_listed or not closing_options(probe):
+                keys = {option_key(option) for option in args.options.split(",") if option.strip()}
+                if option_key(args.default) not in keys or len(keys) < 2:
                     raise BrigadeError("an item decision's default must be one of its options, "
                                        "with at least one other option that closes it")
             ident = restaurant.next_id("86.tsv")
