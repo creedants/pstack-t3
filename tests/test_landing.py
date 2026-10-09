@@ -2424,6 +2424,109 @@ os.execv({real!r}, [{real!r}, *args])
                                 capture_output=True, text=True, timeout=20, env=os.environ.copy())
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_worker_slots_span_directories_and_leave_landing_capacity(self):
+        import signal
+
+        governor = self.base / "state/pstack-t3/governor"
+        governor.mkdir(parents=True)
+        (governor / "governor.json").write_text(json.dumps({"slots": 2}))
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        directories = [self.base / f"command-{index}" for index in range(3)]
+        releases = [self.base / f"release-{index}" for index in range(3)]
+        retry = self.base / "retry"
+        handles = []
+        processes = []
+
+        def wait_for(path):
+            deadline = time.monotonic() + 20
+            while not path.exists():
+                if time.monotonic() >= deadline:
+                    self.fail(f"barrier not reached: {path}")
+                time.sleep(0.01)
+
+        command = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "release = os.open(sys.argv[1], os.O_RDONLY)\n"
+            "Path('started').touch()\n"
+            "assert os.read(release, 1) == b'x'\n"
+            "os.close(release)\n"
+            "Path('finished').touch()\n"
+        )
+        third = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+            "import land\n"
+            "count = 0\n"
+            "def blocked(seconds):\n"
+            "    global count\n"
+            "    count += 1\n"
+            "    gate = os.open(sys.argv[1], os.O_RDONLY)\n"
+            "    Path(f'waiting-{count}').touch()\n"
+            "    assert os.read(gate, 1) == b'x'\n"
+            "    os.close(gate)\n"
+            "land.time.sleep = blocked\n"
+            "sys.exit(land.main(sys.argv[2:]))\n"
+        )
+        try:
+            for path in [*releases, retry]:
+                os.mkfifo(path)
+                # Keep both ends open so a barrier write never waits for a reader.
+                handles.append(os.open(path, os.O_RDWR | os.O_NONBLOCK))
+            for directory in directories:
+                directory.mkdir()
+            for index in range(2):
+                processes.append(subprocess.Popen(
+                    [sys.executable, str(SCRIPT), "slot", "--",
+                     sys.executable, "-c", command, str(releases[index])],
+                    cwd=directories[index], env=env, start_new_session=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                wait_for(directories[index] / "started")
+            processes.append(subprocess.Popen(
+                [sys.executable, "-c", third, str(retry), "slot", "--",
+                 sys.executable, "-c", command, str(releases[2])],
+                cwd=directories[2], env=env, start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            wait_for(directories[2] / "waiting-1")
+            self.assertFalse((directories[2] / "started").exists())
+            os.write(handles[3], b"x")
+            wait_for(directories[2] / "waiting-2")
+            self.assertFalse((directories[2] / "started").exists())
+            self.assertTrue(all(process.poll() is None for process in processes))
+
+            landing_mark = self.base / "landing-progress"
+            probe = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+                "import land\n"
+                "with land.slot('landing'):\n"
+                f"    Path({str(landing_mark)!r}).touch()\n"
+            )
+            result = subprocess.run([sys.executable, "-c", probe],
+                                    env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(landing_mark.exists())
+            self.assertFalse((directories[2] / "started").exists())
+
+            os.write(handles[0], b"x")
+            self.assertEqual(processes[0].wait(timeout=20), 0)
+            self.assertTrue((directories[0] / "finished").exists())
+            os.write(handles[3], b"x")
+            wait_for(directories[2] / "started")
+            self.assertIsNone(processes[1].poll())
+            for index in (1, 2):
+                os.write(handles[index], b"x")
+                self.assertEqual(processes[index].wait(timeout=20), 0)
+                self.assertTrue((directories[index] / "finished").exists())
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=20)
+            for handle in handles:
+                os.close(handle)
 
     def reserve(self, prefix, paths, ruling, *extra, ok=True):
         return self.land("lease", "reserve", "--for", prefix, "--paths", paths, "--ruling", ruling, *ADMIN, *extra, ok=ok)
