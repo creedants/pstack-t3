@@ -248,7 +248,18 @@ def bare_id(model_id):
 
 
 def normalized_bare(model_id):
-    return bare_id(model_id).replace(".", "-").replace("_", "-")
+    """Canonical id both Haiku checks compare.
+
+    Removes a provider path prefix such as amazon-bedrock/, a Vertex @YYYYMMDD
+    suffix, and one leading Bedrock prefix (anthropic., or us., eu., apac., or
+    global. before anthropic.). Then folds dots and underscores to hyphens and
+    removes a trailing -YYYYMMDD suffix.
+    """
+    text = bare_id(model_id)
+    text = re.sub(r"@\d{8}$", "", text)
+    text = re.sub(r"^(?:(?:us|eu|apac|global)\.)?anthropic\.", "", text)
+    text = text.replace(".", "-").replace("_", "-")
+    return re.sub(r"-\d{8}$", "", text)
 
 
 def haiku_45(model_id):

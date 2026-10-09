@@ -1354,14 +1354,51 @@ class Haiku55CliTest(unittest.TestCase):
         cases = (
             ("claude-haiku-4-5", True),
             ("claude-haiku-4-5-20251001", True),
+            ("claude-haiku-4-5@20251001", True),
             ("anthropic/claude-haiku-4.5", True),
+            ("anthropic.claude-haiku-4-5", True),
+            ("us.anthropic.claude-haiku-4-5", True),
+            ("eu.anthropic.claude-haiku-4-5", True),
+            ("apac.anthropic.claude-haiku-4-5", True),
+            ("global.anthropic.claude-haiku-4-5", True),
+            ("amazon-bedrock/anthropic.claude-haiku-4-5@20251001", True),
             ("claude_haiku_4_5", True),
             ("claude-haiku-5-5", False),
+            ("anthropic.claude-haiku-5-5", False),
+            ("us.anthropic.claude-haiku-5-5", False),
+            ("amazon-bedrock/anthropic.claude-haiku-5-5", False),
             ("claude-haiku-4-6", False),
             ("claude-sonnet-4-5", False),
         )
         for model_id, expected in cases:
             self.assertIs(roles.excluded_id(model_id), expected, model_id)
+
+    def test_provider_spellings_map_to_the_canonical_id(self):
+        cases = (
+            ("claude-haiku-4-5@20251001", "claude-haiku-4-5"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
+            ("ANTHROPIC.CLAUDE_HAIKU_4_5_20251001", "claude-haiku-4-5"),
+            ("anthropic/claude-haiku-4.5", "claude-haiku-4-5"),
+            ("us.anthropic.claude-haiku-4-5@20251001", "claude-haiku-4-5"),
+            ("eu.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("apac.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("global.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("amazon-bedrock/anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("us.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("eu.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("apac.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("global.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("amazon-bedrock/anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("opencode/amazon-bedrock/anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("claude-haiku-5-5@20251001", "claude-haiku-5-5"),
+            ("claude-haiku-5-5-20251001", "claude-haiku-5-5"),
+            ("claude-haiku-5-5", "claude-haiku-5-5"),
+            ("claude-sonnet-4-5", "claude-sonnet-4-5"),
+            ("claude-sonnet-4.5", "claude-sonnet-4-5"),
+        )
+        for model_id, canonical in cases:
+            self.assertEqual(roles.normalized_bare(model_id), canonical, model_id)
 
     def test_only_haiku_45_and_opus_never_picks_haiku_45(self):
         effort = [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}]}]
@@ -1520,6 +1557,165 @@ class Haiku55CliTest(unittest.TestCase):
             "seats": [HAIKU_5_HIGH],
             "haikuBrief": HAIKU_BRIEF,
         })
+
+
+VERTEX_ID = "claude-haiku-4-5@20251001"
+HAIKU_55_SPELLINGS = (
+    "anthropic.claude-haiku-5-5",
+    "us.anthropic.claude-haiku-5-5",
+    "eu.anthropic.claude-haiku-5-5",
+    "apac.anthropic.claude-haiku-5-5",
+    "global.anthropic.claude-haiku-5-5",
+    "amazon-bedrock/anthropic.claude-haiku-5-5",
+    "claude-haiku-5-5@20251001",
+    "claude-haiku-5-5-20251001",
+)
+
+
+def vertex_only_catalog():
+    return {"providers": [{
+        "providerInstanceId": "claudeAgent",
+        "canRunChildTask": True,
+        "constraints": [],
+        "models": [{"id": VERTEX_ID, "options": []}],
+    }]}
+
+
+class VertexHaikuCliTest(unittest.TestCase):
+    """Vertex Haiku 4.5 is excluded on show, validate, and write."""
+
+    def run_show(self, roles_doc):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, vertex_only_catalog())
+            if roles_doc is not None:
+                repo.put(repo.user, {"version": 1, "roles": roles_doc})
+            return repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", f"claudeAgent/{VERTEX_ID}",
+                "--role", "bug-fix",
+            )
+
+    def test_configured_seat_is_refused(self):
+        completed = self.run_show({"bug-fix": [{
+            "providerInstanceId": "claudeAgent",
+            "model": VERTEX_ID,
+        }]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+        ))
+
+    def test_unset_role_does_not_fall_back_to_it(self):
+        completed = self.run_show({})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+        ))
+
+    def test_missing_model_does_not_fall_back_to_it(self):
+        completed = self.run_show({"bug-fix": [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-missing",
+        }]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' cannot use "
+            f"claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
+
+    def test_inherit_does_not_keep_it(self):
+        completed = self.run_show({"bug-fix": ["inherit"]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' cannot inherit "
+            f"claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}; "
+            "claudeAgent has no other model pstack may pick\n"
+        ))
+
+    def test_validate_rejects_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, vertex_only_catalog())
+            repo.put(repo.user, {"version": 1, "roles": {"bug-fix": [{
+                "providerInstanceId": "claudeAgent",
+                "model": VERTEX_ID,
+            }]}})
+            completed = repo.run(
+                "validate",
+                "--catalog", str(path),
+                "--parent", f"claudeAgent/{VERTEX_ID}",
+            )
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, (
+            f"bug-fix: claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
+        self.assertEqual(completed.stderr, "")
+
+    def test_write_force_refuses_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, vertex_only_catalog())
+            completed = repo.run(
+                "write",
+                "--catalog", str(path),
+                "--parent", f"claudeAgent/{VERTEX_ID}",
+                "--force",
+                "--set", f"bug-fix=claudeAgent/{VERTEX_ID}",
+            )
+            self.assertFalse(repo.user.exists())
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: refusing to write, even with --force:\n"
+            f"bug-fix: claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
+
+
+class BedrockHaikuBriefCliTest(unittest.TestCase):
+    """Bedrock and dated Haiku 5.5 spellings still get haikuBrief."""
+
+    def show(self, model_id, seat):
+        catalog = {"providers": [{
+            "providerInstanceId": "opencode",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": model_id, "options": []}],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"version": 1, "roles": {"how explorer": [seat]}})
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            return repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", f"opencode/{model_id}",
+                "--role", "how explorer",
+            )
+
+    def test_explicit_and_inherit_seats_get_haiku_brief(self):
+        for model_id in HAIKU_55_SPELLINGS:
+            explicit = {"providerInstanceId": "opencode", "model": model_id}
+            for seat in (explicit, "inherit"):
+                label = "inherit" if seat == "inherit" else "explicit"
+                with self.subTest(model=model_id, seat=label):
+                    completed = self.show(model_id, seat)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    entry = json.loads(completed.stdout)["roles"]["how explorer"]
+                    expected = ["inherit"] if seat == "inherit" else [explicit]
+                    self.assertEqual(entry["seats"], expected)
+                    self.assertEqual(entry.get("haikuBrief"), HAIKU_BRIEF)
 
 
 def reasoning_select(default="high"):
