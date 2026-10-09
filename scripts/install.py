@@ -19,7 +19,7 @@ import shutil
 import sys
 import tempfile
 import time
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -80,14 +80,22 @@ def proves(checkout, entry, original):
     return os.path.normpath(os.path.join(base, text)) == link_target(checkout, original)
 
 
-def identity(path):
-    """The device, inode, and change time of the entry at `path` itself, or None when nothing is there."""
-    try:
-        stat = os.lstat(path)
-    except OSError:
-        return None
-    # A filesystem such as ext4 hands a freed inode number to the next new entry. The change time tells them apart.
+def identity(stat):
     return stat.st_dev, stat.st_ino, stat.st_ctime_ns
+
+
+# Linux opens the entry itself with O_PATH. macOS opens a symlink itself with O_SYMLINK, and O_NONBLOCK keeps a FIFO from blocking.
+HOLD_FLAGS = (os.O_PATH | os.O_NOFOLLOW) if hasattr(os, "O_PATH") else (os.O_RDONLY | getattr(os, "O_SYMLINK", os.O_NOFOLLOW) | os.O_NONBLOCK)
+
+
+def hold(path, holds):
+    """Open the entry at `path` itself and keep it open until `holds` closes. Return what restore needs to prove it is still there."""
+    try:
+        fd = os.open(path, HOLD_FLAGS)
+    except OSError as error:
+        return Held(None, None, error.strerror or str(error))
+    holds.callback(os.close, fd)
+    return Held(fd, identity(os.fstat(fd)))
 
 
 def slot_of(path):
@@ -144,6 +152,14 @@ class Mine:
 
 
 @dataclass(frozen=True)
+class Held:
+    """A descriptor open on a backup from the plan to its restore. An inode in use keeps its number, so no new entry can share it."""
+    fd: int | None
+    entry: tuple | None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class Step:
     kind: str
     path: str
@@ -157,7 +173,7 @@ class Step:
     remove_links: tuple = ()
     remove_backups: tuple = ()
     adopted: bool = False
-    entry: tuple | None = None
+    held: Held | None = None
 
 
 @dataclass(frozen=True)
@@ -377,7 +393,7 @@ def occupied_note(row):
     return f"kept backup {backup}: {path} is occupied; clear it and rerun uninstall"
 
 
-def plan_uninstall(view, root, selected):
+def plan_uninstall(view, root, selected, holds):
     chosen = set(selected)
     shared = set()
     owned = records(view, root)
@@ -427,7 +443,7 @@ def plan_uninstall(view, root, selected):
         top = remaining[-1]
         free = slot in uncovered or not os.path.lexists(top.original)
         if free and (slot in uncovered or selected_row(top.harnesses)):
-            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), entry=identity(top.backup)))
+            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), held=hold(top.backup, holds)))
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
@@ -700,9 +716,17 @@ def remove_link(path, root):
     return reason
 
 
-def restore_backup(backup, path, entry):
-    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan read. Return why it was kept."""
-    if identity(backup) != entry:
+def restore_backup(backup, path, held):
+    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept."""
+    if held.fd is None:
+        return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
+    try:
+        now = identity(os.lstat(backup))
+    except OSError:
+        now = None
+    # ext4 hands a freed inode number, and with small inodes its whole-second change time, to the next new entry, so equal numbers alone prove nothing.
+    # The held descriptor keeps the planned inode in use, so an entry made since has other numbers. The change time also catches one changed in place.
+    if now is None or now[:2] != identity(os.fstat(held.fd))[:2] or now != held.entry:
         return "the backup is no longer the entry uninstall read"
     # Another installer can take the path after the plan saw it empty; place refuses it instead of replacing it.
     code = place(backup, path)
@@ -741,7 +765,7 @@ def act(step, root):
         os.unlink(step.backup)
     elif step.kind == "restore":
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
-        return restore_backup(step.backup, step.path, step.entry)
+        return restore_backup(step.backup, step.path, step.held)
 
 
 def execute(plan, state, root):
@@ -904,15 +928,16 @@ def uninstall(args):
     root = str(ROOT)
     state = state_dir(scope, user)
 
-    def make_plan(view):
-        return plan_uninstall(view, root, args.harness)
+    def make_plan(view, holds):
+        return plan_uninstall(view, root, args.harness, holds)
 
-    plan = make_plan(load(scope, user))
+    with ExitStack() as holds:
+        plan = make_plan(load(scope, user), holds)
     if args.dry_run or not plan.steps:
         report_uninstall(plan, None, args.dry_run)
         return 0
-    with locked(state):
-        plan = make_plan(load(scope, user))
+    with locked(state), ExitStack() as holds:
+        plan = make_plan(load(scope, user), holds)
         if not plan.steps:
             report_uninstall(plan, None, False)
             return 0

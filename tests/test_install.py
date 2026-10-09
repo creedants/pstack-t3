@@ -2243,6 +2243,86 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(Path(backup).read_bytes(), b"swapped\x00")
         self.assertEqual(read_legacy(self.home)["backups"], rows)
 
+    def test_a_swapped_backup_that_reuses_the_inode_number_and_change_time_is_not_restored(self):
+        """A filesystem may give a freed inode's numbers to the next new entry. Here every freed one is reused."""
+        a, swarm, rows = self.displaced_by("file")
+        backup = rows[0]["backup"]
+        alpha = str(provider_link(self.home, "grok", "alpha"))
+        held = self.home / "held-after-uninstall"
+        hook = (
+            "import types\n"
+            f"backup = {backup!r}\n"
+            "planned = os.lstat(backup)\n"
+            "real_lstat = os.lstat\n"
+            "def in_use():\n"
+            "    for fd in range(1024):\n"
+            "        try:\n"
+            "            stat = os.fstat(fd)\n"
+            "        except OSError:\n"
+            "            continue\n"
+            "        if (stat.st_dev, stat.st_ino) == (planned.st_dev, planned.st_ino):\n"
+            "            return True\n"
+            "    return False\n"
+            "def lstat(path, *args, **kwargs):\n"
+            "    stat = real_lstat(path, *args, **kwargs)\n"
+            "    if str(path) != backup or (stat.st_dev, stat.st_ino) == (planned.st_dev, planned.st_ino) or in_use():\n"
+            "        return stat\n"
+            "    fields = {name: getattr(stat, name) for name in dir(stat) if name.startswith('st_')}\n"
+            "    fields.update(st_dev=planned.st_dev, st_ino=planned.st_ino, st_ctime_ns=planned.st_ctime_ns)\n"
+            "    return types.SimpleNamespace(**fields)\n"
+            "swapped = False\n"
+            "def swapping(original):\n"
+            "    def call(source, destination, *args, **kwargs):\n"
+            "        global swapped\n"
+            f"        if not swapped and str(source) == {alpha!r}:\n"
+            "            swapped = True\n"
+            "            os.unlink(backup)\n"
+            "            Path(backup).write_bytes(b'swapped\\x00')\n"
+            "            os.lstat = lstat\n"
+            "        return original(source, destination, *args, **kwargs)\n"
+            "    return call\n"
+            "os.rename = swapping(os.rename)\n"
+            "planned_uninstall = module.uninstall\n"
+            "def uninstall(args):\n"
+            "    code = planned_uninstall(args)\n"
+            f"    Path({str(held)!r}).write_text(str(in_use()))\n"
+            "    return code\n"
+            "module.uninstall = uninstall\n"
+        )
+        self.ok(
+            uninstall_hooked(self.home, a, hook),
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: the backup is no longer the entry uninstall read",
+        )
+        self.assertFalse(os.path.lexists(swarm))
+        self.assertEqual(Path(backup).read_bytes(), b"swapped\x00")
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+        self.assertEqual(held.read_text(), "False")
+
+    def test_a_backup_that_cannot_be_held_open_is_not_restored(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = rows[0]["backup"]
+        hook = (
+            "import errno\n"
+            "real_open = os.open\n"
+            "def refusing(path, *args, **kwargs):\n"
+            f"    if str(path) == {backup!r}:\n"
+            "        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)\n"
+            "    return real_open(path, *args, **kwargs)\n"
+            "os.open = refusing\n"
+        )
+        self.ok(
+            uninstall_hooked(self.home, a, hook),
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: the backup could not be held open to prove it is the entry uninstall read "
+            f"({os.strerror(errno.EACCES)})",
+        )
+        self.assertFalse(os.path.lexists(swarm))
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
+        self.assert_displaced(swarm, "file")
+        self.assert_empty_records()
+
     def cross_device_uninstall(self, swarm, a, occupy=None, rename=None):
         hook = cross_device(state_dir(self.home) / "backups", swarm, occupy=occupy, rename=rename)
         raced = uninstall_hooked(self.home, a, hook)
@@ -2262,17 +2342,20 @@ class OwnershipTest(unittest.TestCase):
                 if kind == "file":
                     os.chmod(backup, 0o604)
                     os.utime(backup, ns=times)
+                    # A filesystem with whole-second timestamps keeps only the seconds.
+                    stored = backup.stat().st_mtime_ns
                 elif kind == "directory":
                     os.symlink("SKILL.md", backup / "alias")
                     os.symlink("/foreign/dangling", backup / "dangling")
                     os.chmod(backup / "SKILL.md", 0o604)
                     os.utime(backup / "SKILL.md", ns=times)
+                    stored = (backup / "SKILL.md").stat().st_mtime_ns
                 raced = self.cross_device_uninstall(swarm, a)
                 self.ok(raced, "removed 3 links, restored 1 entries")
                 if kind == "file":
                     self.assert_displaced(swarm, kind)
                     self.assertEqual(swarm.stat().st_mode & 0o777, 0o604)
-                    self.assertEqual(swarm.stat().st_mtime_ns, times[1])
+                    self.assertEqual(swarm.stat().st_mtime_ns, stored)
                 elif kind == "link":
                     self.assert_displaced(swarm, kind)
                 else:
@@ -2280,7 +2363,7 @@ class OwnershipTest(unittest.TestCase):
                     self.assertEqual(sorted(os.listdir(swarm)), ["SKILL.md", "alias", "dangling"])
                     self.assertEqual((swarm / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
                     self.assertEqual((swarm / "SKILL.md").stat().st_mode & 0o777, 0o604)
-                    self.assertEqual((swarm / "SKILL.md").stat().st_mtime_ns, times[1])
+                    self.assertEqual((swarm / "SKILL.md").stat().st_mtime_ns, stored)
                     self.assertEqual(os.readlink(swarm / "alias"), "SKILL.md")
                     self.assertEqual(os.readlink(swarm / "dangling"), "/foreign/dangling")
                 self.assertFalse(os.path.lexists(backup))
