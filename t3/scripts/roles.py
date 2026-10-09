@@ -41,6 +41,7 @@ PANEL_ROLES = [
     "architect runners",
     "interrogate reviewers",
     "verifiers",
+    "review backups",
 ]
 ROLES = SINGLE_ROLES + PANEL_ROLES
 BUDGETS = {"default": None, "small": "medium", "medium": "high", "large": "xhigh", "unlimited": "max"}
@@ -142,6 +143,7 @@ class PreferredSeat:
 
 class AdaptiveDefault(Enum):
     VERIFIERS = "verifiers"
+    UNSET = "unset"
 
 
 OPUS = PreferredSeat("claude-opus-5-5", "xhigh", "max")
@@ -169,6 +171,7 @@ ROLE_DEFAULTS = {
     "interrogate reviewers": (OPUS, GROK),
     "skill tests": (HAIKU_TESTS,),
     "verifiers": AdaptiveDefault.VERIFIERS,
+    "review backups": AdaptiveDefault.UNSET,
 }
 
 
@@ -189,6 +192,19 @@ CLAUDE_BACKUP_PROVIDER = "claudeAgent"
 WORKER_BACKUP = "claude-opus-5-5"
 LIGHT_BACKUP = "claude-sonnet-5-5"
 REVIEW_LADDER = ("grok-4.7", "claude-opus-5-5")
+PANEL_GATE_ROLE = "verifiers"
+PANEL_BACKUP_ROLE = "review backups"
+PANEL_MINIMUM_PASSES = 2
+PANEL_MAXIMUM_REPRODUCED_BLOCKERS = 0
+PANEL_RULE = {
+    "waitForAllTerminal": True,
+    "minimumPasses": PANEL_MINIMUM_PASSES,
+    "maximumReproducedBlockers": PANEL_MAXIMUM_REPRODUCED_BLOCKERS,
+}
+UNSET_NOTE = (
+    "review backups has no built-in seats. Set it to let roles.py backup run a review panel "
+    "when every paid reviewer backup is out. Unset, a verifier parks."
+)
 BACKUP_PROVIDERS = {
     WORKER_BACKUP: CLAUDE_BACKUP_PROVIDER,
     LIGHT_BACKUP: CLAUDE_BACKUP_PROVIDER,
@@ -209,11 +225,13 @@ USAGE_LIMIT_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
 
 @dataclass(frozen=True)
 class Backup:
-    """One usage-limit decision. relaunch carries a seat. park and not-usage-limit do not."""
+    """One usage-limit decision. relaunch carries a seat. panel carries seats and drop notes."""
 
     decision: str
     report: str
     seat: dict | None = None
+    seats: tuple | None = None
+    notes: tuple = ()
 
 
 def user_config_path():
@@ -490,6 +508,8 @@ def check_shape(config, origin):
         if name in SINGLE_ROLES and len(seats) != 1:
             raise RolesError(f"{origin}: role {name!r} takes exactly one seat")
         for seat in seats:
+            if seat == INHERIT and name == PANEL_BACKUP_ROLE:
+                raise RolesError(f"{origin}: role {name!r} refuses inherit, because the parent can be the author")
             if seat == INHERIT:
                 continue
             if not isinstance(seat, dict) or not seat.get("providerInstanceId") or not seat.get("model"):
@@ -729,6 +749,8 @@ def _lost_diversity(name, seats):
 def default_seats(name, catalog, budget="default", providers=None):
     """Resolve exactly the policy seats for this role from the live catalog."""
     policy = ROLE_DEFAULTS[name]
+    if policy is AdaptiveDefault.UNSET:
+        return DefaultSelection(policy.value, (UNSET_NOTE,))
     if catalog is None:
         if policy is AdaptiveDefault.VERIFIERS:
             return DefaultSelection(DEFAULT_PANEL, (
@@ -1006,7 +1028,10 @@ def backup_ladder(role, failed_provider, authors, out):
     """Models to try, in order. An empty ladder parks.
 
     A worker parks only when claudeAgent is out. A Claude model on another provider still moves there.
+    A review backups seat has no backup.
     """
+    if role == PANEL_BACKUP_ROLE:
+        return ()
     if role in REVIEW_ROLES:
         skip = author_families(authors)
         return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
@@ -1045,10 +1070,65 @@ def _emit_backup(role, label, provider, model, source_options, budget, resumed):
     return Backup("relaunch", report, seat)
 
 
-def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False):
-    """Pick the one backup seat, or park. The caller passes providers already out.
+def panel_seats(configured, catalog, budget, blocked, authors):
+    """Keep the configured review backups seats a panel can run, with one note per dropped seat in seat order.
+
+    No inherit and no model fallback, because either can seat the author. Families
+    compare bare ids, so a namespaced id such as opencode/muse-2-free is muse on both sides.
+    """
+    skip = author_families(authors)
+    kept, notes, seated = [], [], set()
+    for seat in configured:
+        if seat == INHERIT:
+            notes.append("dropped inherit: the parent can be the author")
+            continue
+        provider_id, model_id = seat["providerInstanceId"], seat["model"]
+        seat_family = family(author_model(model_id))
+        if provider_id in NEVER_BACKUP_PROVIDERS:
+            reason = "backup never selects Codex or Cursor"
+        elif provider_id in blocked:
+            reason = f"{provider_id} is out"
+        elif seat_family in skip:
+            reason = f"{seat_family} wrote the diff"
+        elif _catalog_pair(catalog, provider_id, model_id) is None:
+            reason = "not runnable or not in the catalog"
+        elif seat_family in seated:
+            reason = f"family {seat_family} already seated"
+        else:
+            reason = None
+        if reason is not None:
+            notes.append(f"dropped {provider_id}/{model_id}: {reason}")
+            continue
+        value, seat_notes, _ = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE)
+        kept.append(value)
+        seated.add(seat_family)
+        notes.extend(f"{provider_id}/{model_id}: {note}" for note in seat_notes)
+    return kept, notes
+
+
+def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume):
+    configured, skipped = review_backups
+    seats, notes = panel_seats(configured or [], catalog, budget, blocked, authors)
+    notes = skipped + notes
+    lead = f"{role}: {label} is still out after the reset" if resume else f"{role}: {label} hit its usage limit"
+    if len(seats) >= PANEL_MINIMUM_PASSES:
+        report = (
+            f"{lead}; every paid reviewer backup is out, so review backups runs {len(seats)} seats; "
+            "land only if no reviewer reproduces a blocker and at least two pass"
+        )
+        return Backup("panel", report, seats=tuple(seats), notes=tuple(notes))
+    usable = f"{len(seats)} usable seat{'' if len(seats) == 1 else 's'}"
+    report = f"{lead}; review backups has {usable} and needs {PANEL_MINIMUM_PASSES}, so the work waits for the reset"
+    if notes:
+        report += f" ({'; '.join(notes)})"
+    return Backup("park", report)
+
+
+def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False, review_backups=None):
+    """Pick the one backup seat, a review backups panel, or park. The caller passes providers already out.
 
     With resume, the original seat comes back first when its provider is not out.
+    review_backups is configured_seats' (seats, notes) for that role, or None when it is unset.
     """
     provider_id = failed["provider"]
     model_id = failed["model"]
@@ -1067,6 +1147,11 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False)
         chosen = _catalog_pair(catalog, BACKUP_PROVIDERS[wanted], wanted, blocked)
         if chosen is not None:
             return _emit_backup(role, label, *chosen, failed.get("options"), budget, resume)
+    if role == PANEL_BACKUP_ROLE:
+        report = f"{role}: {label} hit its usage limit; a review backups seat has no backup, so it counts as no pass"
+        return Backup("park", report)
+    if role == PANEL_GATE_ROLE and review_backups is not None:
+        return _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume)
     if resume:
         report = f"{role}: {label} is still out after the reset; no backup seat, so the work waits for the reset"
     else:
@@ -1112,7 +1197,10 @@ def command_backup(args):
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
     options = parse_applied_options(args.options) if args.options else {}
     failed = {"provider": args.provider, "model": args.model, "options": options}
-    result = backup_seat(args.role, failed, text, catalog, budget, args.out or [], authors, args.resume)
+    review_backups = configured_seats(config, PANEL_BACKUP_ROLE) if PANEL_BACKUP_ROLE in config["roles"] else None
+    result = backup_seat(
+        args.role, failed, text, catalog, budget, args.out or [], authors, args.resume, review_backups,
+    )
     payload = {
         "decision": result.decision,
         "role": args.role,
@@ -1120,6 +1208,11 @@ def command_backup(args):
     }
     if result.seat is not None:
         payload["seat"] = result.seat
+    if result.seats is not None:
+        payload["seats"] = list(result.seats)
+        payload["rule"] = PANEL_RULE
+    if result.notes:
+        payload["notes"] = list(result.notes)
     payload["report"] = result.report
     print(json.dumps(payload, indent=2))
     return 0

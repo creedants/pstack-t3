@@ -2588,6 +2588,31 @@ _CLAUDE_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultracode", "ultrath
 _CODEX_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
 _GROK_LEVELS = ("low", "medium", "high", "xhigh")
 _LIMIT = "You've hit your usage limit. Try again later.\n"
+MUSE = "opencode/muse-lite-2-free"
+STEP = "opencode/step-9-preview-free"
+BUNNY = "opencode/bunny-1-free"
+MUSE_SEAT = {"providerInstanceId": "opencode", "model": MUSE, "options": {"variant": "high"}}
+STEP_SEAT = {"providerInstanceId": "opencode", "model": STEP, "options": {"variant": "high"}}
+BUNNY_SEAT = {"providerInstanceId": "opencode", "model": BUNNY, "options": {"variant": "max"}}
+REVIEW_BACKUPS = {"roles": {"review backups": [MUSE_SEAT, STEP_SEAT, BUNNY_SEAT]}}
+PANEL_RULE = {"waitForAllTerminal": True, "minimumPasses": 2, "maximumReproducedBlockers": 0}
+UNSET_NOTE = (
+    "review backups has no built-in seats. Set it to let roles.py backup run a review panel "
+    "when every paid reviewer backup is out. Unset, a verifier parks."
+)
+VERIFIER_OUT = (
+    "--role", "verifiers",
+    "--provider", "codex",
+    "--model", "gpt-6.1-sol",
+    "--author", "claudeAgent/claude-opus-5-5",
+    "--out", "grok",
+)
+VERIFIER_PARK = {
+    "decision": "park",
+    "role": "verifiers",
+    "failed": "codex/gpt-6.1-sol",
+    "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
+}
 
 
 def backup_catalog(*, second_claude=False):
@@ -2631,16 +2656,24 @@ def backup_catalog(*, second_claude=False):
                 {"id": "claude-sonnet-5-5", "options": claude_options},
             ],
         },
+        {
+            "providerInstanceId": "opencode",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": model, "options": [_select("variant", ("high", "max"))]} for model in (MUSE, STEP, BUNNY)],
+        },
     ])
     return {"providers": providers}
 
 
 class BackupCliTest(unittest.TestCase):
-    def backup(self, *args, text=_LIMIT, catalog=None):
+    def backup(self, *args, text=_LIMIT, catalog=None, roles_file=None):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             path = repo.directory / "catalog.json"
             repo.put(path, backup_catalog() if catalog is None else catalog)
+            if roles_file is not None:
+                repo.put(repo.user, roles_file)
             env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
             return subprocess.run(
                 [
@@ -3262,3 +3295,212 @@ class BackupCliTest(unittest.TestCase):
         self.assertEqual(stdin_catalog.returncode, 2)
         self.assertEqual(stdin_catalog.stdout, "")
         self.assertIn("--catalog -", stdin_catalog.stderr)
+
+    def test_unset_review_backups_keeps_the_verifier_park(self):
+        self.assert_backup(self.backup(*VERIFIER_OUT), VERIFIER_PARK)
+
+    def test_review_backups_turn_a_verifier_park_into_a_panel(self):
+        completed = self.backup(*VERIFIER_OUT, roles_file=REVIEW_BACKUPS)
+        self.assert_backup(completed, {
+            "decision": "panel",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seats": [MUSE_SEAT, STEP_SEAT, BUNNY_SEAT],
+            "rule": PANEL_RULE,
+            "report": (
+                "verifiers: codex/gpt-6.1-sol hit its usage limit; every paid reviewer backup is out, "
+                "so review backups runs 3 seats; land only if no reviewer reproduces a blocker and at least two pass"
+            ),
+        })
+
+    def test_the_paid_ladder_wins_over_the_panel(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            roles_file=REVIEW_BACKUPS,
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "xhigh", "fastMode": False},
+            },
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; relaunched on grok/grok-4.7 at xhigh",
+        })
+
+    def test_resume_with_every_paid_backup_out_runs_the_panel(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--out", "codex",
+            "--out", "grok",
+            "--resume",
+            text="",
+            roles_file=REVIEW_BACKUPS,
+        )
+        self.assert_backup(completed, {
+            "decision": "panel",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seats": [MUSE_SEAT, STEP_SEAT, BUNNY_SEAT],
+            "rule": PANEL_RULE,
+            "report": (
+                "verifiers: codex/gpt-6.1-sol is still out after the reset; every paid reviewer backup is out, "
+                "so review backups runs 3 seats; land only if no reviewer reproduces a blocker and at least two pass"
+            ),
+        })
+
+    def test_only_verifiers_get_a_panel(self):
+        interrogate = self.backup(
+            "--role", "interrogate reviewers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--out", "grok",
+            roles_file=REVIEW_BACKUPS,
+        )
+        self.assert_backup(interrogate, {
+            "decision": "park",
+            "role": "interrogate reviewers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": "interrogate reviewers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+        worker = self.backup(
+            "--role", "bug-fix",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--out", "grok",
+            roles_file=REVIEW_BACKUPS,
+        )
+        self.assert_backup(worker, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5",
+        })
+
+    def test_panel_drops_blocked_author_missing_and_repeated_seats(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--author", "opencode/" + MUSE,
+            "--out", "claudeAgent",
+            roles_file={"roles": {"review backups": [
+                {"providerInstanceId": "cursor", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                {"providerInstanceId": "grok", "model": "grok-4.7"},
+                {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5"},
+                MUSE_SEAT,
+                {"providerInstanceId": "opencode", "model": "opencode/nope-free"},
+                STEP_SEAT,
+                BUNNY_SEAT,
+                {"providerInstanceId": "opencode", "model": BUNNY, "options": {"variant": "high"}},
+            ]}},
+        )
+        self.assert_backup(completed, {
+            "decision": "panel",
+            "role": "verifiers",
+            "failed": "grok/grok-4.7",
+            "seats": [STEP_SEAT, BUNNY_SEAT],
+            "rule": PANEL_RULE,
+            "notes": [
+                "dropped cursor/claude-opus-5-5: backup never selects Codex or Cursor",
+                "dropped codex/gpt-6.1-sol: backup never selects Codex or Cursor",
+                "dropped grok/grok-4.7: grok is out",
+                "dropped claudeAgent/claude-sonnet-5-5: claudeAgent is out",
+                "dropped opencode/opencode/muse-lite-2-free: muse wrote the diff",
+                "dropped opencode/opencode/nope-free: not runnable or not in the catalog",
+                "dropped opencode/opencode/bunny-1-free: family bunny already seated",
+            ],
+            "report": (
+                "verifiers: grok/grok-4.7 hit its usage limit; every paid reviewer backup is out, "
+                "so review backups runs 2 seats; land only if no reviewer reproduces a blocker and at least two pass"
+            ),
+        })
+
+    def test_panel_seats_drops_inherit(self):
+        seats, notes = roles.panel_seats(["inherit", STEP_SEAT, BUNNY_SEAT], backup_catalog(), "default", frozenset(), [])
+        self.assertEqual(seats, [STEP_SEAT, BUNNY_SEAT])
+        self.assertEqual(notes, ["dropped inherit: the parent can be the author"])
+
+    def test_one_usable_seat_parks(self):
+        completed = self.backup(
+            *VERIFIER_OUT,
+            roles_file={"roles": {"review backups": [
+                {"providerInstanceId": "cursor", "model": "claude-opus-5-5"},
+                STEP_SEAT,
+            ]}},
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": (
+                "verifiers: codex/gpt-6.1-sol hit its usage limit; review backups has 1 usable seat and needs 2, "
+                "so the work waits for the reset (dropped cursor/claude-opus-5-5: backup never selects Codex or Cursor)"
+            ),
+        })
+
+    def test_a_panel_member_limit_parks_without_a_backup(self):
+        member = ("--role", "review backups", "--provider", "opencode", "--model", STEP)
+        self.assert_backup(self.backup(*member, roles_file=REVIEW_BACKUPS), {
+            "decision": "park",
+            "role": "review backups",
+            "failed": "opencode/opencode/step-9-preview-free",
+            "report": (
+                "review backups: opencode/opencode/step-9-preview-free hit its usage limit; "
+                "a review backups seat has no backup, so it counts as no pass"
+            ),
+        })
+        self.assert_backup(self.backup(*member, text="connection reset\n", roles_file=REVIEW_BACKUPS), {
+            "decision": "not-usage-limit",
+            "role": "review backups",
+            "failed": "opencode/opencode/step-9-preview-free",
+            "report": (
+                "review backups: opencode/opencode/step-9-preview-free failed without a usage limit; "
+                "respawn per Failure handling"
+            ),
+        })
+
+    def test_light_mode_keeps_a_variant_seat(self):
+        completed = self.backup(*VERIFIER_OUT, "--brief-mode", "light", roles_file=REVIEW_BACKUPS)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "panel")
+        self.assertEqual(payload["seats"], [MUSE_SEAT, STEP_SEAT, BUNNY_SEAT])
+
+
+class ReviewBackupsRoleCliTest(unittest.TestCase):
+    def test_show_reports_unset_with_and_without_a_catalog(self):
+        expected = {"source": "default", "seats": "unset", "note": UNSET_NOTE}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            parent = ("--parent", "claudeAgent/claude-opus-5-5", "--role", "review backups")
+            plain = repo.run("show", *parent)
+            with_catalog = repo.run("show", "--catalog", str(CATALOG), *parent)
+        for completed in (plain, with_catalog):
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": expected})
+
+    def test_write_and_validate_refuse_inherit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            written = repo.write("--set", "review backups=inherit;grok/grok-4.7")
+            repo.put(repo.user, {"roles": {"review backups": ["inherit"]}})
+            validated = repo.run("validate", "--catalog", str(CATALOG))
+            user = str(repo.user)
+        refusal = "role 'review backups' refuses inherit, because the parent can be the author\n"
+        self.assertEqual(written.returncode, 2)
+        self.assertEqual(written.stderr, f"error: {user}: {refusal}")
+        self.assertEqual(validated.returncode, 2)
+        self.assertEqual(validated.stderr, f"error: {user}: {refusal}")
