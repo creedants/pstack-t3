@@ -1586,6 +1586,206 @@ class PromptCapCliTest(unittest.TestCase):
             "target": 100000,
         })
 
+    def assert_bounded(self, completed, document, stderr=""):
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, stderr)
+        self.assertEqual(completed.stdout, json.dumps(document, indent=2) + "\n")
+
+    def test_bounded_seat_launches_seats_skips_cursor_haiku(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "cursor-catalog.json"
+            repo.put(path, cursor_haiku_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "capped": False,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 12,
+                "readBytes": 0,
+                "tokens": 41003,
+                "target": None,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_refuses_a_cursor_only_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "cursor-only.json"
+            repo.put(path, cursor_only_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "cursor/gemini-3.8-flash",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            "error: role 'skill tests' has no non-cursor seat for a child that launches seats\n",
+        )
+
+    def test_bounded_seat_launches_seats_inherits_a_non_cursor_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "cursor-only.json"
+            repo.put(path, cursor_only_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": "inherit",
+            "capped": False,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 12,
+                "readBytes": 0,
+                "tokens": 41003,
+                "target": None,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_prefers_the_non_cursor_model(self):
+        catalog = {
+            "providers": [
+                {
+                    "providerInstanceId": "cursor",
+                    "canRunChildTask": True,
+                    "constraints": [],
+                    "models": [{"id": "gemini-3.8-flash", "options": []}],
+                },
+                {
+                    "providerInstanceId": "claudeAgent",
+                    "canRunChildTask": True,
+                    "constraints": [],
+                    "models": [{"id": "claude-haiku-4-5", "options": []}],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "mixed.json"
+            repo.put(path, catalog)
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            plain = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+            )
+            flagged = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        estimate = {
+            "overheadTokens": 41000,
+            "briefBytes": 12,
+            "readBytes": 0,
+            "tokens": 41003,
+            "target": None,
+        }
+        self.assert_bounded(plain, {
+            "seat": {"providerInstanceId": "cursor", "model": "gemini-3.8-flash"},
+            "capped": False,
+            "estimate": estimate,
+            "reason": None,
+            "notes": [],
+        })
+        self.assert_bounded(flagged, {
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "capped": False,
+            "estimate": estimate,
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_keeps_under_target_haiku(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            brief = repo.directory / "brief.txt"
+            read = repo.directory / "read.txt"
+            brief.write_bytes(b"y" * 1000)
+            read.write_bytes(b"x" * 2000)
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--read", str(read),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "capped": True,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 1000,
+                "readBytes": 2000,
+                "tokens": 41750,
+                "target": 100000,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_replaces_a_configured_cursor_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"skill tests": [
+                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
+            ]}})
+            path = repo.directory / "cursor-catalog.json"
+            repo.put(path, cursor_haiku_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "capped": False,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 12,
+                "readBytes": 0,
+                "tokens": 41003,
+                "target": None,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
     def test_bounded_seat_prints_an_uncapped_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
@@ -2090,5 +2290,37 @@ def cap_only_catalog():
             "providerInstanceId": "claudeAgent",
             "canRunChildTask": True,
             "models": [{"id": "claude-haiku-5-5", "options": []}],
+        }],
+    }
+
+
+def cursor_haiku_catalog():
+    return {
+        "providers": [
+            {
+                "providerInstanceId": "cursor",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "claude-haiku-5-5", "options": [
+                    {"id": "contextWindow", "type": "select", "options": [{"id": "1m"}, {"id": "300k"}]},
+                ]}],
+            },
+            {
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "claude-haiku-4-5", "options": [{"id": "thinking", "type": "boolean"}]}],
+            },
+        ],
+    }
+
+
+def cursor_only_catalog():
+    return {
+        "providers": [{
+            "providerInstanceId": "cursor",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "gemini-3.8-flash", "options": []}],
         }],
     }
