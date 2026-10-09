@@ -1,24 +1,320 @@
 """Installer behavior a fresh home can observe."""
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ("alpha", "pstack-runtime", "swarm")
+OLD_SHA = "3936df1838da72e64c9870c6c73262929c27f828385be625286018a80039a33d"
+KEPT = "kept {n} records whose links no longer point at this checkout; they apply again if the links come back"
+ADOPTED = "adopted {n} links an older installer recorded"
+UNTRACKED = "links already point at this checkout but are not tracked; uninstall leaves them"
+
+OLD_INSTALLER = r'''#!/usr/bin/env python3
+"""Install pstack-t3 skills into every provider skill directory T3 reads.
+
+T3's `$` picker lists each provider's native skills, so pstack-t3 links its
+generated skills into each provider's directory. Every link and every entry
+moved aside is recorded in a manifest so `uninstall` restores the prior state.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SKILLS = ROOT / "skills"
+HARNESSES = ("claude", "codex", "grok", "cursor")
+
+
+def skill_dirs(scope_root, user):
+    home = Path(os.environ.get("HOME", str(Path.home())))
+    claude = Path(os.environ["CLAUDE_CONFIG_DIR"]) if user and os.environ.get("CLAUDE_CONFIG_DIR") else (home / ".claude" if user else scope_root / ".claude")
+    base = home if user else scope_root
+    return {
+        "claude": claude / "skills",
+        "codex": base / ".agents" / "skills",
+        "grok": base / ".grok" / "skills",
+        "cursor": base / ".cursor" / "skills",
+    }
+
+
+def extra_dirs(scope_root, user):
+    """Other directories each provider also reads skills from, where stale copies can compete."""
+    home = Path(os.environ.get("HOME", str(Path.home())))
+    base = home if user else scope_root
+    claude = skill_dirs(scope_root, user)["claude"]
+    return {
+        "claude": [],
+        "codex": [base / ".codex" / "skills"],
+        "grok": [],
+        "cursor": [base / ".agents" / "skills", base / ".codex" / "skills", claude],
+    }
+
+
+def state_dir(scope_root, user):
+    if user:
+        config = Path(os.environ.get("XDG_CONFIG_HOME") or Path(os.environ.get("HOME", str(Path.home()))) / ".config")
+        return config / "pstack-t3"
+    return scope_root / ".pstack"
+
+
+def ours(path):
+    """A link whose target is a skill directory in this checkout. Never follows loops."""
+    if not path.is_symlink():
+        return False
+    target = Path(os.path.normpath(os.path.join(path.parent, os.readlink(path))))
+    return target.parent in (SKILLS, Path(os.path.realpath(SKILLS)))
+
+
+def inside_checkout(path):
+    """True when the path is, or resolves into, this checkout's skills tree."""
+    real = Path(os.path.realpath(path))
+    skills = Path(os.path.realpath(SKILLS))
+    return real == skills or skills in real.parents
+
+
+def describe(path):
+    if path.is_symlink():
+        return f"link to {os.readlink(path)}"
+    return "directory" if path.is_dir() else "file"
+
+
+def load_manifest(file):
+    if file.exists():
+        return json.loads(file.read_text())
+    return {"links": [], "backups": []}
+
+
+def save_manifest(file, manifest):
+    file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = file.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest, indent=2) + "\n")
+    os.replace(temporary, file)
+
+
+def plan(targets, names):
+    """Return (actions, conflicts). Directories sharing a real path are visited once,
+    and each action names every harness that shares it."""
+    actions, conflicts, seen = [], [], {}
+    for harness, directory in targets.items():
+        real = Path(os.path.realpath(directory))
+        if real in seen:
+            seen[real].append(harness)
+            continue
+        seen[real] = [harness]
+        if inside_checkout(directory):
+            print(f"{harness}: {directory} already resolves to {SKILLS}; nothing to link")
+            continue
+        for name in names:
+            link = directory / name
+            if ours(link):
+                continue
+            if inside_checkout(link):
+                # Moving this aside would move pstack-t3's own skill directory.
+                continue
+            if link.exists() or link.is_symlink():
+                conflicts.append((seen[real], link))
+            actions.append((seen[real], link))
+    return actions, conflicts
+
+
+def install(args):
+    if not SKILLS.is_dir():
+        sys.exit("skills/ is missing; run python3 scripts/build.py first")
+    user = args.project is None
+    scope = Path(args.project).resolve() if args.project else None
+    targets = {h: d for h, d in skill_dirs(scope, user).items() if h in args.harness}
+    names = sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file())
+    actions, conflicts = plan(targets, names)
+    if conflicts and not args.replace:
+        lines = [f"  {'/'.join(harnesses)}: {link} ({describe(link)})" for harnesses, link in conflicts]
+        sys.exit("these skills already exist; rerun with --replace to move them aside (uninstall restores them):\n" + "\n".join(lines))
+    if args.dry_run:
+        for harnesses, link in actions:
+            print(f"would link {link} -> {SKILLS / link.name}" + (f" (replacing {describe(link)})" if (harnesses, link) in conflicts else ""))
+        print(f"{len(actions)} links planned")
+        return
+    state = state_dir(scope, user)
+    manifest_file = state / "install-manifest.json"
+    manifest = load_manifest(manifest_file)
+    # Create the stamp directory on the first skill that has to be moved aside.
+    backup_root = None
+    for harnesses, link in actions:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            if backup_root is None:
+                (state / "backups").mkdir(parents=True, exist_ok=True)
+                backup_root = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=state / "backups"))
+            backup = backup_root / harnesses[0] / link.name
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            # Record before moving, so a crash mid-move still leaves a restorable entry.
+            manifest["backups"].append({"harnesses": harnesses, "original": str(link), "backup": str(backup)})
+            save_manifest(manifest_file, manifest)
+            shutil.move(str(link), str(backup))
+        link.symlink_to(SKILLS / link.name, target_is_directory=True)
+        manifest["links"].append({"harnesses": harnesses, "path": str(link)})
+        save_manifest(manifest_file, manifest)
+    print(f"linked {len(actions)} skills into {', '.join(sorted(set(h for hs, _ in actions for h in hs))) or 'nothing (already installed)'}")
+    print(f"manifest: {manifest_file}")
+
+
+def entry_harnesses(entry):
+    """Harnesses that share an entry's directory. Unknown means all of them."""
+    if not isinstance(entry, dict):
+        return list(HARNESSES)
+    if "harnesses" in entry:
+        return entry["harnesses"]
+    return [entry["harness"]] if "harness" in entry else list(HARNESSES)
+
+
+def entry_path(entry):
+    return Path(entry["path"] if isinstance(entry, dict) else entry)
+
+
+def uninstall(args):
+    user = args.project is None
+    scope = Path(args.project).resolve() if args.project else None
+    manifest_file = state_dir(scope, user) / "install-manifest.json"
+    manifest = load_manifest(manifest_file)
+    shared = set()
+
+    def selected(entry):
+        # A directory shared by several harnesses goes only when all of them are selected.
+        harnesses = entry_harnesses(entry)
+        if set(harnesses) <= set(args.harness):
+            return True
+        if set(harnesses) & set(args.harness):
+            shared.add(", ".join(sorted(set(harnesses) - set(args.harness))))
+        return False
+    removed, kept_links = 0, []
+    for entry in manifest["links"]:
+        link = entry_path(entry)
+        if not selected(entry):
+            kept_links.append(entry)
+        elif ours(link):
+            if not args.dry_run:
+                link.unlink()
+            removed += 1
+    restored, kept_backups = 0, []
+    for entry in reversed(manifest["backups"]):
+        original, backup = Path(entry["original"]), Path(entry["backup"])
+        present = backup.exists() or backup.is_symlink()
+        if not selected(entry) or not present:
+            if present:
+                kept_backups.append(entry)
+            continue
+        occupied = original.exists() or original.is_symlink()
+        # In a dry run our own links are still in place but would be removed first.
+        if occupied and not (args.dry_run and ours(original)):
+            print(f"kept backup {backup}: {original} is occupied; clear it and rerun uninstall")
+            kept_backups.append(entry)
+            continue
+        if not args.dry_run:
+            shutil.move(str(backup), str(original))
+        restored += 1
+    print(f"would remove {removed} links, would restore {restored} entries" if args.dry_run else f"removed {removed} links, restored {restored} entries")
+    for others in sorted(shared):
+        print(f"kept entries whose directory is shared with {others}; select those harnesses too to remove them")
+    if args.dry_run:
+        return 0
+    if kept_links or kept_backups:
+        save_manifest(manifest_file, {"links": kept_links, "backups": list(reversed(kept_backups))})
+    elif manifest_file.exists():
+        manifest_file.unlink()
+    return 0
+
+
+def doctor(args):
+    user = args.project is None
+    scope = Path(args.project).resolve() if args.project else None
+    names = sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file()) if SKILLS.is_dir() else []
+    healthy = True
+    for harness, directory in skill_dirs(scope, user).items():
+        if harness not in args.harness:
+            continue
+        if Path(os.path.realpath(directory)) == Path(os.path.realpath(SKILLS)):
+            print(f"{harness:7} {directory}: resolves to the pstack-t3 skills tree itself")
+            continue
+        if inside_checkout(directory):
+            print(f"{harness:7} {directory}: points inside one pstack-t3 skill, so the other skills are invisible")
+            healthy = False
+            continue
+        installed = [n for n in names if ours(directory / n)]
+        foreign = [n for n in names if (directory / n).exists() and not ours(directory / n)]
+        missing = [n for n in names if not (directory / n).exists()]
+        healthy &= not foreign and not missing
+        print(f"{harness:7} {directory}: {len(installed)}/{len(names)} pstack-t3" +
+              (f", {len(foreign)} taken by other copies ({', '.join(foreign[:5])}{'...' if len(foreign) > 5 else ''})" if foreign else "") +
+              (f", {len(missing)} missing" if missing else ""))
+        for extra in extra_dirs(scope, user)[harness]:
+            stale = [n for n in names if (extra / n).exists() and not ours(extra / n)]
+            if stale:
+                healthy = False
+                print(f"        {extra} also holds other copies of {len(stale)} of these "
+                      f"({', '.join(stale[:5])}{'...' if len(stale) > 5 else ''}); {harness} may load those instead")
+        if not user:
+            # Claude and Grok load the user copy when both scopes define a name.
+            user_directory = skill_dirs(None, True)[harness]
+            shadowing = [n for n in installed if (user_directory / n).exists() and not ours(user_directory / n)]
+            if shadowing:
+                healthy = False
+                print(f"        user scope {user_directory} has other copies of {len(shadowing)} of these "
+                      f"({', '.join(shadowing[:5])}{'...' if len(shadowing) > 5 else ''}); providers that prefer user scope will load those instead")
+    return 0 if healthy else 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("install", "uninstall", "doctor"), nargs="?", default="install")
+    parser.add_argument("--project", help="install into this repository instead of the user's skill directories")
+    parser.add_argument("--harness", default="all", help="comma list of " + ",".join(HARNESSES) + ", or all")
+    parser.add_argument("--replace", action="store_true", help="move conflicting skills aside; uninstall restores them")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+    args.harness = HARNESSES if args.harness == "all" else tuple(h.strip() for h in args.harness.split(","))
+    unknown = set(args.harness) - set(HARNESSES)
+    if unknown:
+        parser.error(f"unknown harness {', '.join(sorted(unknown))}")
+    return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
 
 
 def run_install(home, *args):
-    env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
+    return _run(home, ROOT, args)
+
+
+def _env(home):
+    env = os.environ.copy()
+    env.pop("XDG_CONFIG_HOME", None)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env["HOME"] = str(home)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def _run(home, checkout, args):
     return subprocess.run(
-        [sys.executable, str(ROOT / "scripts/install.py"), *args],
-        env=env,
+        [sys.executable, str(Path(checkout) / "scripts" / "install.py"), *args],
+        env=_env(home),
+        cwd=home,
         capture_output=True,
         text=True,
     )
@@ -84,18 +380,23 @@ def state_dir(home):
     return home / ".config" / "pstack-t3"
 
 
-def v2_file(home):
-    return state_dir(home) / "install-manifest-v2.json"
-
-
 def legacy_file(home):
     return state_dir(home) / "install-manifest.json"
 
 
-def make_checkout(home, name):
+def owner_file(home, checkout):
+    digest = hashlib.sha256(str(checkout).encode()).hexdigest()[:16]
+    return state_dir(home) / "install-owners" / f"{digest}.json"
+
+
+def make_checkout(home, name, old=False):
     checkout = home / "checkouts" / name
     (checkout / "scripts").mkdir(parents=True)
-    shutil.copy(ROOT / "scripts" / "install.py", checkout / "scripts" / "install.py")
+    target = checkout / "scripts" / "install.py"
+    if old:
+        target.write_bytes(OLD_INSTALLER.encode())
+    else:
+        shutil.copy(ROOT / "scripts" / "install.py", target)
     for skill in NAMES:
         directory = checkout / "skills" / skill
         directory.mkdir(parents=True)
@@ -103,17 +404,12 @@ def make_checkout(home, name):
     return checkout
 
 
+def upgrade(checkout):
+    shutil.copy(ROOT / "scripts" / "install.py", checkout / "scripts" / "install.py")
+
+
 def run(home, checkout, *args):
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["XDG_CONFIG_HOME"] = str(home / ".config")
-    env.pop("CLAUDE_CONFIG_DIR", None)
-    return subprocess.run(
-        [sys.executable, str(checkout / "scripts" / "install.py"), *args],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    return _run(home, checkout, args)
 
 
 def snapshot(root):
@@ -136,22 +432,19 @@ def snapshot(root):
     return tuple(records)
 
 
-def read_v2(home):
-    return json.loads(v2_file(home).read_text())
+def read_legacy(home):
+    return json.loads(legacy_file(home).read_text())
 
 
-def link_pairs(home):
-    return {(row["path"], row["checkout"]) for row in read_v2(home)["links"]}
+def read_owner(home, checkout):
+    file = owner_file(home, checkout)
+    if not file.exists():
+        return None
+    return json.loads(file.read_text())
 
 
-def grok_pairs(home, checkout):
-    return {(str(provider_link(home, "grok", name)), str(checkout)) for name in NAMES}
-
-
-def write_v2(home, links, backups):
-    file = v2_file(home)
-    file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(json.dumps({"links": links, "backups": backups}, indent=2) + "\n")
+def grok_paths(home):
+    return [str(provider_link(home, "grok", name)) for name in NAMES]
 
 
 def plant_links(home, checkout, harness="grok"):
@@ -161,6 +454,86 @@ def plant_links(home, checkout, harness="grok"):
         if link.is_symlink() or link.exists():
             link.unlink()
         os.symlink(checkout / "skills" / name, link)
+
+
+def write_owner(home, checkout, paths, harnesses=("grok",)):
+    file = owner_file(home, checkout)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    links = {path: {"harnesses": list(harnesses)} for path in paths}
+    file.write_text(json.dumps({"checkout": str(checkout), "links": links}, indent=2) + "\n")
+
+
+def write_legacy(home, links, backups):
+    file = legacy_file(home)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(json.dumps({"links": links, "backups": backups}, indent=2) + "\n")
+
+
+def pause_after_load(home, checkout, args):
+    ready = home / f"ready-{checkout.name}"
+    go = home / f"go-{checkout.name}"
+    wrapper = home / f"pause-{checkout.name}.py"
+    installer = str(checkout / "scripts" / "install.py")
+    wrapper.write_text(
+        "import importlib.util, sys, time\n"
+        "from pathlib import Path\n"
+        f"spec = importlib.util.spec_from_file_location('installer', {installer!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = module\n"
+        "spec.loader.exec_module(module)\n"
+        "original = module.load\n"
+        "def paused(*args):\n"
+        "    result = original(*args)\n"
+        f"    Path({str(ready)!r}).touch()\n"
+        "    deadline = time.monotonic() + 30\n"
+        f"    while not Path({str(go)!r}).exists():\n"
+        "        if time.monotonic() > deadline:\n"
+        "            raise RuntimeError('barrier timeout')\n"
+        "        time.sleep(0.01)\n"
+        "    return result\n"
+        "module.load = paused\n"
+        "sys.exit(module.main())\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(wrapper), *args],
+        env=_env(home),
+        cwd=home,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return proc, ready, go
+
+
+def squat_uninstall(home, checkout, path, payload, *args):
+    wrapper = home / f"squat-{checkout.name}.py"
+    installer = str(checkout / "scripts" / "install.py")
+    wrapper.write_text(
+        "import importlib.util, sys, os\n"
+        "from pathlib import Path\n"
+        f"spec = importlib.util.spec_from_file_location('installer', {installer!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = module\n"
+        "spec.loader.exec_module(module)\n"
+        "original = os.unlink\n"
+        "changed = False\n"
+        "def race_unlink(target, *args, **kwargs):\n"
+        "    global changed\n"
+        "    result = original(target, *args, **kwargs)\n"
+        f"    if str(target) == {str(path)!r} and not changed:\n"
+        "        changed = True\n"
+        f"        Path(target).write_bytes({payload!r})\n"
+        "    return result\n"
+        "os.unlink = race_unlink\n"
+        "sys.exit(module.main())\n"
+    )
+    return subprocess.run(
+        [sys.executable, str(wrapper), *args],
+        env=_env(home),
+        cwd=home,
+        capture_output=True,
+        text=True,
+    )
 
 
 class OwnershipTest(unittest.TestCase):
@@ -177,17 +550,30 @@ class OwnershipTest(unittest.TestCase):
         for line in lines:
             self.assertIn(line, got)
 
-    def assert_no_manifest(self):
-        self.assertFalse(v2_file(self.home).exists())
-        self.assertFalse(legacy_file(self.home).exists())
+    def assert_empty_records(self):
+        self.assertTrue(legacy_file(self.home).is_file())
+        data = read_legacy(self.home)
+        self.assertEqual(data["links"], [])
+        self.assertEqual(data["backups"], [])
+        owners = state_dir(self.home) / "install-owners"
+        found = list(owners.glob("*.json")) if owners.is_dir() else []
+        self.assertEqual(found, [])
 
-    def assert_grok_text(self, checkout):
-        for name in NAMES:
-            self.assertEqual(os.readlink(provider_link(self.home, "grok", name)), str(checkout / "skills" / name))
+    def assert_claims(self, checkout, paths):
+        data = read_owner(self.home, checkout)
+        self.assertIsNotNone(data, checkout)
+        self.assertEqual(data["checkout"], str(checkout))
+        self.assertEqual(set(data["links"]), set(paths))
 
-    def assert_grok_gone(self):
-        for name in NAMES:
-            self.assertFalse(os.path.lexists(provider_link(self.home, "grok", name)))
+    def assert_grok_text(self, checkout, names=NAMES):
+        for name in names:
+            link = provider_link(self.home, "grok", name)
+            self.assertEqual(os.readlink(link), str(checkout / "skills" / name), name)
+            self.assertEqual((link / "SKILL.md").read_bytes(), (checkout / "skills" / name / "SKILL.md").read_bytes())
+
+    def assert_gone(self, names=NAMES, harness="grok"):
+        for name in names:
+            self.assertFalse(os.path.lexists(provider_link(self.home, harness, name)))
 
     def two(self):
         return make_checkout(self.home, "a"), make_checkout(self.home, "b")
@@ -198,14 +584,17 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         return a, b
 
+    def test_old_installer_matches_397d163(self):
+        self.assertEqual(hashlib.sha256(OLD_INSTALLER.encode()).hexdigest(), OLD_SHA)
+
     def test_row_1_replaced_owner_stays_tracked(self):
         a, b = self.base()
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, a))
+        self.assert_claims(a, grok_paths(self.home))
         self.assert_grok_text(a)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def test_row_1b_owner_withdraws_links_another_checkout_moved_aside(self):
         a, b = self.base()
@@ -215,10 +604,10 @@ class OwnershipTest(unittest.TestCase):
             "3 of them had been moved aside by another checkout's --replace",
         )
         self.assert_grok_text(b)
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, b))
+        self.assert_claims(b, grok_paths(self.home))
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def repoint_swarm(self, target):
         link = provider_link(self.home, "grok", "swarm")
@@ -228,11 +617,19 @@ class OwnershipTest(unittest.TestCase):
 
     def assert_repoint_survives(self, a, text):
         link = provider_link(self.home, "grok", "swarm")
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 2 links, restored 0 entries",
+            KEPT.format(n=1),
+        )
         self.assertEqual(os.readlink(link), text)
-        self.assert_no_manifest()
+        self.assert_claims(a, [str(link)])
         before = snapshot(self.home)
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 0 links, restored 0 entries",
+            KEPT.format(n=1),
+        )
         self.assertEqual(snapshot(self.home), before)
         self.assertEqual(os.readlink(link), text)
 
@@ -243,6 +640,12 @@ class OwnershipTest(unittest.TestCase):
         target.mkdir()
         text = self.repoint_swarm(target)
         self.assert_repoint_survives(a, text)
+        link = provider_link(self.home, "grok", "swarm")
+        link.unlink()
+        os.symlink(a / "skills" / "swarm", link)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 1 links, restored 0 entries")
+        self.assertFalse(os.path.lexists(link))
+        self.assert_empty_records()
 
     def test_row_3_repointed_dangling_link_is_left_alone(self):
         a, b = self.base()
@@ -261,9 +664,10 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
         self.assertEqual(os.readlink(link), text)
+        self.assertEqual((link / "SKILL.md").read_bytes(), (target / "SKILL.md").read_bytes() if (target / "SKILL.md").exists() else (link / "SKILL.md").read_bytes())
         for name in ("alpha", "pstack-runtime"):
             self.assertFalse(os.path.lexists(provider_link(self.home, "grok", name)))
-        self.assert_no_manifest()
+        self.assert_empty_records()
         before = snapshot(self.home)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assertEqual(snapshot(self.home), before)
@@ -271,7 +675,9 @@ class OwnershipTest(unittest.TestCase):
     def test_row_4_foreign_symlink_comes_back_untracked(self):
         target = self.home / "foreign-target"
         target.mkdir()
+        (target / "SKILL.md").write_text("foreign-skill\n")
         self.foreign_then_both_uninstall(target)
+        self.assertEqual((provider_link(self.home, "grok", "swarm") / "SKILL.md").read_text(), "foreign-skill\n")
 
     def test_row_5_repointed_lookalike_link_is_left_alone(self):
         a, b = self.base()
@@ -280,16 +686,21 @@ class OwnershipTest(unittest.TestCase):
         (lookalike / "scripts").mkdir(parents=True)
         (lookalike / "scripts" / "install.py").write_text("print('unrelated installer')\n")
         (lookalike / "skills" / "swarm").mkdir(parents=True)
+        (lookalike / "skills" / "swarm" / "SKILL.md").write_text("lookalike\n")
         text = self.repoint_swarm(lookalike / "skills" / "swarm")
         self.assert_repoint_survives(a, text)
         self.assertEqual((lookalike / "scripts" / "install.py").read_text(), "print('unrelated installer')\n")
+        self.assertEqual((lookalike / "skills" / "swarm" / "SKILL.md").read_text(), "lookalike\n")
 
     def test_row_6_lookalike_symlink_comes_back_untracked(self):
         lookalike = self.home / "lookalike"
         (lookalike / "scripts").mkdir(parents=True)
         (lookalike / "scripts" / "install.py").write_text("print('unrelated installer')\n")
         (lookalike / "skills" / "swarm").mkdir(parents=True)
+        (lookalike / "skills" / "swarm" / "SKILL.md").write_text("lookalike\n")
         self.foreign_then_both_uninstall(lookalike / "skills" / "swarm")
+        self.assertEqual((lookalike / "scripts" / "install.py").read_text(), "print('unrelated installer')\n")
+        self.assertEqual((provider_link(self.home, "grok", "swarm") / "SKILL.md").read_text(), "lookalike\n")
 
     def alias_of(self, checkout):
         alias = self.home / "a-alias"
@@ -306,20 +717,31 @@ class OwnershipTest(unittest.TestCase):
         os.symlink(text, link)
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
-        self.ok(run(self.home, alias, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
+        self.ok(
+            run(self.home, alias, "--harness", "grok", "uninstall"),
+            "removed 2 links, restored 0 entries",
+            KEPT.format(n=1),
+        )
         self.assertEqual(os.readlink(link), text)
-        self.assert_no_manifest()
+        self.assertEqual((link / "SKILL.md").read_bytes(), (a / "skills" / "swarm" / "SKILL.md").read_bytes())
+        self.assert_claims(a, [str(link)])
+        before = snapshot(self.home)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.assertEqual(snapshot(self.home), before)
         self.assertEqual(os.readlink(link), text)
 
     def test_row_7u_legacy_rows_do_not_adopt_an_alias_spelling(self):
         a, b = self.two()
         alias = self.alias_of(a)
         self.ok(run(self.home, a, "--harness", "grok"))
-        data = read_v2(self.home)
-        legacy = {"links": [{"harnesses": row["harnesses"], "path": row["path"]} for row in data["links"]], "backups": []}
-        v2_file(self.home).unlink()
-        legacy_file(self.home).write_text(json.dumps(legacy) + "\n")
+        paths = grok_paths(self.home)
+        v2 = state_dir(self.home) / "install-manifest-v2.json"
+        if v2.exists():
+            v2.unlink()
+        owner = owner_file(self.home, a)
+        if owner.exists():
+            owner.unlink()
+        write_legacy(self.home, [{"harnesses": ["grok"], "path": path} for path in paths], [])
         link = provider_link(self.home, "grok", "swarm")
         link.unlink()
         text = str(alias / "skills" / "swarm")
@@ -328,9 +750,12 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
         self.ok(run(self.home, alias, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
         self.assertEqual(os.readlink(link), text)
-        self.assert_no_manifest()
+        self.assertEqual((link / "SKILL.md").read_bytes(), (a / "skills" / "swarm" / "SKILL.md").read_bytes())
+        left = read_legacy(self.home)["links"]
+        self.assertEqual(left, [{"harnesses": ["grok"], "path": str(link)}])
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assertEqual(os.readlink(link), text)
+        self.assertEqual(read_legacy(self.home)["links"], [{"harnesses": ["grok"], "path": str(link)}])
 
     def test_row_8_relative_link_text_is_restored_exactly(self):
         a, b = self.two()
@@ -345,24 +770,26 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
         for name in NAMES:
-            self.assertEqual(os.readlink(provider_link(self.home, "grok", name)), expected[name])
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, a))
+            link = provider_link(self.home, "grok", name)
+            self.assertEqual(os.readlink(link), expected[name])
+            self.assertEqual((link / "SKILL.md").read_bytes(), (a / "skills" / name / "SKILL.md").read_bytes())
+        self.assert_claims(a, grok_paths(self.home))
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def test_row_9_alias_invocation_records_the_canonical_checkout(self):
         a, b = self.two()
         alias = self.alias_of(a)
         self.ok(run(self.home, alias, "--harness", "grok"))
         self.assert_grok_text(a)
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, a))
+        self.assert_claims(a, grok_paths(self.home))
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, a))
+        self.assert_claims(a, grok_paths(self.home))
         self.ok(run(self.home, alias, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def share_skills(self, source, dest):
         shutil.rmtree(dest / "skills")
@@ -372,10 +799,10 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, installer, "--harness", "grok"))
         self.ok(run(self.home, other, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assert_grok_text(installer)
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, installer))
+        self.assert_claims(installer, grok_paths(self.home))
         self.ok(run(self.home, installer, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def test_row_10_forward_shared_skills_tree(self):
         a, b = self.two()
@@ -400,12 +827,16 @@ class OwnershipTest(unittest.TestCase):
             self.assertTrue(os.path.lexists(link))
             self.assertFalse(os.path.exists(link))
             self.assertEqual(os.readlink(link), texts[name])
-        self.assertEqual(
-            link_pairs(self.home),
-            {(str(provider_link(self.home, "codex", name)), str(later)) for name in NAMES},
-        )
+        self.assert_claims(a, grok_paths(self.home))
+        codex_paths = [str(provider_link(self.home, "codex", name)) for name in NAMES]
+        self.assert_claims(later, codex_paths)
         self.ok(run(self.home, later, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_no_manifest()
+        for name in NAMES:
+            self.assertEqual(os.readlink(provider_link(self.home, "grok", name)), texts[name])
+        self.assert_claims(a, grok_paths(self.home))
+        tagged = [row for row in read_legacy(self.home)["links"] if row.get("checkout") == str(a)]
+        self.assertEqual({row["path"] for row in tagged}, set(grok_paths(self.home)))
+        self.assertIsNone(read_owner(self.home, later))
 
     def test_row_11b_deleted_owner_is_restored_untracked_beside_a_live_owner(self):
         a, b = self.two()
@@ -421,12 +852,13 @@ class OwnershipTest(unittest.TestCase):
             self.assertTrue(os.path.lexists(link))
             self.assertFalse(os.path.exists(link))
             self.assertEqual(os.readlink(link), texts[name])
-        self.assertEqual(
-            link_pairs(self.home),
-            {(str(provider_link(self.home, "codex", name)), str(later)) for name in NAMES},
-        )
+        self.assert_claims(a, grok_paths(self.home))
+        self.assert_claims(later, [str(provider_link(self.home, "codex", name)) for name in NAMES])
         self.ok(run(self.home, later, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_no_manifest()
+        for name in NAMES:
+            self.assertEqual(os.readlink(provider_link(self.home, "grok", name)), texts[name])
+        self.assert_claims(a, grok_paths(self.home))
+        self.assert_gone(harness="codex")
 
     def test_row_12a_dry_run_matches_a_covered_foreign_file(self):
         a, b = self.two()
@@ -439,14 +871,16 @@ class OwnershipTest(unittest.TestCase):
         self.ok(
             run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"),
             "would remove 0 links, would restore 0 entries",
+            "is occupied; clear it and rerun uninstall",
         )
         self.assertEqual(snapshot(self.home), before)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.assertEqual(snapshot(self.home), before)
         self.assert_grok_text(b)
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
         self.assertEqual(swarm.read_bytes(), b"foreign\x00file\n")
         self.assertFalse(swarm.is_symlink())
-        self.assert_no_manifest()
+        self.assert_empty_records()
 
     def test_row_12b_dry_run_counts_each_path_once(self):
         a, b = self.base()
@@ -459,21 +893,23 @@ class OwnershipTest(unittest.TestCase):
         self.assert_grok_text(b)
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
         self.assert_grok_text(a)
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, a))
+        self.assert_claims(a, grok_paths(self.home))
 
     def test_row_13_three_replace_cycles_keep_one_row_per_path(self):
         a, b = self.two()
         self.ok(run(self.home, a, "--harness", "grok"))
+        paths = grok_paths(self.home)
         for _ in range(3):
             self.ok(run(self.home, b, "--harness", "grok", "--replace"))
             self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
-            data = read_v2(self.home)
-            self.assertEqual(len(data["links"]), 3)
-            self.assertEqual(len({row["path"] for row in data["links"]}), 3)
-            self.assertEqual({row["checkout"] for row in data["links"]}, {str(a)})
+            self.assert_claims(a, paths)
+            tagged = [row for row in read_legacy(self.home)["links"] if row.get("checkout") == str(a)]
+            self.assertEqual(len(tagged), 3)
+            self.assertEqual({row["path"] for row in tagged}, set(paths))
+            self.assertIsNone(read_owner(self.home, b))
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assert_empty_records()
 
     def legacy_links(self, shape, paths):
         links = []
@@ -485,44 +921,58 @@ class OwnershipTest(unittest.TestCase):
             else:
                 row = path
             links.append(row)
-            links.append(row)
+            links.append(json.loads(json.dumps(row)))
         return links
 
     def plant_legacy(self, shape):
         a = make_checkout(self.home, "a")
         self.ok(run(self.home, a, "--harness", "grok"))
-        paths = [str(provider_link(self.home, "grok", name)) for name in NAMES]
-        v2_file(self.home).unlink()
-        legacy_file(self.home).write_text(json.dumps({"links": self.legacy_links(shape, paths), "backups": []}) + "\n")
+        paths = grok_paths(self.home)
+        v2 = state_dir(self.home) / "install-manifest-v2.json"
+        if v2.exists():
+            v2.unlink()
+        owner = owner_file(self.home, a)
+        if owner.exists():
+            owner.unlink()
+        write_legacy(self.home, self.legacy_links(shape, paths), [])
         return a, paths
+
+    def legacy_rows(self):
+        return read_legacy(self.home)["links"]
 
     def legacy_shape(self, shape):
         a, paths = self.plant_legacy(shape)
-        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)")
-        self.assertFalse(legacy_file(self.home).exists())
-        data = read_v2(self.home)
-        self.assertEqual(len(data["links"]), 3)
-        self.assertEqual({(row["path"], row["checkout"]) for row in data["links"]}, {(path, str(a)) for path in paths})
+        planted = self.legacy_rows()
+        adopted = run(self.home, a, "--harness", "grok")
+        self.ok(adopted, "linked 0 skills into nothing (already installed)", ADOPTED.format(n=3))
+        self.assertNotIn(UNTRACKED, adopted.stdout)
+        self.assertEqual(self.legacy_rows(), planted)
+        self.assert_claims(a, paths)
+        self.assert_grok_text(a)
 
         self.use_fresh()
         a, paths = self.plant_legacy(shape)
         b = make_checkout(self.home, "b")
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
-        self.assertEqual(link_pairs(self.home), {(path, str(a)) for path in paths})
+        self.assert_grok_text(a)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assertIsNone(read_owner(self.home, a))
+        self.assertEqual(len(self.legacy_rows()), 3)
+        self.assertEqual(set(self._row_path(row) for row in self.legacy_rows()), set(paths))
 
         self.use_fresh()
         a, paths = self.plant_legacy(shape)
         b = make_checkout(self.home, "b")
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
-        self.assertEqual(link_pairs(self.home), {(path, str(a)) for path in paths})
         self.assert_grok_text(a)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assertEqual(len(self.legacy_rows()), 3)
+
+    def _row_path(self, row):
+        return row["path"] if isinstance(row, dict) else row
 
     def test_row_14_harnesses_shape(self):
         self.legacy_shape("harnesses")
@@ -547,8 +997,7 @@ class OwnershipTest(unittest.TestCase):
             links.append({"harnesses": ["grok"], "path": original})
             links.append({"harnesses": ["grok"], "path": original})
             backups.append({"harnesses": ["grok"], "original": original, "backup": str(backup)})
-        legacy_file(self.home).parent.mkdir(parents=True, exist_ok=True)
-        legacy_file(self.home).write_text(json.dumps({"links": links, "backups": backups}) + "\n")
+        write_legacy(self.home, links, backups)
         sentinel = self.home / "sentinel.txt"
         sentinel.write_text("keep\n")
         skill_bytes = {
@@ -558,56 +1007,51 @@ class OwnershipTest(unittest.TestCase):
         }
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
         self.assert_grok_text(a)
-        self.assert_no_manifest()
         for path, content in skill_bytes.items():
             self.assertEqual(path.read_bytes(), content)
         self.assertEqual(sentinel.read_text(), "keep\n")
-        self.ok(
-            run(self.home, a, "--harness", "grok"),
-            "linked 0 skills into nothing (already installed)",
-            "3 links already point at this checkout but are not tracked; uninstall leaves them",
-        )
-        self.assertFalse(v2_file(self.home).exists())
+        adopted = run(self.home, a, "--harness", "grok")
+        self.ok(adopted, "linked 0 skills into nothing (already installed)", ADOPTED.format(n=3))
+        self.assertNotIn(UNTRACKED, adopted.stdout)
+        self.assert_claims(a, grok_paths(self.home))
         self.assert_grok_text(a)
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
-        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
         self.assertEqual(sentinel.read_text(), "keep\n")
+        for path, content in skill_bytes.items():
+            self.assertEqual(path.read_bytes(), content)
 
     def test_row_14c_old_manifest_file_cannot_erase_current_rows(self):
         a = make_checkout(self.home, "a")
         other = make_checkout(self.home, "c")
         self.ok(run(self.home, a, "--harness", "grok"))
-        self.assertTrue(v2_file(self.home).exists())
-        self.assertFalse(legacy_file(self.home).exists())
-        before = v2_file(self.home).read_bytes()
+        before = owner_file(self.home, a).read_bytes()
         plant_links(self.home, other, "codex")
-        legacy_file(self.home).write_text(json.dumps({
-            "links": [{"harnesses": ["codex"], "path": str(provider_link(self.home, "codex", name))} for name in NAMES],
-            "backups": [],
-        }) + "\n")
         legacy_file(self.home).unlink()
-        self.assertEqual(v2_file(self.home).read_bytes(), before)
+        self.assertEqual(owner_file(self.home, a).read_bytes(), before)
+        self.assertFalse(legacy_file(self.home).exists())
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
-        self.assert_no_manifest()
+        self.assert_gone()
+        self.assertFalse(legacy_file(self.home).exists())
+        self.assertIsNone(read_owner(self.home, a))
         for name in NAMES:
             link = provider_link(self.home, "codex", name)
             self.assertEqual(os.readlink(link), str(other / "skills" / name))
+            self.assertEqual((link / "SKILL.md").read_bytes(), (other / "skills" / name / "SKILL.md").read_bytes())
 
     def test_project_scope_refuses_a_directory_shared_with_user_scope(self):
         a = make_checkout(self.home, "a")
         self.ok(run(self.home, a, "--harness", "grok"))
-        before = v2_file(self.home).read_bytes()
+        before = snapshot(state_dir(self.home))
         project = self.home / "project"
         project_skills = project / ".grok" / "skills"
         project_skills.parent.mkdir(parents=True)
         os.symlink(self.home / ".grok" / "skills", project_skills)
         refusal = f"grok: {project_skills} already resolves to {self.home / '.grok' / 'skills'}; nothing to link"
         self.ok(run(self.home, a, "--project", str(project), "--harness", "grok"), refusal)
-        self.assertEqual(v2_file(self.home).read_bytes(), before)
+        self.assertEqual(snapshot(state_dir(self.home)), before)
         self.assert_grok_text(a)
-        self.assertFalse((project / ".pstack" / "install-manifest-v2.json").exists())
-        self.assertFalse((project / ".pstack" / "install-manifest.json").exists())
+        self.assertFalse((project / ".pstack").exists())
 
     def share_cursor_with_agents(self):
         agents = self.home / ".agents" / "skills"
@@ -635,13 +1079,11 @@ class OwnershipTest(unittest.TestCase):
             "3 of them had been moved aside by another checkout's --replace",
         )
         self.assertEqual(os.readlink(agents / "swarm"), str(b / "skills" / "swarm"))
-        self.ok(
-            run(self.home, b, "--harness", "codex,cursor", "uninstall"),
-            "removed 3 links, restored 1 entries",
-        )
+        self.assertEqual((agents / "swarm" / "SKILL.md").read_bytes(), (b / "skills" / "swarm" / "SKILL.md").read_bytes())
+        self.ok(run(self.home, b, "--harness", "codex,cursor", "uninstall"), "removed 3 links, restored 1 entries")
         self.assertEqual((agents / "swarm").read_bytes(), b"foreign\x00file\n")
         self.assertFalse((agents / "swarm").is_symlink())
-        self.assert_no_manifest()
+        self.assert_empty_records()
 
     def test_partial_selection_does_not_restore_over_a_live_link(self):
         a = make_checkout(self.home, "a")
@@ -669,15 +1111,20 @@ class OwnershipTest(unittest.TestCase):
         foreign.parent.mkdir(parents=True)
         foreign.write_bytes(b"keep-me\n")
         swarm = provider_link(self.home, "grok", "swarm")
-        write_v2(self.home, [{"path": str(swarm), "harnesses": ["grok"], "checkout": str(a)}], [])
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        write_owner(self.home, a, [str(swarm)])
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 0 links, restored 0 entries",
+            KEPT.format(n=1),
+        )
         self.assertFalse(os.path.lexists(swarm))
         self.assertEqual(foreign.read_bytes(), b"keep-me\n")
-        self.assert_no_manifest()
+        self.assert_claims(a, [str(swarm)])
 
         self.use_fresh()
         a = make_checkout(self.home, "a")
         plant_links(self.home, a)
+        paths = grok_paths(self.home)
         backups = []
         for name in NAMES:
             link = str(provider_link(self.home, "grok", name))
@@ -685,15 +1132,16 @@ class OwnershipTest(unittest.TestCase):
                 "original": link,
                 "harnesses": ["grok"],
                 "backup": str(state_dir(self.home) / "backups" / "missing" / name),
-                "displaced": {"path": link, "harnesses": ["grok"], "checkout": str(a)},
             })
-        write_v2(self.home, [], backups)
+        write_owner(self.home, a, paths)
+        write_legacy(self.home, [], backups)
         kept = self.home / "kept.txt"
         kept.write_text("kept\n")
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
+        self.assert_gone()
         self.assertEqual(kept.read_text(), "kept\n")
-        self.assert_no_manifest()
+        self.assertEqual(len(read_legacy(self.home)["backups"]), 3)
+        self.assertIsNone(read_owner(self.home, a))
 
         self.use_fresh()
         a = make_checkout(self.home, "a")
@@ -701,25 +1149,24 @@ class OwnershipTest(unittest.TestCase):
         swarm = provider_link(self.home, "grok", "swarm")
         swarm.unlink()
         swarm.write_bytes(b"foreign\x00file\n")
-        links = [
-            {"path": str(provider_link(self.home, "grok", name)), "harnesses": ["grok"], "checkout": str(a)}
-            for name in NAMES
-        ]
-        write_v2(self.home, links, [])
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
+        write_owner(self.home, a, grok_paths(self.home))
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 2 links, restored 0 entries",
+            KEPT.format(n=1),
+        )
         self.assertEqual(swarm.read_bytes(), b"foreign\x00file\n")
         self.assertFalse(swarm.is_symlink())
         for name in ("alpha", "pstack-runtime"):
             self.assertFalse(os.path.lexists(provider_link(self.home, "grok", name)))
-        self.assert_no_manifest()
+        self.assert_claims(a, [str(swarm)])
 
         self.use_fresh()
         a, b = self.two()
         plant_links(self.home, b)
-        links = [
-            {"path": str(provider_link(self.home, "grok", name)), "harnesses": ["grok"], "checkout": str(b)}
-            for name in NAMES
-        ]
+        paths = grok_paths(self.home)
+        write_owner(self.home, b, paths)
+        write_owner(self.home, a, paths)
         backups = []
         for name in NAMES:
             link = str(provider_link(self.home, "grok", name))
@@ -727,37 +1174,40 @@ class OwnershipTest(unittest.TestCase):
                 "original": link,
                 "harnesses": ["grok"],
                 "backup": str(state_dir(self.home) / "backups" / "gone" / name),
-                "displaced": {"path": link, "harnesses": ["grok"], "checkout": str(a)},
             })
-        write_v2(self.home, links, backups)
+        write_legacy(self.home, [], backups)
         kept = self.home / "kept.txt"
         kept.write_text("kept\n")
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assert_grok_text(b)
-        self.assertEqual(link_pairs(self.home), grok_pairs(self.home, b))
+        self.assert_claims(a, paths)
+        self.assert_claims(b, paths)
         self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
+        self.assert_gone()
         self.assertEqual(kept.read_text(), "kept\n")
-        self.assert_no_manifest()
+        self.assert_claims(a, paths)
+        self.assertIsNone(read_owner(self.home, b))
+        self.assertEqual(len(read_legacy(self.home)["backups"]), 3)
 
         self.use_fresh()
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         swarm.parent.mkdir(parents=True)
         swarm.write_bytes(b"foreign\x00file\n")
-        write_v2(self.home, [], [{
+        write_legacy(self.home, [], [{
             "original": str(swarm),
             "harnesses": ["grok"],
             "backup": str(state_dir(self.home) / "backups" / "gone" / "swarm"),
-            "displaced": None,
+            "note": "keep",
         }])
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assertEqual(swarm.read_bytes(), b"foreign\x00file\n")
-        self.assert_no_manifest()
+        self.assertEqual(read_legacy(self.home)["backups"][0]["note"], "keep")
 
         self.use_fresh()
         a = make_checkout(self.home, "a")
         plant_links(self.home, a)
+        paths = grok_paths(self.home)
         backups = []
         for name in NAMES:
             link = str(provider_link(self.home, "grok", name))
@@ -765,12 +1215,314 @@ class OwnershipTest(unittest.TestCase):
                 "original": link,
                 "harnesses": ["grok"],
                 "backup": str(state_dir(self.home) / "backups" / "gone" / name),
-                "displaced": {"path": link, "harnesses": ["grok"], "checkout": str(a)},
+                "note": "keep",
             })
-        write_v2(self.home, [], backups)
+        write_owner(self.home, a, paths)
+        write_legacy(self.home, [], backups)
         kept = self.home / "kept.txt"
         kept.write_text("kept\n")
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
-        self.assert_grok_gone()
+        self.assert_gone()
         self.assertEqual(kept.read_text(), "kept\n")
-        self.assert_no_manifest()
+        self.assertEqual([row["note"] for row in read_legacy(self.home)["backups"]], ["keep", "keep", "keep"])
+        self.assertIsNone(read_owner(self.home, a))
+
+    def resume(self, proc, ready, go, during):
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.exists():
+                if proc.poll() is not None:
+                    out, err = proc.communicate()
+                    self.fail(f"paused install exited early\n{out}\n{err}")
+                if time.monotonic() > deadline:
+                    self.fail("paused install did not reach load")
+                time.sleep(0.01)
+            during()
+            go.touch()
+            out, err = proc.communicate(timeout=30)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        self.assertEqual(proc.returncode, 0, err + out)
+        return out
+
+    def test_f1a_paused_noop_race_when_legacy_is_created(self):
+        a = make_checkout(self.home, "a")
+        c = make_checkout(self.home, "c", old=True)
+        self.ok(run(self.home, a, "--harness", "grok"))
+        proc, ready, go = pause_after_load(self.home, a, ["--harness", "grok"])
+        out = self.resume(proc, ready, go, lambda: self.ok(run(self.home, c, "--harness", "codex")))
+        self.assertIn("already installed", out)
+        self.ok(run(self.home, c, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+
+    def test_f1a_paused_noop_race_when_legacy_already_exists(self):
+        a = make_checkout(self.home, "a", old=True)
+        c = make_checkout(self.home, "c", old=True)
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.assertTrue(legacy_file(self.home).is_file())
+        upgrade(a)
+        proc, ready, go = pause_after_load(self.home, a, ["--harness", "grok"])
+        out = self.resume(proc, ready, go, lambda: self.ok(run(self.home, c, "--harness", "codex")))
+        self.assertIn("already installed", out)
+        self.ok(run(self.home, c, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+        self.assert_grok_text(a)
+        upgrade(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+
+    def test_f1b_older_operator_still_uninstalls(self):
+        a = make_checkout(self.home, "a", old=True)
+        b = make_checkout(self.home, "b")
+        swarm = provider_link(self.home, "grok", "swarm")
+        swarm.parent.mkdir(parents=True)
+        swarm.write_bytes(b"operator foreign\x00bytes")
+        self.ok(run(self.home, a, "--harness", "grok", "--replace"))
+        self.ok(run(self.home, b, "--harness", "codex"))
+        self.ok(run(self.home, b, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"operator foreign\x00bytes")
+        self.assertFalse(swarm.is_symlink())
+        self.assert_gone(("alpha", "pstack-runtime"))
+
+    def test_f1c_mixed_replacement_keeps_the_first_owner(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b", old=True)
+        c = make_checkout(self.home, "c")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        self.ok(run(self.home, c, "--harness", "codex"))
+        upgrade(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.ok(run(self.home, c, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+        self.assert_empty_records()
+
+    def test_f1d_mixed_replacement_restores_the_newer_layer(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b", old=True)
+        c = make_checkout(self.home, "c")
+        swarm = provider_link(self.home, "grok", "swarm")
+        swarm.parent.mkdir(parents=True)
+        swarm.write_bytes(b"initial foreign\x00")
+        self.ok(run(self.home, a, "--harness", "grok", "--replace"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        self.ok(run(self.home, c, "--harness", "codex"))
+        upgrade(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"initial foreign\x00")
+        self.assertFalse(swarm.is_symlink())
+        self.assert_gone(("alpha", "pstack-runtime"))
+
+    def _pruned(self):
+        a = make_checkout(self.home, "a", old=True)
+        c = make_checkout(self.home, "c")
+        shutil.rmtree(a / "skills" / "pstack-runtime")
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 2 skills into grok")
+        self.ok(run(self.home, c, "--harness", "codex"))
+        return a, c
+
+    def test_f1e_pruned_old_tree_uninstalls(self):
+        a, c = self._pruned()
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
+        self.assert_gone(("alpha", "swarm"))
+        self.assertEqual((a / "skills" / "swarm" / "SKILL.md").read_text(), "a-swarm\n")
+        for name in NAMES:
+            link = provider_link(self.home, "codex", name)
+            self.assertEqual(os.readlink(link), str(c / "skills" / name))
+        self.ok(run(self.home, c, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+
+    def test_f1e_pruned_old_tree_uninstalls_after_upgrade(self):
+        a, c = self._pruned()
+        upgrade(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 2 links, restored 0 entries")
+        self.assert_gone(("alpha", "swarm"))
+        for name in NAMES:
+            link = provider_link(self.home, "codex", name)
+            self.assertEqual(os.readlink(link), str(c / "skills" / name))
+            self.assertEqual((link / "SKILL.md").read_bytes(), (c / "skills" / name / "SKILL.md").read_bytes())
+        self.ok(run(self.home, c, "--harness", "codex", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="codex")
+
+    def test_f2a_blocked_restore_keeps_the_backup(self):
+        b = make_checkout(self.home, "b")
+        swarm = provider_link(self.home, "grok", "swarm")
+        swarm.parent.mkdir(parents=True)
+        swarm.write_bytes(b"original foreign\x00bytes")
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        blocked = squat_uninstall(self.home, b, swarm, b"new occupant\x00bytes", "--harness", "grok", "uninstall")
+        self.ok(blocked, "removed 3 links, restored 0 entries")
+        self.assertIn("skipped restore", blocked.stdout)
+        self.assertEqual(swarm.read_bytes(), b"new occupant\x00bytes")
+        swarm.unlink()
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"original foreign\x00bytes")
+        self.assertFalse(swarm.is_symlink())
+
+    def test_f2b_blocked_restore_keeps_the_displaced_owner(self):
+        a, b = self.two()
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        blocked = squat_uninstall(self.home, b, swarm, b"new occupant", "--harness", "grok", "uninstall")
+        self.ok(blocked, "removed 3 links, restored 2 entries")
+        self.assertIn("skipped restore", blocked.stdout)
+        self.assertEqual(swarm.read_bytes(), b"new occupant")
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 3 links, restored 0 entries",
+            "1 of them had been moved aside by another checkout's --replace",
+        )
+        self.assertEqual(swarm.read_bytes(), b"new occupant")
+        self.assertFalse(swarm.is_symlink())
+        self.assert_gone(("alpha", "pstack-runtime"))
+        before = swarm.read_bytes()
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.assertEqual(swarm.read_bytes(), before)
+
+    def test_f3a_provider_directory_move_keeps_ownership(self):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        skills = self.home / ".grok" / "skills"
+        dest = self.home / "relocated-skills"
+        skills.rename(dest)
+        skills.symlink_to(dest)
+        self.assert_grok_text(a)
+        self.ok(run(self.home, b, "--harness", "codex", "uninstall"), "removed 0 links, restored 0 entries")
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+
+    def test_f3b_dotfiles_move_restores_at_the_current_path(self):
+        a = make_checkout(self.home, "a")
+        dots1 = self.home / "dots1" / "grok"
+        (dots1 / "skills" / "swarm").mkdir(parents=True)
+        (dots1 / "skills" / "swarm" / "SKILL.md").write_bytes(b"user directory\x00bytes")
+        (self.home / ".grok").symlink_to(dots1)
+        self.ok(run(self.home, a, "--harness", "grok", "--replace"))
+        (self.home / "dots1").rename(self.home / "dots2")
+        (self.home / ".grok").unlink()
+        (self.home / ".grok").symlink_to(self.home / "dots2" / "grok")
+        doctor = run(self.home, a, "--harness", "grok", "doctor")
+        self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
+        self.assertIn("3/3 pstack-t3", doctor.stdout)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+        swarm = self.home / ".grok" / "skills" / "swarm"
+        self.assertEqual((swarm / "SKILL.md").read_bytes(), b"user directory\x00bytes")
+        self.assertFalse(swarm.is_symlink())
+        self.assertFalse((self.home / "dots1").exists())
+        self.assert_gone(("alpha", "pstack-runtime"))
+
+    def test_f4a_temporary_absence_keeps_ownership(self):
+        a = make_checkout(self.home, "a")
+        c = make_checkout(self.home, "c")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        away = self.home / "a-away"
+        a.rename(away)
+        self.ok(run(self.home, c, "--harness", "claude"))
+        away.rename(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        for name in NAMES:
+            link = provider_link(self.home, "claude", name)
+            self.assertEqual(os.readlink(link), str(c / "skills" / name))
+        self.ok(run(self.home, c, "--harness", "claude", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone(harness="claude")
+
+    def test_f4b_displaced_owner_survives_temporary_absence(self):
+        a, b = self.two()
+        c = make_checkout(self.home, "c")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        away = self.home / "a-away"
+        a.rename(away)
+        self.ok(run(self.home, c, "--harness", "claude"))
+        self.ok(run(self.home, c, "--harness", "claude", "uninstall"), "removed 3 links, restored 0 entries")
+        away.rename(a)
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 3 links, restored 0 entries",
+            "3 of them had been moved aside by another checkout's --replace",
+        )
+        self.assert_grok_text(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assert_empty_records()
+
+    def test_f4b_absent_owner_is_restored_by_the_covering_checkout(self):
+        a, b = self.two()
+        c = make_checkout(self.home, "c")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"))
+        away = self.home / "a-away"
+        a.rename(away)
+        self.ok(run(self.home, c, "--harness", "claude"))
+        self.ok(run(self.home, c, "--harness", "claude", "uninstall"), "removed 3 links, restored 0 entries")
+        away.rename(a)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assert_empty_records()
+
+    def _chain(self, foreign=False):
+        a = make_checkout(self.home, "a")
+        b = make_checkout(self.home, "b")
+        c = make_checkout(self.home, "c", old=True)
+        if foreign:
+            swarm = provider_link(self.home, "grok", "swarm")
+            swarm.parent.mkdir(parents=True)
+            swarm.write_bytes(b"stack foreign\x00")
+        for owner in (a, b, c):
+            self.ok(run(self.home, owner, "--harness", "grok", "--replace"))
+        return a, b, c
+
+    def test_f5a_mixed_generation_chain_restores_the_top_layer(self):
+        a, b, c = self._chain()
+        upgrade(c)
+        self.ok(run(self.home, c, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(b)
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            "removed 3 links, restored 0 entries",
+            "3 of them had been moved aside by another checkout's --replace",
+        )
+        self.assert_grok_text(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assert_empty_records()
+
+    def test_f5b_old_uninstall_in_the_chain_still_cleans_up(self):
+        a, b, c = self._chain()
+        self.ok(run(self.home, c, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(a)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assert_empty_records()
+
+    def test_f5c_foreign_bytes_survive_the_mixed_chain(self):
+        a, b, c = self._chain(foreign=True)
+        upgrade(c)
+        swarm = provider_link(self.home, "grok", "swarm")
+        self.ok(run(self.home, c, "--harness", "grok", "uninstall"), "removed 3 links, restored 3 entries")
+        self.assert_grok_text(b)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_grok_text(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"stack foreign\x00")
+        self.assertFalse(swarm.is_symlink())
+        self.assert_gone(("alpha", "pstack-runtime"))
