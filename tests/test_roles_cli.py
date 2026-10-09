@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "t3/scripts"))
+import roles  # noqa: E402
 
 GROK_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}
 OPUS_SEAT = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
@@ -1637,7 +1639,9 @@ class PromptCapCliTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertEqual(
             completed.stderr,
-            "error: role 'skill tests' has no non-cursor seat for a child that launches seats\n",
+            "error: role 'skill tests' has no seat for a child that launches seats: "
+            "cursor cannot launch seats, and no single-role seat in roles.json, "
+            "built-in default family, or parent names another provider\n",
         )
 
     def test_bounded_seat_launches_seats_inherits_a_non_cursor_parent(self):
@@ -1850,7 +1854,7 @@ class PromptCapCliTest(unittest.TestCase):
                 "--launches-seats",
             )
         self.assert_bounded(completed, {
-            "seat": {"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"},
+            "seat": "inherit",
             "capped": False,
             "estimate": {
                 "overheadTokens": 41000,
@@ -2462,3 +2466,416 @@ def cursor_only_catalog():
             "models": [{"id": "gemini-3.8-flash", "options": []}],
         }],
     }
+
+
+def reasoning_select(default="high"):
+    return {"id": "reasoningEffort", "type": "select", "options": [
+        {"id": "low"},
+        {"id": "medium", **({"isDefault": True} if default == "medium" else {})},
+        {"id": "high", **({"isDefault": True} if default == "high" else {})},
+        {"id": "xhigh"},
+    ]}
+
+
+def grok_claude_fast_catalog():
+    effort = reasoning_select()
+    return {"providers": [
+        {
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "grok-4.7", "options": [effort]},
+                {"id": "grok-4.7-build-fast", "options": [effort]},
+                {"id": "grok-build", "options": []},
+            ],
+        },
+        {
+            "providerInstanceId": "claudeAgent",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "claude-opus-5-5", "options": []},
+                {"id": "claude-haiku-4-5", "options": []},
+            ],
+        },
+    ]}
+
+
+def cursor_grok_catalog():
+    return {"providers": [
+        {
+            "providerInstanceId": "grok",
+            "canRunChildTask": False,
+            "constraints": ["blocked"],
+            "models": [{"id": "grok-4.7", "options": []}],
+        },
+        {
+            "providerInstanceId": "cursor",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "grok-4.7", "options": [
+                {"id": "reasoning_effort", "type": "select", "options": [
+                    {"id": "low"}, {"id": "medium"}, {"id": "high"}, {"id": "xhigh"},
+                ]},
+                {"id": "fastMode", "type": "boolean"},
+            ]}],
+        },
+    ]}
+
+
+def user_shape_catalog():
+    medium = reasoning_select("medium")
+    return {"providers": [
+        {
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "grok-4.7", "options": [reasoning_select()]},
+                {"id": "grok-4.7-build-fast", "options": []},
+            ],
+        },
+        {
+            "providerInstanceId": "claudeAgent",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "claude-opus-5-5", "options": []},
+                {"id": "claude-haiku-4-5", "options": []},
+            ],
+        },
+        {
+            "providerInstanceId": "codex",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "gpt-6-astra", "options": [medium]},
+                {"id": "gpt-6-luna", "options": [medium]},
+            ],
+        },
+        {
+            "providerInstanceId": "cursor",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "gemini-3.8-flash", "options": []}],
+        },
+    ]}
+
+
+def single_role_split(grok_seat, claude_seat, reflect=None):
+    code = (
+        "feature, refactoring",
+        "bug-fix",
+        "perf-issue",
+        "hillclimb",
+        "how explorer",
+        "why investigators",
+        "swarm workers",
+    )
+    judgment = (
+        "judgment and prose",
+        "hardest tasks",
+        "how explainer",
+        "why synthesizer",
+        "reflect judgment, divergent, synthesizer",
+    )
+    document = {name: [grok_seat] for name in code}
+    document.update({name: [claude_seat] for name in judgment})
+    document["reflect tooling"] = [reflect or grok_seat]
+    return {"roles": document}
+
+
+SHORT_ESTIMATE = {
+    "overheadTokens": 41000,
+    "briefBytes": 12,
+    "readBytes": 0,
+    "tokens": 41003,
+    "target": None,
+}
+
+
+class FastGrokCliTest(unittest.TestCase):
+    def show(self, repo, catalog, role, parent="claudeAgent/claude-opus-5-5"):
+        path = repo.directory / "catalog.json"
+        repo.put(path, catalog)
+        return repo.run("show", "--catalog", str(path), "--parent", parent, "--role", role), path
+
+    def test_fast_grok_truth_table(self):
+        cases = (
+            ("grok-4.7-build-fast", True),
+            ("x-ai/grok-code-fast-1", True),
+            ("Grok-4-Fast-Reasoning", True),
+            ("grok-build", False),
+            ("grok-4.7", False),
+            ("gpt-6.1-fast", False),
+        )
+        for model_id, expected in cases:
+            self.assertIs(roles.fast_grok(model_id), expected, model_id)
+
+    def test_launches_seats_skips_grok_build_fast(self):
+        grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        claude = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, single_role_split(grok, claude))
+            path = repo.directory / "catalog.json"
+            repo.put(path, grok_claude_fast_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        PromptCapCliTest.assert_bounded(self, completed, {
+            "seat": {"providerInstanceId": "grok", "model": "grok-build"},
+            "capped": False,
+            "estimate": SHORT_ESTIMATE,
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_skill_tests_skips_grok_build_fast(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed, _path = self.show(repo, grok_claude_fast_catalog(), "skill tests")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-build"}])
+        self.assertNotIn("notes", entry)
+
+    def test_swarm_cursor_grok_pins_fast_mode_false(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed, _path = self.show(repo, cursor_grok_catalog(), "swarm workers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["swarm workers"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "cursor",
+            "model": "grok-4.7",
+            "options": {"reasoning_effort": "xhigh", "fastMode": False},
+        }])
+
+    def test_no_preferred_default_sets_fast_mode_true(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, cursor_grok_catalog())
+            completed = repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(set(payload["roles"]), set(roles.ROLES))
+        for name, entry in payload["roles"].items():
+            for seat in entry["seats"]:
+                if isinstance(seat, dict):
+                    self.assertIsNot(seat.get("options", {}).get("fastMode"), True, name)
+
+    def test_same_family_fallback_skips_a_fast_id(self):
+        catalog = {"providers": [{
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "grok-4.7-build-fast", "options": []},
+                {"id": "grok-4.6", "options": [reasoning_select()]},
+            ],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed, _path = self.show(repo, catalog, "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "grok",
+            "model": "grok-4.6",
+            "options": {"reasoningEffort": "xhigh"},
+        }])
+
+    def test_verifier_skips_a_leading_fast_id(self):
+        catalog = {"providers": [
+            {
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "claude-opus-5-5", "options": []}],
+            },
+            {
+                "providerInstanceId": "grok",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [
+                    {"id": "grok-4.7-build-fast", "options": []},
+                    {"id": "grok-4.6", "options": []},
+                ],
+            },
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            completed, _path = self.show(repo, catalog, "verifiers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["verifiers"]
+        self.assertEqual(entry["seats"], [
+            "inherit",
+            {"providerInstanceId": "grok", "model": "grok-4.6"},
+        ])
+
+    def test_configured_fast_id_is_kept_and_noted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [
+                {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"},
+            ]}})
+            completed, path = self.show(repo, grok_claude_fast_catalog(), "bug-fix")
+            checked = repo.run(
+                "validate",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+            )
+            written = repo.run(
+                "write",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--set", "bug-fix=grok/grok-4.7-build-fast",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}])
+        self.assertEqual(entry["notes"], [
+            "kept grok/grok-4.7-build-fast from roles.json; pstack never picks a fast Grok variant itself",
+        ])
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertEqual(checked.stdout, "ok\n")
+        self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertEqual(written.stdout, f"wrote {repo.user}\n")
+
+    def test_configured_fast_mode_true_is_kept_and_noted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [{
+                "providerInstanceId": "cursor",
+                "model": "grok-4.7",
+                "options": {"fastMode": True},
+            }]}})
+            completed, _path = self.show(repo, cursor_grok_catalog(), "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "cursor",
+            "model": "grok-4.7",
+            "options": {"fastMode": True},
+        }])
+        self.assertEqual(entry["notes"], [
+            "kept cursor/grok-4.7?fastMode=true from roles.json; pstack never picks a fast Grok variant itself",
+        ])
+
+    def test_configured_fast_mode_false_has_no_note(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [{
+                "providerInstanceId": "cursor",
+                "model": "grok-4.7",
+                "options": {"fastMode": False},
+            }]}})
+            completed, _path = self.show(repo, cursor_grok_catalog(), "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "cursor",
+            "model": "grok-4.7",
+            "options": {"fastMode": False},
+        }])
+        self.assertNotIn("notes", entry)
+
+    def test_missing_model_drops_carried_fast_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"bug-fix": [{
+                "providerInstanceId": "cursor",
+                "model": "grok-9",
+                "options": {"fastMode": True},
+            }]}})
+            completed, _path = self.show(repo, cursor_grok_catalog(), "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "cursor",
+            "model": "grok-4.7",
+            "options": {"fastMode": False},
+        }])
+
+    def test_launches_seats_skips_a_free_model_outside_default_families(self):
+        cursor = {"providerInstanceId": "cursor", "model": "gemini-3.8-flash"}
+        catalog = {"providers": [
+            {
+                "providerInstanceId": "opencode",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "opencode/ling-3.0-flash-fin-free", "options": []}],
+            },
+            {
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "claude-haiku-4-5", "options": []}],
+            },
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, single_role_split(cursor, cursor))
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        body = json.loads(completed.stdout)
+        self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"})
+
+    def test_launches_seats_keeps_the_configured_family_split(self):
+        grok = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "high"}}
+        claude = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}}
+        reflect = {"providerInstanceId": "codex", "model": "gpt-6-astra"}
+        document = single_role_split(grok, claude, reflect)
+        self.assertEqual(set(document["roles"]), set(roles.SINGLE_ROLES) - {"skill tests"})
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, document)
+            path = repo.directory / "catalog.json"
+            repo.put(path, user_shape_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+
+            def launch(parent):
+                return repo.run(
+                    "bounded-seat",
+                    "--catalog", str(path),
+                    "--parent", parent,
+                    "--brief", str(brief),
+                    "--launches-seats",
+                )
+
+            claude_parent = launch("claudeAgent/claude-opus-5-5")
+            grok_parent = launch("grok/grok-4.7")
+        self.assertEqual(claude_parent.returncode, 0, claude_parent.stderr)
+        self.assertEqual(grok_parent.returncode, 0, grok_parent.stderr)
+        self.assertEqual(
+            json.loads(claude_parent.stdout)["seat"],
+            {"providerInstanceId": "codex", "model": "gpt-6-luna"},
+        )
+        self.assertEqual(
+            json.loads(grok_parent.stdout)["seat"],
+            {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        )
