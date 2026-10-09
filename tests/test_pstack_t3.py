@@ -648,6 +648,33 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(entry["seats"], ["inherit"])
         self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF))
 
+    def test_direct_resolve_keeps_exclusion_notes_when_cursor_is_ignored(self):
+        # check_shape rejects two skill tests seats at the CLI, so this calls resolve directly.
+        cfg = {
+            "budget": "default",
+            "roles": {"skill tests": [
+                {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"},
+                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
+            ]},
+            "sources": {"skill tests": "fixture-config"},
+        }
+        entry = roles.resolve(
+            cfg, CATALOG, ["skill tests"],
+            providers={"claudeAgent", "grok"}, launches_seats=True,
+        )["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-haiku-5-5",
+            "options": {"effort": "high"},
+        }])
+        self.assertEqual(entry["notes"], [
+            "skipped configured seat grok/grok-4.7-build-fast: "
+            "grok-4.7-build-fast is a fast Grok variant, and "
+            "pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker",
+        ])
+        self.assertEqual(entry["source"], "fixture-config")
+        self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF))
+
 
 class InstallTest(unittest.TestCase):
     def run_install(self, home, *args):

@@ -886,9 +886,7 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
             selection = default_seats(name, catalog, budget, role_providers)
             if isinstance(selection.seats, str):
                 entry["seats"] = selection.seats
-                if skipped and configured is not None:
-                    entry["notes"] = skipped
-                elif skipped:
+                if skipped:
                     entry["notes"] = skipped
                 if selection.notes:
                     entry["note"] = selection.notes[0]
@@ -897,7 +895,7 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
                 result["roles"][name] = entry
                 continue
             seats = list(selection.seats)
-            selection_notes = (skipped if configured is None else []) + list(selection.notes)
+            selection_notes = skipped + list(selection.notes)
         else:
             seats = configured
             selection_notes = skipped

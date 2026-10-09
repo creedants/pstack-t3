@@ -1498,6 +1498,28 @@ class Haiku55CliTest(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(json.loads(completed.stdout)["roles"], entries)
 
+    def test_launches_seats_ignores_a_configured_cursor_skill_tests_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"version": 1, "roles": {
+                "skill tests": [{"providerInstanceId": "cursor", "model": "claude-haiku-5-5"}],
+            }})
+            completed = repo.run(
+                "show",
+                "--catalog",
+                str(CATALOG),
+                "--parent",
+                "claudeAgent/claude-opus-5-5",
+                "--role",
+                "skill tests",
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["skill tests"], {
+            "source": str(repo.user),
+            "seats": [HAIKU_5_HIGH],
+            "haikuBrief": HAIKU_BRIEF,
+        })
 
 
 INHERIT_CAP = (
