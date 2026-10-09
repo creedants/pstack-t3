@@ -1,5 +1,6 @@
 """Installer behavior a fresh home can observe."""
 
+import errno
 import hashlib
 import json
 import os
@@ -601,6 +602,75 @@ def interleave_removal(home, checkout, paths, call, *args, occupy=None):
         cwd=home,
         capture_output=True,
         text=True,
+    )
+
+
+def set_aside(path):
+    """Entries an uninstall kept aside for `path`, each in its own hidden directory beside it."""
+    return sorted(path.parent.glob(f".pstack-t3-*/{path.name}"))
+
+
+def uninstall_hooked(home, checkout, code):
+    """Run this checkout's uninstall with `code` run first against the loaded installer, named `module`."""
+    wrapper = home / f"hooked-{checkout.name}.py"
+    installer = str(checkout / "scripts" / "install.py")
+    wrapper.write_text(
+        "import importlib.util, os, sys\n"
+        "from pathlib import Path\n"
+        f"spec = importlib.util.spec_from_file_location('installer', {installer!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = module\n"
+        "spec.loader.exec_module(module)\n"
+        f"{code}\n"
+        "sys.exit(module.main())\n"
+    )
+    return subprocess.run(
+        [sys.executable, str(wrapper), "--harness", "grok", "uninstall"],
+        env=_env(home),
+        cwd=home,
+        capture_output=True,
+        text=True,
+    )
+
+
+def put_back_race(path, swap, occupy=None, link_error=False, no_primitive=False):
+    """Hook code that swaps `path` for a foreign `swap` entry just before the move aside.
+
+    `occupy` arrives at `path` when the put-back calls a rename onto it, after any check for vacancy.
+    """
+    return (
+        "import ctypes, errno\n"
+        f"target = {str(path)!r}\n"
+        "moved = False\n"
+        "def hooked(original):\n"
+        "    def call(source, destination, *args, **kwargs):\n"
+        "        global moved\n"
+        "        if not moved and str(source) == target:\n"
+        "            moved = True\n"
+        "            os.unlink(target)\n"
+        f"            if {swap!r} == 'directory':\n"
+        "                os.mkdir(target)\n"
+        "                Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
+        "            else:\n"
+        "                os.symlink('/foreign/swarm', target)\n"
+        "        elif moved and str(destination) == target:\n"
+        f"            if {occupy!r} == 'directory':\n"
+        "                os.mkdir(target)\n"
+        f"            elif {occupy!r} == 'file':\n"
+        "                Path(target).write_bytes(b'occupant\\x00\\xff')\n"
+        "        return original(source, destination, *args, **kwargs)\n"
+        "    return call\n"
+        "os.rename = hooked(os.rename)\n"
+        "if hasattr(module, 'rename_noreplace'):\n"
+        "    module.rename_noreplace = hooked(module.rename_noreplace)\n"
+        f"if {link_error!r}:\n"
+        "    def denied(*args, **kwargs):\n"
+        "        raise OSError(errno.EPERM, 'hard links prohibited')\n"
+        "    os.link = denied\n"
+        f"if {no_primitive!r}:\n"
+        "    def missing(*args, **kwargs):\n"
+        "        raise OSError('no libc')\n"
+        "    ctypes.CDLL = missing\n"
     )
 
 
@@ -1753,14 +1823,14 @@ class OwnershipTest(unittest.TestCase):
         replace = [sys.executable, b / "scripts" / "install.py", "--harness", "grok", "--replace"]
         raced = interleave_removal(self.home, a, [alpha], replace, "--harness", "grok", "uninstall", occupy=b"occupant\x00")
         self.ok(raced, "removed 0 links, restored 0 entries", KEPT.format(n=3))
-        aside = [name for name in os.listdir(alpha.parent) if name.startswith(".alpha.")]
+        aside = set_aside(alpha)
         self.assertEqual(len(aside), 1, aside)
         self.assertIn(
             f"skipped unlink {alpha}: the link no longer matches the recorded checkout and {alpha} was taken again; "
-            f"it is kept at {alpha.parent / aside[0]}",
+            f"it is kept at {aside[0]}",
             raced.stdout.splitlines(),
         )
-        self.assertEqual(os.readlink(alpha.parent / aside[0]), str(b / "skills" / "alpha"))
+        self.assertEqual(os.readlink(aside[0]), str(b / "skills" / "alpha"))
         self.assertEqual(alpha.read_bytes(), b"occupant\x00")
         self.assert_grok_text(b, ("pstack-runtime", "swarm"))
         self.assert_claims(a, grok_paths(self.home))
@@ -1791,3 +1861,106 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
         self.assert_gone()
         self.assertIsNone(read_owner(self.home, a))
+
+    def test_a_hidden_entry_present_before_uninstall_survives_every_move_aside(self):
+        for kind in ("file", "link"):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a = make_checkout(self.home, "a")
+                self.ok(run(self.home, a, "--harness", "grok"))
+                parent = provider_link(self.home, "grok", "swarm").parent
+                # Every hidden name an uninstall could pick first is already taken by an entry it did not create.
+                plant = (
+                    "import secrets, tempfile\n"
+                    "secrets.token_hex = lambda n: 'deadbeef'\n"
+                    "candidates = tempfile._get_candidate_names\n"
+                    "def colliding():\n"
+                    "    yield 'deadbeef'\n"
+                    "    yield from candidates()\n"
+                    "tempfile._get_candidate_names = colliding\n"
+                    f"for name in ['.swarm.pstack-t3-%d-deadbeef' % os.getpid(), '.pstack-t3-deadbeef']:\n"
+                    f"    hidden = os.path.join({str(parent)!r}, name)\n"
+                    f"    if {kind!r} == 'file':\n"
+                    "        Path(hidden).write_bytes(b'hidden\\x00\\xff')\n"
+                    "    else:\n"
+                    "        os.symlink('/foreign/hidden', hidden)\n"
+                )
+                raced = uninstall_hooked(self.home, a, plant)
+                self.ok(raced, "removed 3 links, restored 0 entries")
+                self.assert_gone()
+                hidden = sorted(name for name in os.listdir(parent))
+                self.assertEqual(len(hidden), 2, hidden)
+                self.assertEqual(hidden[0], ".pstack-t3-deadbeef")
+                self.assertRegex(hidden[1], r"^\.swarm\.pstack-t3-\d+-deadbeef$")
+                for name in hidden:
+                    if kind == "file":
+                        self.assertEqual((parent / name).read_bytes(), b"hidden\x00\xff")
+                    else:
+                        self.assertEqual(os.readlink(parent / name), "/foreign/hidden")
+                self.assertIsNone(read_owner(self.home, a))
+
+    def test_a_directory_put_back_never_replaces_a_directory_that_took_the_path(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, put_back_race(swarm, "directory", occupy="directory"))
+        self.assertEqual(os.listdir(swarm), [])
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, aside)
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: the link no longer matches the recorded checkout and {swarm} was taken again; "
+            f"it is kept at {aside[0]}",
+        )
+        self.assertEqual((aside[0] / "precious").read_bytes(), b"directory bytes\x00")
+        self.assert_claims(a, [str(swarm)])
+
+    def test_a_foreign_directory_moved_aside_goes_back_to_its_empty_path(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, put_back_race(swarm, "directory"))
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: the link no longer matches the recorded checkout",
+        )
+        self.assertEqual((swarm / "precious").read_bytes(), b"directory bytes\x00")
+        self.assertEqual(os.listdir(swarm.parent), ["swarm"])
+        self.assert_claims(a, [str(swarm)])
+
+    def test_a_put_back_without_hard_links_never_replaces_a_file_that_took_the_path(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, put_back_race(swarm, "link", occupy="file", link_error=True))
+        self.assertFalse(swarm.is_symlink())
+        self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, aside)
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: the link no longer matches the recorded checkout and {swarm} was taken again; "
+            f"it is kept at {aside[0]}",
+        )
+        self.assertEqual(os.readlink(aside[0]), "/foreign/swarm")
+        self.assert_claims(a, [str(swarm)])
+
+    def test_a_put_back_with_no_safe_rename_keeps_the_entry_aside(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, put_back_race(swarm, "link", link_error=True, no_primitive=True))
+        self.assertFalse(os.path.lexists(swarm))
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, aside)
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: the link no longer matches the recorded checkout and {swarm} cannot be refilled "
+            f"without risking an overwrite ({os.strerror(errno.ENOSYS)}); it is kept at {aside[0]}",
+        )
+        self.assertEqual(os.readlink(aside[0]), "/foreign/swarm")
+        self.assert_claims(a, [str(swarm)])
