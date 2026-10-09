@@ -50,15 +50,15 @@ You can skip setup entirely. The defaults in the previous paragraph still apply.
 
 ### When a provider hits its usage limit
 
-A usage limit does not stall the work. The lead reads the failed child's error text and runs `roles.py backup` with it. The command prints `relaunch`, `park`, or `not-usage-limit`. On `relaunch` the lead starts a fresh child on the printed seat.
+A usage limit relaunches the failed seat when a backup is free. The lead reads the failed child's error text and runs `roles.py backup` with it. The command prints `relaunch`, `park`, or `not-usage-limit`. On `relaunch` the lead starts a fresh child on the printed seat. On `park` the lead launches nothing, and that item waits for the reset.
 
 | Failed seat | Backup seat |
 | --- | --- |
 | A worker, meaning any role that is not a reviewer or a Haiku role, such as code, `judgment and prose`, or `hardest tasks` | `claude-opus-5-5` on `claudeAgent` |
-| `how explorer`, `why investigators`, `skill tests` | `claude-sonnet-5-5` on `claudeAgent` |
+| `how explorer`, `why investigators`, `skill tests`, when the failed seat is on another provider and `claudeAgent` is not out | `claude-sonnet-5-5` on `claudeAgent` |
 | `verifiers`, `interrogate reviewers`, `arena cross-judge pool` | `grok-4.7`, then `claude-opus-5-5`, skipping every model family that wrote the diff |
 
-Backup never picks Codex or Cursor. A seat parks when its backup family is out or the catalog lacks the backup model. A worker whose own seat is on `claudeAgent` has no other backup, so it parks, keeping its branch and lease. After the reset time in the error, `roles.py backup --resume` returns it to its original seat, or to the backup when the original is still out. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to.
+Backup never picks Codex or Cursor as an alternate seat. A seat parks when its backup family is out or the catalog lacks the backup model. A non-reviewer whose own seat is on `claudeAgent` has no other backup, so it parks, keeping its branch and lease. That includes a Haiku role. A reviewer parks when every family on its ladder wrote the diff or is out. After the reset time in the error, `roles.py backup --resume` returns the original seat, whatever its provider, once that provider is back. Otherwise it returns the backup. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to.
 
 ## 3. Your first rigorous task
 

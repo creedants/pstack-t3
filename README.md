@@ -38,7 +38,7 @@
 - **Proves the change works.** It reproduces bugs on the real surface, including driving a web UI through T3's preview tools, and verifies against the real artifact rather than "it compiles".
 - **Keeps going while you're away.** Overnight runs use child agents, separate worktree threads, and an hourly scheduled check. It still stops for anything irreversible you didn't authorize.
 - **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so. No role runs Claude Haiku 4.5 or a fast Grok model.
-- **Keeps working at a usage limit.** When a provider hits its limit, `roles.py backup` relaunches the failed seat. A worker moves to Claude, and a reviewer moves to Grok, then Claude, never onto the family that wrote the diff. A worker parks, with its branch and lease, when Claude cannot take it.
+- **Keeps working at a usage limit.** When a provider hits its limit, `roles.py backup` relaunches the failed seat when a backup is free. A worker moves to Claude, and a reviewer moves to Grok, then Claude, never onto the family that wrote the diff. The work parks until the reset when no backup is free. A parked worker keeps its branch and lease.
 - **Writes like a senior engineer.** Short, direct replies, every claim labeled measured, inferred, or guess, and the engineering principles behind each decision named.
 
 ## A standing coordinator for each project
@@ -256,7 +256,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | --- | --- |
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
-| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role resolves to a fast Grok model or Claude Haiku 4.5, and a usage limit relaunches on Claude or Grok. |
+| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role resolves to a fast Grok model or Claude Haiku 4.5, and a usage limit relaunches on Claude or Grok when a backup is free and parks otherwise. |
 | A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` is this thread's model plus one seat per other model family you can run. |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |

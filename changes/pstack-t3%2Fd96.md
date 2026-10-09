@@ -1,1 +1,6 @@
-- The guide, README, light-mode design, and live-runs record now describe the Haiku 5.5 seats with no prompt cap, the refusal of Claude Haiku 4.5 and fast Grok seats, `roles.py backup` at a usage limit, `show --launches-seats`, `auto` owner reports, command capacity, decision-only pauses, forks, owner model changes, queued corrections, run-now, and visual reports.
+- The guide, README, light-mode design, and live-runs record now describe Claude Haiku 5.5 seats with no prompt cap.
+- They describe the refusal of Claude Haiku 4.5 and fast Grok seats.
+- They describe `roles.py backup` at a usage limit, including when it parks.
+- They describe `show --launches-seats`.
+- They describe `auto` owner reports, command capacity, and decision-only pauses.
+- They describe forks, owner model changes, queued corrections, run-now, and visual reports.
