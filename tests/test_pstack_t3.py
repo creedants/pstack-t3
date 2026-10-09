@@ -2131,6 +2131,46 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("before you respawn its slice", section)
 
 
+class OpenCodeLongCommandDocTest(unittest.TestCase):
+    PARAGRAPH = (
+        "Nobody resumes you after your turn ends, so a command left running in the background is lost.",
+        "Run every long command in the foreground with a long enough timeout, for example a bash timeout of 600000 ms.",
+        "If your shell moves a command to the background anyway, keep checking its output, "
+        "with `sleep 60` between checks, until it finishes.",
+        "Do not end your turn until your report is written.",
+    )
+
+    def test_delegation_step_3_carries_the_opencode_brief_paragraph(self):
+        step = runtime_section("3. Spawn every independent child", "\n4. A child starts")
+        cursor = "A Cursor harness sent `options` as a string, T3 refused the call, and the child then dropped the options."
+        rule = step.split(cursor, 1)[1].split("\n   - ", 2)[1]
+        self.assertIn("OpenCode, and only OpenCode, moves a long command to the background", rule)
+        self.assertIn("T3 publishes the task's result when the first turn ends, and the later turn does not reopen the task.", rule)
+        self.assertIn("Paste this paragraph unchanged into the brief of every child seated on OpenCode.", rule)
+        self.assertIn("     > " + " ".join(self.PARAGRAPH) + "\n", rule)
+        self.assertIn(
+            "When an OpenCode child's task is terminal and the report file its brief named is missing, "
+            "the task is not finished. Read its activity with `t3_thread_read`. "
+            "While a later turn on its thread still runs, wait on it per step 5. "
+            "Otherwise handle it per [Failure handling](#failure-handling).",
+            rule,
+        )
+
+    def test_step_5_two_minute_rule_skips_a_background_wait(self):
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        bullet = runtime_bullet(step, "   - A child with a final assistant message that holds the result")
+        self.assertIn(
+            "A message that says more work follows does not hold the result. "
+            "A last message that says the child waits on a background command does not hold the result either, "
+            "so this two-minute rule does not apply to it.",
+            bullet,
+        )
+
+    def test_the_paragraph_is_stated_once(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        self.assertEqual(text.count("Nobody resumes you after your turn ends"), 1)
+
+
 class SeatLaunchDocTest(unittest.TestCase):
     def setUp(self):
         self.runtime = (ROOT / "skills/pstack-runtime/SKILL.md").read_text()
