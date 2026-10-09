@@ -29,6 +29,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | ask the user (`AskQuestion`) | The host's question tool if it has one, otherwise a short question in the reply. |
 | todolist | The host's todo tool if it has one, otherwise a checklist in the work log. |
 | PR you opened or now drive | Register it with `link_pull_request`. |
+| status page, dashboard, report table, chart | A page published with `html_preview`, then `html_render`, inside a reply already due. See [Visual reports](#visual-reports). |
 
 ## Deadlines
 
@@ -376,7 +377,19 @@ Create top-level threads only when the user asked for separate threads or invoke
 - Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
 - A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
 - Autopilot-full, Autopilot-stack, and Orchestrate owners send their report lines to the root or coordinator with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle recipient, steers a fully active turn, and queues behind a turn that cannot accept steering yet. It does not merge reports into one turn. The recipient handles every report, steered or queued, and runs the playbook's head-specific checks on the head each report names. Arrival order never makes a head current. Brigade's event lines to an executive admin stay on `mode: "queue"`, as [Reporting to an executive admin](../brigade/SKILL.md#reporting-to-an-executive-admin) states.
+- A correction you queued earlier to an active owner or coordinator can sit behind a long turn. To deliver it into the run, call `t3_queue_list` on the recipient and find the `queuedRunId` of that exact message. Read the recipient's `activeRunId` with `t3_thread_read`. Call `t3_queue_promote_to_steer` with that `queuedRunId`, the `activeRunId` as `targetRunId`, and the recipient's `threadId`. Its `sequence` result means T3 accepted the call, not that the run received the message. Read the recipient with `t3_thread_read`, `view: "activity"`, and `afterPosition`, and find the correction's text in that run. Until that read shows it, the delivery is unresolved. A `cancelled` queued run alone proves nothing. When the active run changed or T3 refused the promotion, read `t3_queue_list` and the recipient again before you act, and never resend a correction that may already be delivered. Never promote brigade's event lines to an executive admin, a digest message, or a message that needs a turn of its own. Send a new correction with `mode: "steer"` or `mode: "auto"` instead of queuing it.
+- Change an existing launched thread's model with `t3_thread_configure` only when a playbook step already calls for that owner to run on another model, such as Orchestrate's tool-error retry. Never call it because an owner keeps failing a gate. Resolve the seat per [Roles](#roles) with `roles.py show`. `t3_thread_configure` requires a concrete `modelSelection`, so always pass one, even for an `inherit` seat. Build it from the resolved seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged. When the resolved seat is `inherit`, use this thread's own provider and model, `inheritedProviderInstanceId` and `inheritedModel` from `orchestrator_capabilities`, as the concrete seat when it passes [Excluded seats](#excluded-seats). When it fails that check, do not configure the thread, and report that no replacement seat could be selected. Call it when `t3_thread_read` shows no `activeRunId`, or after `t3_thread_interrupt` and `t3_thread_wait` end the run. Before the thread's next message, read `t3_thread_configuration` and compare `instanceId`, `model`, and every option per [Delegation](#delegation) step 3. On a refusal or a mismatch, send nothing to the thread and report the tool's error text. The call does not change the thread's permission modes, and it keeps the thread's retry count, scope, standing orders, and gates. The thread keeps its history, so it never counts as a fresh worker or a fresh reviewer. Never configure a verifier or reviewer thread. A failed child task gets a fresh child per [Failure handling](#failure-handling). A send-back and a usage-limit relaunch get the fresh worker their playbook or `roles.py backup` names. None of them uses `t3_thread_configure`.
 - `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
+
+### Forks
+
+`t3_thread_fork` starts a new top-level thread from another thread's context. `t3_thread_merge_back` moves context between related threads in one project. Use them only for a separate thread this section allows. Child work stays on `delegate_task` per [Delegation](#delegation) and [Fresh children by default](#fresh-children-by-default). A fork never stands in for a child task, an Orchestrate sub-coordinator, or a fresh review round, and `task_status` does not apply to it.
+
+- Fork only a read-only planner or investigation whose source context is the part it needs. Pass `sourcePoint` as `{"type": "latest_stable"}`, `{"type": "run", "runId": "<id>"}`, or `{"type": "checkpoint", "checkpointId": "<id>"}`. Keep the returned `targetThreadId`.
+- The fork inherits the source's configuration. Read it with `t3_thread_configuration` before the fork's first message, and check it against [Excluded seats](#excluded-seats) and the user's roles. Inheritance is not an exception. When the inherited seat fails that check, send the fork nothing and report it.
+- Read the fork with `t3_thread_read` for its `worktreePath`, `branch`, and `activeRunId` before you send anything. Treat a checkout it shares with another thread as read-only. Writers stay isolated per [Isolation](#isolation).
+- Send its scope with `t3_thread_send`. The message names the slice, says "do not edit files, commit, or push", and names the report line and the thread ID that line goes to with `t3_thread_send`. Follow the fork as a launched thread with `t3_thread_wait` and `t3_thread_read`.
+- A one-line report stays the default. Call `t3_thread_merge_back` only when the user authorized it and the target needs the fork's reasoning, not only its result. Pass `targetThreadId` and `sourcePoint`, and `sourceThreadId` when the source is not this thread. Read `t3_thread_transfers` and the target's later activity with `t3_thread_read` to see what the target received. A transfer moves context, not code, and it does not make a review independent.
 
 ## Scheduling
 
@@ -398,6 +411,7 @@ Create top-level threads only when the user asked for separate threads or invoke
 - Never pause a schedule that renews a lease, drains queued work, consumes standing intake, or notices a merge. A required merge heartbeat and a fallback heartbeat beside `watch_pull_request` keep running. This rule never pauses a brigade schedule. Brigade holds an item on a decision and keeps its liveness schedule renewing the lease.
 - Do not schedule a tick to wait for a child task. Child completions wake this thread, and [Delegation](#delegation) step 5 bounds the wait for a child that never completes.
 - Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](#pull-request-watching). Keep `schedule_task` for a cadence with no PR event. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. A required heartbeat whose job is to notice a merge may use `900000`, as that section states.
+- To run an enabled `interval` schedule's work now, call `run_scheduled_task_now` with its ID as `taskId`. Take that ID from the work log or from `scheduledTaskId` in `list_scheduled_tasks`. Call it only when the work its next run does is ready and neither this turn nor a dispatched run is doing it. No event calls it by rule, a merge or an answer included. Each call is a new manual run. Before you retry a lost or failed response, read `list_scheduled_tasks` and the bound thread with `t3_thread_read`. The result means T3 dispatched the run, not that its turn finished. Follow a returned `threadId` with `t3_thread_read` when the result matters. Report the returned `nextRunAt` as T3 returned it. Never run a paused schedule before the answer permits work. Never run one to wait on a child, to wait on a pull request's checks, reviews, or conflicts, or to repeat a `watch_pull_request` wake. It requires a full-access or default caller. Under another mode, leave the work to the next scheduled run, or do it in this turn only when this thread owns that work and its mode allows the edits.
 
 ## Local state
 
@@ -413,6 +427,19 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 - Devices and simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`.
 - CLIs and TUIs: run them in the terminal and assert on output.
 - A project `verify-*` skill beats all of these when one exists.
+
+## Visual reports
+
+A page is for a reply that is already due. When the playbook that runs this thread sends a reply, and a table of units, a timeline, a frontier, or a chart would carry it better than prose, publish that part as a page. A short status with no table stays text.
+
+1. Write one self-contained HTML document. Every number and link on it comes from the store or the tables the text report would read.
+2. Call `html_preview` with it. Fix every console error and every clipped or overlapping element. When the page holds a wide table, preview it again with `width: 390`.
+3. Call `html_render` with the document, a `title`, and the preview's `contentHeight` as `height`, raised to 80 or capped at 2000. A capped frame scrolls the rest.
+4. Write the reply after the render. It does not announce the page and adds only what the page does not show. Every decision that waits on the user, every PR link, and the store and report paths stay in the reply text, so a capped frame never hides them.
+
+Leave `html`, `body`, and the outermost element with no background color, and style the page with the theme variables `html_render` describes. When either tool is missing or `html_render` fails, send the same facts as text.
+
+A rendered page is a reply the user reads, even with no reply text. Render none on a wake that sends no reply. Brigade at `digest` renders no page, so its replies stay in the plain form [Digest messages](../brigade/SKILL.md#digest-messages) sets. At every level, step 9 of brigade's [Run a service](../brigade/SKILL.md#run-a-service) decides which wakes reply before any page is drawn.
 
 ## History
 
