@@ -21,6 +21,11 @@ HELD_LINE = (
     "Move this coordinator to a provider that passes them?; "
     "launch no worker or verifier until 86 answer Q1"
 )
+STILL_OPEN = "Q1 still open; D1 stays held until 86 answer Q1 --answer moved"
+ITEM_DECISION = (
+    "brigade: an item decision's default must be one of its options, "
+    "with at least one other option that closes it"
+)
 
 
 def _wait_for_path(path, timeout=8):
@@ -1838,6 +1843,15 @@ class BrigadeTest(unittest.TestCase):
         return self.brigade("86", "add", *dish_args, "--question", question,
                             "--options", "moved, keep parked", "--default", "keep parked")
 
+    def store_bytes(self):
+        return tuple((self.at / name).read_bytes() for name in ("86.tsv", "log.tsv", "restaurant.json"))
+
+    def open_admin(self):
+        return self.run_at(self.store / "bridge-kit" / ".admin", "open", "--admin", "--project-root", str(self.project))
+
+    def admin(self, *args, ok=True):
+        return self.run_at(self.store / "bridge-kit" / ".admin", *args, ok=ok)
+
     def landing_db(self):
         import sqlite3
         database = next((Path(self.temporary.name) / "state").glob("pstack-t3/landing/*/land.db"))
@@ -2031,6 +2045,127 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual([row for row in self.log_rows() if row["kind"] == "decision"], decisions)
         self.assertEqual(self.brigade("watch"), HELD_LINE)
         self.assertEqual(self.brigade("watch"), HELD_LINE)
+
+    def test_keep_parked_leaves_the_item_decision_open_and_writes_nothing(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        before = self.store_bytes()
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
+        self.assertEqual(self.store_bytes(), before)
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+
+    def test_a_relayed_keep_parked_leaves_the_item_held(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.open_admin()
+        before = (self.at / "86.tsv").read_bytes()
+        self.admin("request", "--to", "perf", "answer perf Q1: keep parked")
+        self.assertEqual(self.brigade("inbox", "take"), "A1: answer perf Q1: keep parked")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
+        self.assertEqual(self.brigade("inbox", "done", "A1"), "A1 done")
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual((self.at / "86.tsv").read_bytes(), before)
+
+    def test_a_replayed_keep_parked_relay_logs_inbox_done_once(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.open_admin()
+        before = (self.at / "86.tsv").read_bytes()
+        self.admin("request", "--to", "perf", "answer perf Q1: keep parked")
+        self.assertEqual(self.brigade("inbox", "take"), "A1: answer perf Q1: keep parked")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
+        self.assertEqual(self.brigade("inbox", "take"), "A1: answer perf Q1: keep parked")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
+        self.assertEqual(self.brigade("inbox", "done", "A1"), "A1 done")
+        self.assertEqual(self.brigade("inbox", "take"), "nothing handed to you")
+        self.assertEqual(self.brigade("inbox", "done", "A1"), "A1 done")
+        self.assertEqual((self.at / "86.tsv").read_bytes(), before)
+        done = [row for row in self.log_rows() if row["kind"] == "inbox-done"]
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in done],
+                         [("A1", "done", "answer perf Q1: keep parked")])
+
+    def test_moved_closes_an_item_decision_and_a_later_answer_writes_nothing(self):
+        self.started()
+        ordinary = self.brigade("watch")
+        self.assertEqual(ordinary, "D1: running 0m of 60m (no worker recorded)")
+        self.park_item()
+        opened = [row for row in self.log_rows() if row["kind"] == "decision"]
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "Moved."), "Q1 answered")
+        row = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertEqual((row["state"], row["answer"]), ("answered", "moved"))
+        answered = [row for row in self.log_rows() if row["kind"] == "decision" and row["state"] == "answered"]
+        self.assertEqual(len(answered), 1)
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "decision"]), len(opened) + 1)
+        self.assertEqual(self.brigade("watch"), ordinary)
+        before = self.store_bytes()
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), "Q1 answered")
+        self.assertEqual(self.store_bytes(), before)
+
+    def test_a_second_refusal_after_keep_parked_prints_the_open_id(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
+        table = (self.at / "86.tsv").read_text()
+        decisions = [row for row in self.log_rows() if row["kind"] == "decision"]
+        other = "D1: cursor could not pass the seat's options: refused again. Move this coordinator to a provider that passes them?"
+        self.assertEqual(self.park_item(other), "Q1")
+        self.assertEqual((self.at / "86.tsv").read_text(), table)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "decision"], decisions)
+
+    def test_free_text_keeps_the_hold_and_writes_nothing(self):
+        self.started()
+        self.assertEqual(self.park_item(), "Q1")
+        before = self.store_bytes()
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "I moved it"), STILL_OPEN)
+        self.assertEqual(self.store_bytes(), before)
+        self.assertEqual(self.brigade("watch"), HELD_LINE)
+
+    def test_an_item_decision_needs_a_default_and_a_closing_option(self):
+        self.started()
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
+                                      "--options", "keep parked", "--default", "keep parked", ok=False), ITEM_DECISION)
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
+                                      "--options", "moved, keep parked", "--default", "ship it", ok=False), ITEM_DECISION)
+        self.assertEqual((self.at / "86.tsv").read_text().splitlines(),
+                         ["id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer"])
+        self.assertEqual(self.park_item(), "Q1")
+        table = (self.at / "86.tsv").read_text()
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
+                                      "--options", "keep parked", "--default", "keep parked"), "Q1")
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
+                                      "--options", "moved, keep parked", "--default", "ship it"), "Q1")
+        self.assertEqual((self.at / "86.tsv").read_text(), table)
+
+    def test_a_blank_dish_decision_still_closes_on_any_text(self):
+        self.started()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        self.assertEqual(self.brigade("86", "add", "--question", "Ship it?",
+                                      "--options", "keep parked", "--default", "keep parked"), "Q1")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), "Q1 answered")
+        row = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertEqual((row["state"], row["answer"]), ("answered", "keep parked"))
+        self.assertEqual(self.brigade("86", "add", "--question", "Really?",
+                                      "--options", "yes", "--default", "no"), "Q2")
+        self.assertEqual(self.brigade("86", "answer", "Q2", "--answer", "whatever"), "Q2 answered")
+        self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["answer"], "whatever")
+        self.assertEqual(self.brigade("watch"), "D1: in review")
+
+    def test_a_legacy_item_row_with_no_closing_option_closes_on_any_answer(self):
+        self.started()
+        ordinary = self.brigade("watch")
+        question = "Hold this item?"
+        path = self.at / "86.tsv"
+        header = path.read_text().splitlines()[0]
+        row = "\t".join(["Q1", "2026-10-06T00:00:00+00:00", "open", "D1", question, "keep parked", "keep parked", ""])
+        path.write_text(header + "\n" + row + "\n")
+        self.assertEqual(
+            self.brigade("watch"),
+            f"D1: open decision Q1: {question}; launch no worker or verifier until 86 answer Q1",
+        )
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), "Q1 answered")
+        stored = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertEqual((stored["state"], stored["answer"]), ("answered", "keep parked"))
+        self.assertEqual(self.brigade("watch"), ordinary)
 
     def test_a_passed_item_with_a_submitted_entry_says_mark_it_queued(self):
         self.started()

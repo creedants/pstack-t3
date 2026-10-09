@@ -1394,6 +1394,22 @@ def entry_line(restaurant, dish):
     return f"{ident}: E{number} {state}", True
 
 
+def option_key(text):
+    return text.strip().rstrip(".").casefold()
+
+
+def closing_options(row):
+    if not row.get("dish", "").strip():
+        return []
+    default = option_key(row.get("default", ""))
+    options = []
+    for option in row.get("options", "").split(","):
+        option = option.strip()
+        if option and option_key(option) != default:
+            options.append(option)
+    return options
+
+
 def open_item_decisions(rows):
     decisions = {}
     for row in rows:
@@ -2368,13 +2384,34 @@ def command(restaurant, args, contract=None, rails=None):
             open_row = open_item_decisions(restaurant.rows("86.tsv")).get(args.dish)
             if open_row:
                 return open_row["id"]
+            if args.dish:
+                listed = [option.strip() for option in args.options.split(",") if option.strip()]
+                probe = {"dish": args.dish, "options": args.options, "default": args.default}
+                default_listed = option_key(args.default) in {option_key(option) for option in listed}
+                if not default_listed or not closing_options(probe):
+                    raise BrigadeError("an item decision's default must be one of its options, "
+                                       "with at least one other option that closes it")
             ident = restaurant.next_id("86.tsv")
             restaurant.append("86.tsv", {"id": ident, "at": now(), "state": "open", "dish": args.dish,
                                          "question": args.question, "options": args.options, "default": args.default})
             restaurant.log("decision", ident, "open", args.question)
             return ident
         if args.action == "answer":
-            restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
+            _, row = restaurant.find("86.tsv", args.id)
+            if not row["dish"].strip():
+                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
+                return f"{args.id} answered"
+            if row["state"] == "answered":
+                return f"{args.id} answered"
+            closes = closing_options(row)
+            if not closes:
+                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
+                return f"{args.id} answered"
+            match = next((option for option in closes if option_key(option) == option_key(args.answer)), None)
+            if match is None:
+                quoted = " or ".join(shlex.quote(option) for option in closes)
+                return f"{args.id} still open; {row['dish']} stays held until 86 answer {args.id} --answer {quoted}"
+            restaurant.update("86.tsv", args.id, "decision", state="answered", answer=match)
             return f"{args.id} answered"
         lines = []
         for row in restaurant.rows("86.tsv"):
