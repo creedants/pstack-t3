@@ -1,0 +1,2 @@
+- Claude Haiku 5.5 is the default for `skill tests`, `how explorer`, and `why investigators`. `roles.py show` excludes fast Grok ids and Claude Haiku 4.5 and returns `haikuBrief` for Haiku 5.5 seats. Prompt caps and `bounded-seat` are removed. Seat-launching tests use `show --launches-seats`.
+- One model-id normalizer strips a Vertex `@YYYYMMDD` suffix, a `-YYYYMMDD` suffix, Bedrock prefixes, and a provider path prefix such as `amazon-bedrock/` before the Haiku 4.5 exclusion and the Haiku 5.5 `haikuBrief` check.

@@ -31,14 +31,14 @@ LAUNCH_MODELS = {
     "hillclimb": ["grok-4.7"],
     "judgment and prose": ["claude-opus-5-5"],
     "hardest tasks": ["claude-opus-5-5"],
-    "how explorer": ["grok-4.7"],
+    "how explorer": ["claude-haiku-5-5"],
     "how explainer": ["claude-opus-5-5"],
-    "why investigators": ["grok-4.7"],
+    "why investigators": ["claude-haiku-5-5"],
     "why synthesizer": ["claude-opus-5-5"],
     "reflect tooling": ["grok-4.7"],
     "reflect judgment, divergent, synthesizer": ["claude-opus-5-5"],
     "swarm workers": ["grok-4.7"],
-    "skill tests": ["gpt-6-luna"],
+    "skill tests": ["claude-haiku-5-5"],
     "arena runners": ["claude-opus-5-5", "grok-4.7"],
     "arena cross-judge pool": ["claude-opus-5-5", "grok-4.7"],
     "architect runners": ["claude-opus-5-5", "grok-4.7"],
@@ -703,7 +703,7 @@ class ModeCliTest(unittest.TestCase):
                 "recorded one-line escalation reason; forces full mode and wins over paths and send-backs",
             ),
         )
-        for command in ("show", "bounded-seat", "mode"):
+        for command in ("show", "mode"):
             with self.subTest(command=command):
                 completed = subprocess.run(
                     [sys.executable, str(ROOT / "t3/scripts/roles.py"), command, "--help"],
@@ -1293,1179 +1293,429 @@ class ModeCliTest(unittest.TestCase):
         }])
 
 
-HAIKU_CAP = (
-    "claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model"
-)
+
+EXCLUDED_RULE = roles.EXCLUDED_RULE
+HAIKU_BRIEF = list(roles.HAIKU_BRIEF)
+HAIKU_5_HIGH = {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "high"}}
 
 
-class PromptCapCliTest(unittest.TestCase):
-    def test_write_refuses_a_capped_bug_fix_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            completed = repo.write("--set", "bug-fix=claudeAgent/claude-haiku-5-5")
-            self.assertEqual(completed.returncode, 2)
-            self.assertEqual(completed.stdout, "")
-            self.assertEqual(
-                completed.stderr,
-                f"error: {repo.user}: role 'bug-fix' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
-            )
-            self.assertFalse(repo.user.exists())
+class Haiku55CliTest(unittest.TestCase):
+    def test_show_skill_tests_default_haiku_high(self):
+        completed = show("skill tests")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [HAIKU_5_HIGH])
+        self.assertEqual(entry["haikuBrief"], HAIKU_BRIEF)
 
-    def test_write_force_still_refuses_a_capped_bug_fix_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            completed = repo.write("--force", "--set", "bug-fix=claudeAgent/claude-haiku-5-5")
-            self.assertEqual(completed.returncode, 2)
-            self.assertEqual(completed.stdout, "")
-            self.assertEqual(
-                completed.stderr,
-                f"error: {repo.user}: role 'bug-fix' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
-            )
-            self.assertFalse(repo.user.exists())
+    def test_show_haiku_reading_roles_medium(self):
+        for role in ("how explorer", "why investigators"):
+            with self.subTest(role=role):
+                completed = show(role)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                entry = json.loads(completed.stdout)["roles"][role]
+                self.assertEqual(entry["seats"], [HAIKU_5_MEDIUM])
+                self.assertEqual(entry["haikuBrief"], HAIKU_BRIEF)
 
-    def test_write_refuses_a_capped_seat_in_a_panel(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            completed = repo.write("--set", "verifiers=claudeAgent/claude-haiku-5-5;grok/grok-4.7")
-            self.assertEqual(completed.returncode, 2)
-            self.assertEqual(completed.stdout, "")
-            self.assertEqual(
-                completed.stderr,
-                f"error: {repo.user}: role 'verifiers' cannot use claudeAgent/claude-haiku-5-5: {HAIKU_CAP}\n",
-            )
-            self.assertFalse(repo.user.exists())
+    def test_bounded_seat_command_unknown(self):
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "bounded-seat"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 2)
 
-    def test_write_accepts_a_capped_model_for_skill_tests(self):
+    def test_write_and_show_configured_haiku_skill_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             completed = repo.write("--set", "skill tests=claudeAgent/claude-haiku-5-5")
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            document = json.loads(repo.user.read_text())
-            self.assertEqual(document["roles"]["skill tests"], [
-                {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
-            ])
-
-    def test_show_refuses_a_stored_capped_architect_runner(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"architect runners": [
-                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
-            ]}})
-            completed = repo.run("show", "--role", "bug-fix")
-            self.assertEqual(completed.returncode, 2)
-            self.assertEqual(completed.stdout, "")
-            self.assertEqual(
-                completed.stderr,
-                f"error: {repo.user}: role 'architect runners' cannot use cursor/claude-haiku-5-5: {HAIKU_CAP}\n",
+            shown = repo.run(
+                "show",
+                "--catalog",
+                str(CATALOG),
+                "--parent",
+                "claudeAgent/claude-opus-5-5",
+                "--role",
+                "skill tests",
             )
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        entry = json.loads(shown.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"][0]["model"], "claude-haiku-5-5")
+        self.assertEqual(entry["haikuBrief"], HAIKU_BRIEF)
 
-    def show_inherit(self, repo, *extra):
-        return repo.run("show", "--role", "bug-fix", *extra)
+    def test_show_output_never_mentions_caps(self):
+        completed = show("bug-fix", "skill tests", "how explorer")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lowered = completed.stdout.lower()
+        self.assertNotIn("capped", lowered)
+        self.assertNotIn("prompt tokens", lowered)
 
-    def test_no_catalog_haiku_parent_refuses_inherit(self):
+    def test_haiku_45_excluded_ids(self):
         cases = (
-            {"roles": {"bug-fix": ["inherit"]}},
-            {"mode": "light", "roles": {"bug-fix": ["inherit"]}},
-            {"budget": "unlimited", "roles": {"bug-fix": ["inherit"]}},
+            ("claude-haiku-4-5", True),
+            ("claude-haiku-4-5-20251001", True),
+            ("claude-haiku-4-5@20251001", True),
+            ("anthropic/claude-haiku-4.5", True),
+            ("anthropic.claude-haiku-4-5", True),
+            ("us.anthropic.claude-haiku-4-5", True),
+            ("eu.anthropic.claude-haiku-4-5", True),
+            ("apac.anthropic.claude-haiku-4-5", True),
+            ("global.anthropic.claude-haiku-4-5", True),
+            ("amazon-bedrock/anthropic.claude-haiku-4-5@20251001", True),
+            ("claude_haiku_4_5", True),
+            ("claude-haiku-5-5", False),
+            ("anthropic.claude-haiku-5-5", False),
+            ("us.anthropic.claude-haiku-5-5", False),
+            ("amazon-bedrock/anthropic.claude-haiku-5-5", False),
+            ("claude-haiku-4-6", False),
+            ("claude-sonnet-4-5", False),
         )
-        for payload in cases:
-            with self.subTest(payload=payload):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    repo.put(repo.user, payload)
-                    completed = self.show_inherit(repo, "--parent", "claudeAgent/claude-haiku-5-5")
-                self.assertEqual(completed.returncode, 2)
-                self.assertEqual(completed.stdout, "")
-                self.assertEqual(completed.stderr, f"error: {INHERIT_CAP}\n")
+        for model_id, expected in cases:
+            self.assertIs(roles.excluded_id(model_id), expected, model_id)
 
-    def test_malformed_parent_exits_before_the_catalog(self):
-        samples = ("claude-haiku-5-5", "claudeAgent/", "/claude-haiku-5-5", "a b/c", "")
-        for text in samples:
-            for catalog in (None, CATALOG):
-                with self.subTest(text=text, catalog=catalog):
-                    with tempfile.TemporaryDirectory() as directory:
-                        repo = Repo(directory)
-                        args = ["show", "--role", "bug-fix", "--parent", text]
-                        if catalog is None:
-                            args.extend(["--catalog", str(Path(directory) / "missing-catalog.json")])
-                        else:
-                            args.extend(["--catalog", str(catalog)])
-                        completed = repo.run(*args)
-                    self.assertEqual(completed.returncode, 2, completed.stderr)
-                    self.assertEqual(completed.stdout, "")
-                    self.assertEqual(completed.stderr, parent_error(text))
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"bug-fix": ["inherit"]}})
-            completed = self.show_inherit(repo, "--parent", "opencode/opencode/big-pickle")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], ["inherit"])
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            for command in ("validate", "write"):
-                completed = repo.run(command, "--catalog", str(CATALOG), "--parent", "claude-haiku-5-5")
-                self.assertEqual(completed.returncode, 2, completed.stderr)
-                self.assertEqual(completed.stderr, parent_error("claude-haiku-5-5"))
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(Path(directory) / "missing-catalog.json"),
-                "--parent", "",
-                "--brief", str(Path(directory) / "missing-brief.txt"),
-            )
-            self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertEqual(completed.stdout, "")
-            self.assertEqual(completed.stderr, parent_error(""))
-
-    def test_snapshot_without_a_parent_keeps_inherit(self):
-        catalog = runnable_haiku_catalog()
-        for pass_path in (False, True):
-            with self.subTest(pass_path=pass_path):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    snapshot = repo.directory / "pstack-t3" / "catalog.json"
-                    repo.put(snapshot, catalog)
-                    repo.put(repo.user, {"roles": {"bug-fix": ["inherit"]}})
-                    args = ["--role", "bug-fix"]
-                    if pass_path:
-                        args.extend(["--catalog", str(snapshot)])
-                    completed = repo.run("show", *args)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], ["inherit"])
-
-    def test_panels_refuse_a_haiku_parent_without_a_catalog(self):
-        grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
+    def test_provider_spellings_map_to_the_canonical_id(self):
         cases = (
-            ("verifiers", None, ()),
-            ("interrogate reviewers", {"roles": {"interrogate reviewers": ["inherit", grok]}}, ()),
-            ("verifiers", {"mode": "light", "roles": {"verifiers": ["inherit"]}}, ()),
+            ("claude-haiku-4-5@20251001", "claude-haiku-4-5"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
+            ("ANTHROPIC.CLAUDE_HAIKU_4_5_20251001", "claude-haiku-4-5"),
+            ("anthropic/claude-haiku-4.5", "claude-haiku-4-5"),
+            ("us.anthropic.claude-haiku-4-5@20251001", "claude-haiku-4-5"),
+            ("eu.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("apac.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("global.anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("amazon-bedrock/anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+            ("anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("us.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("eu.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("apac.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("global.anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("amazon-bedrock/anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("opencode/amazon-bedrock/anthropic.claude-haiku-5-5", "claude-haiku-5-5"),
+            ("claude-haiku-5-5@20251001", "claude-haiku-5-5"),
+            ("claude-haiku-5-5-20251001", "claude-haiku-5-5"),
+            ("claude-haiku-5-5", "claude-haiku-5-5"),
+            ("claude-sonnet-4-5", "claude-sonnet-4-5"),
+            ("claude-sonnet-4.5", "claude-sonnet-4-5"),
         )
-        for role, payload, extra in cases:
-            with self.subTest(role=role, payload=payload):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    if payload is not None:
-                        repo.put(repo.user, payload)
-                    completed = repo.run("show", "--role", role, "--parent", "claudeAgent/claude-haiku-5-5", *extra)
-                self.assertEqual(completed.returncode, 2, completed.stdout)
-                self.assertEqual(completed.stdout, "")
-                self.assertIn(f"role {role!r} cannot inherit claudeAgent/claude-haiku-5-5", completed.stderr)
-                self.assertIn(HAIKU_CAP, completed.stderr)
+        for model_id, canonical in cases:
+            self.assertEqual(roles.normalized_bare(model_id), canonical, model_id)
 
-    def test_uncapped_parent_keeps_inherit_without_a_catalog(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"bug-fix": ["inherit"]}})
-            completed = self.show_inherit(repo, "--parent", "grok/grok-4.7")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["catalog"], False)
-        self.assertEqual(body["roles"]["bug-fix"]["seats"], ["inherit"])
-
-    def test_show_skill_tests_returns_the_uncapped_haiku(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            completed = repo.run(
-                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            entry = json.loads(completed.stdout)["roles"]["skill tests"]
-            self.assertEqual(entry["seats"], [HAIKU_4_SEAT])
-            self.assertEqual(entry["note"], SKILL_TESTS_NOTE)
-            repo.put(repo.user, {"roles": {"skill tests": [
-                {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
-            ]}})
-            configured = repo.run(
-                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
-            )
-        self.assertEqual(configured.returncode, 0, configured.stderr)
-        entry = json.loads(configured.stdout)["roles"]["skill tests"]
-        self.assertEqual(entry["seats"], [HAIKU_4_SEAT])
-        self.assertEqual(entry["note"], SKILL_TESTS_NOTE)
-
-    def test_bounded_seat_accepts_a_small_read(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            brief.write_bytes(b"y" * 1000)
-            read.write_bytes(b"x" * 2000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", str(read),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-        self.assertEqual(body["capped"], True)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"})
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 1000,
-            "readBytes": 2000,
-            "tokens": 41750,
-            "target": 100000,
-        })
-
-    def test_bounded_seat_falls_back_when_the_estimate_is_over_the_target(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            brief.write_bytes(b"y" * 1000)
-            read.write_bytes(b"z" * 235004)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", str(read),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["capped"], False)
-        self.assertEqual(body["seat"], HAIKU_4_SEAT)
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["reason"], "estimate 100001 tokens is over the 100000-token target for claude-haiku-5-5")
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 1000,
-            "readBytes": 235004,
-            "tokens": 100001,
-            "target": 100000,
-        })
-
-    def test_bounded_seat_runs_cursor_haiku_under_the_target(self):
+    def test_only_haiku_45_and_opus_never_picks_haiku_45(self):
+        effort = [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}]}]
         catalog = {
-            "providers": [
-                {
-                    "providerInstanceId": "cursor",
-                    "canRunChildTask": True,
-                    "constraints": [],
-                    "models": [{"id": "claude-haiku-5-5", "options": [
-                        {"id": "contextWindow", "type": "select", "options": [{"id": "1m"}, {"id": "300k"}]},
-                    ]}],
-                },
-                {
-                    "providerInstanceId": "claudeAgent",
-                    "canRunChildTask": True,
-                    "constraints": [],
-                    "models": [{"id": "claude-haiku-4-5", "options": [{"id": "thinking", "type": "boolean"}]}],
-                },
-            ],
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "cursor-catalog.json"
-            repo.put(path, catalog)
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["capped"], True)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["seat"], {
-            "providerInstanceId": "cursor",
-            "model": "claude-haiku-5-5",
-            "options": {"contextWindow": "300k"},
-        })
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 12,
-            "readBytes": 0,
-            "tokens": 41003,
-            "target": 100000,
-        })
-
-    def assert_bounded(self, completed, document, stderr=""):
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, stderr)
-        self.assertEqual(completed.stdout, json.dumps(document, indent=2) + "\n")
-
-    def test_bounded_seat_launches_seats_skips_cursor_haiku(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "cursor-catalog.json"
-            repo.put(path, cursor_haiku_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
-            "capped": False,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 12,
-                "readBytes": 0,
-                "tokens": 41003,
-                "target": None,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_refuses_a_cursor_only_parent(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "cursor-only.json"
-            repo.put(path, cursor_only_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "cursor/gemini-3.8-flash",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assertEqual(completed.returncode, 2)
-        self.assertEqual(completed.stdout, "")
-        self.assertEqual(
-            completed.stderr,
-            "error: role 'skill tests' has no seat for a child that launches seats: "
-            "cursor cannot launch seats, and no single-role seat in roles.json, "
-            "built-in default family, or parent names another provider\n",
-        )
-
-    def test_bounded_seat_launches_seats_inherits_a_non_cursor_parent(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "cursor-only.json"
-            repo.put(path, cursor_only_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": "inherit",
-            "capped": False,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 12,
-                "readBytes": 0,
-                "tokens": 41003,
-                "target": None,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_prefers_the_non_cursor_model(self):
-        catalog = {
-            "providers": [
-                {
-                    "providerInstanceId": "cursor",
-                    "canRunChildTask": True,
-                    "constraints": [],
-                    "models": [{"id": "gemini-3.8-flash", "options": []}],
-                },
-                {
-                    "providerInstanceId": "claudeAgent",
-                    "canRunChildTask": True,
-                    "constraints": [],
-                    "models": [{"id": "claude-haiku-4-5", "options": []}],
-                },
-            ],
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "mixed.json"
-            repo.put(path, catalog)
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            plain = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
-            )
-            flagged = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        estimate = {
-            "overheadTokens": 41000,
-            "briefBytes": 12,
-            "readBytes": 0,
-            "tokens": 41003,
-            "target": None,
-        }
-        self.assert_bounded(plain, {
-            "seat": {"providerInstanceId": "cursor", "model": "gemini-3.8-flash"},
-            "capped": False,
-            "estimate": estimate,
-            "reason": None,
-            "notes": [],
-        })
-        self.assert_bounded(flagged, {
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
-            "capped": False,
-            "estimate": estimate,
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_keeps_under_target_haiku(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            brief.write_bytes(b"y" * 1000)
-            read.write_bytes(b"x" * 2000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", str(read),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
-            "capped": True,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 1000,
-                "readBytes": 2000,
-                "tokens": 41750,
-                "target": 100000,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_replaces_a_configured_cursor_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"skill tests": [
-                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
-            ]}})
-            path = repo.directory / "cursor-catalog.json"
-            repo.put(path, cursor_haiku_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
-            "capped": False,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 12,
-                "readBytes": 0,
-                "tokens": 41003,
-                "target": None,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_ranks_the_single_role_provider(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {
-                "bug-fix": [{"providerInstanceId": "codex", "model": "gpt-6-luna"}],
-                "verifiers": [{"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"}],
-            }})
-            path = repo.directory / "mixed.json"
-            repo.put(path, variant_flash_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            plain = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
-            )
-            flagged = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        estimate = {
-            "overheadTokens": 41000,
-            "briefBytes": 12,
-            "readBytes": 0,
-            "tokens": 41003,
-            "target": None,
-        }
-        self.assert_bounded(plain, {
-            "seat": {"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"},
-            "capped": False,
-            "estimate": estimate,
-            "reason": None,
-            "notes": [],
-        })
-        self.assert_bounded(flagged, {
-            "seat": {"providerInstanceId": "codex", "model": "gpt-6-luna"},
-            "capped": False,
-            "estimate": estimate,
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_falls_back_when_single_roles_are_cursor(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {
-                "bug-fix": [{"providerInstanceId": "cursor", "model": "gemini-3.8-flash"}],
-            }})
-            path = repo.directory / "mixed.json"
-            repo.put(path, variant_flash_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": "inherit",
-            "capped": False,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 12,
-                "readBytes": 0,
-                "tokens": 41003,
-                "target": None,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_launches_seats_ranks_haiku_on_the_configured_providers(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {
-                "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
-                "judgment and prose": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
-            }})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--launches-seats",
-            )
-        self.assert_bounded(completed, {
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
-            "capped": True,
-            "estimate": {
-                "overheadTokens": 41000,
-                "briefBytes": 12,
-                "readBytes": 0,
-                "tokens": 41003,
-                "target": 100000,
-            },
-            "reason": None,
-            "notes": [],
-        })
-
-    def test_bounded_seat_prints_an_uncapped_candidate(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"skill tests": [
-                {"providerInstanceId": "grok", "model": "grok-4.7"},
-            ]}})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"y" * 1000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["capped"], False)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["seat"], {"providerInstanceId": "grok", "model": "grok-4.7"})
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 1000,
-            "readBytes": 0,
-            "tokens": 41250,
-            "target": None,
-        })
-
-    def test_bounded_seat_rejects_a_missing_read(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"brief\n")
-            missing = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", "/x",
-            )
-        self.assertEqual(missing.returncode, 2)
-        self.assertEqual(missing.stdout, "")
-        self.assertEqual(missing.stderr, "error: --read /x: not a file\n")
-
-    def test_all_capped_catalog_names_the_prompt_cap(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "only-haiku.json"
-            repo.put(path, runnable_haiku_catalog())
-            for role in ("bug-fix", "verifiers"):
-                completed = repo.run(
-                    "show", "--catalog", str(path), "--parent", "grok/grok-4.7", "--role", role,
-                )
-                self.assertEqual(completed.returncode, 2, completed.stdout)
-                self.assertEqual(completed.stdout, "")
-                self.assertEqual(
-                    completed.stderr,
-                    f"error: role {role!r} has no seat: every runnable model in the catalog is capped "
-                    "(claude-haiku-5-5 at 100000 prompt tokens), and only skill tests may run a capped model\n",
-                )
-
-    def test_bounded_seat_picks_the_later_lower_effort_haiku(self):
-        catalog = {
+            "inheritedProviderInstanceId": "claudeAgent",
+            "inheritedModel": "claude-opus-5-5",
             "providers": [{
                 "providerInstanceId": "claudeAgent",
                 "canRunChildTask": True,
                 "constraints": [],
                 "models": [
-                    {"id": "claude-haiku-5-5", "options": [
-                        {"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}, {"id": "low"}]},
-                        {"id": "contextWindow", "type": "select", "options": [{"id": "100k"}, {"id": "200k"}]},
-                    ]},
-                    {"id": "anthropic/claude-haiku-5-5", "options": [
-                        {"id": "effort", "type": "select", "options": [{"id": "low", "isDefault": True}, {"id": "high"}]},
-                        {"id": "contextWindow", "type": "select", "options": [{"id": "1m"}, {"id": "300k"}]},
-                    ]},
+                    {"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}, {"id": "medium"}]}]},
+                    {"id": "claude-opus-5-5", "options": effort},
                 ],
             }],
         }
+        for role in roles.SINGLE_ROLES:
+            entry = roles.resolve({"budget": "default", "roles": {}, "sources": {}}, catalog, [role])["roles"][role]
+            seats = entry["seats"]
+            if isinstance(seats, list):
+                for seat in seats:
+                    if isinstance(seat, dict):
+                        self.assertNotEqual(roles.normalized_bare(seat["model"]), "claude-haiku-4-5", role)
+
+    def test_launches_seats_rejects_wrong_role(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
-            path = repo.directory / "tie.json"
-            brief = repo.directory / "brief.txt"
-            repo.put(path, catalog)
-            brief.write_bytes(b"tiny\n")
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(path),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["capped"], True)
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["seat"], {
-            "providerInstanceId": "claudeAgent",
-            "model": "anthropic/claude-haiku-5-5",
-            "options": {"contextWindow": "300k"},
-        })
-
-    def test_bounded_seat_refuses_an_over_target_haiku_parent_without_an_uncapped_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            catalog = repo.directory / "cap-only.json"
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            repo.put(catalog, cap_only_catalog())
-            brief.write_bytes(b"y" * 86)
-            read.write_bytes(b"x" * 600000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(catalog),
-                "--parent", "claudeAgent/claude-haiku-5-5",
-                "--brief", str(brief),
-                "--read", str(read),
-            )
-        self.assertEqual(completed.returncode, 2)
-        self.assertEqual(completed.stdout, "")
-        self.assertEqual(
-            completed.stderr,
-            "error: role 'skill tests' has no uncapped seat for this test: "
-            "estimate 191022 tokens is over the 100000-token target for claude-haiku-5-5, "
-            "no runnable model in the catalog is uncapped, "
-            "and the parent claudeAgent/claude-haiku-5-5 is capped\n",
-        )
-
-    def test_bounded_seat_inherits_an_uncapped_parent_when_every_runnable_model_is_capped(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            catalog = repo.directory / "cap-only.json"
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            repo.put(catalog, cap_only_catalog())
-            brief.write_bytes(b"y" * 86)
-            read.write_bytes(b"x" * 600000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(catalog),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", str(read),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, "")
-        body = json.loads(completed.stdout)
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-        self.assertEqual(body["seat"], "inherit")
-        self.assertEqual(body["capped"], False)
-        self.assertEqual(body["reason"], "estimate 191022 tokens is over the 100000-token target for claude-haiku-5-5")
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 86,
-            "readBytes": 600000,
-            "tokens": 191022,
-            "target": 100000,
-        })
-
-    def test_bounded_seat_resolves_a_missing_configured_model(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"skill tests": [
-                {"providerInstanceId": "claudeAgent", "model": "claude-haiku-old"},
-            ]}})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"y" * 86)
-            show = repo.run(
-                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
-            )
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-            )
-        self.assertEqual(show.returncode, 0, show.stderr)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, "")
-        shown = json.loads(show.stdout)["roles"]["skill tests"]
-        body = json.loads(completed.stdout)
-        seat = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
-        self.assertEqual(shown["seats"], [seat])
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-        self.assertEqual(body["seat"], seat)
-        self.assertEqual(body["seat"], shown["seats"][0])
-        self.assertEqual(body["capped"], False)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], [
-            "claudeAgent/claude-haiku-old is not in the catalog; using claude-opus-5-5",
-        ])
-        self.assertEqual(body["notes"], shown["notes"])
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 86,
-            "readBytes": 0,
-            "tokens": 41022,
-            "target": None,
-        })
-
-    def test_bounded_seat_inherits_for_an_unrunnable_configured_provider(self):
-        cases = (
-            (
-                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
-                "cursor is not runnable (Provider is not authenticated.); seat inherits the parent",
-            ),
-            (
-                {"providerInstanceId": "disabled-provider", "model": "claude-haiku-5-5"},
-                "disabled-provider is not runnable (not in catalog); seat inherits the parent",
-            ),
-        )
-        for configured, note in cases:
-            with self.subTest(provider=configured["providerInstanceId"]):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    repo.put(repo.user, {"roles": {"skill tests": [configured]}})
-                    brief = repo.directory / "brief.txt"
-                    brief.write_bytes(b"y" * 86)
-                    completed = repo.run(
-                        "bounded-seat",
-                        "--catalog", str(CATALOG),
-                        "--parent", "grok/grok-4.7",
-                        "--brief", str(brief),
-                    )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(completed.stderr, "")
-                body = json.loads(completed.stdout)
-                self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-                self.assertEqual(body["seat"], "inherit")
-                self.assertEqual(body["capped"], False)
-                self.assertIsNone(body["reason"])
-                self.assertEqual(body["notes"], [note])
-                self.assertEqual(body["estimate"], {
-                    "overheadTokens": 41000,
-                    "briefBytes": 86,
-                    "readBytes": 0,
-                    "tokens": 41022,
-                    "target": None,
-                })
-
-    def test_bounded_seat_gates_a_configured_inherit_on_a_haiku_parent(self):
-        cases = (
-            (2000, "inherit", True, None, 41750),
-            (
-                235004,
-                {"providerInstanceId": "codex", "model": "gpt-6-luna"},
-                False,
-                "estimate 100001 tokens is over the 100000-token target for claude-haiku-5-5",
-                100001,
-            ),
-        )
-        for read_bytes, seat, capped, reason, tokens in cases:
-            with self.subTest(tokens=tokens):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    repo.put(repo.user, {"roles": {"skill tests": ["inherit"]}})
-                    brief = repo.directory / "brief.txt"
-                    read = repo.directory / "read.txt"
-                    brief.write_bytes(b"y" * 1000)
-                    read.write_bytes(b"z" * read_bytes)
-                    completed = repo.run(
-                        "bounded-seat",
-                        "--catalog", str(CATALOG),
-                        "--parent", "claudeAgent/claude-haiku-5-5",
-                        "--brief", str(brief),
-                        "--read", str(read),
-                    )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(completed.stderr, "")
-                body = json.loads(completed.stdout)
-                self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-                self.assertEqual(body["seat"], seat)
-                self.assertEqual(body["capped"], capped)
-                self.assertEqual(body["reason"], reason)
-                self.assertEqual(body["notes"], [])
-                self.assertEqual(body["estimate"], {
-                    "overheadTokens": 41000,
-                    "briefBytes": 1000,
-                    "readBytes": read_bytes,
-                    "tokens": tokens,
-                    "target": 100000,
-                })
-
-    def test_bounded_seat_keeps_under_target_haiku_when_every_model_is_capped(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            catalog = repo.directory / "cap-only.json"
-            brief = repo.directory / "brief.txt"
-            repo.put(catalog, cap_only_catalog())
-            brief.write_bytes(b"y" * 86)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(catalog),
-                "--parent", "claudeAgent/claude-haiku-5-5",
-                "--brief", str(brief),
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, "")
-        body = json.loads(completed.stdout)
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-        self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"})
-        self.assertEqual(body["capped"], True)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], [])
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 86,
-            "readBytes": 0,
-            "tokens": 41022,
-            "target": 100000,
-        })
-
-    def test_bounded_seat_drops_an_unknown_option(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"roles": {"skill tests": [
-                {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"nope": "x"}},
-            ]}})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"y" * 86)
-            show = repo.run(
-                "show", "--catalog", str(CATALOG), "--parent", "grok/grok-4.7", "--role", "skill tests",
-            )
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-            )
-        self.assertEqual(show.returncode, 0, show.stderr)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, "")
-        shown = json.loads(show.stdout)["roles"]["skill tests"]
-        body = json.loads(completed.stdout)
-        seat = {"providerInstanceId": "grok", "model": "grok-4.7"}
-        self.assertEqual(shown["seats"], [seat])
-        self.assertEqual(list(body), ["seat", "capped", "estimate", "reason", "notes"])
-        self.assertEqual(body["seat"], seat)
-        self.assertEqual(body["seat"], shown["seats"][0])
-        self.assertEqual(body["capped"], False)
-        self.assertIsNone(body["reason"])
-        self.assertEqual(body["notes"], ["dropped unknown options nope"])
-        self.assertEqual(body["notes"], shown["notes"])
-        self.assertEqual(body["estimate"], {
-            "overheadTokens": 41000,
-            "briefBytes": 86,
-            "readBytes": 0,
-            "tokens": 41022,
-            "target": None,
-        })
-
-    def test_light_mode_keeps_every_launch_model(self):
-        def launch_models(payload):
-            found = {}
-            for name, entry in payload["roles"].items():
-                models = []
-                for seat in entry["seats"]:
-                    models.append("claude-opus-5-5" if seat == "inherit" else seat["model"])
-                found[name] = models
-            return found
-
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            full = repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5")
-            repo.put(repo.user, {"mode": "light"})
-            light = repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5")
-        for completed in (full, light):
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(launch_models(json.loads(completed.stdout)), LAUNCH_MODELS)
-            self.assertNotIn("claude-haiku-5-5", completed.stdout)
-
-    def test_light_mode_refuses_a_haiku_parent_for_bug_fix(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"mode": "light", "roles": {"bug-fix": ["inherit"]}})
             completed = repo.run(
                 "show",
-                "--catalog", str(CATALOG),
-                "--parent", "claudeAgent/claude-haiku-5-5",
-                "--role", "bug-fix",
+                "--catalog",
+                str(CATALOG),
+                "--parent",
+                "claudeAgent/claude-opus-5-5",
+                "--role",
+                "bug-fix",
+                "--launches-seats",
             )
         self.assertEqual(completed.returncode, 2)
-        self.assertEqual(completed.stdout, "")
-        self.assertEqual(completed.stderr, f"error: {INHERIT_CAP}\n")
+        self.assertIn('only with exactly one --role "skill tests"', completed.stderr)
 
-    def test_light_skill_tests_show_replaces_haiku_5_5(self):
+    def test_launches_seats_requires_catalog_and_parent(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
-            repo.put(repo.user, {"mode": "light", "roles": {"skill tests": [{
-                "providerInstanceId": "claudeAgent",
-                "model": "claude-haiku-5-5",
-            }]}})
+            no_catalog = repo.run("show", "--role", "skill tests", "--launches-seats")
+            self.assertEqual(no_catalog.returncode, 2)
+            self.assertIn("requires a catalog", no_catalog.stderr)
+            no_parent = repo.run(
+                "show",
+                "--catalog",
+                str(CATALOG),
+                "--role",
+                "skill tests",
+                "--launches-seats",
+            )
+        self.assertEqual(no_parent.returncode, 2)
+        self.assertIn("requires --parent", no_parent.stderr)
+
+    def test_launches_seats_default_haiku_high(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
             completed = repo.run(
                 "show",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--role", "skill tests",
+                "--catalog",
+                str(CATALOG),
+                "--parent",
+                "claudeAgent/claude-opus-5-5",
+                "--role",
+                "skill tests",
+                "--launches-seats",
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         entry = json.loads(completed.stdout)["roles"]["skill tests"]
-        self.assertEqual(entry["seats"], [HAIKU_4_SEAT])
-        self.assertEqual(entry["note"], SKILL_TESTS_NOTE)
+        self.assertEqual(entry["seats"], [HAIKU_5_HIGH])
 
-    def test_bounded_seat_caps_a_light_haiku(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            brief = repo.directory / "brief.txt"
-            read = repo.directory / "read.txt"
-            brief.write_bytes(b"y" * 1000)
-            read.write_bytes(b"x" * 2000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--read", str(read),
-                "--session-mode", "light",
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["seat"], HAIKU_5_MEDIUM)
-        self.assertEqual(body["capped"], True)
-        self.assertEqual(body["estimate"]["tokens"], 41750)
-        self.assertEqual(body["estimate"]["target"], 100000)
-
-    def test_bounded_seat_brief_mode_full_keeps_the_bare_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            repo.put(repo.user, {"mode": "light"})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"y" * 1000)
-            completed = repo.run(
-                "bounded-seat",
-                "--catalog", str(CATALOG),
-                "--parent", "grok/grok-4.7",
-                "--brief", str(brief),
-                "--brief-mode", "full",
-            )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(
-            json.loads(completed.stdout)["seat"],
-            {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+    def test_budget_and_light_levels_for_haiku_roles(self):
+        cases = (
+            ({"budget": "default"}, "skill tests", "high"),
+            ({"budget": "small"}, "skill tests", "medium"),
+            ({"budget": "large"}, "skill tests", "high"),
+            ({"budget": "unlimited"}, "skill tests", "high"),
+            ({"mode": "light", "budget": "default"}, "skill tests", "medium"),
+            ({"budget": "default"}, "how explorer", "medium"),
         )
+        for config, role, level in cases:
+            with self.subTest(config=config, role=role):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, config)
+                    completed = repo.run(
+                        "show",
+                        "--catalog",
+                        str(CATALOG),
+                        "--parent",
+                        "claudeAgent/claude-opus-5-5",
+                        "--role",
+                        role,
+                        *(
+                            ["--brief-mode", "light", "--session-mode", "light"]
+                            if config.get("mode") == "light"
+                            else []
+                        ),
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                seat = json.loads(completed.stdout)["roles"][role]["seats"][0]
+                self.assertEqual(seat["options"]["effort"], level)
 
-    def test_light_show_keeps_an_uncapped_model_when_grok_is_absent(self):
-        catalog = json.loads(CATALOG.read_text())
-        catalog["providers"] = [
-            provider for provider in catalog["providers"] if provider["providerInstanceId"] != "grok"
-        ]
+    def test_non_haiku_defaults_unchanged_on_fixture(self):
+        opus_max = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}}
+        expectations = {
+            "default": {
+                "bug-fix": {"source": "default", "seats": [GROK_SEAT]},
+                "judgment and prose": {"source": "default", "seats": [OPUS_SEAT]},
+                "arena runners": {"source": "default", "seats": [OPUS_SEAT, GROK_SEAT]},
+            },
+            "unlimited": {
+                "bug-fix": {"source": "default", "seats": [GROK_SEAT]},
+                "judgment and prose": {"source": "default", "seats": [opus_max]},
+                "arena runners": {"source": "default", "seats": [opus_max, GROK_SEAT]},
+            },
+        }
+        for budget, entries in expectations.items():
+            with self.subTest(budget=budget):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"version": 1, "roles": {}, "budget": budget})
+                    completed = repo.run(
+                        "show",
+                        "--catalog",
+                        str(CATALOG),
+                        "--parent",
+                        "claudeAgent/claude-opus-5-5",
+                        *[arg for role in entries for arg in ("--role", role)],
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(json.loads(completed.stdout)["roles"], entries)
+
+    def test_launches_seats_ignores_a_configured_cursor_skill_tests_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"version": 1, "roles": {
+                "skill tests": [{"providerInstanceId": "cursor", "model": "claude-haiku-5-5"}],
+            }})
+            completed = repo.run(
+                "show",
+                "--catalog",
+                str(CATALOG),
+                "--parent",
+                "claudeAgent/claude-opus-5-5",
+                "--role",
+                "skill tests",
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["skill tests"], {
+            "source": str(repo.user),
+            "seats": [HAIKU_5_HIGH],
+            "haikuBrief": HAIKU_BRIEF,
+        })
+
+
+VERTEX_ID = "claude-haiku-4-5@20251001"
+HAIKU_55_SPELLINGS = (
+    "anthropic.claude-haiku-5-5",
+    "us.anthropic.claude-haiku-5-5",
+    "eu.anthropic.claude-haiku-5-5",
+    "apac.anthropic.claude-haiku-5-5",
+    "global.anthropic.claude-haiku-5-5",
+    "amazon-bedrock/anthropic.claude-haiku-5-5",
+    "claude-haiku-5-5@20251001",
+    "claude-haiku-5-5-20251001",
+)
+
+
+def vertex_only_catalog():
+    return {"providers": [{
+        "providerInstanceId": "claudeAgent",
+        "canRunChildTask": True,
+        "constraints": [],
+        "models": [{"id": VERTEX_ID, "options": []}],
+    }]}
+
+
+class VertexHaikuCliTest(unittest.TestCase):
+    """Vertex Haiku 4.5 is excluded on show, validate, and write."""
+
+    def run_show(self, roles_doc):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             path = repo.directory / "catalog.json"
-            repo.put(path, catalog)
-            repo.put(repo.user, {"mode": "light"})
-            completed = repo.run(
+            repo.put(path, vertex_only_catalog())
+            if roles_doc is not None:
+                repo.put(repo.user, {"version": 1, "roles": roles_doc})
+            return repo.run(
                 "show",
                 "--catalog", str(path),
-                "--parent", "claudeAgent/claude-opus-5-5",
+                "--parent", f"claudeAgent/{VERTEX_ID}",
                 "--role", "bug-fix",
             )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [{
+
+    def test_configured_seat_is_refused(self):
+        completed = self.run_show({"bug-fix": [{
             "providerInstanceId": "claudeAgent",
-            "model": "claude-opus-5-5",
-            "options": {"effort": "medium"},
-        }])
+            "model": VERTEX_ID,
+        }]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+        ))
 
+    def test_unset_role_does_not_fall_back_to_it(self):
+        completed = self.run_show({})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+        ))
 
-INHERIT_CAP = (
-    "role 'bug-fix' cannot inherit claudeAgent/claude-haiku-5-5: "
-    "claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model"
-)
-SKILL_TESTS_NOTE = (
-    "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits"
-)
-HAIKU_4_SEAT = {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"}
-
-
-def parent_error(text):
-    return (
-        f"error: --parent {text!r}: expected "
-        "'<inheritedProviderInstanceId>/<inheritedModel>' from orchestrator_capabilities\n"
-    )
-
-
-def runnable_haiku_catalog():
-    return {
-        "inheritedProviderInstanceId": "claudeAgent",
-        "inheritedModel": "claude-haiku-5-5",
-        "providers": [{
+    def test_missing_model_does_not_fall_back_to_it(self):
+        completed = self.run_show({"bug-fix": [{
             "providerInstanceId": "claudeAgent",
-            "canRunChildTask": True,
-            "constraints": [],
-            "models": [{"id": "claude-haiku-5-5", "options": []}],
-        }],
-    }
+            "model": "claude-missing",
+        }]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' cannot use "
+            f"claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
 
+    def test_inherit_does_not_keep_it(self):
+        completed = self.run_show({"bug-fix": ["inherit"]})
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: role 'bug-fix' cannot inherit "
+            f"claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}; "
+            "claudeAgent has no other model pstack may pick\n"
+        ))
 
-def cap_only_catalog():
-    return {
-        "providers": [{
-            "providerInstanceId": "claudeAgent",
-            "canRunChildTask": True,
-            "models": [{"id": "claude-haiku-5-5", "options": []}],
-        }],
-    }
-
-
-def cursor_haiku_catalog():
-    return {
-        "providers": [
-            {
-                "providerInstanceId": "cursor",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "claude-haiku-5-5", "options": [
-                    {"id": "contextWindow", "type": "select", "options": [{"id": "1m"}, {"id": "300k"}]},
-                ]}],
-            },
-            {
+    def test_validate_rejects_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, vertex_only_catalog())
+            repo.put(repo.user, {"version": 1, "roles": {"bug-fix": [{
                 "providerInstanceId": "claudeAgent",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "claude-haiku-4-5", "options": [{"id": "thinking", "type": "boolean"}]}],
-            },
-        ],
-    }
+                "model": VERTEX_ID,
+            }]}})
+            completed = repo.run(
+                "validate",
+                "--catalog", str(path),
+                "--parent", f"claudeAgent/{VERTEX_ID}",
+            )
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, (
+            f"bug-fix: claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
+        self.assertEqual(completed.stderr, "")
+
+    def test_write_force_refuses_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, vertex_only_catalog())
+            completed = repo.run(
+                "write",
+                "--catalog", str(path),
+                "--parent", f"claudeAgent/{VERTEX_ID}",
+                "--force",
+                "--set", f"bug-fix=claudeAgent/{VERTEX_ID}",
+            )
+            self.assertFalse(repo.user.exists())
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            "error: refusing to write, even with --force:\n"
+            f"bug-fix: claudeAgent/{VERTEX_ID}: {VERTEX_ID} is Claude Haiku 4.5, and {EXCLUDED_RULE}\n"
+        ))
 
 
-def variant_flash_catalog():
-    return {
-        "providers": [
-            {
-                "providerInstanceId": "opencode",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "opencode/ling-3.0-flash-fin-free", "options": [
-                    {"id": "variant", "type": "select", "options": [{"id": "default", "isDefault": True}]},
-                ]}],
-            },
-            {
-                "providerInstanceId": "codex",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "gpt-6-luna", "options": [
-                    {"id": "reasoningEffort", "type": "select", "options": [
-                        {"id": "low"}, {"id": "medium", "isDefault": True}, {"id": "high"},
-                    ]},
-                ]}],
-            },
-            {
-                "providerInstanceId": "cursor",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "gemini-3.8-flash", "options": []}],
-            },
-        ],
-    }
+class BedrockHaikuBriefCliTest(unittest.TestCase):
+    """Bedrock and dated Haiku 5.5 spellings still get haikuBrief."""
 
-
-def cursor_only_catalog():
-    return {
-        "providers": [{
-            "providerInstanceId": "cursor",
+    def show(self, model_id, seat):
+        catalog = {"providers": [{
+            "providerInstanceId": "opencode",
             "canRunChildTask": True,
             "constraints": [],
-            "models": [{"id": "gemini-3.8-flash", "options": []}],
-        }],
-    }
+            "models": [{"id": model_id, "options": []}],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"version": 1, "roles": {"how explorer": [seat]}})
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            return repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", f"opencode/{model_id}",
+                "--role", "how explorer",
+            )
+
+    def test_explicit_and_inherit_seats_get_haiku_brief(self):
+        for model_id in HAIKU_55_SPELLINGS:
+            explicit = {"providerInstanceId": "opencode", "model": model_id}
+            for seat in (explicit, "inherit"):
+                label = "inherit" if seat == "inherit" else "explicit"
+                with self.subTest(model=model_id, seat=label):
+                    completed = self.show(model_id, seat)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    entry = json.loads(completed.stdout)["roles"]["how explorer"]
+                    expected = ["inherit"] if seat == "inherit" else [explicit]
+                    self.assertEqual(entry["seats"], expected)
+                    self.assertEqual(entry.get("haikuBrief"), HAIKU_BRIEF)
 
 
 def reasoning_select(default="high"):
@@ -2496,7 +1746,7 @@ def grok_claude_fast_catalog():
             "constraints": [],
             "models": [
                 {"id": "claude-opus-5-5", "options": []},
-                {"id": "claude-haiku-4-5", "options": []},
+                {"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}, {"id": "medium"}]}]},
             ],
         },
     ]}
@@ -2542,7 +1792,7 @@ def user_shape_catalog():
             "constraints": [],
             "models": [
                 {"id": "claude-opus-5-5", "options": []},
-                {"id": "claude-haiku-4-5", "options": []},
+                {"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}, {"id": "medium"}]}]},
             ],
         },
         {
@@ -2593,7 +1843,7 @@ SHORT_ESTIMATE = {
     "tokens": 41003,
     "target": None,
 }
-FAST_RULE = "pstack never runs a fast Grok model as a seat or a worker"
+FAST_RULE = roles.EXCLUDED_RULE
 
 
 class FastGrokCliTest(unittest.TestCase):
@@ -2619,28 +1869,21 @@ class FastGrokCliTest(unittest.TestCase):
 
     def test_launches_seats_skips_grok_build_fast(self):
         grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
-        claude = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
-            repo.put(repo.user, single_role_split(grok, claude))
+            repo.put(repo.user, {"roles": {name: [grok] for name in roles.SINGLE_ROLES}})
             path = repo.directory / "catalog.json"
             repo.put(path, grok_claude_fast_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
             completed = repo.run(
-                "bounded-seat",
+                "show",
                 "--catalog", str(path),
                 "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
+                "--role", "skill tests",
                 "--launches-seats",
             )
-        PromptCapCliTest.assert_bounded(self, completed, {
-            "seat": {"providerInstanceId": "grok", "model": "grok-build"},
-            "capped": False,
-            "estimate": SHORT_ESTIMATE,
-            "reason": None,
-            "notes": [],
-        })
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7"}])
 
     def test_skill_tests_skips_grok_build_fast(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2648,8 +1891,8 @@ class FastGrokCliTest(unittest.TestCase):
             completed, _path = self.show(repo, grok_claude_fast_catalog(), "skill tests")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         entry = json.loads(completed.stdout)["roles"]["skill tests"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-build"}])
-        self.assertNotIn("notes", entry)
+        self.assertEqual(entry["seats"], [HAIKU_5_HIGH])
+        self.assertEqual(entry["haikuBrief"], HAIKU_BRIEF)
 
     def test_swarm_cursor_grok_pins_fast_mode_false(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2885,7 +2128,7 @@ class FastGrokCliTest(unittest.TestCase):
                 "providerInstanceId": "claudeAgent",
                 "canRunChildTask": True,
                 "constraints": [],
-                "models": [{"id": "claude-haiku-4-5", "options": []}],
+                "models": [{"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high", "isDefault": True}]}]}],
             },
         ]}
         with tempfile.TemporaryDirectory() as directory:
@@ -2893,18 +2136,16 @@ class FastGrokCliTest(unittest.TestCase):
             repo.put(repo.user, single_role_split(cursor, cursor))
             path = repo.directory / "catalog.json"
             repo.put(path, catalog)
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
             completed = repo.run(
-                "bounded-seat",
+                "show",
                 "--catalog", str(path),
                 "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
+                "--role", "skill tests",
                 "--launches-seats",
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        body = json.loads(completed.stdout)
-        self.assertEqual(body["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"})
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [HAIKU_5_HIGH])
 
     def test_launches_seats_keeps_the_configured_family_split(self):
         grok = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "high"}}
@@ -2917,15 +2158,12 @@ class FastGrokCliTest(unittest.TestCase):
             repo.put(repo.user, document)
             path = repo.directory / "catalog.json"
             repo.put(path, user_shape_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
-
             def launch(parent):
                 return repo.run(
-                    "bounded-seat",
+                    "show",
                     "--catalog", str(path),
                     "--parent", parent,
-                    "--brief", str(brief),
+                    "--role", "skill tests",
                     "--launches-seats",
                 )
 
@@ -2934,12 +2172,12 @@ class FastGrokCliTest(unittest.TestCase):
         self.assertEqual(claude_parent.returncode, 0, claude_parent.stderr)
         self.assertEqual(grok_parent.returncode, 0, grok_parent.stderr)
         self.assertEqual(
-            json.loads(claude_parent.stdout)["seat"],
-            {"providerInstanceId": "codex", "model": "gpt-6-luna"},
+            json.loads(claude_parent.stdout)["roles"]["skill tests"]["seats"],
+            [HAIKU_5_HIGH],
         )
         self.assertEqual(
-            json.loads(grok_parent.stdout)["seat"],
-            {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            json.loads(grok_parent.stdout)["roles"]["skill tests"]["seats"],
+            [HAIKU_5_HIGH],
         )
 
     def test_fast_parent_verifiers_use_the_providers_safe_model(self):
@@ -3045,7 +2283,7 @@ class FastGrokCliTest(unittest.TestCase):
                     "seats": seats,
                 })
 
-    def test_bounded_seat_refuses_a_fast_only_parent(self):
+    def test_launches_seats_refuses_a_fast_only_parent(self):
         catalog = {"providers": [{
             "providerInstanceId": "grok",
             "canRunChildTask": True,
@@ -3053,31 +2291,25 @@ class FastGrokCliTest(unittest.TestCase):
             "models": [{"id": "grok-4.7-build-fast", "options": []}],
         }]}
         stderr = (
-            "error: role 'skill tests' cannot inherit grok/grok-4.7-build-fast: "
-            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}; "
-            "grok has no other model pstack may pick\n"
+            "error: role 'skill tests' has no seat: every runnable model in the catalog is excluded "
+            f"(grok-4.7-build-fast), and {FAST_RULE}\n"
         )
-        for flag in ((), ("--launches-seats",)):
-            with self.subTest(flag=flag):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    path = repo.directory / "catalog.json"
-                    repo.put(path, catalog)
-                    brief = repo.directory / "brief.txt"
-                    brief.write_bytes(b"short brief\n")
-                    completed = repo.run(
-                        "bounded-seat",
-                        "--catalog", str(path),
-                        "--parent", "grok/grok-4.7-build-fast",
-                        "--brief", str(brief),
-                        "--brief-mode", "full",
-                        *flag,
-                    )
-                self.assertEqual(completed.returncode, 2)
-                self.assertEqual(completed.stdout, "")
-                self.assertEqual(completed.stderr, stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            completed = repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", "grok/grok-4.7-build-fast",
+                "--role", "skill tests",
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, stderr)
 
-    def test_bounded_seat_empty_pool_uses_the_parent_safe_model(self):
+    def test_launches_seats_empty_pool_uses_the_parent_safe_model(self):
         catalog = {"providers": [
             {
                 "providerInstanceId": "acme",
@@ -3091,40 +2323,33 @@ class FastGrokCliTest(unittest.TestCase):
                 "constraints": [],
                 "models": [
                     {"id": "grok-4.7-build-fast", "options": []},
-                    {"id": "grok-4.7", "options": []},
+                    {"id": "grok-4.7", "options": [reasoning_select()]},
                 ],
             },
         ]}
         replaced = (
             "inherit replaced by grok/grok-4.7: "
-            f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}"
+            f"grok-4.7-build-fast is a fast Grok variant, and {EXCLUDED_RULE}"
         )
-        seat = {"providerInstanceId": "grok", "model": "grok-4.7"}
-        plain = {"seat": seat, "capped": False, "estimate": SHORT_ESTIMATE, "reason": None, "notes": []}
-        launched = {**plain, "notes": [replaced]}
-        expected = {(): plain, ("--launches-seats",): launched}
-        for flag, body in expected.items():
-            with self.subTest(flag=flag):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    repo.put(repo.user, {"roles": {"bug-fix": [
-                        {"providerInstanceId": "acme", "model": "grok-4.7-build-fast"},
-                    ]}})
-                    path = repo.directory / "catalog.json"
-                    repo.put(path, catalog)
-                    brief = repo.directory / "brief.txt"
-                    brief.write_bytes(b"short brief\n")
-                    completed = repo.run(
-                        "bounded-seat",
-                        "--catalog", str(path),
-                        "--parent", "grok/grok-4.7-build-fast",
-                        "--brief", str(brief),
-                        "--brief-mode", "full",
-                        *flag,
-                    )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(completed.stderr, "")
-                self.assertEqual(json.loads(completed.stdout), body)
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"skill tests": ["inherit"]}})
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            completed = repo.run(
+                "show",
+                "--catalog", str(path),
+                "--parent", "grok/grok-4.7-build-fast",
+                "--role", "skill tests",
+                "--launches-seats",
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [{
+            "providerInstanceId": "grok",
+            "model": "grok-4.7",
+        }])
+        self.assertTrue(any(replaced in note for note in entry.get("notes", [])))
 
     def test_unrunnable_provider_with_a_fast_parent_uses_the_safe_model(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3146,7 +2371,7 @@ class FastGrokCliTest(unittest.TestCase):
             ],
         })
 
-    def test_bounded_seat_skips_a_configured_fast_skill_tests_seat(self):
+    def test_show_skips_a_configured_fast_skill_tests_seat(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"roles": {"skill tests": [
@@ -3154,25 +2379,19 @@ class FastGrokCliTest(unittest.TestCase):
             ]}})
             path = repo.directory / "catalog.json"
             repo.put(path, grok_claude_fast_catalog())
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
             completed = repo.run(
-                "bounded-seat",
+                "show",
                 "--catalog", str(path),
                 "--parent", "claudeAgent/claude-opus-5-5",
-                "--brief", str(brief),
+                "--role", "skill tests",
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), {
-            "seat": {"providerInstanceId": "grok", "model": "grok-build"},
-            "capped": False,
-            "estimate": SHORT_ESTIMATE,
-            "reason": None,
-            "notes": [
-                "skipped configured seat grok/grok-4.7-build-fast: "
-                f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}",
-            ],
-        })
+        entry = json.loads(completed.stdout)["roles"]["skill tests"]
+        self.assertEqual(entry["seats"], [HAIKU_5_HIGH])
+        self.assertIn(
+            "skipped configured seat grok/grok-4.7-build-fast",
+            entry.get("notes", [""])[0],
+        )
 
     def test_no_catalog_fast_parent_needs_the_catalog(self):
         note = (
@@ -3195,7 +2414,7 @@ class FastGrokCliTest(unittest.TestCase):
         self.assertEqual(json.loads(skill_tests.stdout)["roles"]["skill tests"], {
             "source": "default",
             "seats": "catalog-required",
-            "note": note,
+            "note": "call orchestrator_capabilities and rerun roles.py show --catalog",
         })
         self.assertEqual(json.loads(bug_fix.stdout)["roles"]["bug-fix"], {
             "source": "default",
@@ -3236,7 +2455,7 @@ class FastGrokCliTest(unittest.TestCase):
                 "providerInstanceId": "claudeAgent",
                 "canRunChildTask": True,
                 "constraints": [],
-                "models": [{"id": "claude-haiku-5-5", "options": []}],
+                "models": [{"id": "claude-haiku-4-5", "options": []}],
             },
             {
                 "providerInstanceId": "grok",
@@ -3248,13 +2467,13 @@ class FastGrokCliTest(unittest.TestCase):
         cases = {
             "fast": (
                 fast_only,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is a fast Grok variant "
+                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
                 f"(grok-4.7-build-fast), and {FAST_RULE}\n",
             ),
             "mixed": (
                 mixed,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is capped or a fast Grok variant "
-                f"(claude-haiku-5-5 at 100000, grok-4.7-build-fast), and {FAST_RULE}\n",
+                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+                f"(claude-haiku-4-5, grok-4.7-build-fast), and {FAST_RULE}\n",
             ),
         }
         for name, (catalog, stderr) in cases.items():
@@ -3316,20 +2535,17 @@ class BlockedFastOptionParentCliTest(unittest.TestCase):
                 self.assertEqual(completed.stdout, "")
                 self.assertEqual(completed.stderr, expected)
 
-    def bounded(self, provider_id, flag):
+    def launch_show(self, provider_id):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             path = repo.directory / "catalog.json"
             repo.put(path, {"providers": [blocked_fast_option_provider(provider_id)]})
-            brief = repo.directory / "brief.txt"
-            brief.write_bytes(b"short brief\n")
             return repo.run(
-                "bounded-seat",
+                "show",
                 "--catalog", str(path),
                 "--parent", f"{provider_id}/grok-4.7",
-                "--brief", str(brief),
-                "--brief-mode", "full",
-                *flag,
+                "--role", "skill tests",
+                "--launches-seats",
             )
 
     def test_configured_inherit_is_refused(self):
@@ -3338,13 +2554,13 @@ class BlockedFastOptionParentCliTest(unittest.TestCase):
     def test_unavailable_seat_fallback_is_refused(self):
         self.show({"providerInstanceId": "pi", "model": "default"})
 
-    def test_bounded_seat_empty_pool_is_refused(self):
-        completed = self.bounded("cursor", ())
+    def test_launches_seats_empty_pool_is_refused(self):
+        completed = self.launch_show("cursor")
         self.assertEqual(completed.returncode, 2)
         self.assertEqual(completed.stdout, "")
-        self.assertEqual(completed.stderr, blocked_fast_option_refusal("skill tests"))
+        self.assertIn("cannot launch seats", completed.stderr)
 
-    def test_bounded_seat_empty_pool_launching_seats_is_refused(self):
+    def test_launches_seats_empty_pool_on_acme_is_refused(self):
         expected = {
             "cursor": (
                 "error: role 'skill tests' has no seat for a child that launches seats: "
@@ -3355,7 +2571,10 @@ class BlockedFastOptionParentCliTest(unittest.TestCase):
         }
         for provider_id, stderr in expected.items():
             with self.subTest(provider=provider_id):
-                completed = self.bounded(provider_id, ("--launches-seats",))
+                completed = self.launch_show(provider_id)
                 self.assertEqual(completed.returncode, 2)
                 self.assertEqual(completed.stdout, "")
-                self.assertEqual(completed.stderr, stderr)
+                if provider_id == "acme":
+                    self.assertIn("no provider in the catalog can run child tasks", completed.stderr)
+                else:
+                    self.assertEqual(completed.stderr, stderr)
