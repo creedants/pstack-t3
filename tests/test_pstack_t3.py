@@ -2105,6 +2105,26 @@ class FixedContextWindowTest(unittest.TestCase):
         self.assertIn("The cap is about price, not capacity", section)
 
 
+class LaunchingSkillTestDocTest(unittest.TestCase):
+    def test_prompt_caps_send_a_seat_launching_test_through_launches_seats(self):
+        section = runtime_section("### Prompt caps")
+        step1 = section.split("\n1. ", 1)[1].split("\n2. ", 1)[0]
+        step4 = section.split("\n4. ", 1)[1]
+        for phrase in (
+            "stays on the `show` seat, unless its child will launch seats.",
+            "passes a `target` to `delegate_task` or `t3_thread_launch`",
+            "When the skill-test child will launch seats, pass `--launches-seats` to `roles.py bounded-seat`.",
+            "never cursor",
+            "still applies the Haiku prompt cap",
+            "`show` has no such flag and can still return a cursor seat.",
+        ):
+            self.assertIn(phrase, step1)
+        self.assertIn(
+            "Rerun a child that launches seats on `inherit`, and every other child on the `show` seat.",
+            step4,
+        )
+
+
 class MuseDocTest(unittest.TestCase):
     def test_runtime_names_muse_and_limits_its_modes(self):
         runtime = (ROOT / "t3/runtime.md").read_text()
@@ -2149,6 +2169,35 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("timeoutMs: 300000", step)
         self.assertIn("does not end its turn while a child is open", step)
 
+    def test_delegation_step_5_rechecks_a_final_result_after_two_minutes(self):
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        ten = "A child with no new item for 10 minutes is stalled."
+        two = "no pending tool or child run, and no new activity for two minutes is stalled."
+        for phrase in (
+            two,
+            "A message that says more work follows does not hold the result.",
+            "with `timeoutMs: 120000`",
+            "only when the wait timed out, `workState` is still `working`, "
+            "that message is still the last item, and no tool or child run is pending.",
+            "Otherwise the 10-minute rule above decides that child.",
+            ten,
+        ):
+            self.assertIn(phrase, step)
+        self.assertLess(step.index(ten), step.index(two))
+
+    def test_delegation_step_5_holds_against_the_delegate_task_tool_text(self):
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        stay = "does not end its turn while a child is open"
+        holds = "This holds even though the `delegate_task` tool text says to end the turn."
+        self.assertIn(holds, step)
+        self.assertLess(step.index(stay), step.index(holds))
+
+    def test_failure_handling_keeps_the_two_minute_clock_out(self):
+        section = runtime_section("### Failure handling", "### Fresh children by default")
+        self.assertNotIn("two minutes", section)
+        self.assertNotIn("120000", section)
+        self.assertIn("holds the result the brief asked for", section)
+
     def test_permissions_never_lowers_runtime_mode(self):
         text = (ROOT / "t3/runtime.md").read_text()
         section = text.split("### Permissions", 1)[1].split("### Failure handling", 1)[0]
@@ -2173,6 +2222,10 @@ class StalledChildDocTest(unittest.TestCase):
             "interrogate/SKILL.md": "../pstack-runtime", "swarm/SKILL.md": "../pstack-runtime",
             "why/SKILL.md": "../pstack-runtime", "no-comments/SKILL.md": "../pstack-runtime",
             "poteto-mode/playbooks/orchestrate.md": "../../pstack-runtime",
+            "poteto-mode/playbooks/feature.md": "../../pstack-runtime",
+            "poteto-mode/playbooks/bug-fix.md": "../../pstack-runtime",
+            "poteto-mode/playbooks/refactoring.md": "../../pstack-runtime",
+            "poteto-mode/playbooks/perf-issue.md": "../../pstack-runtime",
         }
         missing = [name for name, runtime in sources.items()
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
