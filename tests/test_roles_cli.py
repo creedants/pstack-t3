@@ -1469,16 +1469,34 @@ class Haiku55CliTest(unittest.TestCase):
                 self.assertEqual(seat["options"]["effort"], level)
 
     def test_non_haiku_defaults_unchanged_on_fixture(self):
+        opus_max = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}}
         expectations = {
-            "bug-fix": [GROK_SEAT],
-            "judgment and prose": [OPUS_SEAT],
-            "arena runners": [OPUS_SEAT, GROK_SEAT],
+            "default": {
+                "bug-fix": {"source": "default", "seats": [GROK_SEAT]},
+                "judgment and prose": {"source": "default", "seats": [OPUS_SEAT]},
+                "arena runners": {"source": "default", "seats": [OPUS_SEAT, GROK_SEAT]},
+            },
+            "unlimited": {
+                "bug-fix": {"source": "default", "seats": [GROK_SEAT]},
+                "judgment and prose": {"source": "default", "seats": [opus_max]},
+                "arena runners": {"source": "default", "seats": [opus_max, GROK_SEAT]},
+            },
         }
-        for role, seats in expectations.items():
-            with self.subTest(role=role):
-                completed = show(role)
+        for budget, entries in expectations.items():
+            with self.subTest(budget=budget):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"version": 1, "roles": {}, "budget": budget})
+                    completed = repo.run(
+                        "show",
+                        "--catalog",
+                        str(CATALOG),
+                        "--parent",
+                        "claudeAgent/claude-opus-5-5",
+                        *[arg for role in entries for arg in ("--role", role)],
+                    )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(json.loads(completed.stdout)["roles"][role]["seats"], seats)
+                self.assertEqual(json.loads(completed.stdout)["roles"], entries)
 
 
 

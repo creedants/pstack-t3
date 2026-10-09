@@ -521,9 +521,11 @@ class RolesTest(unittest.TestCase):
                 {"id": "high"}, {"id": "medium"}, {"id": "low"}]}]}],
         }
         providers = [grok if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "high"}}])
-        self.assertEqual(entry["notes"], ["bug-fix seat 1: wanted xhigh, using high"])
+        for budget in ("default", "unlimited"):
+            with self.subTest(budget=budget):
+                entry = roles.resolve(config(budget), {**CATALOG, "providers": providers}, ["bug-fix"])["roles"]["bug-fix"]
+                self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "high"}}])
+                self.assertEqual(entry["notes"], ["bug-fix seat 1: wanted xhigh, using high"])
 
     def test_preferred_seat_adds_no_effort_option_when_the_model_declares_none(self):
         grok = {"providerInstanceId": "grok", "canRunChildTask": True, "constraints": [], "models": [{"id": "grok-4.7", "options": []}]}

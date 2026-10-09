@@ -127,6 +127,11 @@ class Parent:
 
 @dataclass(frozen=True)
 class PreferredSeat:
+    """A built-in seat. effort is the level it promises. unlimited is the level the unlimited budget asks for.
+
+    The shortfall note compares the chosen level with effort, so asking for more never adds a note.
+    """
+
     model_id: str
     effort: str = "xhigh"
     unlimited: str = "max"
@@ -605,8 +610,8 @@ def _preferred_seat(preference, catalog, budget="default", role=None, providers=
         notes.append(f"wanted {wanted}, using {provider['providerInstanceId']}/{model['id']} ({cause})")
     option = effort_option(model)
     chosen = (seat.get("options") or {}).get(option["id"]) if option else None
-    if chosen is not None and rank(chosen) is not None and rank(target_level) is not None and rank(chosen) < rank(target_level):
-        notes.append(f"wanted {target_level}, using {chosen}")
+    if chosen is not None and rank(chosen) is not None and rank(preference.effort) is not None and rank(chosen) < rank(preference.effort):
+        notes.append(f"wanted {preference.effort}, using {chosen}")
     return seat, tuple(notes)
 
 
