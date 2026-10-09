@@ -663,6 +663,14 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
         "                Path(target).write_bytes(b'occupant\\x00\\xff')\n"
         "        return original(source, destination, *args, **kwargs)\n"
         "    return call\n"
+        "os.rename = hooked(os.rename)\n"
+        + without_noreplace(hooked="hooked", link_error=link_error, rename=rename)
+    )
+
+
+def without_noreplace(hooked, link_error, rename):
+    """Hook code that wraps the no-replace rename in `hooked` and takes it or hard links away, as `put_back_race` describes."""
+    return (
         "noreplace = getattr(module, 'rename_noreplace', None)\n"
         "def record():\n"
         "    scratch = tempfile.mkdtemp(dir=os.getcwd())\n"
@@ -672,9 +680,8 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
         "    Path(os.getcwd(), 'noreplace-result').write_text(str(code))\n"
         "    shutil.rmtree(scratch)\n"
         "atexit.register(record)\n"
-        "os.rename = hooked(os.rename)\n"
         "if noreplace:\n"
-        "    module.rename_noreplace = hooked(noreplace)\n"
+        f"    module.rename_noreplace = {hooked}(noreplace)\n"
         f"if {link_error!r}:\n"
         "    def denied(*args, **kwargs):\n"
         "        raise OSError(errno.EPERM, 'hard links prohibited')\n"
@@ -687,6 +694,44 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
         "    def missing(*args, **kwargs):\n"
         "        raise OSError('no libc')\n"
         "    ctypes.CDLL = missing\n"
+    )
+
+
+def restore_race(path, occupy, link_error=False, rename=None):
+    """Hook code that fills `path` just before the first call that would write a backup onto it.
+
+    `occupy` is a "file", a "directory", a "link", or a command line to run, such as another checkout's
+    installer. `link_error` and `rename` take hard links and the no-replace rename away as in `put_back_race`.
+    """
+    return (
+        "import atexit, ctypes, errno, shutil, subprocess, tempfile\n"
+        f"target = {str(path)!r}\n"
+        f"occupy = {occupy!r}\n"
+        "filled = False\n"
+        "def filling(original, hard_link=False):\n"
+        "    def call(source, destination, *args, **kwargs):\n"
+        "        global filled\n"
+        "        # A directory cannot be hard linked, so its occupant arrives at the rename that follows.\n"
+        "        directory = hard_link and os.path.isdir(source) and not os.path.islink(source)\n"
+        "        if not filled and str(destination) == target and not directory:\n"
+        "            filled = True\n"
+        "            if occupy == 'file':\n"
+        "                Path(target).write_bytes(b'occupant\\x00\\xff')\n"
+        "            elif occupy == 'directory':\n"
+        "                os.mkdir(target)\n"
+        "                Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
+        "            elif occupy == 'link':\n"
+        "                os.symlink('/foreign/occupant', target)\n"
+        "            else:\n"
+        "                child = subprocess.run(occupy, env=os.environ, capture_output=True, text=True)\n"
+        "                assert child.returncode == 0, child.stdout + child.stderr\n"
+        "        return original(source, destination, *args, **kwargs)\n"
+        "    return call\n"
+        "shutil.move = filling(shutil.move)\n"
+        "os.link = filling(os.link, hard_link=True)\n"
+        "os.rename = filling(os.rename)\n"
+        + without_noreplace(hooked="filling", link_error=link_error, rename=rename)
+        + "atexit.register(lambda: Path(os.getcwd(), 'filled').write_text(str(filled)))\n"
     )
 
 
@@ -2028,3 +2073,123 @@ class OwnershipTest(unittest.TestCase):
         )
         self.assertEqual(os.readlink(aside[0]), "/foreign/swarm")
         self.assert_claims(a, [str(swarm)])
+
+    def displaced_by(self, kind):
+        """Checkout a after `--replace` moved a foreign `kind` entry at swarm aside, with swarm and its one backup row."""
+        a = make_checkout(self.home, "a")
+        swarm = provider_link(self.home, "grok", "swarm")
+        swarm.parent.mkdir(parents=True)
+        if kind == "directory":
+            swarm.mkdir()
+            (swarm / "SKILL.md").write_bytes(b"displaced\x00\xfe")
+        else:
+            swarm.write_bytes(b"displaced\x00\xfe")
+        self.ok(run(self.home, a, "--harness", "grok", "--replace"), "linked 3 skills into grok")
+        rows = read_legacy(self.home)["backups"]
+        self.assertEqual([row["original"] for row in rows], [str(swarm)])
+        return a, swarm, rows
+
+    def assert_displaced(self, path, kind):
+        if kind == "directory":
+            self.assertEqual(os.listdir(path), ["SKILL.md"])
+            self.assertEqual((path / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
+        else:
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
+
+    def assert_restore_kept(self, raced, swarm, rows, kind, reason):
+        """The raced restore wrote nothing at swarm and kept the backup and its row where they were."""
+        self.assertEqual((self.home / "filled").read_text(), "True")
+        backup = Path(rows[0]["backup"])
+        self.ok(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
+        self.assert_displaced(backup, kind)
+        self.assertEqual(os.listdir(backup.parent), [backup.name])
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+        self.assertEqual(set_aside(swarm), [])
+
+    def restore_reason(self, swarm, kind, link_error, rename):
+        """Why a put-back onto a taken swarm declined: a hard link sees the occupant, else the no-replace rename decides."""
+        code = self.noreplace(rename)
+        if (kind != "directory" and not link_error) or code == 0:
+            return f"{swarm} was taken again"
+        return f"{swarm} cannot be refilled without risking an overwrite ({os.strerror(code)})"
+
+    def test_a_restore_never_replaces_an_entry_that_took_the_path(self):
+        cases = (
+            ("file", "file", False),
+            ("file", "file", True),
+            ("file", "link", False),
+            ("file", "directory", False),
+            ("directory", "directory", False),
+            ("directory", "file", False),
+        )
+        for kind, occupy, link_error in cases:
+            for rename in (None, "platform", "symbol"):
+                with self.subTest(kind=kind, occupy=occupy, link_error=link_error, rename=rename):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    raced = uninstall_hooked(self.home, a, restore_race(swarm, occupy, link_error=link_error, rename=rename))
+                    reason = self.restore_reason(swarm, kind, link_error, rename)
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
+                    if occupy == "file":
+                        self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+                        swarm.unlink()
+                    elif occupy == "link":
+                        self.assertEqual(os.readlink(swarm), "/foreign/occupant")
+                        swarm.unlink()
+                    else:
+                        self.assertEqual(os.listdir(swarm), ["precious"])
+                        self.assertEqual((swarm / "precious").read_bytes(), b"directory bytes\x00")
+                        shutil.rmtree(swarm)
+                    self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
+                    self.assert_displaced(swarm, kind)
+                    self.assert_empty_records()
+
+    def test_a_restore_never_writes_into_another_checkout_that_took_the_path(self):
+        cases = (("file", False), ("file", True), ("directory", False))
+        for kind, link_error in cases:
+            for rename in (None, "platform", "symbol"):
+                with self.subTest(kind=kind, link_error=link_error, rename=rename):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    b = make_checkout(self.home, "b", old=True)
+                    tree = snapshot(b / "skills")
+                    install_b = [sys.executable, str(b / "scripts" / "install.py"), "--harness", "grok"]
+                    hook = restore_race(swarm, install_b, link_error=link_error, rename=rename)
+                    raced = uninstall_hooked(self.home, a, hook)
+                    reason = self.restore_reason(swarm, kind, link_error, rename)
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
+                    self.assertEqual(snapshot(b / "skills"), tree)
+                    self.assert_grok_text(b)
+                    self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+                    self.assertEqual(snapshot(b / "skills"), tree)
+                    self.assert_displaced(swarm, kind)
+                    self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+                    self.assert_displaced(swarm, kind)
+                    self.assertFalse(legacy_file(self.home).exists())
+
+    def test_a_backup_swapped_during_uninstall_is_not_restored(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = rows[0]["backup"]
+        alpha = str(provider_link(self.home, "grok", "alpha"))
+        hook = (
+            "swapped = False\n"
+            "def swapping(original):\n"
+            "    def call(source, destination, *args, **kwargs):\n"
+            "        global swapped\n"
+            f"        if not swapped and str(source) == {alpha!r}:\n"
+            "            swapped = True\n"
+            f"            os.unlink({backup!r})\n"
+            f"            Path({backup!r}).write_bytes(b'swapped\\x00')\n"
+            "        return original(source, destination, *args, **kwargs)\n"
+            "    return call\n"
+            "os.rename = swapping(os.rename)\n"
+        )
+        self.ok(
+            uninstall_hooked(self.home, a, hook),
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: the backup is no longer the entry uninstall read",
+        )
+        self.assertFalse(os.path.lexists(swarm))
+        self.assertEqual(Path(backup).read_bytes(), b"swapped\x00")
+        self.assertEqual(read_legacy(self.home)["backups"], rows)

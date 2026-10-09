@@ -80,6 +80,15 @@ def proves(checkout, entry, original):
     return os.path.normpath(os.path.join(base, text)) == link_target(checkout, original)
 
 
+def identity(path):
+    """The device and inode of the entry at `path` itself, or None when nothing is there."""
+    try:
+        stat = os.lstat(path)
+    except OSError:
+        return None
+    return stat.st_dev, stat.st_ino
+
+
 def slot_of(path):
     return (os.path.realpath(os.path.dirname(path)), os.path.basename(path))
 
@@ -147,6 +156,7 @@ class Step:
     remove_links: tuple = ()
     remove_backups: tuple = ()
     adopted: bool = False
+    entry: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -416,7 +426,7 @@ def plan_uninstall(view, root, selected):
         top = remaining[-1]
         free = slot in uncovered or not os.path.lexists(top.original)
         if free and (slot in uncovered or selected_row(top.harnesses)):
-            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,)))
+            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), entry=identity(top.backup)))
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
@@ -650,6 +660,14 @@ def remove_link(path, root):
     return reason
 
 
+def restore_backup(backup, path, entry):
+    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan read. Return why it was kept."""
+    if identity(backup) != entry:
+        return "the backup is no longer the entry uninstall read"
+    # Another installer can take the path after the plan saw it empty; put_back refuses it instead of replacing it.
+    return put_back(backup, path)
+
+
 def buried(state, root, path):
     """Whether a backup row now holds this checkout's entry for the slot of `path`."""
     file = Path(state) / LEGACY_NAME
@@ -677,7 +695,7 @@ def act(step, root):
         os.unlink(step.backup)
     elif step.kind == "restore":
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
-        shutil.move(step.backup, step.path)
+        return restore_backup(step.backup, step.path, step.entry)
 
 
 def execute(plan, state, root):
