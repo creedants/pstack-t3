@@ -1786,6 +1786,113 @@ class PromptCapCliTest(unittest.TestCase):
             "notes": [],
         })
 
+    def test_bounded_seat_launches_seats_ranks_the_single_role_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {
+                "bug-fix": [{"providerInstanceId": "codex", "model": "gpt-6-luna"}],
+                "verifiers": [{"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"}],
+            }})
+            path = repo.directory / "mixed.json"
+            repo.put(path, variant_flash_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            plain = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+            )
+            flagged = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        estimate = {
+            "overheadTokens": 41000,
+            "briefBytes": 12,
+            "readBytes": 0,
+            "tokens": 41003,
+            "target": None,
+        }
+        self.assert_bounded(plain, {
+            "seat": {"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"},
+            "capped": False,
+            "estimate": estimate,
+            "reason": None,
+            "notes": [],
+        })
+        self.assert_bounded(flagged, {
+            "seat": {"providerInstanceId": "codex", "model": "gpt-6-luna"},
+            "capped": False,
+            "estimate": estimate,
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_falls_back_when_single_roles_are_cursor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {
+                "bug-fix": [{"providerInstanceId": "cursor", "model": "gemini-3.8-flash"}],
+            }})
+            path = repo.directory / "mixed.json"
+            repo.put(path, variant_flash_catalog())
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": {"providerInstanceId": "opencode", "model": "opencode/ling-3.0-flash-fin-free"},
+            "capped": False,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 12,
+                "readBytes": 0,
+                "tokens": 41003,
+                "target": None,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
+    def test_bounded_seat_launches_seats_ranks_haiku_on_the_configured_providers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {
+                "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
+                "judgment and prose": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
+            }})
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            completed = repo.run(
+                "bounded-seat",
+                "--catalog", str(CATALOG),
+                "--parent", "grok/grok-4.7",
+                "--brief", str(brief),
+                "--launches-seats",
+            )
+        self.assert_bounded(completed, {
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "capped": True,
+            "estimate": {
+                "overheadTokens": 41000,
+                "briefBytes": 12,
+                "readBytes": 0,
+                "tokens": 41003,
+                "target": 100000,
+            },
+            "reason": None,
+            "notes": [],
+        })
+
     def test_bounded_seat_prints_an_uncapped_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
@@ -2310,6 +2417,37 @@ def cursor_haiku_catalog():
                 "canRunChildTask": True,
                 "constraints": [],
                 "models": [{"id": "claude-haiku-4-5", "options": [{"id": "thinking", "type": "boolean"}]}],
+            },
+        ],
+    }
+
+
+def variant_flash_catalog():
+    return {
+        "providers": [
+            {
+                "providerInstanceId": "opencode",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "opencode/ling-3.0-flash-fin-free", "options": [
+                    {"id": "variant", "type": "select", "options": [{"id": "default", "isDefault": True}]},
+                ]}],
+            },
+            {
+                "providerInstanceId": "codex",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "gpt-6-luna", "options": [
+                    {"id": "reasoningEffort", "type": "select", "options": [
+                        {"id": "low"}, {"id": "medium", "isDefault": True}, {"id": "high"},
+                    ]},
+                ]}],
+            },
+            {
+                "providerInstanceId": "cursor",
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": "gemini-3.8-flash", "options": []}],
             },
         ],
     }
