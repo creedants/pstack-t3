@@ -58,7 +58,6 @@ def state_dir(scope_root, user):
 
 
 def key(path):
-    """One spelling per directory entry: the real parent plus the entry's own name."""
     path = os.fspath(path)
     return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
 
@@ -135,31 +134,30 @@ def alive(checkout):
 
 
 def holds(row, text, at):
-    """The link text at `at` is still the skill directory this row recorded."""
     if text is None or not alive(row.checkout):
         return False
     return lexical(text, at) == row.target
 
 
+def is_pstack_checkout(root):
+    return root == str(ROOT) or (
+        os.path.isfile(os.path.join(root, "scripts", "install.py"))
+        and os.path.isfile(os.path.join(root, "skills", "pstack-runtime", "SKILL.md"))
+    )
+
+
 def legacy_owner(text, at):
-    """The checkout a pre-owner link names, or None. An alias spelling is not one."""
     if text is None:
         return None
     spelled = lexical(text, at)
     if os.path.basename(spelled) != os.path.basename(at) or os.path.basename(os.path.dirname(spelled)) != "skills":
         return None
     root = os.path.dirname(os.path.dirname(spelled))
-    if os.path.realpath(root) != root:
-        return None
-    marker = os.path.join(root, "skills", "pstack-runtime", "SKILL.md")
-    # install.py alone is not enough: a lookalike project can have that file.
-    if root == str(ROOT) or (os.path.isfile(os.path.join(root, "scripts", "install.py")) and os.path.isfile(marker)):
-        return root
-    return None
+    written_by_an_installer = os.path.realpath(root) == root
+    return root if written_by_an_installer and is_pstack_checkout(root) else None
 
 
 def entry_harnesses(entry, at, layout):
-    """Harnesses recorded on the row. A bare path uses whichever provider directory holds it now."""
     if isinstance(entry, dict) and isinstance(entry.get("harnesses"), list):
         return tuple(entry["harnesses"])
     if isinstance(entry, dict) and isinstance(entry.get("harness"), str):
@@ -231,7 +229,6 @@ def prepare_backup(entry, legacy_file, layout):
 
 
 def reconcile(current, legacy, layout):
-    """The manifest as the disk proves it. Forgets and migrates rows, and does not write."""
     links = {}
     for entry in list_of(current, "links"):
         take_link(entry, False, links, layout, ())
@@ -322,7 +319,6 @@ class Restore:
     entry: BackupRow
 
 
-# Manifest first, then the disk. The other kinds change the disk first.
 SAVE_THEN_ACT = (CreateLink, MoveAside, Record)
 
 
@@ -489,7 +485,6 @@ def plan_install(manifest, scope, user, selected, names):
                     actions.append(Record(replace(live, harnesses=grown)))
                 continue
             text = link_text(at)
-            # An exact link also resolves inside this checkout, so count it before that guard.
             if live is None and text is not None and lexical(text, at) == row.target:
                 untracked += 1
                 continue
