@@ -55,6 +55,7 @@ PROMPT_CAPS = {"claude-haiku-5-5": 100000}  # soft target: the estimated prompt 
 BYTES_PER_TOKEN = 4                          # rough, for prose and code
 OVERHEAD_TOKENS = 41000                      # harness allowance: a real T3 Claude Haiku 5.5 child's first request was 40,427 tokens on 2026-10-07
 BOUNDED_ROLES = frozenset({"skill tests"})
+CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
 SKILL_TESTS_CAP_NOTE = "claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits"
 CATALOG_REQUIRED = "catalog-required"
 DEFAULT_PANEL = "default-panel"
@@ -1073,18 +1074,16 @@ def launch_model(seat, parent):
 
 
 def launch_providers(config, catalog):
-    """Providers a child that launches seats may run on: those of the user's single-role seats, else every one but cursor."""
     configured = {
         seat["providerInstanceId"]
         for name in SINGLE_ROLES
         for seat in config["roles"].get(name) or []
         if isinstance(seat, dict)
-    } - {"cursor"}
-    return configured or {provider["providerInstanceId"] for provider in catalog["providers"]} - {"cursor"}
+    } - CANNOT_LAUNCH_SEATS
+    return configured or {provider["providerInstanceId"] for provider in catalog["providers"]} - CANNOT_LAUNCH_SEATS
 
 
 def launch_provider(seat, parent):
-    """Provider a launch of this resolved seat runs: the target's provider, or the parent's for inherit."""
     if seat == INHERIT:
         return parent.provider
     return seat["providerInstanceId"]
@@ -1119,17 +1118,17 @@ def command_bounded_seat(args):
         launches_seats
         and configured
         and isinstance(configured[0], dict)
-        and configured[0]["providerInstanceId"] == "cursor"
+        and configured[0]["providerInstanceId"] in CANNOT_LAUNCH_SEATS
     )
-    if configured_cursor:
-        candidate = skill_tests_seat(catalog, allow_capped=True, providers=providers)
+    if configured and not configured_cursor:
+        candidate = configured[0]
     else:
-        candidate = configured[0] if configured else skill_tests_seat(catalog, allow_capped=True, providers=providers)
+        candidate = skill_tests_seat(catalog, allow_capped=True, providers=providers)
 
     def resolved(seat):
         value, raw_notes, _problems = resolve_seat(seat, catalog, budget, "skill tests")
         notes = [note["info"] if isinstance(note, dict) else note for note in raw_notes]
-        if launches_seats and launch_provider(value, parent) == "cursor":
+        if launches_seats and launch_provider(value, parent) in CANNOT_LAUNCH_SEATS:
             raise RolesError("role 'skill tests' has no non-cursor seat for a child that launches seats")
         return value, notes
 
