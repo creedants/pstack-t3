@@ -1673,3 +1673,16 @@ class OwnershipTest(unittest.TestCase):
         write_legacy(self.home, [], [{"original": str(swarm), "backup": str(saved)}])
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
         self.assertEqual((swarm / "SKILL.md").read_text(), "saved\n")
+
+    def test_partial_move_keeps_the_row_for_its_copy(self):
+        b = make_checkout(self.home, "b")
+        skills = provider_link(self.home, "grok", "swarm").parent
+        swarm = skills / "swarm"
+        swarm.mkdir(parents=True)
+        (swarm / "SKILL.md").write_text("precious\n")
+        skills.chmod(0o555)
+        self.addCleanup(skills.chmod, 0o755)
+        self.ok(run(self.home, b, "--harness", "grok", "--replace"), "linked 0 skills into grok")
+        rows = read_legacy(self.home)["backups"]
+        self.assertEqual([row["original"] for row in rows], [str(swarm)])
+        self.assertEqual((Path(rows[0]["backup"]) / "SKILL.md").read_text(), "precious\n")
