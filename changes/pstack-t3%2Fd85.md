@@ -1,1 +1,1 @@
-- `bounded-seat --launches-seats` skips cursor provider seats, keeps the Haiku cap, and leaves `show` unchanged.
+- `bounded-seat --launches-seats` ranks providers from the user's single-seat roles. When every such seat is on cursor, or none is configured, it ranks every provider but cursor. The Haiku cap and `show` stay unchanged.
