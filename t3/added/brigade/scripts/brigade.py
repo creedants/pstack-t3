@@ -893,8 +893,10 @@ WAIT_RULE = ("- Never end your turn while a child task you started with delegate
              "300000, then read it with task_status. A child task is open while its workState is working or "
              "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child task with task_cancel when it runs past "
              "its budget or stalls, per the runtime's Failure handling. A thread you launched with t3_thread_launch has no "
-             "parent, so its finished turn never wakes you. Wait on it with t3_thread_wait on its threadId and timeoutMs "
-             "300000, read it with t3_thread_read, and stop it with t3_thread_interrupt and then t3_thread_wait. A long-lived "
+             "parent, so its finished turn never wakes you. While it stays healthy, repeat t3_thread_wait on its threadId with "
+             "timeoutMs 300000 and read its activity with t3_thread_read. A timeout alone never stops it. Stop it with "
+             "t3_thread_interrupt and then a terminal t3_thread_wait only when it stalls, with no new activity item for ten "
+             "minutes per step 5 of the runtime's Delegation section, or runs past its budget. A long-lived "
              "owner your playbook supervises, such as an Orchestrate PR owner, follows the runtime's Top-level threads section "
              "and its playbook instead, and does not hold your report. Write the report only once every child task and every "
              "other thread you launched is terminal.")
