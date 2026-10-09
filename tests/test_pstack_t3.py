@@ -2176,6 +2176,7 @@ class StalledChildDocTest(unittest.TestCase):
         for phrase in (
             two,
             "A message that says more work follows does not hold the result.",
+            "After you see that message while the child's run is still open",
             "with `timeoutMs: 120000`",
             "only when the wait timed out, `workState` is still `working`, "
             "that message is still the last item, and no tool or child run is pending.",
