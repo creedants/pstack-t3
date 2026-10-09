@@ -546,8 +546,9 @@ class OwnershipTest(unittest.TestCase):
 
     def ok(self, result, *lines):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        got = result.stdout.splitlines()
         for line in lines:
-            self.assertIn(line, result.stdout)
+            self.assertIn(line, got)
 
     def assert_empty_records(self):
         self.assertTrue(legacy_file(self.home).is_file())
@@ -867,11 +868,9 @@ class OwnershipTest(unittest.TestCase):
         swarm.write_bytes(b"foreign\x00file\n")
         self.ok(run(self.home, b, "--harness", "grok", "--replace"))
         before = snapshot(self.home)
-        self.ok(
-            run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"),
-            "would remove 0 links, would restore 0 entries",
-            "is occupied; clear it and rerun uninstall",
-        )
+        dry = run(self.home, a, "--harness", "grok", "uninstall", "--dry-run")
+        self.ok(dry, "would remove 0 links, would restore 0 entries")
+        self.assertIn(f"{swarm} is occupied; clear it and rerun uninstall", dry.stdout)
         self.assertEqual(snapshot(self.home), before)
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
         self.assertEqual(snapshot(self.home), before)
