@@ -181,32 +181,43 @@ def parse_link(entry, scope, user):
     return LinkRec(entry, path, harnesses_for(path, entry, scope, user), checkout)
 
 
-def parse_backup(entry):
+def parse_backup(entry, scope, user):
     if not isinstance(entry, dict):
         return None
     original, backup = entry.get("original"), entry.get("backup")
     if not isinstance(original, str) or not isinstance(backup, str):
         return None
-    if isinstance(entry.get("harnesses"), list):
-        harnesses = ordered(entry["harnesses"])
-    elif isinstance(entry.get("harness"), str) and entry["harness"] in HARNESSES:
-        harnesses = (entry["harness"],)
-    else:
-        harnesses = HARNESSES
-    return BackupRec(entry, original, backup, harnesses)
+    return BackupRec(entry, original, backup, harnesses_for(original, entry, scope, user))
+
+
+def read_object(path):
+    try:
+        data = json.loads(path.read_text())
+    except ValueError:
+        sys.exit(f"{path} is not valid JSON; fix or move it and rerun")
+    if not isinstance(data, dict):
+        sys.exit(f"{path} is not a JSON object; fix or move it and rerun")
+    return data
+
+
+def legacy_lists(path):
+    data = read_object(path)
+    found = []
+    for key in ("links", "backups"):
+        value = data.get(key, [])
+        if not isinstance(value, list):
+            sys.exit(f"{path} has a {key} entry that is not a list; fix or move it and rerun")
+        found.append(value)
+    return data, found[0], found[1]
 
 
 def read_legacy(state, scope, user):
     path = Path(state) / LEGACY_NAME
     if not path.exists():
         return (), ()
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        return (), ()
-    raw_links = data.get("links") if isinstance(data.get("links"), list) else []
-    raw_backups = data.get("backups") if isinstance(data.get("backups"), list) else []
+    _data, raw_links, raw_backups = legacy_lists(path)
     links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
-    backups = tuple(item for item in (parse_backup(entry) for entry in raw_backups) if item)
+    backups = tuple(item for item in (parse_backup(entry, scope, user) for entry in raw_backups) if item)
     return links, backups
 
 
@@ -436,11 +447,11 @@ def current_claims(state, root):
     path = owner_path(state, root)
     if not path.exists():
         return {}
-    data = json.loads(path.read_text())
-    recorded = data.get("checkout") if isinstance(data, dict) else None
+    data = read_object(path)
+    recorded = data.get("checkout")
     if recorded != root:
         sys.exit(f"{path} records {recorded}, not this checkout")
-    links = data.get("links") if isinstance(data, dict) else None
+    links = data.get("links")
     if not isinstance(links, dict):
         return {}
     claims = {}
@@ -457,18 +468,12 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
         return (), ()
     path = Path(state) / LEGACY_NAME
     # Older installers still read this file, so a cleanup leaves empty lists in place.
-    if not path.exists():
-        if not adding:
-            return (), ()
-        data = {"links": [], "backups": []}
+    if path.exists():
+        data, links, backups = legacy_lists(path)
+    elif adding:
+        data, links, backups = {}, [], []
     else:
-        data = json.loads(path.read_text())
-        if not isinstance(data, dict):
-            if not adding:
-                return
-            data = {"links": [], "backups": []}
-    links = data.get("links") if isinstance(data.get("links"), list) else []
-    backups = data.get("backups") if isinstance(data.get("backups"), list) else []
+        return (), ()
     added_links, added_backups = [], []
     changed = False
     if adding:
