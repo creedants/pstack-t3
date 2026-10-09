@@ -3971,6 +3971,26 @@ class LivenessIdleDocTest(unittest.TestCase):
         self.assertNotIn("Skip this line while `$B 86 list` parks that dish.", section)
 
 
+class UsageLimitDocTest(unittest.TestCase):
+    def test_step_7_relaunches_a_usage_limit_before_the_light_mode_question(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        service = text.split("## Run a service", 1)[1].split("\n## ", 1)[0]
+        bullet = next(line for line in service.splitlines() if line.startswith("   - Usage limit:"))
+        self.assertIn("../pstack-runtime/SKILL.md#failure-handling", bullet)
+        self.assertIn("roles.py backup", bullet)
+        self.assertIn("The dish keeps its lease", bullet)
+        self.assertIn("Never call `t3_thread_send` on the old worker.", bullet)
+        question = (
+            '$B 86 add --question "<provider> hit its usage limit. '
+            'Run new work in light mode until it resets?" '
+            '--options "light, full" --default "light"'
+        )
+        self.assertIn(question, bullet)
+        self.assertLess(bullet.index("t3_thread_interrupt"), bullet.index("roles.py backup"))
+        self.assertLess(bullet.index("roles.py backup"), bullet.index(question))
+        self.assertIn("../pstack-runtime/SKILL.md#modes", bullet)
+
+
 class AnswerRelayDocTest(unittest.TestCase):
     def test_the_requests_answer_row_names_still_open(self):
         text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
