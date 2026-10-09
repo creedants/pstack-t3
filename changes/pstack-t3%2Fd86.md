@@ -1,0 +1,1 @@
+- `brigade.py brief` writes the bounded-wait rule as the first line of every brief's REPORT section, so a worker never ends its turn while a child task or thread it launched is open.

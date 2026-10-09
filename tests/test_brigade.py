@@ -2562,8 +2562,8 @@ class BrigadeTest(unittest.TestCase):
             "Playbook: playbooks/feature.md", "Mode: light", "Mode source: restaurant.json", "Attempt: first",
             "Waived by mode: Arena, Interrogate, Comment Sicko"))
         report = text.split("REPORT:\n", 1)[1].splitlines()
-        self.assertEqual(report[1:3], [self.REPEAT, self.CONTESTED])
-        self.assertTrue(report[3].startswith("- After that file is written, call t3_thread_send"), report[3])
+        self.assertEqual(report[2:4], [self.REPEAT, self.CONTESTED])
+        self.assertTrue(report[4].startswith("- After that file is written, call t3_thread_send"), report[4])
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
         self.assertEqual(self.mode_rows(), [])
 
