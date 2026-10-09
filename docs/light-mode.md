@@ -386,7 +386,7 @@ House rule 7 requires a fresh-child test for every change to a skill's behavior.
 
 - **A leaf test** runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation, such as a reply's wording, a brief line, or a command the skill runs.
 - **An executing workflow test** runs the playbook with its real children, nested ones included. It is required once for each changed spawn or coordination behavior. One test covers one behavior. Two unrelated changed behaviors need two tests.
-- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which already prefers another family.
+- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5.
 
 ## Saving per change
 

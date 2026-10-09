@@ -1,0 +1,1 @@
+- Claude Haiku 5.5 is the default for `skill tests`, `how explorer`, and `why investigators`. Excluded ids and `haikuBrief` ride `roles.py show`. Prompt caps and `bounded-seat` are gone; seat-launching tests use `show --launches-seats`.

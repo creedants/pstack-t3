@@ -101,7 +101,7 @@ python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inherited
 
 When the brief this call seats has a `Mode:` line, replace the bracket with `--brief-mode <value>`. Copy that line's bare value, and pass no other mode flag. When the brief has no `Mode:` line and the session is light, replace the bracket with `--session-mode light`, except for a user's explicit reflect, which passes `--session-mode full`. Otherwise delete the bracket. A call with no mode flag takes its mode from the roles files.
 
-Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, the verifier panel treats no seat as this thread's own, and `show` cannot refuse an `inherit` seat on a thread that runs a capped model. `show`, `validate`, and `write` reject a malformed `--parent`. See [Prompt caps](#prompt-caps).
+Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, the verifier panel treats no seat as this thread's own, and `show` cannot settle an `inherit` seat on a thread that runs an excluded model. `show`, `validate`, and `write` reject a malformed `--parent`. See [Excluded seats](#excluded-seats).
 
 `<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A role that reports `"seats": "catalog-required"`, or an adaptive panel that reports `"seats": "default-panel"`, needs a catalog. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
 
@@ -141,11 +141,11 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 
 `roles.py show` owns this mapping. A skill must not rebuild it.
 
-Code roles (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `swarm workers`, `how explorer`, `why investigators`, `reflect tooling`) use `grok-4.7` at xhigh. Judgment roles (`judgment and prose`, `hardest tasks`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer`) use `claude-opus-5-5` at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats in that order. Every seat follows [Fast Grok seats](#fast-grok-seats), so a `grok-4.7` seat on a provider whose model declares `fastMode` comes back with `"fastMode": false`.
+Code roles (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `swarm workers`, `reflect tooling`) use `grok-4.7` at xhigh. Judgment roles (`judgment and prose`, `hardest tasks`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer`) use `claude-opus-5-5` at xhigh. `arena runners`, `arena cross-judge pool`, `architect runners`, and `interrogate reviewers` use those two seats in that order. Every seat follows [Excluded seats](#excluded-seats), so a `grok-4.7` seat on a provider whose model declares `fastMode` comes back with `"fastMode": false`.
 
-`skill tests` is one catalog seat. Prefer a runnable model whose family differs from this thread's model. A family is the leading word of the model id. In that pool, prefer an id token in `haiku`, `mini`, `nano`, `flash`, `lite`, `fast`, `small`, or `luna`, then the lowest default reasoning level, then earlier in the catalog. That ranking picks a model line, the model id without its version numbers, so `claude-haiku-4-5` and `claude-haiku-5-5` share one line. The seat is the newest version of that line on any runnable provider. Ties among those rows break in the same order: another family, a small-tier token, the lower default reasoning level, then earlier in the catalog. `show` skips capped models here, so Haiku 5.5 reaches a test only through `roles.py bounded-seat`, per [Prompt caps](#prompt-caps). Neither command picks a fast Grok id, even though `fast` is a small-tier token. If every runnable model shares this thread's family, apply the same rule inside the family. No catalog, or no runnable model, leaves `["inherit"]`. When this thread runs a capped model, no catalog gives `catalog-required` instead. The seat names no reasoning option. The budget cap still applies.
+`skill tests` uses `claude-haiku-5-5` at high. `how explorer` and `why investigators` use `claude-haiku-5-5` at medium, per [Claude Haiku 5.5](#claude-haiku-55).
 
-`verifiers` starts with `"inherit"` when this thread's provider can run children, then adds one seat per other runnable provider (`canRunChildTask: true`), using that provider's first pickable model and skipping a family already seated. A thread on a fast Grok id or a capped model gets no `"inherit"` seat, and its own provider joins with its first pickable model instead. With only one runnable provider, `verifiers` is three `"inherit"` seats, or three copies of the one runnable provider's first pickable model when this thread cannot be inherited, and the report must say the models did not differ. The other panel roles do not use that three-seat rule.
+`verifiers` starts with `"inherit"` when this thread's provider can run children, then adds one seat per other runnable provider (`canRunChildTask: true`), using that provider's first pickable model and skipping a family already seated. A thread on an excluded model gets no `"inherit"` seat, and its own provider joins with its first pickable model instead. With only one runnable provider, `verifiers` is three `"inherit"` seats, or three copies of the one runnable provider's first pickable model when this thread cannot be inherited, and the report must say the models did not differ. The other panel roles do not use that three-seat rule.
 
 A model family is the leading word of the model ID: `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, `grok-4.7` is `grok`. Diversity rules compare families, never providers, because one provider can serve another's models.
 
@@ -153,21 +153,21 @@ A preferred seat that matches this thread stays an explicit target. It does not 
 
 When the preferred model is missing, the seat stays and a numbered note names the role, the seat number, the wanted model, and the replacement. The replacement is the first pickable runnable model of that family, then this thread's model when its provider can run children and the model is pickable, then the first pickable runnable model in the catalog. No runnable provider is an error. The panel keeps every seat. When two seats land on the same model, the note says the panel lost a distinct model.
 
-Without a catalog, a preferred role reports `"seats": "catalog-required"`. `skill tests` reports `["inherit"]`. `verifiers` reports `"seats": "default-panel"`.
+Without a catalog, a preferred role reports `"seats": "catalog-required"`. `skill tests` reports `"seats": "catalog-required"` like the other preferred roles. `verifiers` reports `"seats": "default-panel"`.
 
 Agreement between seats on the same model is weak evidence. It shows the prompt is stable, not that the finding is right. Weigh consensus only across seats on different models, and say which kind you have.
 
-### Fast Grok seats
+### Excluded seats
 
-pstack never runs a fast Grok model as a seat or a worker. A fast Grok seat is a grok-family model whose id carries a `fast` token, such as `grok-4.7-build-fast`, or a Grok seat with `fastMode` set to `true`. `grok-build` has no `fast` token. A pickable model is one that is not a fast Grok id and, for every role but `skill tests`, not capped per [Prompt caps](#prompt-caps). Every automatic pick in this file takes a pickable model.
+pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker. A fast Grok seat is a grok-family model whose id carries a `fast` token, such as `grok-4.7-build-fast`, or a Grok seat with `fastMode` set to `true`. `grok-build` has no `fast` token. A pickable model is one that is not excluded. Every automatic pick in this file takes a pickable model.
 
 - No picker chooses a fast Grok id.
 - Every seat on a Grok model that declares a boolean `fastMode` option comes back with `"fastMode": false`. No mode and no budget sets it to `true`. pstack never adds `fastMode` to a model of another family.
 - An `inherit` seat on a fast Grok id becomes that provider's first pickable model, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no pickable model, `show` refuses the role.
 - An `inherit` seat on a Grok model that declares `fastMode` becomes an explicit seat on that model with `"fastMode": false`, and the info `inherit made explicit as <provider>/<model> so fastMode stays false`. When that provider cannot run children, `fastMode` cannot be pinned, so `show` refuses the role.
-- `show` and `bounded-seat` skip a configured fast Grok seat with the note `skipped configured seat <provider>/<model>`. When no configured seat is left, the role uses its built-in default. `validate` lists each one and exits 1. `write` refuses it with `refusing to write, even with --force`.
+- `show` skips a configured excluded seat with the note `skipped configured seat <provider>/<model>`. When no configured seat is left, the role uses its built-in default. `validate` lists each one and exits 1. `write` refuses it with `refusing to write, even with --force`.
 - `verifiers` gets no `inherit` seat for a fast Grok parent, with the note `skipped inherit of <provider>/<model>`, per [Built-in defaults](#built-in-defaults).
-- Without a catalog, a role whose seats include `inherit`, and the `verifiers` default panel, report `"seats": "catalog-required"` when `--parent` names a fast Grok id. Call `orchestrator_capabilities` and rerun `show` with `--catalog`.
+- Without a catalog, a role whose seats include `inherit`, and the `verifiers` default panel, report `"seats": "catalog-required"` when `--parent` names an excluded id. Call `orchestrator_capabilities` and rerun `show` with `--catalog`.
 
 ### Budget
 
@@ -175,33 +175,25 @@ The config may carry `"budget"`: `default`, `small`, `medium`, `large`, or `unli
 
 ### Fallback
 
-A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. This path is separate from the built-in order above. A configured fast Grok seat never takes this path. [Fast Grok seats](#fast-grok-seats) says how each command handles it.
+A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. This path is separate from the built-in order above. A configured fast Grok seat never takes this path. [Excluded seats](#excluded-seats) says how each command handles it.
 
 1. Use the same provider's first pickable model. When it has none, `show` refuses the seat.
-2. If the provider is not runnable, use `"inherit"`, settled per [Fast Grok seats](#fast-grok-seats).
+2. If the provider is not runnable, use `"inherit"`, settled per [Excluded seats](#excluded-seats).
 3. Say which seat changed and why. Never silently drop a seat, because the seat count is the panel size.
 
 Built-in preferred seats use the numbered notes from [Built-in defaults](#built-in-defaults). Those notes name each replacement, and the panel size never shrinks.
 
 `roles.py validate --catalog <file>` checks a config against a saved catalog file. Use the file path there. The quoted heredoc above is for `show` when the catalog is still a tool result.
 
-### Prompt caps
+### Claude Haiku 5.5
 
-Claude Haiku 5.5 (`claude-haiku-5-5`, on any provider) should not receive a prompt over 100,000 tokens, because its price rises fivefold past that. `PROMPT_CAPS` in `roles.py` holds that target. T3 records no token counts, so the parent estimates the prompt before launch and runs Haiku 5.5 only on a short leaf task whose estimate is at or under the target. T3's native `claudeAgent` Claude 5 models run a fixed 1M-token context and offer no `contextWindow` option. The cap is about price, not capacity, so it holds at every context size.
+`skill tests`, `how explorer`, and `why investigators` use Claude Haiku 5.5 by default. `skill tests` runs at high effort. `how explorer` and `why investigators` run at medium. Anthropic positions Haiku 5.5 for high-volume, latency-sensitive work such as classification, routing, extraction, and sub-agent tasks, and for reading-heavy workers that search, read, and extract with little hard reasoning. A worker that needs more judgment takes Sonnet, and hard work takes Opus. Effort defaults to medium, and high fits work where instruction following matters. `unlimited` does not raise these seats. Every brief for a child on a Haiku 5.5 seat carries both paragraphs from `haikuBrief`, pasted unchanged in order.
 
-- `roles.py show` never returns a capped model. A capped `skill tests` seat, configured or adaptive, comes back as the adaptive `skill tests` seat from [Built-in defaults](#built-in-defaults) with capped models skipped, which can be another model line, with the note `claude-haiku-5-5 is capped; roles.py bounded-seat launches it when the whole prompt fits`.
-- Every other role refuses a capped model, including an `inherit` seat on a thread that `--parent` names as Haiku 5.5, with `role '<role>' cannot use <provider>/claude-haiku-5-5: claude-haiku-5-5 is capped at 100000 prompt tokens, and only skill tests may run a capped model`. `show`, `validate`, and `write` refuse it with or without a catalog. `--force` does not override it. Built-in defaults and fallbacks skip capped models and fast Grok ids. When every runnable model is capped or a fast Grok id, the error says so.
+Keep working until everything the user asked for is done, and only stop to ask when you can't go on without the user or before a risky step. When the work the user asked for is done and checked, stop and report. Don't add new features, docs, or refactors that weren't asked for. If you think one would help, mention it at the end instead of doing it.
 
-A skill test runs on Haiku 5.5 only through `bounded-seat`. Write the test brief to a file, list the files the child will read, and run:
+When you change code that can be run, built, or type-checked, run a real check that exercises the change before reporting it done: the project's tests, type-checker, or build, or the changed command itself. A syntax-only check, or a check command that failed to start, does not count; if all that is missing is the project's declared dependencies, install them with its own package manager and lockfile (e.g. npm install, pip install -r requirements.txt), never via sudo or the system package manager, unless told not to. Only if no real check can run here, say which one you did not run and why instead of reporting the change as done.
 
-```bash
-python3 <pstack-runtime>/scripts/roles.py bounded-seat --cwd "$PWD" --catalog <file> --parent "<inheritedProviderInstanceId>/<inheritedModel>" --brief <brief file> --read <path> --read <path>
-```
-
-1. List every file the test needs, such as the skill's `SKILL.md` and the references it links. A test that runs commands, searches, writes, or spawns children stays on the `show` seat, unless its child will launch seats. A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. When the skill-test child will launch seats, pass `--launches-seats` to `roles.py bounded-seat`. It ranks the providers of the explicit seats in your single-seat roles, never cursor, whose harness cannot pass a nested options object. When those seats name no provider other than cursor, it ranks every runnable provider that serves a model of a built-in default family (`claude`, `grok`) that is not a fast Grok id, plus this thread's provider, still never cursor. An empty pool refuses with `cannot launch seats`. It uses a configured `skill tests` seat on another provider as written, and that seat is not limited to that pool. It ignores a configured `skill tests` seat on cursor and prints no note. It refuses a seat that resolves to cursor, including `inherit` on a cursor thread. It still applies the Haiku prompt cap. `show` has no such flag and can still return a cursor seat.
-2. `bounded-seat` resolves the configured or adaptive `skill tests` seat the way `show` does, per [Fallback](#fallback), before the cap check. The cap check uses the model the launch runs, which is this thread's model for `inherit`. It estimates the prompt as a 41,000-token harness allowance plus the brief and the listed files at 4 bytes per token. The allowance comes from a real T3 Claude Haiku 5.5 child whose first request was 40,427 tokens. A bare Cursor CLI request measured 29,539 tokens.
-3. It prints one JSON object. `notes` lists each change resolution made to the seat. When `capped` is true, launch `seat` with your brief and `mode: "async"`, even where a skill says `mode: "wait"`. Tell the child to read only the listed files. When `capped` is false, launch `seat` and read `reason` and `notes`. Over the target, `seat` is the adaptive uncapped seat, or `inherit` when no runnable model is uncapped and this thread's model is uncapped. With `--launches-seats`, that fallback ranks the same provider pool and still refuses a cursor seat. When neither exists, it exits 2 with `role 'skill tests' has no uncapped seat for this test`. Launch nothing. Trim the brief or the listed files and run it again.
-4. Watch a capped child. Wait with `t3_thread_wait` and `timeoutMs: 60000`. After each timeout, read it with `t3_thread_read`, `view: "activity"`. Past 15 activity items, call `task_cancel` and rerun the test once. Rerun a child that launches seats on `inherit`, unless this thread runs on cursor, and every other child on the `show` seat. A cursor thread launches no rerun for a child that launches seats. It reports the capped child's last activity items and that cursor cannot launch seats.
+A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. That pool follows the built-in default families plus this thread's provider, never cursor.
 
 ## Modes
 
@@ -222,7 +214,7 @@ Every brief whose child resolves seats or spawns carries the mode. Get the lines
 python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> --attempt <kind>] [--brief-mode <value> | --session-mode light]
 ```
 
-- A code delegate's brief passes `--playbook <name> --attempt <kind>`. `<kind>` is `first` for new work, `fix` after a send-back, and `bounce` after a queue bounce. Paste the printed lines unchanged under the persona body. They start with the `Playbook:` line, so write no `Playbook:` line of your own. See [Delegation](#delegation) step 4.
+- A code delegate's brief passes `--playbook <name> --attempt <kind>`. `<kind>` is `first` for new work, `fix` after a send-back, and `bounce` after a queue bounce. Paste the printed lines unchanged under the persona body. When the role entry `show` printed has `haikuBrief`, paste its paragraphs unchanged, in order, at the end of that child's brief. They start with the `Playbook:` line, so write no `Playbook:` line of your own. See [Delegation](#delegation) step 4.
 - An owner, sub-coordinator, unit worker, visual-parity owner, or landing writer is not a code delegate. Run the command without `--playbook` and `--attempt`, and paste its `Mode:` and `Mode source:` lines into the brief or the `message`. Right after them, paste the seat rule below unchanged. A launched thread has no parent to ask, and a `Mode source: session` line reads like a session of its own without it.
 
   ```text
@@ -231,7 +223,7 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
 - A read-only leaf, such as a `how` explainer or a reviewer, gets no `Mode:` line. It resolves no seat.
 - A light session with no brief runs the same command with `--playbook <name> --attempt first` for its own playbook. Its `Waived by mode:` line names the steps this thread skips.
 
-Under light with budget `default`, `roles.py show` resolves seats as budget `small`, which caps reasoning at `medium`. An explicit budget wins. No mode sets `fastMode` to `true`. A Grok seat that declares it gets `false`, per [Fast Grok seats](#fast-grok-seats). Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat gets the cap.
+Under light with budget `default`, `roles.py show` resolves seats as budget `small`, which caps reasoning at `medium`. An explicit budget wins. No mode sets `fastMode` to `true`. A Grok seat that declares it gets `false`, per [Excluded seats](#excluded-seats). Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat gets the cap.
 
 Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`. Nothing moves work from full to light mid-flight.
 
