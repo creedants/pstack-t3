@@ -1,0 +1,1 @@
+- `roles.py backup` relaunches a usage-limited seat onto Claude, or onto Grok and then Claude for a reviewer. Codex and Cursor never take that work. A Claude worker waits for the reset. Brigade relaunches that worker or verifier before it asks about light mode.
