@@ -808,7 +808,8 @@ def _resolve_inherit(catalog, budget, name):
     """The one place an inherit seat is settled. Returns (seat, notes) in resolve_seat's notes shape.
 
     A fast Grok parent becomes its provider's first model pstack may pick, or a refusal.
-    A parent whose model declares fastMode is always made explicit so fastMode stays false.
+    A parent whose model declares fastMode is always made explicit so fastMode stays false,
+    or refused when its provider cannot run that explicit seat.
     """
     parent = inherit_parent(catalog)
     if parent is None:
@@ -827,10 +828,18 @@ def _resolve_inherit(catalog, budget, name):
     model = find_model(provider, parent.model) if provider else None
     if model is None:
         return INHERIT, []
+    fast = fast_options(model)
+    if fast and not runnable(provider):
+        reason = "; ".join(provider.get("constraints") or []) or "cannot run child tasks"
+        raise RolesError(
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: "
+            f"{parent.provider} is not runnable ({reason}), so {', '.join(fast)} cannot be pinned false, "
+            f"and {FAST_GROK_RULE}"
+        )
     reasons = []
     if BUDGETS[budget] is not None and effort_option(model) is not None and runnable(provider):
         reasons.append(f"the {budget} budget applies")
-    if fast_options(model) and runnable(provider):
+    if fast:
         reasons.append("fastMode stays false")
     window = bounded and prompt_cap(parent.model) is not None and _context_window_choice(model) is not None
     if not reasons and not window:

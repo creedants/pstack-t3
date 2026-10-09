@@ -3265,3 +3265,97 @@ class FastGrokCliTest(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2)
                 self.assertEqual(completed.stdout, "")
                 self.assertEqual(completed.stderr, stderr)
+
+
+def blocked_fast_option_provider(provider_id="cursor"):
+    return {
+        "providerInstanceId": provider_id,
+        "canRunChildTask": False,
+        "constraints": ["Provider is not authenticated."],
+        "models": [{"id": "grok-4.7", "options": [
+            {"id": "fastMode", "type": "boolean", "currentValue": True},
+        ]}],
+    }
+
+
+def blocked_fast_option_refusal(role, provider_id="cursor"):
+    return (
+        f"error: role {role!r} cannot inherit {provider_id}/grok-4.7: "
+        f"{provider_id} is not runnable (Provider is not authenticated.), so fastMode cannot be pinned false, "
+        f"and {FAST_RULE}\n"
+    )
+
+
+class BlockedFastOptionParentCliTest(unittest.TestCase):
+    """A parent whose Grok model declares fastMode is never inherited bare, even when its provider cannot run."""
+
+    def catalog(self):
+        catalog = json.loads(CATALOG.read_text())
+        catalog["providers"] = [
+            provider for provider in catalog["providers"] if provider["providerInstanceId"] != "cursor"
+        ] + [blocked_fast_option_provider()]
+        return catalog
+
+    def show(self, configured):
+        expected = blocked_fast_option_refusal("bug-fix")
+        for mode in ("full", "light"):
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    repo.put(repo.user, {"roles": {"bug-fix": [configured]}})
+                    path = repo.directory / "catalog.json"
+                    repo.put(path, self.catalog())
+                    completed = repo.run(
+                        "show",
+                        "--catalog", str(path),
+                        "--parent", "cursor/grok-4.7",
+                        "--role", "bug-fix",
+                        "--brief-mode", mode,
+                    )
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, expected)
+
+    def bounded(self, provider_id, flag):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [blocked_fast_option_provider(provider_id)]})
+            brief = repo.directory / "brief.txt"
+            brief.write_bytes(b"short brief\n")
+            return repo.run(
+                "bounded-seat",
+                "--catalog", str(path),
+                "--parent", f"{provider_id}/grok-4.7",
+                "--brief", str(brief),
+                "--brief-mode", "full",
+                *flag,
+            )
+
+    def test_configured_inherit_is_refused(self):
+        self.show("inherit")
+
+    def test_unavailable_seat_fallback_is_refused(self):
+        self.show({"providerInstanceId": "pi", "model": "default"})
+
+    def test_bounded_seat_empty_pool_is_refused(self):
+        completed = self.bounded("cursor", ())
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, blocked_fast_option_refusal("skill tests"))
+
+    def test_bounded_seat_empty_pool_launching_seats_is_refused(self):
+        expected = {
+            "cursor": (
+                "error: role 'skill tests' has no seat for a child that launches seats: "
+                "cursor cannot launch seats, and no single-role seat in roles.json, "
+                "built-in default family, or parent names another provider\n"
+            ),
+            "acme": blocked_fast_option_refusal("skill tests", "acme"),
+        }
+        for provider_id, stderr in expected.items():
+            with self.subTest(provider=provider_id):
+                completed = self.bounded(provider_id, ("--launches-seats",))
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, stderr)
