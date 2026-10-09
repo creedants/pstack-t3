@@ -2578,3 +2578,687 @@ class BlockedFastOptionParentCliTest(unittest.TestCase):
                     self.assertIn("no provider in the catalog can run child tasks", completed.stderr)
                 else:
                     self.assertEqual(completed.stderr, stderr)
+
+
+def _select(option_id, values):
+    return {"id": option_id, "type": "select", "options": [{"id": value} for value in values]}
+
+
+_CLAUDE_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultracode", "ultrathink")
+_CODEX_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
+_GROK_LEVELS = ("low", "medium", "high", "xhigh")
+_LIMIT = "You've hit your usage limit. Try again later.\n"
+
+
+def backup_catalog(*, second_claude=False):
+    claude_options = [_select("effort", _CLAUDE_LEVELS)]
+    providers = []
+    if second_claude:
+        providers.append({
+            "providerInstanceId": "claudeDesktop",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "claude-opus-5-5", "options": claude_options}],
+        })
+    providers.extend([
+        {
+            "providerInstanceId": "cursor",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "claude-opus-5-5", "options": claude_options}],
+        },
+        {
+            "providerInstanceId": "codex",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "gpt-6.1-sol", "options": [_select("reasoningEffort", _CODEX_LEVELS)]}],
+        },
+        {
+            "providerInstanceId": "grok",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{
+                "id": "grok-4.7",
+                "options": [_select("reasoningEffort", _GROK_LEVELS), {"id": "fastMode", "type": "boolean"}],
+            }],
+        },
+        {
+            "providerInstanceId": "claudeAgent",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "claude-opus-5-5", "options": claude_options},
+                {"id": "claude-sonnet-5-5", "options": claude_options},
+            ],
+        },
+    ])
+    return {"providers": providers}
+
+
+class BackupCliTest(unittest.TestCase):
+    def backup(self, *args, text=_LIMIT, catalog=None):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, backup_catalog() if catalog is None else catalog)
+            env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "t3/scripts/roles.py"),
+                    "backup",
+                    "--cwd", str(repo.directory),
+                    "--catalog", str(path),
+                    "--parent", "claudeAgent/claude-opus-5-5",
+                    *args,
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                input=text,
+            )
+
+    def assert_backup(self, completed, expected):
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), expected)
+
+    def test_codex_worker_at_xhigh_relaunches_on_opus(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--options", '[{"id": "reasoningEffort", "value": "xhigh"}]',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+        })
+
+    def test_grok_worker_relaunches_on_opus_at_its_level(self):
+        completed = self.backup(
+            "--role", "feature, refactoring",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '[{"id": "reasoningEffort", "value": "high"}]',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "feature, refactoring",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "feature, refactoring: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        })
+
+    def test_how_explorer_relaunches_on_sonnet(self):
+        completed = self.backup(
+            "--role", "how explorer",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "medium"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "how explorer",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5", "options": {"effort": "medium"}},
+            "report": "how explorer: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-sonnet-5-5 at medium",
+        })
+
+    def test_light_mode_caps_the_level_at_medium(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--options", '[{"id": "reasoningEffort", "value": "xhigh"}]',
+            "--brief-mode", "light",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
+        })
+
+    def test_codex_ultra_lands_on_max(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--options", '{"reasoningEffort": "ultra"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at max",
+        })
+
+    def test_a_variant_level_maps_onto_the_backup_effort(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"variant": "high"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        })
+
+    def test_a_seat_with_no_level_gets_no_effort_option(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5",
+        })
+
+    def test_a_claude_worker_parks_and_names_neither_codex_nor_cursor(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "claudeAgent",
+            "--model", "claude-opus-5-5",
+            "--options", '{"effort": "xhigh"}',
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "bug-fix",
+            "failed": "claudeAgent/claude-opus-5-5",
+            "report": "bug-fix: claudeAgent/claude-opus-5-5 hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+        self.assertNotIn("codex", completed.stdout)
+        self.assertNotIn("cursor", completed.stdout)
+
+    def test_codex_verifier_with_a_claude_author_relaunches_on_grok(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claude-opus-5-5",
+            "--options", '[{"id": "reasoningEffort", "value": "xhigh"}]',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "xhigh", "fastMode": False},
+            },
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; relaunched on grok/grok-4.7 at xhigh",
+        })
+
+    def test_codex_verifier_with_a_grok_author_relaunches_on_opus(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "grok-4.7",
+            "--options", '{"reasoningEffort": "xhigh"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+        })
+
+    def test_codex_verifier_parks_when_grok_authored_and_claude_is_out(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "grok-4.7",
+            "--out", "claudeAgent",
+            "--options", '{"reasoningEffort": "xhigh"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+
+    def test_options_array_and_object_parse_to_the_same_seat(self):
+        expected = {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        }
+        array = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '[{"id": "reasoningEffort", "value": "high"}]',
+        )
+        obj = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+        )
+        self.assert_backup(array, expected)
+        self.assert_backup(obj, expected)
+
+    def test_two_author_families_park_a_reviewer(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claude-opus-5-5",
+            "--author", "grok-4.7",
+            "--options", '{"reasoningEffort": "xhigh"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+
+    def test_provider_and_model_authors_exclude_every_family(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--author", "grok/grok-4.7",
+            "--options", '{"reasoningEffort": "xhigh"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+
+    def test_a_provider_and_model_author_skips_that_family_on_claude_agent(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "grok/grok-4.7",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+        })
+
+    def test_cursor_claude_relaunches_on_claude_agent(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "cursor",
+            "--model", "claude-opus-5-5",
+            "--options", '{"effort": "xhigh"}',
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "cursor/claude-opus-5-5",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "bug-fix: cursor/claude-opus-5-5 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+        })
+
+    def test_worker_backup_pins_claude_agent_ahead_of_an_earlier_claude_provider(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        })
+
+    def test_cursor_light_role_relaunches_on_claude_agent_sonnet(self):
+        completed = self.backup(
+            "--role", "how explorer",
+            "--provider", "cursor",
+            "--model", "claude-haiku-5-5",
+            "--options", '{"effort": "medium"}',
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "how explorer",
+            "failed": "cursor/claude-haiku-5-5",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5", "options": {"effort": "medium"}},
+            "report": "how explorer: cursor/claude-haiku-5-5 hit its usage limit; relaunched on claudeAgent/claude-sonnet-5-5 at medium",
+        })
+
+    def test_cursor_claude_parks_when_claude_agent_is_out(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "cursor",
+            "--model", "claude-opus-5-5",
+            "--options", '{"effort": "xhigh"}',
+            "--out", "claudeAgent",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "bug-fix",
+            "failed": "cursor/claude-opus-5-5",
+            "report": "bug-fix: cursor/claude-opus-5-5 hit its usage limit; no backup seat, so the work waits for the reset",
+        })
+
+    def test_resume_returns_the_original_claude_agent_seat(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "claudeAgent",
+            "--model", "claude-opus-5-5",
+            "--options", '{"effort": "xhigh"}',
+            "--resume",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "claudeAgent/claude-opus-5-5",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "bug-fix: claudeAgent/claude-opus-5-5 resumed on claudeAgent/claude-opus-5-5 at xhigh after the reset",
+        })
+
+    def test_resume_parks_while_claude_agent_stays_out(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "claudeAgent",
+            "--model", "claude-opus-5-5",
+            "--options", '{"effort": "xhigh"}',
+            "--out", "grok",
+            "--out", "claudeAgent",
+            "--resume",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "park",
+            "role": "bug-fix",
+            "failed": "claudeAgent/claude-opus-5-5",
+            "report": "bug-fix: claudeAgent/claude-opus-5-5 is still out after the reset; no backup seat, so the work waits for the reset",
+        })
+
+    def test_resume_returns_the_original_grok_seat_when_grok_is_back(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            "--resume",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "high", "fastMode": False},
+            },
+            "report": "bug-fix: grok/grok-4.7 resumed on grok/grok-4.7 at high after the reset",
+        })
+
+    def test_resume_uses_claude_agent_when_the_original_provider_stays_out(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            "--out", "grok",
+            "--resume",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 resumed on claudeAgent/claude-opus-5-5 at high after the reset",
+        })
+
+    def test_resume_of_a_reviewer_does_not_return_an_author_family(self):
+        parked = self.backup(
+            "--role", "verifiers",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--author", "grok/grok-4.7",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            "--resume",
+        )
+        self.assert_backup(parked, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "grok/grok-4.7",
+            "report": "verifiers: grok/grok-4.7 is still out after the reset; no backup seat, so the work waits for the reset",
+        })
+        moved = self.backup(
+            "--role", "verifiers",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--author", "grok/grok-4.7",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            "--resume",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(moved, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
+            "report": "verifiers: grok/grok-4.7 resumed on claudeAgent/claude-opus-5-5 at xhigh after the reset",
+        })
+
+    def test_resume_returns_a_reviewer_whose_family_wrote_nothing(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "grok/grok-4.7",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            "--resume",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "xhigh"}},
+            "report": "verifiers: codex/gpt-6.1-sol resumed on codex/gpt-6.1-sol at xhigh after the reset",
+        })
+
+    def test_resume_of_a_light_role_uses_sonnet_when_the_provider_stays_out(self):
+        completed = self.backup(
+            "--role", "how explorer",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "medium"}',
+            "--out", "grok",
+            "--resume",
+            catalog=backup_catalog(second_claude=True),
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "how explorer",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5", "options": {"effort": "medium"}},
+            "report": "how explorer: grok/grok-4.7 resumed on claudeAgent/claude-sonnet-5-5 at medium after the reset",
+        })
+
+    def test_grok_usage_balance_exhausted_is_a_usage_limit(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            text="API error (status 402 Payment Required): Grok Build usage balance exhausted\n",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        })
+
+    def test_a_cursor_grok_reviewer_moves_to_the_grok_provider(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "cursor",
+            "--model", "grok-4.7",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--options", '{"reasoningEffort": "high"}',
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "cursor/grok-4.7",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "high", "fastMode": False},
+            },
+            "report": "verifiers: cursor/grok-4.7 hit its usage limit; relaunched on grok/grok-4.7 at high",
+        })
+
+    def test_resume_of_a_reviewer_still_out_takes_the_review_ladder(self):
+        completed = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--options", '{"reasoningEffort": "xhigh"}',
+            "--out", "codex",
+            "--resume",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": "xhigh", "fastMode": False},
+            },
+            "report": "verifiers: codex/gpt-6.1-sol resumed on grok/grok-4.7 at xhigh after the reset",
+        })
+
+    def test_rate_limit_overload_and_429_are_not_a_usage_limit(self):
+        expected = {
+            "decision": "not-usage-limit",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "report": "bug-fix: grok/grok-4.7 failed without a usage limit; respawn per Failure handling",
+        }
+        for text in ("rate_limit_error", "overloaded", "429", "usage limit", "model not found"):
+            with self.subTest(text=text):
+                completed = self.backup(
+                    "--role", "bug-fix",
+                    "--provider", "grok",
+                    "--model", "grok-4.7",
+                    "--options", '{"reasoningEffort": "high"}',
+                    text=text,
+                )
+                self.assert_backup(completed, expected)
+
+    def test_listed_limit_phrases_relaunch(self):
+        expected = {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+        }
+        phrases = (
+            "You've hit your usage limit. Try again later.",
+            "You've hit your limit",
+            "usage limit reached",
+            "reached your usage limit",
+            "usage limit exceeded",
+            "out of usage",
+            "quota exceeded",
+            "exceeded your quota",
+            "insufficient_quota",
+        )
+        for text in phrases:
+            with self.subTest(text=text):
+                completed = self.backup(
+                    "--role", "bug-fix",
+                    "--provider", "grok",
+                    "--model", "grok-4.7",
+                    "--options", '{"reasoningEffort": "high"}',
+                    text=text,
+                )
+                self.assert_backup(completed, expected)
+
+    def test_inherit_missing_author_and_catalog_stdin_exit_2(self):
+        inherit = self.backup(
+            "--role", "bug-fix",
+            "--provider", "inherit",
+            "--model", "claude-opus-5-5",
+        )
+        self.assertEqual(inherit.returncode, 2)
+        self.assertEqual(inherit.stdout, "")
+        self.assertIn("inherit", inherit.stderr)
+
+        missing_author = self.backup(
+            "--role", "verifiers",
+            "--provider", "codex",
+            "--model", "gpt-6.1-sol",
+        )
+        self.assertEqual(missing_author.returncode, 2)
+        self.assertEqual(missing_author.stdout, "")
+        self.assertIn("--author", missing_author.stderr)
+
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
+            stdin_catalog = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "t3/scripts/roles.py"),
+                    "backup",
+                    "--cwd", str(repo.directory),
+                    "--catalog", "-",
+                    "--parent", "claudeAgent/claude-opus-5-5",
+                    "--role", "bug-fix",
+                    "--provider", "grok",
+                    "--model", "grok-4.7",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                input=_LIMIT,
+            )
+        self.assertEqual(stdin_catalog.returncode, 2)
+        self.assertEqual(stdin_catalog.stdout, "")
+        self.assertIn("--catalog -", stdin_catalog.stderr)
