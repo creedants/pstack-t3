@@ -2514,7 +2514,12 @@ class BrigadeTest(unittest.TestCase):
             "pstack-runtime skill's Delegation section. This overrides delegate_task's text that says to end the turn and "
             "wait for a notification. A completion wakes you only when the child's run ends, and a stalled child or a run "
             "left open never ends. Wait on each open child task with t3_thread_wait on its childThreadId and timeoutMs "
-            "300000, then read it with task_status. A child task is open while its workState is working or "
+            "300000, then read it with task_status. A child whose run is still open and whose last message holds the result "
+            "is stalled after two minutes with no new activity, per step 5. If that wait returns at once while workState is "
+            "still working or waiting_for_children, the child's run ended with its task open. Then wait between task_status "
+            "checks with t3_thread_wait and timeoutMs 120000 on your own thread, the parentThreadId from "
+            "orchestrator_capabilities, never a shell sleep, and count ten minutes from its last activity item. "
+            "A child task is open while its workState is working or "
             "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child task with task_cancel when it runs "
             "past its budget or stalls, per the runtime's Failure handling. A thread you launched with t3_thread_launch "
             "has no parent, so its finished turn never wakes you. While it stays healthy, repeat t3_thread_wait on its "
@@ -2555,6 +2560,18 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("Decide completion by `workState` alone", runtime)
         self.assertIn("Its finished turn does not wake the launcher.", runtime)
         self.assertIn("interrupt with `t3_thread_interrupt`", runtime)
+
+    def test_wait_rule_waits_out_an_ended_run(self):
+        rule = runpy.run_path(str(SCRIPT))["WAIT_RULE"]
+        for phrase in (
+            "returns at once while workState is still working or waiting_for_children",
+            "t3_thread_wait and timeoutMs 120000 on your own thread",
+            "never a shell sleep",
+            "whose run is still open and whose last message holds the result is stalled after two minutes with no new activity, per step 5",
+            "count ten minutes from its last activity item",
+        ):
+            self.assertIn(phrase, rule)
+        self.assertEqual(rule, self.WAIT)
 
     def test_the_report_section_opens_with_the_bounded_wait(self):
         self.coordinator()

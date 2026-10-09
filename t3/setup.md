@@ -63,7 +63,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
   --set "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh"
 ```
 
-The provider, model, and option IDs above are examples. Use IDs from step 1. Add `fastMode` only when the chosen model is in the grok family and declares that boolean option. A fallback to another family does not set it. Write `contextWindow` only for a model whose catalog entry offers it. Cursor's Claude 5 models still offer it. T3's native Claude 5 models do not.
+The provider, model, and option IDs above are examples. Use IDs from step 1. Never write a fast Grok id such as `grok-4.7-build-fast`, or `fastMode=true` on a Grok seat. `write` refuses both, even with `--force`, and `validate` reports both. Leave `fastMode` out. `roles.py` pins a declared Grok `fastMode` to `false`, never picks or inherits a fast Grok seat, and refuses a parent whose `fastMode` it cannot pin, per [the runtime's Fast Grok seats](../pstack-runtime/SKILL.md#fast-grok-seats). Write `contextWindow` only for a model whose catalog entry offers it. Cursor's Claude 5 models still offer it. T3's native Claude 5 models do not.
 
 - The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass. A user write without `--mode` stores `full`. A project write without `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
 - It refuses to write a seat that does not match the catalog and prints why. Fix the seat and rerun. Do not pass `--force` unless the user asks.

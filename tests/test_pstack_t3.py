@@ -2112,17 +2112,31 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
         step4 = section.split("\n4. ", 1)[1]
         for phrase in (
             "stays on the `show` seat, unless its child will launch seats.",
-            "passes a `target` to `delegate_task` or `t3_thread_launch`",
+            "passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`",
             "When the skill-test child will launch seats, pass `--launches-seats` to `roles.py bounded-seat`.",
             "never cursor",
+            "When those seats name no provider other than cursor",
+            "serves a model of a built-in default family (`claude`, `grok`) that is not a fast Grok id",
+            "plus this thread's provider, still never cursor",
+            "An empty pool refuses with `cannot launch seats`.",
+            "is not limited to that pool",
+            "prints no note",
+            "including `inherit` on a cursor thread",
             "still applies the Haiku prompt cap",
             "`show` has no such flag and can still return a cursor seat.",
         ):
             self.assertIn(phrase, step1)
+        step3 = section.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
         self.assertIn(
-            "Rerun a child that launches seats on `inherit`, and every other child on the `show` seat.",
+            "With `--launches-seats`, that fallback ranks the same provider pool and still refuses a cursor seat.",
+            step3,
+        )
+        self.assertIn(
+            "Rerun a child that launches seats on `inherit`, unless this thread runs on cursor, "
+            "and every other child on the `show` seat.",
             step4,
         )
+        self.assertIn("A cursor thread launches no rerun for a child that launches seats.", step4)
 
 
 class MuseDocTest(unittest.TestCase):
@@ -2186,6 +2200,26 @@ class StalledChildDocTest(unittest.TestCase):
             self.assertIn(phrase, step)
         self.assertLess(step.index(ten), step.index(two))
 
+    def test_delegation_step_5_waits_out_an_ended_run(self):
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        two = "no pending tool or child run, and no new activity for two minutes is stalled."
+        ended = "A child's run can end while its task stays open."
+        now = "If you need a result now"
+        for phrase in (
+            ended,
+            "returns at once, because an idle thread returns immediately",
+            "`waiting_for_children`",
+            "the `parentThreadId` from `orchestrator_capabilities`",
+            "returns `timedOut: true` after 120 seconds",
+            "Never wait with a shell `sleep`",
+            "a `task_status` check does not",
+            "because the two-minute rule above needs an open run",
+            "Count 10 minutes from the child's last activity item.",
+        ):
+            self.assertIn(phrase, step)
+        self.assertLess(step.index(two), step.index(ended))
+        self.assertLess(step.index(ended), step.index(now))
+
     def test_delegation_step_5_holds_against_the_delegate_task_tool_text(self):
         step = runtime_section("5. Collect results.", "\n6. You own")
         stay = "does not end its turn while a child is open"
@@ -2227,6 +2261,7 @@ class StalledChildDocTest(unittest.TestCase):
             "poteto-mode/playbooks/bug-fix.md": "../../pstack-runtime",
             "poteto-mode/playbooks/refactoring.md": "../../pstack-runtime",
             "poteto-mode/playbooks/perf-issue.md": "../../pstack-runtime",
+            "poteto-mode/playbooks/hillclimb.md": "../../pstack-runtime",
         }
         missing = [name for name, runtime in sources.items()
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
@@ -2262,7 +2297,7 @@ class SeatLaunchDocTest(unittest.TestCase):
         self.assertIn(
             "`modelSelection` is the seat with `providerInstanceId` renamed to `instanceId`, "
             "`model` copied, and `options` copied unchanged as the same object, "
-            "including a boolean such as `{\"fastMode\": true}`.",
+            "including a boolean such as `{\"fastMode\": false}`.",
             section,
         )
         self.assertIn('"options": {"effort": "xhigh"}', section)
@@ -2276,6 +2311,101 @@ class SeatLaunchDocTest(unittest.TestCase):
             "`t3_thread_configuration` on the child's `childThreadId`, and never call again with the options removed.",
             step,
         )
+
+
+class FastGrokDocTest(unittest.TestCase):
+    def test_fast_grok_section_quotes_the_code_rule(self):
+        section = runtime_section("### Fast Grok seats", "\n### ")
+        self.assertIn(roles.FAST_GROK_RULE + ".", section)
+        for phrase in (
+            "`grok-4.7-build-fast`",
+            "`grok-build` has no `fast` token",
+            "A pickable model is one that is not a fast Grok id and not capped",
+            '"fastMode": false',
+            "No mode and no budget sets it to `true`.",
+            "`validate` lists each one and exits 1.",
+            '"seats": "catalog-required"',
+            "Without a catalog, a role whose seats include `inherit`, and the `verifiers` default panel, "
+            'report `"seats": "catalog-required"` when `--parent` names a fast Grok id.',
+        ):
+            self.assertIn(phrase, section)
+        caps = runtime_section("### Prompt caps", "\n## ")
+        self.assertIn(
+            "Built-in defaults and fallbacks skip capped models and fast Grok ids. "
+            "When every runnable model is capped or a fast Grok id, the error says so.",
+            caps,
+        )
+
+    def test_fast_grok_notes_match_roles_py(self):
+        section = runtime_section("### Fast Grok seats", "\n### ")
+        source = (ROOT / "t3/scripts/roles.py").read_text()
+        for phrase in (
+            "inherit replaced by",
+            "inherit made explicit as",
+            "so fastMode stays false",
+            "skipped configured seat",
+            "skipped inherit of",
+            "refusing to write, even with --force",
+        ):
+            self.assertIn(phrase, section)
+            self.assertIn(phrase, source)
+
+    def test_no_source_sets_fast_mode_true(self):
+        pattern = re.compile(r'"fastMode":\s*true')
+        retired = (
+            "sets `fastMode` only when",
+            "Light mode never sets `fastMode`",
+            "Add `fastMode` only when",
+        )
+        found = []
+        for path in sorted((ROOT / "t3").rglob("*.md")):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if pattern.search(line) or any(phrase in line for phrase in retired):
+                    found.append(f"{path.relative_to(ROOT)}:{number}")
+        self.assertEqual(found, [])
+
+    def test_roles_sites_say_pickable_not_first_listed(self):
+        roles_text = runtime_section("## Roles")
+        self.assertNotIn("first listed model", roles_text)
+        fallback = runtime_section("### Fallback", "\n### ")
+        self.assertIn(
+            "Use the same provider's first pickable model. When it has none, `show` refuses the seat.",
+            fallback,
+        )
+        for start, end in (
+            ("### Built-in defaults", "\n### "),
+            ("### Fallback", "\n### "),
+            ("## Modes", "\n## "),
+        ):
+            self.assertIn("[Fast Grok seats](#fast-grok-seats)", runtime_section(start, end))
+
+    def test_verifiers_skip_an_uninheritable_parent(self):
+        defaults = runtime_section("### Built-in defaults", "### Fast Grok seats")
+        self.assertIn('A thread on a fast Grok id or a capped model gets no `"inherit"` seat', defaults)
+        self.assertIn('`verifiers` is three `"inherit"` seats', defaults)
+
+    def test_modes_never_set_fast_mode_true(self):
+        section = runtime_section("### Resolve and carry the mode", "\n### ")
+        self.assertIn("No mode sets `fastMode` to `true`.", section)
+
+
+class SetupFastGrokDocTest(unittest.TestCase):
+    def test_setup_never_writes_a_fast_grok_seat(self):
+        text = (ROOT / "t3/setup.md").read_text()
+        self.assertIn("Never write a fast Grok id such as `grok-4.7-build-fast`", text)
+        self.assertIn("`write` refuses both, even with `--force`, and `validate` reports both.", text)
+        self.assertIn("(../pstack-runtime/SKILL.md#fast-grok-seats)", text)
+        self.assertNotIn("Add `fastMode` only when", text)
+
+
+class AuthorSkillDocTest(unittest.TestCase):
+    def test_seat_launching_test_goes_through_launches_seats(self):
+        text = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
+        step = text.split("## 4. Test it on a fresh child", 1)[1].split("\n## 5. ", 1)[0]
+        step2 = step.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
+        self.assertIn("stays on the `show` seat, unless its child launches seats.", step2)
+        self.assertIn("`--launches-seats`", step2)
+        self.assertIn("(../pstack-runtime/SKILL.md#prompt-caps)", step2)
 
 
 if __name__ == "__main__":
