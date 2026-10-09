@@ -1015,13 +1015,16 @@ def seat_level(options):
     return None
 
 
-def author_model(author):
-    """An author is a model id or provider/model. The family comes from the model."""
-    return author.rsplit("/", 1)[-1]
+def model_family(model_id):
+    """Family of a model id, a namespaced id, or provider/model: opencode/opencode/muse-2-free -> muse.
+
+    Every comparison of a seat with the authors goes through this, so both sides compare bare ids.
+    """
+    return family(bare_id(model_id))
 
 
 def author_families(authors):
-    return {family(author_model(author)) for author in authors or () if author}
+    return {model_family(author) for author in authors or () if author}
 
 
 def backup_ladder(role, failed_provider, authors, out):
@@ -1034,7 +1037,7 @@ def backup_ladder(role, failed_provider, authors, out):
         return ()
     if role in REVIEW_ROLES:
         skip = author_families(authors)
-        return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
+        return tuple(model_id for model_id in REVIEW_LADDER if model_family(model_id) not in skip)
     if CLAUDE_BACKUP_PROVIDER == failed_provider or CLAUDE_BACKUP_PROVIDER in out:
         return ()
     if role in LIGHT_ROLES:
@@ -1073,8 +1076,7 @@ def _emit_backup(role, label, provider, model, source_options, budget, resumed):
 def panel_seats(configured, catalog, budget, blocked, authors):
     """Keep the configured review backups seats a panel can run, with one note per dropped seat in seat order.
 
-    No inherit and no model fallback, because either can seat the author. Families
-    compare bare ids, so a namespaced id such as opencode/muse-2-free is muse on both sides.
+    No inherit and no model fallback, because either can seat the author.
     """
     skip = author_families(authors)
     kept, notes, seated = [], [], set()
@@ -1083,7 +1085,7 @@ def panel_seats(configured, catalog, budget, blocked, authors):
             notes.append("dropped inherit: the parent can be the author")
             continue
         provider_id, model_id = seat["providerInstanceId"], seat["model"]
-        seat_family = family(author_model(model_id))
+        seat_family = model_family(model_id)
         if provider_id in NEVER_BACKUP_PROVIDERS:
             reason = "backup never selects Codex or Cursor"
         elif provider_id in blocked:
@@ -1136,7 +1138,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
     out = set(out or ())
     blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | out
     if resume:
-        reviews_itself = role in REVIEW_ROLES and family(model_id) in author_families(authors)
+        reviews_itself = role in REVIEW_ROLES and model_family(model_id) in author_families(authors)
         original = None if reviews_itself else _catalog_pair(catalog, provider_id, model_id, out)
         if original is not None:
             return _emit_backup(role, label, *original, failed.get("options"), budget, True)

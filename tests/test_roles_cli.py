@@ -3111,6 +3111,44 @@ class BackupCliTest(unittest.TestCase):
             "report": "verifiers: grok/grok-4.7 resumed on claudeAgent/claude-opus-5-5 at xhigh after the reset",
         })
 
+    def test_resume_of_a_namespaced_reviewer_does_not_return_its_author(self):
+        muse = self.backup(
+            "--role", "verifiers",
+            "--provider", "opencode",
+            "--model", MUSE,
+            "--author", "opencode/" + MUSE,
+            "--out", "grok",
+            "--out", "claudeAgent",
+            "--resume",
+        )
+        self.assert_backup(muse, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "opencode/opencode/muse-lite-2-free",
+            "report": (
+                "verifiers: opencode/opencode/muse-lite-2-free is still out after the reset; "
+                "no backup seat, so the work waits for the reset"
+            ),
+        })
+        catalog = backup_catalog()
+        opencode = next(p for p in catalog["providers"] if p["providerInstanceId"] == "opencode")
+        opencode["models"].append({"id": "anthropic/claude-sonnet-5-5", "options": []})
+        claude = self.backup(
+            "--role", "verifiers",
+            "--provider", "opencode",
+            "--model", "anthropic/claude-sonnet-5-5",
+            "--author", "claudeAgent/claude-opus-5-5",
+            "--resume",
+            catalog=catalog,
+        )
+        self.assert_backup(claude, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "opencode/anthropic/claude-sonnet-5-5",
+            "seat": {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}},
+            "report": "verifiers: opencode/anthropic/claude-sonnet-5-5 resumed on grok/grok-4.7 after the reset",
+        })
+
     def test_resume_returns_a_reviewer_whose_family_wrote_nothing(self):
         completed = self.backup(
             "--role", "verifiers",
