@@ -44,9 +44,21 @@ It calls `orchestrator_capabilities` first. That tool must be in the thread's to
 | `large` | Extra-high reasoning |
 | `unlimited` | A seat that names no level gets the highest offered level at or below max. When every offered level is above that cap, the seat gets the lowest offered level. That includes a `verifiers` seat. An `inherit` seat becomes this thread's model at that level. A configured seat keeps its level when the level is at or below max. When its level is above max, it drops to the highest level at or below max, or to the lowest offered level when every offered level is above that cap. |
 
-Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a runnable model from another family, takes the newest version of that model, and names no reasoning level. Claude Haiku 5.5 should not get a prompt over 100,000 tokens, because its price rises fivefold past that. Setup refuses it for every role but `skill tests`. A skill test runs on Haiku 5.5 only when `roles.py bounded-seat` estimates its prompt at or under 100,000 tokens before launch. Otherwise the test runs on an uncapped seat. When no uncapped seat exists, `bounded-seat` refuses that test. Arena, architect, and interrogate panels are those two seats. `arena cross-judge pool` uses the same two seats. `verifiers` is this thread's model plus one seat per other model family you can run. With one runnable model family, `verifiers` is three copies of one seat. That seat is this thread's model only when this thread's provider can run children. Otherwise that seat is the runnable provider's first model. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
+Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` uses Claude Haiku 5.5 at high. The `how` explorer and the `why` investigators use Claude Haiku 5.5 at medium. Haiku 5.5 suits reading, extraction, and sub-agent work, so a role that needs judgment keeps Opus. `unlimited` does not raise those seats, and no prompt length moves them. `roles.py show` adds two paragraphs as `haikuBrief` to each role that runs Haiku 5.5, and the lead pastes them at the end of that child's brief. pstack never runs Claude Haiku 4.5 or a fast Grok model such as `grok-4.7-build-fast`, in any role. `roles.py show` skips either one in your roles file and says so. `validate` reports it and exits 1, and `write` refuses it even with `--force`. A skill test whose child launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. That form never returns a Cursor seat, because Cursor's harness cannot pass a seat's options object. Arena, architect, and interrogate panels are those two seats. `arena cross-judge pool` uses the same two seats. `verifiers` is this thread's model plus one seat per other model family you can run. With one runnable model family, `verifiers` is three copies of one seat. That seat is this thread's model only when this thread's provider can run children. Otherwise that seat is the runnable provider's first model. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
 
 You can skip setup entirely. The defaults in the previous paragraph still apply. A seat whose model you cannot run falls back, and the report names each replacement.
+
+### When a provider hits its usage limit
+
+A usage limit does not stall the work. The lead reads the failed child's error text and runs `roles.py backup` with it. The command prints `relaunch`, `park`, or `not-usage-limit`. On `relaunch` the lead starts a fresh child on the printed seat.
+
+| Failed seat | Backup seat |
+| --- | --- |
+| A worker, meaning any role that is not a reviewer or a Haiku role, such as code, `judgment and prose`, or `hardest tasks` | `claude-opus-5-5` on `claudeAgent` |
+| `how explorer`, `why investigators`, `skill tests` | `claude-sonnet-5-5` on `claudeAgent` |
+| `verifiers`, `interrogate reviewers`, `arena cross-judge pool` | `grok-4.7`, then `claude-opus-5-5`, skipping every model family that wrote the diff |
+
+Backup never picks Codex or Cursor. A seat parks when its backup family is out or the catalog lacks the backup model. A worker whose own seat is on `claudeAgent` has no other backup, so it parks, keeping its branch and lease. After the reset time in the error, `roles.py backup --resume` returns it to its original seat, or to the backup when the original is still out. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to.
 
 ## 3. Your first rigorous task
 
@@ -105,6 +117,19 @@ Long work uses three T3 features:
 It keeps a decision log you can audit afterwards (`show-me-your-work`). It still pauses for anything irreversible that you didn't authorize, such as a force-push to a shared branch, a deploy, or deleting data.
 
 To stop it, interrupt the thread. The playbooks interrupt their own owner threads and cancel their child agents when told to stand down.
+
+Four rules keep a long run from stalling or piling up.
+
+- **Owner reports.** An Autopilot or Orchestrate owner sends its report lines to the lead with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle lead, steers a running turn, or queues behind a turn that cannot take steering yet. The lead checks each head a line names, and arrival order never makes a head current. A queued correction that sits behind a long turn can be moved into the owner's active run with `t3_queue_promote_to_steer`. It counts as delivered only when the owner's activity shows it.
+- **Command capacity.** Local builds, tests, and verifier reruns run through `land.py slot --`, and timing measurements through `land.py slot --exclusive --`. The slot limits heavy commands on the machine. It never caps how many owners or children run.
+- **Decision-only pauses.** A finite program, such as Autopilot or Orchestrate, pauses an audit schedule when its next run could only repeat a question you have not answered. It raises the question once and resumes the same schedule when your answer permits work. A schedule that renews a lease, drains the queue, takes intake, or notices a merge never pauses, and a coordinator's schedules are never paused this way.
+- **Run now.** When an enabled interval schedule's work is ready, the lead can run it at once with `run_scheduled_task_now` instead of waiting for the next tick. The result means the run was dispatched, not that it finished.
+
+The lead can also fork a thread, move an owner to another model, and publish a page.
+
+- **Forks.** `t3_thread_fork` starts a separate read-only planning or investigation thread from another thread's context, and only when you asked for a separate thread. A fork never replaces a child agent or a review round. `t3_thread_merge_back` carries a fork's reasoning back to a related thread only when you authorized it.
+- **Owner model changes.** `t3_thread_configure` moves an idle launched owner to another model only when a playbook step already calls for it, such as Orchestrate's retry after a tool error. The owner keeps its history, gates, scope, and retry count, so it is never a fresh worker or a fresh reviewer. It is never used on a verifier or reviewer thread.
+- **Visual reports.** When a reply is already due and a table, a timeline, or a chart carries it better than prose, the lead publishes that part as a page with `html_preview` and `html_render`. Every decision that waits on you, every PR link, and the store and report paths stay in the reply text. A coordinator at `digest` renders no page.
 
 ## 7. Pick up where you left off
 

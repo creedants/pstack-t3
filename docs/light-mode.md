@@ -172,7 +172,7 @@ So a coordinator set to `light` over a project set to `full` writes `Mode: light
 
 When the effective mode is `light` and the merged budget is `default`, `show` resolves seats as budget `small`. `t3/scripts/roles.py:43` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats, and `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat already becomes an explicit target with the capped option (`inherit_with_budget`), so a light child cannot pass its parent's xhigh through. That conversion needs a catalog and the right parent. Without a catalog, `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped, but an `inherit` seat either stays `inherit` (the saved snapshot clears the parent) or converts against the catalog's saved parent (`--catalog` keeps it). Under `light`, `show` without a catalog or without `--parent` prints an `info` line that the `inherit` cap may be wrong. The runtime's Roles section already requires both.
 
-The cap is the only option light mode touches. It never sets `fastMode`. A seat that falls back to the built-in Grok default keeps whatever that default sets today.
+The cap is the only option light mode changes. Light mode never sets `fastMode` to true. In both modes, a Grok seat on a model that declares `fastMode` comes back from `show` with `"fastMode": false`, and that includes a seat that falls back to the built-in Grok default. [The runtime's Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
 
 An escalated item resolves as `full`, so it keeps its full reasoning level. The saving estimate counts no reasoning saving for escalated items.
 
@@ -211,7 +211,7 @@ The previous draft proposed narrower leases for skill text so that rule 1 would 
 
 - `brigade.py set --mode light|full` changes a coordinator. `set --mode ""` returns it to the project and user files. The change applies to the next brief. A running attempt keeps the mode its brief names.
 - `roles.py write --mode` changes the user or project file. New sessions read it. A running coordinator reads it at its next brief.
-- When a provider in the `verifiers` or code roles hits its usage limit, the coordinator does not switch modes on its own. It parks the choice with `86 add`, defaulting to `light` until the limit resets. It switches only when the user answers or the menu's `## Budget` says to. A usage limit is the user's budget call. Codex hit its limit three times on 2026-10-07 (D64, D70, D71 in `pass.tsv`) without anyone changing a setting.
+- When a provider in the `verifiers` or code roles hits its usage limit, the coordinator first relaunches or resumes the failed worker or verifier with `roles.py backup`, per [Failure handling](../t3/runtime.md#failure-handling). The mode stays as it was. The coordinator does not switch modes on its own. Whatever `backup` prints, it then parks the choice with `86 add`, defaulting to `light` until the limit resets. It switches only when the user answers or the menu's `## Budget` says to. A usage limit is the user's budget call. Codex hit its limit three times on 2026-10-07 (D64, D70, D71 in `pass.tsv`) without anyone changing a setting.
 
 ### What the agent says
 
@@ -386,7 +386,7 @@ House rule 7 requires a fresh-child test for every change to a skill's behavior.
 
 - **A leaf test** runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation, such as a reply's wording, a brief line, or a command the skill runs.
 - **An executing workflow test** runs the playbook with its real children, nested ones included. It is required once for each changed spawn or coordination behavior. One test covers one behavior. Two unrelated changed behaviors need two tests.
-- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5.
+- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5 at high, or at medium under light mode's reasoning cap. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`, which never returns a Cursor seat.
 
 ## Saving per change
 
