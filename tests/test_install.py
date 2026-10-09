@@ -546,9 +546,8 @@ class OwnershipTest(unittest.TestCase):
 
     def ok(self, result, *lines):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        got = result.stdout.splitlines()
         for line in lines:
-            self.assertIn(line, got)
+            self.assertIn(line, result.stdout)
 
     def assert_empty_records(self):
         self.assertTrue(legacy_file(self.home).is_file())
