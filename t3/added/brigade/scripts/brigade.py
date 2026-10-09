@@ -2384,15 +2384,17 @@ def command(restaurant, args, contract=None, rails=None):
             open_row = open_item_decisions(restaurant.rows("86.tsv")).get(args.dish)
             if open_row:
                 return open_row["id"]
+            # Validate the text the row will store, since the append turns tabs and newlines into spaces.
+            question, options, default = clean(args.question), clean(args.options), clean(args.default)
             if args.dish:
-                keys = {option_key(option) for option in args.options.split(",") if option.strip()}
-                if option_key(args.default) not in keys or len(keys) < 2:
+                keys = {option_key(option) for option in options.split(",") if option.strip()}
+                if option_key(default) not in keys or len(keys) < 2:
                     raise BrigadeError("an item decision's default must be one of its options, "
                                        "with at least one other option that closes it")
             ident = restaurant.next_id("86.tsv")
             restaurant.append("86.tsv", {"id": ident, "at": now(), "state": "open", "dish": args.dish,
-                                         "question": args.question, "options": args.options, "default": args.default})
-            restaurant.log("decision", ident, "open", args.question)
+                                         "question": question, "options": options, "default": default})
+            restaurant.log("decision", ident, "open", question)
             return ident
         if args.action == "answer":
             _, row = restaurant.find("86.tsv", args.id)

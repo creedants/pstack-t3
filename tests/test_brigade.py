@@ -2136,6 +2136,32 @@ class BrigadeTest(unittest.TestCase):
                                       "--options", "moved, keep parked", "--default", "ship it"), "Q1")
         self.assertEqual((self.at / "86.tsv").read_text(), table)
 
+    def test_an_item_decision_whose_options_collapse_to_the_default_once_stored_is_refused(self):
+        self.started()
+        before = tuple((self.at / name).read_bytes() for name in ("86.tsv", "log.tsv"))
+        for options in ("keep parked, keep\nparked", "keep parked, keep\tparked", "keep parked, keep\r\nparked"):
+            self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
+                                          "--options", options, "--default", "keep parked", ok=False),
+                             ITEM_DECISION, repr(options))
+            self.assertEqual(tuple((self.at / name).read_bytes() for name in ("86.tsv", "log.tsv")), before,
+                             repr(options))
+
+    def test_an_item_decision_stores_its_options_cleaned_and_closes_only_on_the_other_option(self):
+        self.started()
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move\tthis?",
+                                      "--options", "moved\r\nelsewhere, keep\nparked",
+                                      "--default", "keep\tparked"), "Q1")
+        row = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertEqual((row["question"], row["options"], row["default"]),
+                         ("Move this?", "moved elsewhere, keep parked", "keep parked"))
+        before = self.store_bytes()
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"),
+                         "Q1 still open; D1 stays held until 86 answer Q1 --answer 'moved elsewhere'")
+        self.assertEqual(self.store_bytes(), before)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "Moved elsewhere."), "Q1 answered")
+        row = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertEqual((row["state"], row["answer"]), ("answered", "moved elsewhere"))
+
     def test_a_blank_dish_decision_still_closes_on_any_text(self):
         self.started()
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
