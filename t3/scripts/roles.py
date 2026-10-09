@@ -178,6 +178,37 @@ class DefaultSelection:
     notes: tuple = ()
 
 
+# A usage limit moves along this ladder. Nothing here searches for the first runnable model.
+LIGHT_ROLES = frozenset(
+    name for name, policy in ROLE_DEFAULTS.items()
+    if isinstance(policy, tuple) and policy[0] in (HAIKU_TESTS, HAIKU_READING)
+)
+REVIEW_ROLES = frozenset({"verifiers", "interrogate reviewers", "arena cross-judge pool"})
+NEVER_BACKUP_PROVIDERS = frozenset({"codex", "cursor"})
+WORKER_BACKUP = "claude-opus-5-5"
+LIGHT_BACKUP = "claude-sonnet-5-5"
+REVIEW_LADDER = ("grok-4.7", "claude-opus-5-5")
+USAGE_LIMIT_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
+    r"you['’]?ve hit your (?:usage )?limit\b",
+    r"usage limit reached",
+    r"reached your usage limit",
+    r"usage limit exceeded",
+    r"out of usage",
+    r"quota exceeded",
+    r"exceeded your quota",
+    r"insufficient_quota",
+))
+
+
+@dataclass(frozen=True)
+class Backup:
+    """One usage-limit decision. relaunch carries a seat. park and not-usage-limit do not."""
+
+    decision: str
+    report: str
+    seat: dict | None = None
+
+
 def user_config_path():
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "pstack-t3" / "roles.json"
@@ -940,6 +971,119 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
     return result
 
 
+def usage_limited(text):
+    return any(pattern.search(text or "") for pattern in USAGE_LIMIT_PATTERNS)
+
+
+def seat_level(options):
+    """The failed seat's level, from an effort id or variant. None when the seat named none."""
+    if not isinstance(options, dict):
+        return None
+    for key in (*EFFORT_IDS, "variant"):
+        value = options.get(key)
+        if isinstance(value, str) and value in LADDER:
+            return value
+    return None
+
+
+def backup_ladder(role, failed_family, author_family):
+    """Models to try, in order. An empty ladder parks."""
+    if role in REVIEW_ROLES:
+        skip = {failed_family, author_family} - {None}
+        return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
+    if failed_family == "claude":
+        return ()
+    if role in LIGHT_ROLES:
+        return (LIGHT_BACKUP,)
+    return (WORKER_BACKUP,)
+
+
+def backup_seat(role, failed, text, catalog, budget, out, author):
+    """Pick the one backup seat, or park. The caller passes providers already out."""
+    provider_id = failed["provider"]
+    model_id = failed["model"]
+    label = f"{provider_id}/{model_id}"
+    if not usage_limited(text):
+        report = f"{role}: {label} failed without a usage limit; respawn per Failure handling"
+        return Backup("not-usage-limit", report)
+    ladder = backup_ladder(role, family(model_id), family(author) if author else None)
+    blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | set(out or ())
+    chosen = None
+    for wanted in ladder:
+        matches = [
+            (provider, model)
+            for provider, model in _runnable_rows(catalog)
+            if model["id"] == wanted and provider["providerInstanceId"] not in blocked
+        ]
+        if matches:
+            chosen = _provider_for_exact(matches, family(wanted))
+            break
+    if chosen is None:
+        report = f"{role}: {label} hit its usage limit; no backup seat, so the work waits for the reset"
+        return Backup("park", report)
+    provider, model = chosen
+    seat = {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
+    level = seat_level(failed.get("options"))
+    if level is not None:
+        seat = apply_level(seat, model, level)
+    seat = finish_seat(seat, model, budget)
+    applied = seat_level(seat.get("options"))
+    where = f"{seat['providerInstanceId']}/{seat['model']}"
+    at = f" at {applied}" if applied else ""
+    report = f"{role}: {label} hit its usage limit; relaunched on {where}{at}"
+    return Backup("relaunch", report, seat)
+
+
+def parse_applied_options(text):
+    """Options from t3_thread_configuration, or a target's options object."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RolesError(f"--options: invalid JSON: {error}") from error
+    if isinstance(data, dict):
+        return data
+    if not isinstance(data, list):
+        raise RolesError("--options must be a JSON object or an array of id and value")
+    options = {}
+    for item in data:
+        if not isinstance(item, dict) or "id" not in item or "value" not in item:
+            raise RolesError("--options array entries need id and value")
+        options[item["id"]] = item["value"]
+    return options
+
+
+def command_backup(args):
+    if args.catalog == "-":
+        raise RolesError("--catalog - is refused because stdin carries the error text")
+    given_parent(args)
+    if args.provider == INHERIT:
+        raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configuration")
+    if args.role not in ROLES:
+        raise RolesError(f"unknown role {args.role!r}")
+    if args.role in REVIEW_ROLES and not args.author:
+        raise RolesError(f"role {args.role!r} needs --author, the model whose work it judges")
+    text = sys.stdin.read()
+    config = merged_config(args.cwd, args.config, args.project_config)
+    decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
+    budget = seat_budget(config["budget"], decision.mode)
+    _catalog_path, catalog = load_show_catalog(args)
+    if catalog is None:
+        raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
+    options = parse_applied_options(args.options) if args.options else {}
+    failed = {"provider": args.provider, "model": args.model, "options": options}
+    result = backup_seat(args.role, failed, text, catalog, budget, args.out or [], args.author)
+    payload = {
+        "decision": result.decision,
+        "role": args.role,
+        "failed": f"{args.provider}/{args.model}",
+    }
+    if result.seat is not None:
+        payload["seat"] = result.seat
+    payload["report"] = result.report
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def write_atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as handle:
@@ -1517,15 +1661,27 @@ def main(argv=None):
                       help="recorded one-line escalation reason; forces full mode and wins over paths and send-backs")
     mode.add_argument("--playbook", help="playbook stem, such as bug-fix")
     mode.add_argument("--attempt", choices=ATTEMPTS)
-    for command in (sub.choices["show"], mode):
+    check_brief = sub.add_parser("check-brief")
+    check_brief.add_argument("brief", help="brief file to check")
+    backup = sub.add_parser("backup")
+    backup.add_argument("--cwd", default=os.getcwd())
+    backup.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")
+    backup.add_argument("--project-config", help="project roles file (default <repo>/.pstack/t3-roles.json)")
+    backup.add_argument("--catalog", help="saved orchestrator_capabilities JSON. Stdin is the error text, so - is refused")
+    backup.add_argument("--parent", help="this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel)")
+    backup.add_argument("--role", required=True)
+    backup.add_argument("--provider", required=True)
+    backup.add_argument("--model", required=True)
+    backup.add_argument("--options", help="JSON options array from t3_thread_configuration, or a target options object")
+    backup.add_argument("--author", help="author model id. Required for a reviewer role")
+    backup.add_argument("--out", action="append", default=None, help="provider already out. Repeat for each")
+    for command in (sub.choices["show"], mode, backup):
         command.add_argument("--brief-mode", choices=MODES,
                              help="brief mode; overrides session, coordinator, project, and user modes")
         command.add_argument("--session-mode", choices=MODES,
                              help="session mode; used after brief and before coordinator, project, and user modes")
         command.add_argument("--coordinator-mode", choices=MODES,
                              help="coordinator mode; used after brief and session, before project and user modes")
-    check_brief = sub.add_parser("check-brief")
-    check_brief.add_argument("brief", help="brief file to check")
     args = parser.parse_args(argv)
     if args.command == "write" and not args.project and (args.escalate is not None or args.clear_escalate):
         parser.error("--escalate and --clear-escalate require --project")
@@ -1536,6 +1692,7 @@ def main(argv=None):
             "write": command_write,
             "check-brief": command_check_brief,
             "mode": command_mode,
+            "backup": command_backup,
         }[args.command](args) or 0
     except ModeSettingsError as error:
         print(f"error: {error}", file=sys.stderr)
