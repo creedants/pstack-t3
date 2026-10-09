@@ -620,9 +620,10 @@ def _first_pickable(provider):
 
 
 def _verifier_seats(catalog, role="verifiers"):
-    """One inherit seat for this thread, then one seat per new family. One seat is repeated to three.
+    """Inherit the runnable parent, then add one seat per new family.
 
-    A capped parent and a fast id cannot be inherited. The family stays open, so that provider's first pickable model still joins.
+    An excluded parent contributes no inherit seat and leaves its family open.
+    Its provider's first pickable model can join. Repeat a lone seat to three.
     """
     parent = catalog.get("inheritedProviderInstanceId")
     parent_model = catalog.get("inheritedModel")
@@ -702,11 +703,12 @@ def default_seats(name, catalog, budget="default", providers=None):
 
 
 def _resolve_inherit(catalog, budget, name):
-    """The one place an inherit seat is settled. Returns (seat, notes) in resolve_seat's notes shape.
+    """Settle an inherit seat and return resolve_seat's (seat, notes) shape.
 
-    A fast Grok parent becomes its provider's first model pstack may pick, or a refusal.
-    A parent whose model declares fastMode is always made explicit so fastMode stays false,
-    or refused when its provider cannot run that explicit seat.
+    An excluded parent becomes its provider's first pickable model or is refused.
+    A Grok parent that declares boolean fastMode becomes an explicit seat with
+    fastMode false or is refused when its provider cannot run that seat.
+    That note reads inherit made explicit as <provider>/<model> so fastMode stays false.
     """
     parent = inherit_parent(catalog)
     if parent is None:
@@ -831,7 +833,10 @@ def attach_haiku_brief(entry, seats, parent):
 
 
 def configured_seats(config, name):
-    """Configured seats minus each fast Grok seat, and a note per skipped seat. None when nothing is left."""
+    """Return configured seats without excluded seats and a note for each skip.
+
+    Return None for seats when no configured seat remains.
+    """
     seats = config["roles"].get(name)
     if seats is None:
         return None, []
@@ -1070,7 +1075,7 @@ def launch_providers(config, catalog, parent):
     """Providers a child that launches seats may run on.
 
     The configured single-role seats, else the runnable providers that serve a built-in default
-    family plus the parent's provider. A provider pstack never launches by default stays out.
+    family plus the parent's provider. Cursor never joins, because it cannot launch seats.
     """
     configured = {
         seat["providerInstanceId"]
