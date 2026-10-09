@@ -3989,6 +3989,15 @@ class UsageLimitDocTest(unittest.TestCase):
         self.assertLess(bullet.index("t3_thread_interrupt"), bullet.index("roles.py backup"))
         self.assertLess(bullet.index("roles.py backup"), bullet.index(question))
         self.assertIn("../pstack-runtime/SKILL.md#modes", bullet)
+        self.assertIn("../pstack-runtime/SKILL.md#gate-review", bullet)
+        self.assertIn("each code delegate's `providerInstanceId/model`", bullet)
+        self.assertIn("Never pass only the worker's model when a delegate wrote the code.", bullet)
+        self.assertIn("--resume", bullet)
+        self.assertIn("keeps its lease and its branch", bullet)
+        self.assertIn("A new branch never widens the lease.", bullet)
+        self.assertLess(bullet.index("On `park`"), bullet.index("--resume"))
+        self.assertIn("A parked verifier stays in review.", bullet)
+        self.assertNotIn("relaunch per this bullet on the first service after it", bullet)
 
 
 class AnswerRelayDocTest(unittest.TestCase):

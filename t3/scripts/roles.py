@@ -185,9 +185,15 @@ LIGHT_ROLES = frozenset(
 )
 REVIEW_ROLES = frozenset({"verifiers", "interrogate reviewers", "arena cross-judge pool"})
 NEVER_BACKUP_PROVIDERS = frozenset({"codex", "cursor"})
+CLAUDE_BACKUP_PROVIDER = "claudeAgent"
 WORKER_BACKUP = "claude-opus-5-5"
 LIGHT_BACKUP = "claude-sonnet-5-5"
 REVIEW_LADDER = ("grok-4.7", "claude-opus-5-5")
+BACKUP_PROVIDERS = {
+    WORKER_BACKUP: CLAUDE_BACKUP_PROVIDER,
+    LIGHT_BACKUP: CLAUDE_BACKUP_PROVIDER,
+    "grok-4.7": "grok",
+}
 USAGE_LIMIT_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
     r"you['’]?ve hit your (?:usage )?limit\b",
     r"usage limit reached",
@@ -197,6 +203,7 @@ USAGE_LIMIT_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
     r"quota exceeded",
     r"exceeded your quota",
     r"insufficient_quota",
+    r"usage balance exhausted",
 ))
 
 
@@ -986,52 +993,85 @@ def seat_level(options):
     return None
 
 
-def backup_ladder(role, failed_family, author_family):
-    """Models to try, in order. An empty ladder parks."""
+def author_model(author):
+    """An author is a model id or provider/model. The family comes from the model."""
+    return author.rsplit("/", 1)[-1]
+
+
+def author_families(authors):
+    return {family(author_model(author)) for author in authors or () if author}
+
+
+def backup_ladder(role, failed_provider, authors, out):
+    """Models to try, in order. An empty ladder parks.
+
+    A worker parks only when claudeAgent is out. A Claude model on another provider still moves there.
+    """
     if role in REVIEW_ROLES:
-        skip = {failed_family, author_family} - {None}
+        skip = author_families(authors)
         return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
-    if failed_family == "claude":
+    if CLAUDE_BACKUP_PROVIDER == failed_provider or CLAUDE_BACKUP_PROVIDER in out:
         return ()
     if role in LIGHT_ROLES:
         return (LIGHT_BACKUP,)
     return (WORKER_BACKUP,)
 
 
-def backup_seat(role, failed, text, catalog, budget, out, author):
-    """Pick the one backup seat, or park. The caller passes providers already out."""
-    provider_id = failed["provider"]
-    model_id = failed["model"]
-    label = f"{provider_id}/{model_id}"
-    if not usage_limited(text):
-        report = f"{role}: {label} failed without a usage limit; respawn per Failure handling"
-        return Backup("not-usage-limit", report)
-    ladder = backup_ladder(role, family(model_id), family(author) if author else None)
-    blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | set(out or ())
-    chosen = None
-    for wanted in ladder:
-        matches = [
-            (provider, model)
-            for provider, model in _runnable_rows(catalog)
-            if model["id"] == wanted and provider["providerInstanceId"] not in blocked
-        ]
-        if matches:
-            chosen = _provider_for_exact(matches, family(wanted))
-            break
-    if chosen is None:
-        report = f"{role}: {label} hit its usage limit; no backup seat, so the work waits for the reset"
-        return Backup("park", report)
-    provider, model = chosen
+def _catalog_pair(catalog, provider_id, model_id, blocked=frozenset()):
+    if provider_id in blocked:
+        return None
+    provider = providers_by_id(catalog).get(provider_id)
+    if not runnable(provider):
+        return None
+    model = find_model(provider, model_id)
+    if model is None or not pickable(model_id):
+        return None
+    return provider, model
+
+
+def _emit_backup(role, label, provider, model, source_options, budget, resumed):
     seat = {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
-    level = seat_level(failed.get("options"))
+    level = seat_level(source_options)
     if level is not None:
         seat = apply_level(seat, model, level)
     seat = finish_seat(seat, model, budget)
     applied = seat_level(seat.get("options"))
     where = f"{seat['providerInstanceId']}/{seat['model']}"
     at = f" at {applied}" if applied else ""
-    report = f"{role}: {label} hit its usage limit; relaunched on {where}{at}"
+    if resumed:
+        report = f"{role}: {label} resumed on {where}{at} after the reset"
+    else:
+        report = f"{role}: {label} hit its usage limit; relaunched on {where}{at}"
     return Backup("relaunch", report, seat)
+
+
+def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False):
+    """Pick the one backup seat, or park. The caller passes providers already out.
+
+    With resume, the original seat comes back first when its provider is not out.
+    """
+    provider_id = failed["provider"]
+    model_id = failed["model"]
+    label = f"{provider_id}/{model_id}"
+    out = set(out or ())
+    blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | out
+    if resume:
+        reviews_itself = role in REVIEW_ROLES and family(model_id) in author_families(authors)
+        original = None if reviews_itself else _catalog_pair(catalog, provider_id, model_id, out)
+        if original is not None:
+            return _emit_backup(role, label, *original, failed.get("options"), budget, True)
+    elif not usage_limited(text):
+        report = f"{role}: {label} failed without a usage limit; respawn per Failure handling"
+        return Backup("not-usage-limit", report)
+    for wanted in backup_ladder(role, provider_id, authors, out):
+        chosen = _catalog_pair(catalog, BACKUP_PROVIDERS[wanted], wanted, blocked)
+        if chosen is not None:
+            return _emit_backup(role, label, *chosen, failed.get("options"), budget, resume)
+    if resume:
+        report = f"{role}: {label} is still out after the reset; no backup seat, so the work waits for the reset"
+    else:
+        report = f"{role}: {label} hit its usage limit; no backup seat, so the work waits for the reset"
+    return Backup("park", report)
 
 
 def parse_applied_options(text):
@@ -1060,9 +1100,10 @@ def command_backup(args):
         raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configuration")
     if args.role not in ROLES:
         raise RolesError(f"unknown role {args.role!r}")
-    if args.role in REVIEW_ROLES and not args.author:
+    authors = list(args.author or [])
+    if args.role in REVIEW_ROLES and not authors:
         raise RolesError(f"role {args.role!r} needs --author, the model whose work it judges")
-    text = sys.stdin.read()
+    text = "" if args.resume else sys.stdin.read()
     config = merged_config(args.cwd, args.config, args.project_config)
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
     budget = seat_budget(config["budget"], decision.mode)
@@ -1071,7 +1112,7 @@ def command_backup(args):
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
     options = parse_applied_options(args.options) if args.options else {}
     failed = {"provider": args.provider, "model": args.model, "options": options}
-    result = backup_seat(args.role, failed, text, catalog, budget, args.out or [], args.author)
+    result = backup_seat(args.role, failed, text, catalog, budget, args.out or [], authors, args.resume)
     payload = {
         "decision": result.decision,
         "role": args.role,
@@ -1673,8 +1714,12 @@ def main(argv=None):
     backup.add_argument("--provider", required=True)
     backup.add_argument("--model", required=True)
     backup.add_argument("--options", help="JSON options array from t3_thread_configuration, or a target options object")
-    backup.add_argument("--author", help="author model id. Required for a reviewer role")
+    backup.add_argument(
+        "--author", action="append", default=None,
+        help="author model, or provider/model. Repeat for each model that wrote the diff. Required for a reviewer role",
+    )
     backup.add_argument("--out", action="append", default=None, help="provider already out. Repeat for each")
+    backup.add_argument("--resume", action="store_true", help="after a parked item's reset, print the seat to launch")
     for command in (sub.choices["show"], mode, backup):
         command.add_argument("--brief-mode", choices=MODES,
                              help="brief mode; overrides session, coordinator, project, and user modes")

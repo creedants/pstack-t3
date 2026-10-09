@@ -2079,7 +2079,15 @@ class StalledChildDocTest(unittest.TestCase):
             self.assertIn(f"`{decision}`", section)
         self.assertIn("Backup never selects Codex or Cursor.", section)
         self.assertIn("Codex stays the default reviewer.", section)
-        self.assertIn("A Claude worker parks.", section)
+        self.assertIn("A limit on `claudeAgent` parks a worker.", section)
+        self.assertIn("`cursor/claude-opus-5-5`", section)
+        self.assertIn("each code delegate's model", section)
+        self.assertIn("`--resume` reads no error text.", section)
+        self.assertIn("`grok-4.7` on `grok`", section)
+        self.assertIn("--resume", section)
+        self.assertIn("roles.py backup --cwd", section)
+        self.assertIn("```bash", section)
+        self.assertNotIn("A Claude worker parks.", section)
         self.assertIn("A panel relaunches the failed seat and says when a family repeats.", section)
         sentences = re.split(r"(?<=\.)\s+", section)
 
@@ -2087,7 +2095,7 @@ class StalledChildDocTest(unittest.TestCase):
             return {name for name in re.findall(r"`([^`]+)`", sentence) if name in roles.ROLES}
 
         sonnet = next(sentence for sentence in sentences if "claude-sonnet-5-5" in sentence)
-        reviewers = next(sentence for sentence in sentences if "skipping the author's family" in sentence)
+        reviewers = next(sentence for sentence in sentences if "skipping every author's family" in sentence)
         self.assertEqual(named_roles(sonnet), roles.LIGHT_ROLES)
         self.assertEqual(named_roles(reviewers), roles.REVIEW_ROLES)
         failed = section.split("- A child fails", 1)[1].split("\n- ", 1)[0]
