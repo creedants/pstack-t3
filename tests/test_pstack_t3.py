@@ -2072,6 +2072,28 @@ class StalledChildDocTest(unittest.TestCase):
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
         self.assertEqual(missing, [])
 
+    def test_failure_handling_relaunches_a_usage_limit_on_the_backup_ladder(self):
+        section = runtime_section("### Failure handling", "\n### ")
+        self.assertIn("roles.py backup", section)
+        for decision in ("relaunch", "park", "not-usage-limit"):
+            self.assertIn(f"`{decision}`", section)
+        self.assertIn("Backup never selects Codex or Cursor.", section)
+        self.assertIn("Codex stays the default reviewer.", section)
+        self.assertIn("A Claude worker parks.", section)
+        self.assertIn("A panel relaunches the failed seat and says when a family repeats.", section)
+        sentences = re.split(r"(?<=\.)\s+", section)
+
+        def named_roles(sentence):
+            return {name for name in re.findall(r"`([^`]+)`", sentence) if name in roles.ROLES}
+
+        sonnet = next(sentence for sentence in sentences if "claude-sonnet-5-5" in sentence)
+        reviewers = next(sentence for sentence in sentences if "skipping the author's family" in sentence)
+        self.assertEqual(named_roles(sonnet), roles.LIGHT_ROLES)
+        self.assertEqual(named_roles(reviewers), roles.REVIEW_ROLES)
+        failed = section.split("- A child fails", 1)[1].split("\n- ", 1)[0]
+        self.assertIn("When the failure carries a provider error, follow the next bullet before that respawn.", failed)
+        self.assertLess(section.index("provider error"), section.index("roles.py backup"))
+
     def test_failure_handling_decides_completion_by_work_state(self):
         section = runtime_section("### Failure handling", "\n### ")
         self.assertNotIn("that child is still running nested work", section)
