@@ -2320,13 +2320,24 @@ class ConfigureOwnerDocTest(unittest.TestCase):
 
     def test_seat_comes_from_roles_and_is_read_back(self):
         for sentence in (
-            "Resolve the seat per [Roles](#roles) with `roles.py show`, and pass it as `modelSelection` "
-            "built per the `modelSelection` bullet above, with `options` copied unchanged.",
+            "Resolve the seat per [Roles](#roles) with `roles.py show`.",
             "Call it when `t3_thread_read` shows no `activeRunId`, or after `t3_thread_interrupt` and `t3_thread_wait` end the run.",
             "compare `instanceId`, `model`, and every option per [Delegation](#delegation) step 3.",
             "On a refusal or a mismatch, send nothing to the thread and report the tool's error text.",
         ):
             self.assertIn(sentence, self.bullet)
+
+    def test_configure_always_passes_a_concrete_seat(self):
+        for sentence in (
+            "`t3_thread_configure` requires a concrete `modelSelection`, so always pass one, even for an `inherit` seat.",
+            "Build it from the resolved seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged.",
+            "When the resolved seat is `inherit`, use this thread's own provider and model, `inheritedProviderInstanceId` and "
+            "`inheritedModel` from `orchestrator_capabilities`, as the concrete seat when it passes [Excluded seats](#excluded-seats).",
+            "When it fails that check, do not configure the thread, and report that no replacement seat could be selected.",
+        ):
+            self.assertIn(sentence, self.bullet)
+        for claim in ("built per the `modelSelection` bullet above", "Omit `modelSelection`"):
+            self.assertNotIn(claim, self.bullet)
 
     def test_configure_keeps_gates_and_fresh_protocols(self):
         for sentence in (
