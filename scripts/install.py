@@ -243,7 +243,8 @@ def records(view, root):
                 if proves(root, link.path, link.path):
                     live = link.path
                     break
-        proving = live is not None or any(proves(root, row.backup, row.original) for row in present.get(slot, ()))
+        proving_live = live is not None
+        proving = proving_live or any(proves(root, row.backup, row.original) for row in present.get(slot, ()))
         claims = group["claims"]
         tagged = group["tagged"]
         untagged = group["untagged"]
@@ -260,7 +261,7 @@ def records(view, root):
             [harness for _path, owned in claims for harness in owned]
             + [harness for link in tagged + untagged for harness in link.harnesses]
         )
-        voucher = untagged[-1].raw if untagged and proving and not tagged else None
+        voucher = untagged[-1].raw if untagged and proving_live and not tagged else None
         found[slot] = Mine(live, harnesses, tuple(path for path, _owned in claims), tuple(tagged), voucher)
     return found
 
@@ -374,23 +375,27 @@ def plan_uninstall(view, root, selected):
     for slot, record in owned.items():
         if not selected_row(record.harnesses):
             continue
+        rows = present.get(slot, ())
         consumers = []
-        for row in present.get(slot, ()):
+        for row in rows:
             if proves(root, row.backup, row.original):
                 consumers.append(Step("withdraw", record.path, backup=row.backup, remove_backups=(row.backup,)))
                 withdrawn.add(row.backup)
-        if proves(root, record.path, record.path):
+        unlinks = proves(root, record.path, record.path)
+        if unlinks:
             consumers.append(Step("unlink", record.path))
             uncovered.add(slot)
-        if not consumers:
+        steps.extend(consumers)
+        # A live entry over a withdrawn top backup covered this link; any other live entry is a repoint.
+        consumed = unlinks or not os.path.lexists(record.path) or bool(rows and rows[-1].backup in withdrawn)
+        if not consumers or not consumed:
             kept += len(record.claim_paths)
             continue
-        last = consumers[-1]
         links = tuple(link.raw for link in record.tagged)
         if record.voucher is not None:
             links = links + (record.voucher,)
-        consumers[-1] = replace(last, remove_claims=record.claim_paths, remove_links=links)
-        steps.extend(consumers)
+        if record.claim_paths or links:
+            steps.append(Step("forget", record.path, remove_claims=record.claim_paths, remove_links=links))
     for slot, rows in present.items():
         remaining = [row for row in rows if row.backup not in withdrawn]
         if not remaining:
@@ -447,13 +452,14 @@ def current_claims(state, root):
 
 
 def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, adding):
+    """Return the link and backup rows this call appended."""
     if not add_links and not add_backups and not remove_links and not remove_backups:
-        return
+        return (), ()
     path = Path(state) / LEGACY_NAME
     # Older installers still read this file, so a cleanup leaves empty lists in place.
     if not path.exists():
         if not adding:
-            return
+            return (), ()
         data = {"links": [], "backups": []}
     else:
         data = json.loads(path.read_text())
@@ -463,6 +469,7 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
             data = {"links": [], "backups": []}
     links = data.get("links") if isinstance(data.get("links"), list) else []
     backups = data.get("backups") if isinstance(data.get("backups"), list) else []
+    added_links, added_backups = [], []
     changed = False
     if adding:
         for row in add_links:
@@ -472,9 +479,11 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
             ):
                 continue
             links.append(row)
+            added_links.append(row)
             changed = True
         for row in add_backups:
             backups.append(row)
+            added_backups.append(row["backup"])
             changed = True
     else:
         for raw in remove_links:
@@ -490,29 +499,46 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
                     del backups[index]
                     changed = True
                     break
-    if not changed:
-        return
-    data["links"] = links
-    data["backups"] = backups
-    atomic_write(Path(state), LEGACY_NAME, json.dumps(data, indent=2) + "\n")
+    if changed:
+        data["links"] = links
+        data["backups"] = backups
+        atomic_write(Path(state), LEGACY_NAME, json.dumps(data, indent=2) + "\n")
+    return tuple(added_links), tuple(added_backups)
 
 
-def save(step, adding, state, root):
+def add_records(step, state, root):
+    """Save a step's adds before its act. Return a function that takes back exactly the records that were new."""
+    previous = {}
+    if step.add_claims:
+        claims = current_claims(state, root)
+        for path, harnesses in step.add_claims:
+            previous[path] = claims.get(path)
+            claims[path] = ordered(harnesses)
+        write_claims(state, root, claims)
+    links, backups = patch_legacy(state, step.add_links, step.add_backups, (), (), True)
+
+    def undo():
+        patch_legacy(state, (), (), links, backups, False)
+        if previous:
+            claims = current_claims(state, root)
+            for path, harnesses in previous.items():
+                if harnesses is None:
+                    claims.pop(path, None)
+                else:
+                    claims[path] = harnesses
+            write_claims(state, root, claims)
+
+    return undo
+
+
+def remove_records(step, state, root):
     # Owner file first on add and last on remove, so a crash keeps an extra claim.
-    if adding:
-        if step.add_claims:
-            claims = current_claims(state, root)
-            for path, harnesses in step.add_claims:
-                claims[path] = ordered(harnesses)
-            write_claims(state, root, claims)
-        patch_legacy(state, step.add_links, step.add_backups, (), (), True)
-    else:
-        patch_legacy(state, (), (), step.remove_links, step.remove_backups, False)
-        if step.remove_claims:
-            claims = current_claims(state, root)
-            for path in step.remove_claims:
-                claims.pop(path, None)
-            write_claims(state, root, claims)
+    patch_legacy(state, (), (), step.remove_links, step.remove_backups, False)
+    if step.remove_claims:
+        claims = current_claims(state, root)
+        for path in step.remove_claims:
+            claims.pop(path, None)
+        write_claims(state, root, claims)
 
 
 def ready(step, root):
@@ -520,7 +546,7 @@ def ready(step, root):
         return not os.path.lexists(step.path)
     if step.kind == "move":
         return bool(step.backup) and os.path.lexists(step.path) and not os.path.lexists(step.backup)
-    if step.kind == "record":
+    if step.kind in ("record", "forget"):
         return True
     if step.kind == "unlink":
         return proves(root, step.path, step.path)
@@ -531,18 +557,25 @@ def ready(step, root):
     return False
 
 
+def subject(step):
+    return {
+        "unlink": f"unlink {step.path}",
+        "withdraw": f"withdraw {step.backup}",
+        "restore": f"restore {step.backup}",
+        "create": f"link {step.path}",
+        "move": f"move {step.path}",
+    }.get(step.kind)
+
+
 def skip_note(step):
-    if step.kind == "unlink":
-        return f"skipped unlink {step.path}: the link no longer matches the recorded checkout"
-    if step.kind == "withdraw":
-        return f"skipped withdraw {step.backup}: the backup no longer matches the recorded checkout"
-    if step.kind == "restore":
-        return f"skipped restore {step.backup}: {step.path} changed before uninstall"
-    if step.kind == "create":
-        return f"skipped link {step.path}: it changed before install"
-    if step.kind == "move":
-        return f"skipped move {step.path}: it changed before install"
-    return None
+    reason = {
+        "unlink": "the link no longer matches the recorded checkout",
+        "withdraw": "the backup no longer matches the recorded checkout",
+        "restore": f"{step.path} changed before uninstall",
+        "create": "it changed before install",
+        "move": "it changed before install",
+    }.get(step.kind)
+    return f"skipped {subject(step)}: {reason}" if reason else None
 
 
 def act(step, root):
@@ -563,6 +596,7 @@ def act(step, root):
 
 def execute(plan, state, root):
     counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0}
+    failed = set()
     stamp = None
     for step in plan.steps:
         if step.kind == "move":
@@ -572,22 +606,24 @@ def execute(plan, state, root):
                 stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
             backup = os.path.join(stamp, step.place)
             step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
+        if step.kind == "forget" and step.path in failed:
+            counts["kept_extra"] += len(step.remove_claims)
+            continue
         if not ready(step, root):
             note = skip_note(step)
             if note:
                 print(note)
-            counts["kept_extra"] += len(step.remove_claims)
+            failed.add(step.path)
             continue
-        save(step, True, state, root)
+        undo = add_records(step, state, root)
         try:
             act(step, root)
-        except OSError:
-            note = skip_note(step)
-            if note:
-                print(note)
-            counts["kept_extra"] += len(step.remove_claims)
+        except OSError as error:
+            undo()
+            print(f"skipped {subject(step)}: {error}")
+            failed.add(step.path)
             continue
-        save(step, False, state, root)
+        remove_records(step, state, root)
         if step.kind == "create":
             counts["linked"] += 1
         elif step.kind == "unlink":
