@@ -194,6 +194,8 @@ LIGHT_BACKUP = "claude-sonnet-5-5"
 REVIEW_LADDER = ("grok-4.7", "claude-opus-5-5")
 PANEL_GATE_ROLE = "verifiers"
 PANEL_BACKUP_ROLE = "review backups"
+# Resume returns none of these to a seat in an author family.
+AUTHOR_CHECKED_ROLES = REVIEW_ROLES | {PANEL_BACKUP_ROLE}
 PANEL_MINIMUM_PASSES = 2
 PANEL_MAXIMUM_REPRODUCED_BLOCKERS = 0
 PANEL_RULE = {
@@ -1016,11 +1018,11 @@ def seat_level(options):
 
 
 def model_family(model_id):
-    """Family of a model id, a namespaced id, or provider/model: opencode/opencode/muse-2-free -> muse.
+    """Family of a model id in any form: opencode/opencode/muse-2-free -> muse, us.anthropic.claude-sonnet-5-5-v1:0 -> claude.
 
-    Every comparison of a seat with the authors goes through this, so both sides compare bare ids.
+    Every comparison of a seat with the authors goes through this, so both sides compare normalized_bare ids.
     """
-    return family(bare_id(model_id))
+    return family(normalized_bare(model_id))
 
 
 def author_families(authors):
@@ -1138,7 +1140,10 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
     out = set(out or ())
     blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | out
     if resume:
-        reviews_itself = role in REVIEW_ROLES and model_family(model_id) in author_families(authors)
+        reviews_itself = role in AUTHOR_CHECKED_ROLES and model_family(model_id) in author_families(authors)
+        if reviews_itself and role == PANEL_BACKUP_ROLE:
+            report = f"{role}: {label} is in an author's family, so it does not resume and counts as no pass"
+            return Backup("park", report)
         original = None if reviews_itself else _catalog_pair(catalog, provider_id, model_id, out)
         if original is not None:
             return _emit_backup(role, label, *original, failed.get("options"), budget, True)
@@ -1190,6 +1195,8 @@ def command_backup(args):
     authors = list(args.author or [])
     if args.role in REVIEW_ROLES and not authors:
         raise RolesError(f"role {args.role!r} needs --author, the model whose work it judges")
+    if args.role == PANEL_BACKUP_ROLE and args.resume and not authors:
+        raise RolesError(f"role {args.role!r} needs --author with --resume, the model whose work it judges")
     text = "" if args.resume else sys.stdin.read()
     config = merged_config(args.cwd, args.config, args.project_config)
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
