@@ -12,6 +12,8 @@ Defer to Comment Sicko's fresh perspective.
 
 ## Scope
 
+This skill edits files and delegates edits. A caller working under a read-only instruction never runs it and spawns no Comment Sicko, whatever its role label. It reports the comments it would flag as findings in its own read-only report, per [the runtime's Permissions section](../pstack-runtime/SKILL.md#permissions). Step 1's `role: "review"` is a label and does not make Comment Sicko read-only.
+
 Use the caller's files or diff. Otherwise use the current diff against the base branch, default `main`, including the working tree.
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
