@@ -607,7 +607,8 @@ def interleave_removal(home, checkout, paths, call, *args, occupy=None):
 
 def set_aside(path):
     """Entries an uninstall kept aside for `path`, each in its own hidden directory beside it."""
-    return sorted(path.parent.glob(f".pstack-t3-*/{path.name}"))
+    # Before Python 3.12, Path.glob skips a final symlink that points nowhere, so each holder is checked with lexists.
+    return sorted(holder / path.name for holder in path.parent.glob(".pstack-t3-*/") if os.path.lexists(holder / path.name))
 
 
 def uninstall_hooked(home, checkout, code):

@@ -81,12 +81,13 @@ def proves(checkout, entry, original):
 
 
 def identity(path):
-    """The device and inode of the entry at `path` itself, or None when nothing is there."""
+    """The device, inode, and change time of the entry at `path` itself, or None when nothing is there."""
     try:
         stat = os.lstat(path)
     except OSError:
         return None
-    return stat.st_dev, stat.st_ino
+    # A filesystem such as ext4 hands a freed inode number to the next new entry. The change time tells them apart.
+    return stat.st_dev, stat.st_ino, stat.st_ctime_ns
 
 
 def slot_of(path):
