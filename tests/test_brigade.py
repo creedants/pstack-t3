@@ -2510,6 +2510,13 @@ class BrigadeTest(unittest.TestCase):
     SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you "
                  "make, and pass no other mode flag. Never pass --session-mode. Mode source names where your launcher's "
                  "decision came from. It does not make this thread a session.")
+    WAIT = ("- Never end your turn while a child task or thread you launched is still running, per step 5 of the "
+            "pstack-runtime skill's Delegation section. This overrides any tool text that says to end the turn and wait "
+            "for a notification. A completion wakes you only when the child's run ends, and a stalled child or a run left "
+            "open never ends. Wait on each open child with t3_thread_wait on its childThreadId and timeoutMs 300000. For a "
+            "child task, then read it with task_status. A child task is open while its workState is working or "
+            "waiting_for_children, whatever hasPendingChildRuns says. Cancel a child with task_cancel when it runs past its "
+            "budget or stalls, per the runtime's Failure handling. Write the report only once every child is terminal.")
     CONTESTED = ("- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write "
                  "Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives "
                  "your report to a fresh worker.")
@@ -2534,6 +2541,19 @@ class BrigadeTest(unittest.TestCase):
     def test_the_brief_pastes_the_runtime_seat_rule_unchanged(self):
         runtime = (ROOT / "t3/runtime.md").read_text()
         self.assertIn(f"  ```text\n  {self.SEAT_RULE}\n  ```", runtime)
+
+    def test_the_runtime_still_states_the_bounded_wait(self):
+        runtime = (ROOT / "t3/runtime.md").read_text()
+        self.assertIn("does not end its turn while a child is open", runtime)
+        self.assertIn("Decide completion by `workState` alone", runtime)
+
+    def test_the_report_section_opens_with_the_bounded_wait(self):
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        lines = text.splitlines()
+        start = lines.index("REPORT:")
+        write = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("- Write it to "))
+        self.assertEqual(lines[start:write + 1], ["REPORT:", self.WAIT, lines[write]])
 
     def test_a_first_light_feature_brief_prints_the_first_waivers(self):
         self.coordinator()
