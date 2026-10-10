@@ -202,25 +202,25 @@ def harnesses_for(path, entry, scope, user):
     return ordered(found) if found else HARNESSES
 
 
-def parse_link(entry, scope, user):
+def parse_link(entry, scope, user, file):
     if isinstance(entry, str):
-        return LinkRec(entry, entry, harnesses_for(entry, None, scope, user), None)
+        return LinkRec(entry, anchored(file, entry), harnesses_for(entry, None, scope, user), None)
     if not isinstance(entry, dict):
         return None
     path = entry.get("path")
     if not isinstance(path, str):
         return None
     checkout = entry.get("checkout") if isinstance(entry.get("checkout"), str) else None
-    return LinkRec(entry, path, harnesses_for(path, entry, scope, user), checkout)
+    return LinkRec(entry, anchored(file, path), harnesses_for(path, entry, scope, user), checkout)
 
 
-def parse_backup(entry, scope, user, state):
+def parse_backup(entry, scope, user, state, file):
     if not isinstance(entry, dict):
         return None
     original, backup = entry.get("original"), entry.get("backup")
     if not isinstance(original, str) or not isinstance(backup, str):
         return None
-    return BackupRec(entry, original, backup, harnesses_for(original, entry, scope, user), home_of(state, backup))
+    return BackupRec(entry, anchored(file, original), backup, harnesses_for(original, entry, scope, user), home_of(state, backup))
 
 
 class Unreadable(Exception):
@@ -229,6 +229,36 @@ class Unreadable(Exception):
 
 # Path.exists() reads each of these as "not there" on Python 3.10 and 3.12.
 ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+ADRIFT = ("{file} records the relative path {path}, and the system could not name this run's working directory "
+          "({reason}); change to another directory and rerun")
+NO_PROJECT = ("the --project path {project} is relative, and the system could not name this run's working directory "
+              "({reason}); change to another directory and rerun, or give --project a full path")
+
+
+def anchored(file, path):
+    """Return `path`, which a record in `file` holds. Raise Unreadable with ADRIFT when it is relative and os.getcwd() raises OSError."""
+    if not os.path.isabs(path):
+        try:
+            os.getcwd()
+        except OSError as error:
+            raise Unreadable(ADRIFT.format(file=file, path=path, reason=error.strerror)) from None
+    return path
+
+
+def scope_of(args):
+    """Return the directory --project names, resolved, or None when --project is not given or is empty.
+
+    A relative --project while os.getcwd() raises OSError ends the run at exit 1 with NO_PROJECT on stderr.
+    """
+    if not args.project:
+        return None
+    if not os.path.isabs(args.project):
+        try:
+            os.getcwd()
+        except OSError as error:
+            sys.exit(NO_PROJECT.format(project=args.project, reason=error.strerror))
+    return Path(args.project).resolve()
 
 
 def read_object(path):
@@ -265,12 +295,13 @@ def legacy_lists(path):
 
 
 def read_legacy(state, scope, user):
-    found = legacy_lists(Path(state) / LEGACY_NAME)
+    file = Path(state) / LEGACY_NAME
+    found = legacy_lists(file)
     if found is None:
         return (), ()
     _data, raw_links, raw_backups = found
-    links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
-    backups = tuple(item for item in (parse_backup(entry, scope, user, state) for entry in raw_backups) if item)
+    links = tuple(item for item in (parse_link(entry, scope, user, file) for entry in raw_links) if item)
+    backups = tuple(item for item in (parse_backup(entry, scope, user, state, file) for entry in raw_backups) if item)
     return links, backups
 
 
@@ -531,7 +562,10 @@ def current_claims(state, root):
     recorded = data.get("checkout")
     if recorded != root:
         raise Unreadable(f"{path} records {recorded}, not this checkout")
-    return claims_in(data)
+    claims = claims_in(data)
+    for key in claims:
+        anchored(path, key)
+    return claims
 
 
 def claims_in(data):
@@ -1404,7 +1438,7 @@ def install(args):
     if not SKILLS.is_dir():
         sys.exit(UNBUILT)
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     root = str(ROOT)
     state = state_dir(scope, user)
     names = skill_names()
@@ -1443,7 +1477,7 @@ def install(args):
 
 def uninstall(args):
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     root = str(ROOT)
     state = state_dir(scope, user)
 
@@ -1709,7 +1743,7 @@ def doctor(args):
         print(UNBUILT)
         return 1
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     names = skill_names()
     found = audit(args, scope, user, names)
     healthy = True
