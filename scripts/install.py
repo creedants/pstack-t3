@@ -1294,13 +1294,16 @@ def report_uninstall(plan, executed, dry_run):
         print(f"kept {kept} records whose links no longer point at this checkout; they apply again if the links come back")
 
 
+UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+
+
 def skill_names():
     return sorted(path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file())
 
 
 def install(args):
     if not SKILLS.is_dir():
-        sys.exit("skills/ is missing; run python3 scripts/build.py first")
+        sys.exit(UNBUILT)
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
     root = str(ROOT)
@@ -1415,10 +1418,6 @@ EDIT = ('claim {path}: {there}; install plans no link at that path, so no comman
         'to drop it, delete the "{path}" entry from {owner_file}')
 EDIT_MANY = ('claims; install plans no link at the path of any of them, so no command clears them; '
              'to drop one, delete the entry named by its path from {owner_file}:')
-UNBUILT = ('claim {path}: {there}; skills/ is missing, so install stops before it plans a link; '
-           'run python3 scripts/build.py first and rerun doctor')
-UNBUILT_MANY = ('claims; skills/ is missing, so install stops before it plans a link; '
-                'run python3 scripts/build.py first and rerun doctor:')
 HELD_CLAIM = ('claim {path}: {there}, and {aside} holds this checkout\'s link for it; '
               '"{dry_run}" prints what the next run does with it')
 HELD_MANY = 'records; "{dry_run}" prints what the next run does with the entry held for each:'
@@ -1446,8 +1445,6 @@ def claim_finding(args, view, scope, user, names, root, path, harnesses, aside):
         dry_run = command(args, "uninstall", "--dry-run")
         return Finding(harnesses, HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=dry_run),
                        HELD_MANY.format(dry_run=dry_run), f"claim {path}: {there}, and {aside} holds this checkout's link for it")
-    if not SKILLS.is_dir():
-        return Finding(harnesses, UNBUILT.format(path=path, there=there), UNBUILT_MANY, f"{path}: {there}")
     plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
     forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
 
@@ -1587,9 +1584,12 @@ def link_health(harness, directory, names, scope, user):
 
 
 def doctor(args):
+    if not SKILLS.is_dir():
+        print(UNBUILT)
+        return 1
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
-    names = skill_names() if SKILLS.is_dir() else []
+    names = skill_names()
     found = audit(args, scope, user, names)
     healthy = True
     for harness, directory in skill_dirs(scope, user).items():
