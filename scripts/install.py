@@ -1368,7 +1368,8 @@ INERT_ROW_MANY = ('backup rows have nothing at their backup paths; uninstall ski
 HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
             '"{dry_run}" prints what the next run does with it')
 AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory is at {checkout}; '
-        'delete this file unless that checkout will be back at that path')
+        'delete this file unless that checkout will be back at that path; deleting it removes that checkout\'s claims '
+        'and removes no link they name and no row of {manifest}')
 
 
 def command(args, *words):
@@ -1461,7 +1462,7 @@ def audit(args, scope, user, names):
         for harness in HARNESSES:
             count = sum(1 for harnesses in claimed.values() if harness in harnesses)
             if count:
-                away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout)))
+                away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout, manifest=state / LEGACY_NAME)))
     try:
         links, backups = read_legacy(state, scope, user)
     except (Unreadable, OSError) as error:
