@@ -217,7 +217,6 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
-        self._dry = False
 
     def fence(self):
         """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
@@ -246,8 +245,6 @@ class Restaurant:
         It is reentrant within one Restaurant, so a command can hold it around
         its reads and writes while each write also takes it.
         """
-        if self._dry:
-            raise BrigadeError("a dry run takes no lock and writes nothing")
         if self._lock_depth == 0:
             fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX)
@@ -272,7 +269,7 @@ class Restaurant:
         Reading another store while holding a lock raises, so the caller reads that store first.
         No process holds two stores' locks.
         """
-        if self._dry or self.dir.resolve() in HELD_LOCKS:
+        if self.dir.resolve() in HELD_LOCKS:
             yield
             return
         if HELD_LOCKS:
@@ -303,9 +300,7 @@ class Restaurant:
                     chunks.append(chunk)
             finally:
                 os.close(fd)
-        data = b"".join(chunks)
-        # A dry run holds no writer still, so its last line can be half of an append.
-        return data[:data.rfind(b"\n") + 1] if self._dry else data
+        return b"".join(chunks)
 
     @contextmanager
     def checked(self):
@@ -317,21 +312,6 @@ class Restaurant:
             for table in TABLES:
                 self.rows(table)
             yield
-
-    @contextmanager
-    def dry(self):
-        """One dry run's checks, run against tables that all parse. It takes no lock, so it creates no restaurant.lock.
-
-        A rewrite replaces a table whole and snapshot keeps only finished lines, so a read beside a writer still parses.
-        Every write takes the lock, and the lock refuses a dry run.
-        """
-        self._dry = True
-        try:
-            for table in TABLES:
-                self.rows(table)
-            yield
-        finally:
-            self._dry = False
 
     @contextmanager
     def guarded(self):
@@ -660,7 +640,10 @@ def item_report(restaurant, report):
 
     Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
     A path that names a file elsewhere is refused instead of re-anchored as review_report does, and so is a symbolic link.
+    A `..` component is refused as written, before anything is resolved.
     """
+    if ".." in Path(report).parts:
+        raise BrigadeError(f"{report} has a .. component; name a file like reports/D2.md")
     name = Path(report).name
     if not ITEM_REPORT.fullmatch(name):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
@@ -688,36 +671,26 @@ class FollowUps:
     asides: tuple
 
 
-NEEDED = r"(?:\s+(?:needed|required|necessary))"
-# Each line is one whole sentence that says no work is needed. The comment beside it is a sentence it matches.
-NO_WORK = re.compile("|".join((
-    rf"(?:\w[\w /&-]*:\s*)?none{NEEDED}?(?:\s+(?:for|in|on|here|this|beyond|outside)\b.*)?",  # Docs: none for this lease
-    rf"nothing(?:\s+(?:else|more|further))?(?:\s+(?:is|are))?{NEEDED}?",  # Nothing else is needed
-    rf"no(?:\s+(?!(?:is|are|was|were)\b)[^\s,;]+){{1,8}}?(?:\s+(?:is|are))?{NEEDED}",  # No README edit is needed
-    r"(?:n/a|not\s+applicable)\b.*",  # Not applicable to this lease
-)), re.I)
-NEEDS_NO_EDIT = re.compile(
-    r".*\b(?:needs?\s+no\s+(?:edit|change|update)s?|no\s+(?:edit|change|update)s?\s+(?:is|are)\s+needed)", re.I)
+# A block that is one of these and nothing more says the report has no follow-up. Every longer block is read as work.
+NO_WORK = ("none", "none required", "none needed", "nothing", "nothing needed", "n/a", "not applicable", "no follow-ups")
 
 
 def says_no_work(text):
-    """True for a block that only says no work is needed, such as `None for this lease.` or `No README edit is needed.`
+    """True when the block is one of NO_WORK and nothing more.
 
-    Its first sentence is that verdict from its first word to its last, and what follows is the reason.
-    A block of one sentence that ends in `needs no edit` says the same. A verdict anywhere else leaves a follow-up.
+    Case does not count. Neither do list markers, the `*`, `_`, and backtick marks around it, or a final period.
     """
-    sentences = re.split(r"(?<=[.!?])\s+", re.sub(r"[*`]", "", text).strip())
-    first = sentences[0].rstrip(".!?")
-    return bool(NO_WORK.fullmatch(first) or len(sentences) == 1 and NEEDS_NO_EDIT.fullmatch(first))
+    text = re.sub(r"^(?:(?:[-*+]|\d+[.)])\s+)+", "", text.strip())
+    return text.strip("*_` ").removesuffix(".").strip("*_` ").casefold() in NO_WORK
 
 
 def follow_ups(text):
     """Every follow-ups section of a report, or None when no heading says follow-ups.
 
     A top-level list item or a paragraph is one block, and the indented lines, nested bullets, and fenced code under it
-    are part of it. Each block is a follow-up, with three exceptions that are asides. A block that says no work is
-    needed is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph below
-    its section's last list item, which closes the section.
+    are part of it. Each block is a follow-up, with three exceptions that are asides. A block that is one of NO_WORK
+    and nothing more is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph
+    below its section's last list item, which closes the section.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -2279,8 +2252,9 @@ def parser():
     how = a.add_mutually_exclusive_group(required=True)
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
-                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it")
-    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it takes no lock and creates or changes no file")
+                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it "
+                          "and changes only the ticket table, the log, and lastActivityAt")
+    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it changes no table and no log")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
@@ -2568,7 +2542,7 @@ def run(argv):
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
         except UnicodeDecodeError as error:
             raise BrigadeError(f"reports/{name} is not UTF-8 text; nothing added") from error
-        with restaurant.dry() if args.dry_run else restaurant.checked():
+        with restaurant.checked():
             return file_follow_ups(restaurant, name, found, not args.dry_run)
     if args.command == "ticket" and args.action == "add" and args.dry_run:
         raise BrigadeError("--dry-run needs --from-report")
