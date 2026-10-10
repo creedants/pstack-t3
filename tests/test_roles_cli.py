@@ -3483,11 +3483,6 @@ class BackupCliTest(unittest.TestCase):
             ),
         })
 
-    def test_panel_seats_drops_inherit(self):
-        seats, notes = roles.panel_seats(["inherit", STEP_SEAT, BUNNY_SEAT], backup_catalog(), "default", frozenset(), [])
-        self.assertEqual(seats, [STEP_SEAT, BUNNY_SEAT])
-        self.assertEqual(notes, ["dropped inherit: the parent can be the author"])
-
     def test_one_usable_seat_parks(self):
         completed = self.backup(
             *VERIFIER_OUT,
@@ -3703,6 +3698,124 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(written.stderr, f"error: {user}: {refusal}")
         self.assertEqual(validated.returncode, 2)
         self.assertEqual(validated.stderr, f"error: {user}: {refusal}")
+    PANEL_CONFIG = {"roles": {"review backups": [
+        MUSE_SEAT,
+        {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+        {"providerInstanceId": "cursor", "model": "claude-opus-5-5"},
+        {"providerInstanceId": "kilo", "model": "kilo-1"},
+        {"providerInstanceId": "opencode", "model": "opencode/nope-free"},
+        STEP_SEAT,
+        {"providerInstanceId": "openrouter", "model": "muse-lite-2"},
+    ]}}
+    PANEL_SET = (
+        "review backups=opencode/opencode/muse-lite-2-free?variant=high;codex/gpt-6.1-sol;cursor/claude-opus-5-5;"
+        "kilo/kilo-1;opencode/opencode/nope-free;opencode/opencode/step-9-preview-free?variant=high;"
+        "openrouter/muse-lite-2"
+    )
+    PANEL_NOTES = [
+        "dropped codex/gpt-6.1-sol: backup never selects Codex or Cursor",
+        "dropped cursor/claude-opus-5-5: backup never selects Codex or Cursor",
+        "dropped kilo/kilo-1: not runnable or not in the catalog",
+        "dropped opencode/opencode/nope-free: not runnable or not in the catalog",
+        "dropped openrouter/muse-lite-2: family muse already seated",
+    ]
+    PANEL_PROBLEMS = "".join(f"review backups: {note}\n" for note in PANEL_NOTES)
+
+    def panel_repo(self, directory, roles_file=None):
+        repo = Repo(directory)
+        catalog = backup_catalog()
+        catalog["providers"].append(plain_provider("kilo", "kilo-1", runs=False))
+        catalog["providers"].append(plain_provider("openrouter", "muse-lite-2"))
+        path = repo.directory / "catalog.json"
+        repo.put(path, catalog)
+        if roles_file is not None:
+            repo.put(repo.user, roles_file)
+        return repo, str(path)
+
+    def test_show_prints_the_kept_seats_and_a_note_for_each_dropped_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [MUSE_SEAT, STEP_SEAT],
+            "notes": self.PANEL_NOTES,
+        }})
+
+    def test_backup_panel_for_an_author_of_another_family_matches_show(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+                    "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
+                ],
+                env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
+                capture_output=True,
+                text=True,
+                input=_LIMIT,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "panel")
+        self.assertEqual(payload["seats"], [MUSE_SEAT, STEP_SEAT])
+        self.assertEqual(payload["notes"], self.PANEL_NOTES)
+
+    def test_validate_prints_a_problem_for_each_dropped_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, self.PANEL_PROBLEMS)
+        self.assertEqual(completed.stderr, "")
+
+    def test_write_refuses_dropped_seats_without_force(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory)
+            refused = repo.run("write", "--catalog", catalog, "--set", self.PANEL_SET)
+            written_before_force = repo.user.exists()
+            forced = repo.run("write", "--catalog", catalog, "--set", self.PANEL_SET, "--force")
+            stored = json.loads(repo.user.read_text())
+            user = str(repo.user)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, "")
+        self.assertEqual(
+            refused.stderr,
+            "error: refusing to write; these seats do not match the catalog:\n" + self.PANEL_PROBLEMS,
+        )
+        self.assertFalse(written_before_force)
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertEqual(forced.stdout, f"wrote {user}\n")
+        self.assertEqual(stored["roles"], self.PANEL_CONFIG["roles"])
+
+    def test_show_without_a_catalog_reports_catalog_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, _catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = repo.run("show", "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": "catalog-required",
+            "note": (
+                "review backups drops seats by the catalog: "
+                "call orchestrator_capabilities and rerun roles.py show --catalog"
+            ),
+        }})
+
+    def test_validate_reports_an_unknown_option_on_a_kept_seat(self):
+        unknown = {**MUSE_SEAT, "options": {"variant": "high", "bogus": "1"}}
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [unknown, STEP_SEAT]}})
+            completed = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(
+            completed.stdout,
+            "review backups: opencode/opencode/muse-lite-2-free: dropped unknown options bogus\n",
+        )
+
 
 
 def plain_provider(provider_id, *model_ids, runs=True):

@@ -207,6 +207,10 @@ UNSET_NOTE = (
     "review backups has no built-in seats. Set it to let roles.py backup run a review panel "
     "when every paid reviewer backup is out. Unset, a verifier parks."
 )
+PANEL_CATALOG_NOTE = (
+    "review backups drops seats by the catalog: "
+    "call orchestrator_capabilities and rerun roles.py show --catalog"
+)
 BACKUP_PROVIDERS = {
     WORKER_BACKUP: CLAUDE_BACKUP_PROVIDER,
     LIGHT_BACKUP: CLAUDE_BACKUP_PROVIDER,
@@ -980,10 +984,21 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
         else:
             seats = configured
             selection_notes = skipped
-        if catalog is None:
+        if name == PANEL_BACKUP_ROLE and catalog is None:
+            entry["seats"] = CATALOG_REQUIRED
+            entry["note"] = PANEL_CATALOG_NOTE
+            if selection_notes:
+                entry["notes"] = selection_notes
+        elif catalog is None:
             entry["seats"] = seats
             if selection_notes:
                 entry["notes"] = selection_notes
+        elif name == PANEL_BACKUP_ROLE:
+            verdicts = panel_verdicts(seats, catalog, budget)
+            entry["seats"] = [verdict.seat for verdict in verdicts if verdict.seat is not None]
+            panel_notes = selection_notes + [note for verdict in verdicts for note in verdict.notes]
+            if panel_notes:
+                entry["notes"] = panel_notes
         else:
             resolved, notes = [], []
             for seat in seats:
@@ -1070,18 +1085,46 @@ def _emit_backup(role, label, provider, model, source_options, budget, resumed):
     return Backup("relaunch", report, seat)
 
 
-def panel_seats(configured, catalog, budget, blocked, authors):
-    """Keep the configured review backups seats a panel can run, with one note per dropped seat in seat order.
+@dataclass(frozen=True)
+class PanelVerdict:
+    """What backup does with one configured review backups seat.
 
-    No inherit and no model fallback, because either can seat the author.
+    Exactly one of seat and reason is set. seat is resolve_seat's output for a
+    pair _catalog_pair accepted, so it is never inherit and never a substituted model.
+    """
+
+    where: str
+    seat: dict | None = None
+    reason: str | None = None
+    option_notes: tuple = ()
+    option_problems: tuple = ()
+
+    @property
+    def notes(self):
+        if self.reason is not None:
+            return (f"dropped {self.where}: {self.reason}",)
+        return tuple(f"{self.where}: {note}" for note in self.option_notes)
+
+    @property
+    def problems(self):
+        if self.reason is not None:
+            return self.notes
+        return tuple(f"{self.where}: {problem}" for problem in self.option_problems)
+
+
+def panel_verdicts(configured, catalog, budget, blocked=frozenset(), authors=()):
+    """One verdict per configured review backups seat, in seat order.
+
+    The caller removes excluded seats first. A seat is dropped for the first of
+    these that holds: a Codex or Cursor provider, a blocked provider, an author's
+    family, a provider that is not runnable or a model not in the catalog, a
+    family an earlier kept seat has.
     """
     skip = author_families(authors)
-    kept, notes, seated = [], [], set()
+    verdicts, seated = [], set()
     for seat in configured:
-        if seat == INHERIT:
-            notes.append("dropped inherit: the parent can be the author")
-            continue
         provider_id, model_id = seat["providerInstanceId"], seat["model"]
+        where = f"{provider_id}/{model_id}"
         seat_family = family(model_id)
         if provider_id in NEVER_BACKUP_PROVIDERS:
             reason = "backup never selects Codex or Cursor"
@@ -1096,19 +1139,19 @@ def panel_seats(configured, catalog, budget, blocked, authors):
         else:
             reason = None
         if reason is not None:
-            notes.append(f"dropped {provider_id}/{model_id}: {reason}")
+            verdicts.append(PanelVerdict(where, reason=reason))
             continue
-        value, seat_notes, _ = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE)
-        kept.append(value)
+        value, seat_notes, seat_problems = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE)
         seated.add(seat_family)
-        notes.extend(f"{provider_id}/{model_id}: {note}" for note in seat_notes)
-    return kept, notes
+        verdicts.append(PanelVerdict(where, value, None, tuple(seat_notes), tuple(seat_problems)))
+    return verdicts
 
 
 def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume):
     configured, skipped = review_backups
-    seats, notes = panel_seats(configured or [], catalog, budget, blocked, authors)
-    notes = skipped + notes
+    verdicts = panel_verdicts(configured or [], catalog, budget, blocked, authors)
+    seats = [verdict.seat for verdict in verdicts if verdict.seat is not None]
+    notes = skipped + [note for verdict in verdicts for note in verdict.notes]
     lead = f"{role}: {label} is still out after the reset" if resume else f"{role}: {label} hit its usage limit"
     if len(seats) >= PANEL_MINIMUM_PASSES:
         report = (
@@ -1233,9 +1276,12 @@ def write_atomic(path, data):
 def validate(config, catalog):
     problems = excluded_problems(config["roles"])
     for name, seats in config["roles"].items():
+        seats = [seat for seat in seats if not excluded_reason(seat)]
+        if name == PANEL_BACKUP_ROLE:
+            verdicts = panel_verdicts(seats, catalog, config["budget"])
+            problems.extend(f"{name}: {problem}" for verdict in verdicts for problem in verdict.problems)
+            continue
         for seat in seats:
-            if excluded_reason(seat):
-                continue
             _, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name)
             problems.extend(f"{name}: {problem}" for problem in seat_problems)
     return problems
