@@ -1400,6 +1400,18 @@ class Unread:
 
 
 @dataclass(frozen=True)
+class Planned:
+    """What install plans right now for one harness list.
+
+    `plain` and `forced` are the slots, as `slot_of` returns them, of the links install would create without and
+    with --replace. `taken` is the number of paths install without --replace stops on.
+    """
+    plain: frozenset
+    forced: frozenset
+    taken: int
+
+
+@dataclass(frozen=True)
 class Audit:
     """What doctor found in the records. `findings` are Findings and `unread` are Unreads."""
     findings: tuple
@@ -1438,29 +1450,27 @@ def command(args, *words):
     return shlex.join(("python3", "scripts/install.py", *words, *project))
 
 
-def claim_finding(args, view, scope, user, names, root, path, harnesses, aside):
-    """The Finding for one stale claim. The advice comes from what `plan_install` plans for the path right now."""
+def claim_finding(args, state, root, path, harnesses, aside, planned):
+    """The Finding for one stale claim.
+
+    `planned` returns the Planned for a harness list. A claim with nothing held aside for it takes its advice from that.
+    """
     there = f"a {describe(path)} is there" if os.path.lexists(path) else "nothing is there"
     if aside:
         dry_run = command(args, "uninstall", "--dry-run")
         return Finding(harnesses, HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=dry_run),
                        HELD_MANY.format(dry_run=dry_run), f"claim {path}: {there}, and {aside} holds this checkout's link for it")
-    plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
-    forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
-
-    def links(plan):
-        return any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps)
-
+    plans = planned(harnesses)
+    slot = slot_of(path)
     install = command(args, "install", "--harness", ",".join(harnesses))
-    if links(plain) and not plain.conflicts:
+    if slot in plans.plain and not plans.taken:
         uninstall = command(args, "uninstall", "--harness", ",".join(harnesses))
         return Finding(harnesses, RELINK.format(path=path, install=install, uninstall=uninstall),
                        RELINK_MANY.format(install=install, uninstall=uninstall), path)
-    if links(forced):
-        n = len(plain.conflicts)
-        return Finding(harnesses, REPLACE.format(path=path, there=there, install=install, n=n),
-                       REPLACE_MANY.format(install=install, n=n), f"{path}: {there}")
-    owner_file = owner_path(state_dir(scope, user), root)
+    if slot in plans.forced:
+        return Finding(harnesses, REPLACE.format(path=path, there=there, install=install, n=plans.taken),
+                       REPLACE_MANY.format(install=install, n=plans.taken), f"{path}: {there}")
+    owner_file = owner_path(state, root)
     return Finding(harnesses, EDIT.format(path=path, there=there, owner_file=owner_file),
                    EDIT_MANY.format(owner_file=owner_file), f"{path}: {there}")
 
@@ -1536,6 +1546,15 @@ def audit(args, scope, user, names):
     if manifest is None:
         return Audit(tuple(away), tuple(unread))
     view = View(claims, *manifest)
+    kept = {}
+
+    def planned(harnesses):
+        if harnesses not in kept:
+            plain, forced = (plan_install(view, scope, user, harnesses, names, root, replace) for replace in (False, True))
+            created = (frozenset(slot_of(step.path) for step in plan.steps if step.kind == "create") for plan in (plain, forced))
+            kept[harnesses] = Planned(*created, len(plain.conflicts))
+        return kept[harnesses]
+
     strays = survey(view, scope, user, state, root, HARNESSES)
     present = stacks(view)
     for path, harnesses in claims.items():
@@ -1543,7 +1562,7 @@ def audit(args, scope, user, names):
             continue
         aside = next((stray.path for stray in strays
                       if stray.kind in ("home", "own") and slot_of(stray.home) == slot_of(path)), None)
-        stale.append(claim_finding(args, view, scope, user, names, root, path, harnesses, aside))
+        stale.append(claim_finding(args, state, root, path, harnesses, aside, planned))
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
