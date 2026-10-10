@@ -60,7 +60,7 @@ class BuildModeTest(unittest.TestCase):
 
 
 class BuildReferenceTest(unittest.TestCase):
-    def test_default_build_writes_the_committed_command_line_reference(self):
+    def test_default_build_writes_the_committed_command_line_reference_pages(self):
         if shutil.which("git") is None:
             self.skipTest("git is not installed, so the tracked tree cannot be listed")
         listed = subprocess.run(
@@ -73,7 +73,7 @@ class BuildReferenceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             copy = Path(directory)
             for rel in listed:
-                if rel and rel != "docs/cli.md" and (ROOT / rel).is_file():
+                if rel and not rel.startswith("docs/cli/") and (ROOT / rel).is_file():
                     (copy / rel).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(ROOT / rel, copy / rel)
             result = subprocess.run(
@@ -82,4 +82,8 @@ class BuildReferenceTest(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual((copy / "docs/cli.md").read_text(), (ROOT / "docs/cli.md").read_text())
+            built = sorted(path.name for path in (copy / "docs/cli").iterdir())
+            self.assertEqual(built, sorted(path.name for path in (ROOT / "docs/cli").iterdir()))
+            for name in built:
+                with self.subTest(name):
+                    self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
