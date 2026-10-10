@@ -257,11 +257,6 @@ UNANCHORED = ("{name}={value!r} is not an absolute path, and the system could no
 
 
 def unanchored(environ):
-    """Return the UNANCHORED line for HOME or CLAUDE_CONFIG_DIR when one of them qualifies and os.getcwd() raises OSError, else None.
-
-    HOME qualifies when it is set and not absolute. CLAUDE_CONFIG_DIR qualifies when it is not empty and not absolute.
-    The line names HOME when both qualify. When neither qualifies, os.getcwd() is not called.
-    """
     home, claude = environ.get("HOME"), environ.get("CLAUDE_CONFIG_DIR")
     if home is not None and not os.path.isabs(home):
         name, value = "HOME", home
@@ -559,7 +554,6 @@ def plan_uninstall(view, root, selected, holds):
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     for row in view.backups:
-        # selected_row is not used here because it also records a "shared with" line.
         if unreached(row) and set(row.harnesses) <= chosen:
             occupied.append(KEPT_UNREACHED.format(backup=row.backup, original=row.original))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
@@ -1458,11 +1452,6 @@ def skill_names():
 
 
 def unbuilt():
-    """Return the line for a checkout with no skill to link, or None.
-
-    When SKILLS.is_dir() is false it is NOT_A_DIRECTORY if os.path.lexists(SKILLS) is true and UNBUILT if it is false.
-    Otherwise it is NO_SKILL when skill_names() is empty.
-    """
     if not SKILLS.is_dir():
         return NOT_A_DIRECTORY if os.path.lexists(SKILLS) else UNBUILT
     return None if skill_names() else NO_SKILL
@@ -1806,12 +1795,6 @@ ESCAPING = "pstack-t3-escaping"
 
 
 def escape_refused(stream):
-    """Make `stream` write text its error handler raises UnicodeError for as codecs.backslashreplace_errors writes it.
-
-    The handler it registers as ESCAPING calls the handler `stream` had, and calls codecs.backslashreplace_errors when
-    that one raises UnicodeError. It changes nothing when `stream` is not an io.TextIOWrapper or names a handler
-    codecs.lookup_error does not find.
-    """
     if not isinstance(stream, io.TextIOWrapper):
         return
     try:

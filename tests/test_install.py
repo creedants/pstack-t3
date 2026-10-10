@@ -3650,7 +3650,6 @@ class OwnershipTest(unittest.TestCase):
         return f"XDG_CONFIG_HOME='.config' is not an absolute path, so it is ignored and the config home is {str(self.home / '.config')!r}\n"
 
     def another_directory(self):
-        """Make the empty directory work under the home and return it."""
         work = self.home / "work"
         work.mkdir()
         return work
@@ -3786,7 +3785,6 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(self.under_backups(), [])
 
     def restore_recorded_as(self, backup):
-        """Under a relative HOME, restore swarm from <stamp>/grok/swarm through a row whose backup is `backup`."""
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
@@ -5381,10 +5379,6 @@ class OwnershipTest(unittest.TestCase):
     RELATIVE_ROW = ".config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm"
 
     def relative_row(self):
-        """Checkout a installed for grok, a file at <stamp>/grok/swarm under the state directory, and a row that names it by RELATIVE_ROW.
-
-        Return the checkout, the path of swarm, and the file.
-        """
         a, swarm = self.installed_for_grok()
         saved = self.home / self.RELATIVE_ROW
         saved.parent.mkdir(parents=True)
@@ -5599,10 +5593,6 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(os.listdir(f"{state}/backups"), [])
 
     def doctor_with_surrogate_row(self, handler, surrogate):
-        """Run doctor with stdout set to utf-8 and the error handler `handler`, and a backup row whose backup path holds `surrogate`.
-
-        Return the run, with stdout and stderr as bytes, and the two lines doctor prints with `{surrogate}` where the character goes.
-        """
         a, swarm = self.installed_for_grok()
         notes = provider_link(self.home, "grok", "notes")
         backup = f"{state_dir(self.home)}/backups/20260101T000000-1-abcd/grok/no{{surrogate}}tes"
@@ -5691,7 +5681,6 @@ class OwnershipTest(unittest.TestCase):
 
 
 def loaded(name, file):
-    """Load the Python file `file` as the module `name` and return it."""
     spec = importlib.util.spec_from_file_location(name, file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module

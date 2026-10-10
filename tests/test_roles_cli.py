@@ -4404,8 +4404,6 @@ class RuntimeModeBackupCliTest(unittest.TestCase):
 
 
 class RelativeConfigHomeCliTest(unittest.TestCase):
-    """roles.py under XDG_CONFIG_HOME=.config, run from a working directory that is not the home."""
-
     OPUS = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
     GROK = {"providerInstanceId": "grok", "model": "grok-4.7"}
 
