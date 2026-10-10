@@ -22,7 +22,7 @@ VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
 # From 3.11 date.fromisoformat also takes 20261009. The pattern keeps 3.10 and 3.12 equal.
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-UNDO = "git restore CHANGELOG.md changes/"
+RESTORE_FROM_INDEX = "git restore CHANGELOG.md changes/"
 COMMIT = "\x01"
 # --no-renames lists a moved fragment as an add. -z stops git quoting a path.
 # --no-show-signature keeps log.showSignature from printing text ahead of the commit marker.
@@ -34,14 +34,12 @@ Version = tuple[int, int, int]
 
 @dataclass(frozen=True)
 class Cut:
-    """A release that passed every check. Building one only reads. apply() is the only writer."""
     section: str
     changelog: str
     fragments: tuple[Path, ...]
 
 
 def git(*args: str) -> str:
-    """Stdout of git run in ROOT. LC_ALL=C keeps git's own messages in one language."""
     try:
         result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                                 errors="surrogateescape", env={**os.environ, "LC_ALL": "C"})
@@ -71,7 +69,6 @@ def dotted(version: Version) -> str:
 
 
 def bullet_fault(lines: list[str]) -> str | None:
-    """What is wrong with a fragment's lines, or None when every line is a bullet or a continuation."""
     open_bullet = False
     for number, line in enumerate(lines, 1):
         bullet = line.startswith("- ") and line[2:].strip()
@@ -83,10 +80,9 @@ def bullet_fault(lines: list[str]) -> str | None:
 
 
 def added_at(log: str) -> dict[str, int]:
-    """Fragment file name to the ordinal of the last commit that added it. A later add overwrites an earlier one.
+    """Fragment file name to the ordinal of the last commit that added it.
 
-    Raises ValueError on a record that is neither a commit marker nor a path under changes/, so a git
-    that prints another shape refuses instead of ordering every fragment by name.
+    Raises ValueError on a record that is neither a commit marker nor a path under changes/.
     """
     at, commit = {}, 0
     for token in log.split("\0"):
@@ -104,13 +100,11 @@ def added_at(log: str) -> dict[str, int]:
 
 
 def released(changelog: str) -> list[Version]:
-    """Every version a `## X.Y.Z` heading names. Any other `## ` line is not a version."""
     matches = (HEADING.fullmatch(line) for line in changelog.splitlines())
     return [tuple(int(part) for part in match.groups()) for match in matches if match]
 
 
 def splice(changelog: str, section: str) -> str:
-    """The changelog with the section before its first `## ` line, or at the end when it has none."""
     lines = changelog.splitlines(keepends=True)
     at = next((index for index, line in enumerate(lines) if line.startswith("## ")), len(lines))
     head, tail = "".join(lines[:at]).rstrip("\n"), "".join(lines[at:])
@@ -134,8 +128,14 @@ def read_utf8(path: Path) -> str:
         sys.exit(f"{path.relative_to(ROOT).as_posix()} is not UTF-8; fix it")
 
 
+def refuse_unfinished_release() -> None:
+    dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/")
+    if dirty:
+        sys.exit("CHANGELOG.md or changes/ has uncommitted changes; commit them, "
+                 f"or run {RESTORE_FROM_INDEX} to undo an unfinished release:\n{dirty.rstrip()}")
+
+
 def plan(version_text: str, date_text: str | None) -> Cut:
-    """Run every check and sys.exit on the first that fails. Reads git and files. Writes nothing."""
     version = parse_version(version_text)
     if version is None:
         sys.exit(f"version {version_text} is not X.Y.Z; pass three numbers such as 0.3.0")
@@ -146,12 +146,7 @@ def plan(version_text: str, date_text: str | None) -> Cut:
     if git("rev-parse", "--is-shallow-repository").strip() == "true":
         sys.exit("this clone is shallow, so git cannot tell when each fragment was added; "
                  "run git fetch --unshallow and rerun")
-    # This runs before the heading check. After a half-finished run CHANGELOG.md already holds the
-    # heading, and "pick the next version" would be the wrong advice.
-    dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/")
-    if dirty:
-        sys.exit("CHANGELOG.md or changes/ has uncommitted changes; commit them, "
-                 f"or run {UNDO} to undo an unfinished release:\n{dirty.rstrip()}")
+    refuse_unfinished_release()
 
     changelog_path = ROOT / "CHANGELOG.md"
     if not changelog_path.is_file():
@@ -187,7 +182,6 @@ def plan(version_text: str, date_text: str | None) -> Cut:
     for entry in entries:
         if entry.name not in at:
             sys.exit(f"git log shows no commit that added changes/{entry.name}; commit the fragment and rerun")
-    # Name order inside one commit is this sort, not git's. diff.orderFile reorders the paths git prints.
     fragments = tuple(sorted(entries, key=lambda entry: (at[entry.name], entry.name)))
 
     body = "".join(line + "\n" for entry in fragments for line in bullets[entry.name])
@@ -196,14 +190,13 @@ def plan(version_text: str, date_text: str | None) -> Cut:
 
 
 def apply(cut: Cut) -> None:
-    """Write CHANGELOG.md, then delete the fragments. The index is untouched, so UNDO restores both."""
     try:
         with open(ROOT / "CHANGELOG.md", "w", encoding="utf-8", newline="") as handle:
             handle.write(cut.changelog)
         for path in cut.fragments:
             path.unlink()
     except OSError as error:
-        sys.exit(f"stopped partway: {error}; run {UNDO} to undo, then rerun")
+        sys.exit(f"stopped partway: {error}; run {RESTORE_FROM_INDEX} to undo, then rerun")
 
 
 def main(argv=None):

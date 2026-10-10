@@ -65,7 +65,6 @@ def git(repo, *args, date=None):
 
 
 def commit(repo, files, day=1, second=0):
-    """Write each path, or remove it when its text is None, and commit the lot at one fixed time."""
     for relative, text in files.items():
         path = repo / relative
         if text is None:
@@ -78,11 +77,10 @@ def commit(repo, files, day=1, second=0):
 
 
 def run(repo, *args, env=ENV, date="2026-10-09"):
-    # The parent of the repository is the working directory, so a script that read
-    # the working directory in place of its own checkout would find no repository.
+    outside_the_checkout = repo.parent
     return subprocess.run(
         [sys.executable, str(repo / "scripts/release.py"), *args, "--date", date],
-        cwd=repo.parent, capture_output=True, text=True, encoding="utf-8", env=env,
+        cwd=outside_the_checkout, capture_output=True, text=True, encoding="utf-8", env=env,
     )
 
 
@@ -104,8 +102,7 @@ def repository(changelog=CHANGELOG):
         yield repo
 
 
-def add_history(repo):
-    """Four fragments whose release order differs from name order and from time order."""
+def add_fragments_out_of_name_and_date_order(repo):
     commit(repo, {"changes/zeta.md": "- zeta\n", "changes/eta.md": "- eta one\n  eta continued\n- eta two\n"}, day=2)
     commit(repo, {"changes/beta.md": "- beta\n"}, day=3)
     commit(repo, {"changes/alpha.md": "- alpha\n"}, day=3)
@@ -119,7 +116,7 @@ def add_history(repo):
 @contextmanager
 def history():
     with repository() as repo:
-        add_history(repo)
+        add_fragments_out_of_name_and_date_order(repo)
         yield repo
 
 
