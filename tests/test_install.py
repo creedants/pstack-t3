@@ -5325,9 +5325,83 @@ class OwnershipTest(unittest.TestCase):
         self.add_rows(backups=[{"harnesses": ["grok"], "original": str(notes), "backup": "rel/backups/notes"}])
         removed = self.from_removed_directory(a, "uninstall", "--harness", "grok")
         self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
-        self.assertEqual(removed.stdout, "removed 3 links, restored 0 entries\n")
+        self.assertEqual(
+            removed.stdout,
+            f"kept backup row rel/backups/notes: a relative path with nothing at it from this working directory (recorded as the backup of {notes}); "
+            "rerun uninstall from the directory where that path names the backup\n"
+            "removed 3 links, restored 0 entries\n",
+        )
         self.assertEqual(removed.stderr, "")
         self.assertFalse(os.path.lexists(swarm))
+
+    RELATIVE_ROW = ".config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm"
+
+    def relative_row(self):
+        """Checkout a installed for grok, a file at <stamp>/grok/swarm under the state directory, and a row that names it by RELATIVE_ROW.
+
+        Return the checkout, the path of swarm, and the file.
+        """
+        a, swarm = self.installed_for_grok()
+        saved = self.home / self.RELATIVE_ROW
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(b"saved\x00\xfe")
+        self.add_rows(backups=[{"harnesses": ["grok"], "original": str(swarm), "backup": self.RELATIVE_ROW}])
+        return a, swarm, saved
+
+    def test_an_uninstall_from_the_home_directory_restores_from_a_backup_row_recorded_as_a_relative_path_and_leaves_its_stamp_and_harness_directories(self):
+        a, swarm, saved = self.relative_row()
+        removed = run(self.home, a, "uninstall", "--harness", "grok")
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(removed.stdout, "removed 3 links, restored 1 entries\n")
+        self.assertEqual(removed.stderr, "")
+        self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
+        self.assertEqual(read_legacy(self.home)["backups"], [])
+        self.assertEqual(self.under_backups(), ["20260101T000000-1-abcd", "20260101T000000-1-abcd/grok"])
+
+    def test_an_uninstall_from_another_directory_keeps_a_backup_row_recorded_as_a_relative_path_and_prints_the_kept_backup_row_line(self):
+        a, swarm, saved = self.relative_row()
+        work = self.another_directory()
+        row = {"harnesses": ["grok"], "original": str(swarm), "backup": self.RELATIVE_ROW}
+        kept = (
+            f"kept backup row {self.RELATIVE_ROW}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
+            "rerun uninstall from the directory where that path names the backup"
+        )
+        for command, counts in (
+            (("uninstall", "--dry-run"), "would remove 3 links, would restore 0 entries"),
+            (("uninstall",), "removed 3 links, restored 0 entries"),
+        ):
+            with self.subTest(command=command):
+                removed = run(self.home, a, *command, "--harness", "grok", cwd=work)
+                self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+                self.assertEqual(removed.stdout.splitlines(), [kept, counts])
+                self.assertEqual(removed.stderr, "")
+                self.assertEqual(read_legacy(self.home)["backups"], [row])
+                self.assertEqual(saved.read_bytes(), b"saved\x00\xfe")
+        self.assertFalse(os.path.lexists(swarm))
+        self.assertEqual(os.listdir(work), [])
+        restored = run(self.home, a, "uninstall", "--harness", "grok")
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertEqual(restored.stdout, "removed 0 links, restored 1 entries\n")
+        self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
+
+    def test_doctor_from_another_directory_prints_the_run_it_from_the_directory_line_for_a_backup_row_recorded_as_a_relative_path(self):
+        a, swarm, saved = self.relative_row()
+        work = self.another_directory()
+        before = snapshot(self.home)
+        checked = run(self.home, a, "doctor", "--harness", "grok", cwd=work)
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        self.assertEqual(checked.stderr, "")
+        self.assertEqual(
+            checked.stdout.splitlines(),
+            [
+                self.harness_line("grok", "3/3 pstack-t3"),
+                f"        backup row {self.RELATIVE_ROW}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
+                "uninstall reads that path from the directory it runs in, so run it from the directory where the path names the backup; "
+                f'to drop the row instead, delete it from "backups" in {legacy_file(self.home)}',
+            ],
+        )
+        self.assertEqual(self.doctor(a, 0, "--harness", "grok"), [self.harness_line("grok", "3/3 pstack-t3")])
+        self.assertEqual(snapshot(self.home), before)
 
     @unittest.skipIf(os.geteuid() == 0, "root removes a file from a directory of mode 000")
     def test_an_uninstall_whose_install_owners_turns_mode_000_before_its_owner_file_is_removed_exits_1_with_one_could_not_be_removed_line(self):

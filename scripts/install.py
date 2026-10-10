@@ -466,6 +466,14 @@ def occupied_note(row):
     return f"kept backup {backup}: {path} is occupied; clear it and rerun uninstall"
 
 
+UNREACHED = "a relative path with nothing at it from this working directory (recorded as the backup of {original})"
+KEPT_UNREACHED = "kept backup row {backup}: " + UNREACHED + "; rerun uninstall from the directory where that path names the backup"
+
+
+def unreached(row):
+    return not os.path.isabs(row.backup) and not os.path.lexists(row.backup)
+
+
 def plan_uninstall(view, root, selected, holds):
     chosen = set(selected)
     shared = set()
@@ -524,6 +532,10 @@ def plan_uninstall(view, root, selected, holds):
                                 "remove the one that is not the backup and rerun uninstall")
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
+    for row in view.backups:
+        # selected_row is not used here because it also records a "shared with" line.
+        if unreached(row) and set(row.harnesses) <= chosen:
+            occupied.append(KEPT_UNREACHED.format(backup=row.backup, original=row.original))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
 
@@ -1562,6 +1574,10 @@ INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {
              'while that path is empty; to drop it, delete the row from "backups" in {manifest}')
 INERT_ROW_MANY = ('backup rows have nothing at their backup paths; uninstall skips each row while its backup path is empty; '
                   'to drop one, delete the row from "backups" in {manifest}:')
+UNREACHED_ROW = (
+    "backup row {backup}: " + UNREACHED + "; uninstall reads that path from the directory it runs in, "
+    'so run it from the directory where the path names the backup; to drop the row instead, delete it from "backups" in {manifest}'
+)
 HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
             '"{dry_run}" prints what the next run does with it')
 AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory is at {checkout}; '
@@ -1608,6 +1624,8 @@ def row_finding(args, state, row, aside):
                        HELD_MANY.format(dry_run=dry_run),
                        f"backup row {row.backup}: nothing is there, and {aside} holds an entry under that name")
     manifest = Path(state) / LEGACY_NAME
+    if not os.path.isabs(row.backup):
+        return Finding(row.harnesses, UNREACHED_ROW.format(backup=row.backup, original=row.original, manifest=manifest))
     return Finding(row.harnesses, INERT_ROW.format(backup=row.backup, original=row.original, manifest=manifest),
                    INERT_ROW_MANY.format(manifest=manifest), f"{row.backup} (recorded as the backup of {row.original})")
 
