@@ -136,7 +136,7 @@ land.py [flags] lease list
 land.py [flags] lease check --holder HOLDER --paths PATHS
 ```
 
-print what a claim would answer now, and write nothing
+print what a claim would answer now; claims no lease and arms no reservation
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

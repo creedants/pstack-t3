@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -2639,17 +2640,18 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.lease_check("ops/D1", "c.txt"), (0, "free"))
         self.assertEqual(self.listed(), ["S1 armed docs/ by R4: a.txt, b.txt"])
 
+    def raw_db(self):
+        """land.db opened without Store, which upgrades an older schema when it opens one."""
+        return contextlib.closing(sqlite3.connect(next((self.base / "state").glob("pstack-t3/landing/*/land.db"))))
+
     def dumped(self):
-        store = land.Store.for_repo(self.work)
-        try:
-            return "\n".join(store.db.iterdump())
-        finally:
-            store.db.close()
+        with self.raw_db() as db:
+            return "\n".join(db.iterdump())
 
     def armed_log(self):
         return [row["id"] for row in self.ruling_rows("log") if (row["kind"], row["state"]) == ("reservation", "armed")]
 
-    def check_writing_nothing(self, holder, paths):
+    def check_keeping_nothing(self, holder, paths):
         before = self.dumped()
         answer = self.lease_check(holder, paths)
         self.assertEqual(self.dumped(), before)
@@ -2668,11 +2670,11 @@ os.execv({real!r}, [{real!r}, *args])
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
         self.assertEqual(self.listed(), ["S1 waiting docs/ by R4: a.txt"])
         for _ in range(2):
-            self.assertEqual(self.check_writing_nothing("ops/D2", "d.txt"), (0, "free"))
-            code, refusal = self.check_writing_nothing("engine/D9", "a.txt")
+            self.assertEqual(self.check_keeping_nothing("ops/D2", "d.txt"), (0, "free"))
+            code, refusal = self.check_keeping_nothing("engine/D9", "a.txt")
             self.assertEqual(code, 1)
             self.assert_reserved_for_two_hours(refusal)
-            self.assertEqual(self.check_writing_nothing("docs/D7", "a.txt"), (0, "free"))
+            self.assertEqual(self.check_keeping_nothing("docs/D7", "a.txt"), (0, "free"))
         self.assertEqual(self.listed(), ["S1 waiting docs/ by R4: a.txt"])
         self.assertEqual(self.armed_log(), [])
 
@@ -2693,16 +2695,16 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.armed_log(), [1])
         self.assert_reserved_for_two_hours(self.claim("engine/D9", "a.txt", ok=False))
 
-    def test_lease_check_naming_an_overlapping_lease_writes_nothing(self):
+    def test_lease_check_naming_an_overlapping_lease_keeps_nothing(self):
         self.init()
         self.claim("engine/D1", "a.txt")
         self.claim("ops/D1", "b.txt")
         self.assertEqual(self.reserve("docs/", "a.txt", "R4"), "S1")
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
-        self.assertEqual(self.check_writing_nothing("engine/D9", "b.txt"), (1, "L2 held by ops/D1 on b.txt"))
+        self.assertEqual(self.check_keeping_nothing("engine/D9", "b.txt"), (1, "L2 held by ops/D1 on b.txt"))
         self.assertEqual(self.listed(), ["L2 active ops/D1: b.txt", "S1 waiting docs/ by R4: a.txt"])
 
-    def test_lease_check_at_the_cap_writes_nothing_and_the_refused_claim_arms(self):
+    def test_lease_check_at_the_cap_keeps_nothing_and_the_refused_claim_arms(self):
         self.init()
         self.land("cap", "1")
         self.claim("ops/D1", "lib")
@@ -2710,13 +2712,13 @@ os.execv({real!r}, [{real!r}, *args])
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
         at_cap = "repository at its cap: 1 of 1 changes in flight (S1 for docs/)"
         for _ in range(2):
-            self.assertEqual(self.check_writing_nothing("ops/D2", "c.txt"), (1, at_cap))
+            self.assertEqual(self.check_keeping_nothing("ops/D2", "c.txt"), (1, at_cap))
         self.assertEqual(self.listed(), ["S1 waiting docs/ by R1: a.txt"])
         self.assertEqual(self.claim("ops/D2", "c.txt", ok=False), f"land: {at_cap}")
         self.assertEqual(self.listed(), ["S1 armed docs/ by R1: a.txt"])
         self.assertEqual(self.armed_log(), [1])
 
-    def test_lease_check_at_a_share_writes_nothing(self):
+    def test_lease_check_at_a_share_keeps_nothing(self):
         self.init()
         self.land("cap", "4")
         self.share("docs/", 2)
@@ -2725,7 +2727,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.claim("docs/D1", "b.txt")
         self.claim("docs/D2", "c.txt")
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
-        self.assertEqual(self.check_writing_nothing("docs/D3", "lib"), (1, "docs/ is at its share: 2 of 2"))
+        self.assertEqual(self.check_keeping_nothing("docs/D3", "lib"), (1, "docs/ is at its share: 2 of 2"))
         self.assertEqual(self.listed(), ["L2 active docs/D1: b.txt", "L3 active docs/D2: c.txt", "S1 waiting ops/ by R4: a.txt"])
         self.assertEqual(self.claim("docs/D3", "lib", ok=False), "land: docs/ is at its share: 2 of 2")
 
@@ -2734,8 +2736,38 @@ os.execv({real!r}, [{real!r}, *args])
         self.claim("engine/D1", "a.txt")
         self.assertEqual(self.reserve("docs/", "a.txt", "R4", "--ttl-hours", "0"), "S1")
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
-        self.assertEqual(self.check_writing_nothing("engine/D9", "a.txt"), (0, "free"))
+        self.assertEqual(self.check_keeping_nothing("engine/D9", "a.txt"), (0, "free"))
         self.assertEqual(self.claim("engine/D9", "a.txt"), "L2")
+
+    def test_lease_check_on_an_older_store_upgrades_the_schema_and_changes_no_row(self):
+        self.init()
+        self.claim("engine/D1", "a.txt")
+        self.assertEqual(self.reserve("docs/", "a.txt", "R4"), "S1")
+        self.land("lease", "renew", "L1", "--ttl-hours", "0")
+        self.rebuild_entry_without_autoincrement()
+
+        def entry_sql():
+            with self.raw_db() as db:
+                return db.execute("SELECT sql FROM sqlite_master WHERE name = 'entry'").fetchone()[0]
+
+        def rows():
+            with self.raw_db() as db:
+                return {table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                        for table in ("contract", "lease", "attempt", "log", "owner", "reservation", "share", "contest")}
+
+        self.assertNotIn("AUTOINCREMENT", entry_sql())
+        self.assertNotIn("title", entry_sql())
+        before = rows()
+        code, refusal = self.lease_check("engine/D9", "a.txt")
+        self.assertEqual(code, 1)
+        self.assert_reserved_for_two_hours(refusal)
+        self.assertIn("AUTOINCREMENT", entry_sql())
+        self.assertIn("title", entry_sql())
+        self.assertEqual(rows(), before)
+        with self.raw_db() as db:
+            self.assertEqual(db.execute("SELECT id, holder FROM lease").fetchall(), [(1, "engine/D1")])
+            self.assertEqual(db.execute("SELECT armed, expires FROM reservation").fetchall(), [("", "")])
+            self.assertEqual(db.execute("SELECT count(*) FROM log WHERE state = 'armed'").fetchall(), [(0,)])
 
     def test_releasing_one_lease_leaves_a_reservation_waiting_on_another(self):
         self.init()

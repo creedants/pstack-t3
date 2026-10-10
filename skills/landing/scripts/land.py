@@ -611,8 +611,9 @@ def admission(store, db, holder, wanted, renewing=None):
     Returns the other holders' overlapping leases, a refusal, and the standing reservations the lease takes from.
     Run it inside the transaction that writes the lease, so two claims cannot both pass. A caller that writes a
     lease still commits when refused, so arming is never lost to a refused claim. lease check runs it in
-    Store.trial and keeps nothing. renewing is an expired lease id. A reservation that already lists it is taken
-    again and left out of the count, so that renewal fits a full cap.
+    Store.trial, which rolls back, so a check arms no reservation and adds no log row. renewing is an expired
+    lease id. A reservation that already lists it is taken again and left out of the count, so that renewal
+    fits a full cap.
     """
     leases, cap = in_flight(db), store.contract.get("cap")
     arm_reservations(store, db, leases, cap)
@@ -1930,7 +1931,7 @@ def parser():
     a.add_argument("id")
     a.add_argument("--owner", help=owner_help)
     t.add_parser("list")
-    a = t.add_parser("check", help="print what a claim would answer now, and write nothing")
+    a = t.add_parser("check", help="print what a claim would answer now; claims no lease and arms no reservation")
     a.add_argument("--holder", required=True)
     a.add_argument("--paths", required=True)
     a = t.add_parser("reserve", help="reserve paths for a holder prefix by a ruling; prints S<n>")
