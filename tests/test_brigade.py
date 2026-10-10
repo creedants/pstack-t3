@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import runpy
@@ -240,6 +241,167 @@ def _race_child(mode, case, args):
     sys.exit(mod["main"](args))
 
 
+BULLETS = """# D1 report
+
+Status: done
+
+## Follow-ups
+
+- A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read `ticket list` before refiling. A `brigade.py` guard would make that structural.
+- `docs/guide.md` still describes intake as `gh issue list` and `gh pr list` when the standing orders name them. That file is outside this lease.
+- PR #87 was not commented on, approved, or closed.
+"""
+NUMBERED = """## Follow-ups
+
+1. **Hillclimb.** `t3/overrides/poteto-mode/playbooks/hillclimb.md` has a code-delegate line with the same missing step 5 pointer. It was outside the lease.
+2. **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.
+3. No README or `docs/guide.md` edit is needed.
+
+Scratch is under `~/.cache/d87`.
+"""
+NESTED = """## Follow-ups
+
+1. **D90-dependent wording.** These sentences hold for main and change if D90 lands:
+   - Prompt caps step 1: "It still applies the Haiku prompt cap."
+   - Step 4: the rerun of a seat-launching child on `inherit`.
+
+   If D90 makes the flag skip capped models, step 1 should say the flag never returns a capped model.
+2. **Docs batch.**
+  - Change 4's Files list in `docs/light-mode.md` should add `t3/scripts/roles.py`.
+  - `docs/light-mode.md` is not leased.
+"""
+FENCED = r"""## Follow-ups
+
+1. Run this command to set the user's panel. It must use a fresh catalog.
+
+   ```bash
+   # write the panel
+   python3 roles.py write --catalog <file> --keep \
+     --set "review backups=opencode/step-5-preview-free?variant=high"
+   ```
+
+2. `family()` keeps the provider path for namespaced ids such as `opencode/...`. The panel compares bare ids locally.
+"""
+PROSE = """## Follow-ups
+
+Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.
+
+`integration.head()` is still read inside two transactions.
+Both sites predate this change.
+
+No test under `tests/` asserts these sentences. That directory is outside this lease.
+
+## Principles
+
+- Fix root causes changed the order of the two reads.
+"""
+LEAD_IN = """## Follow-ups
+
+The explainer found these in `brigade.py`. All are outside L81, so I did not fix them.
+
+- `pass record` without `--pr` overwrites the item's recorded PR with an empty value, because `--pr` defaults to `""`.
+- `--same-family` is not checked. It writes the `same model family;` note even when the families differ.
+"""
+TWO_SECTIONS = """# D1 report
+
+## Follow-ups
+
+1. `docs/light-mode.md`, in its review-file table, still describes one `<item>-review.md` file per item.
+2. The panel sentences in step 7 still say "handle the send-back below" while that bullet sits above them.
+
+## Decision trail
+
+Kept in the store.
+
+## Round 2
+
+### Deviations
+
+- None.
+
+### Follow-ups
+
+1. Decide whether `ticket move` should refuse a ticket of an item that owes its decision.
+
+## Round 3
+
+- The rule as implemented.
+"""
+PROSE_ABOVE_A_LEAD_IN = """## Follow-ups
+
+**`README.md`.** Replace the `**Known limits.**` bullet (line 284), which still says "Nothing deletes it or moves it back", with these two bullets:
+
+```markdown
+- **Interrupted runs are recovered.** Every later install or uninstall looks in those directories.
+- **Known limits.** Nothing returns or deletes it, so delete it by hand.
+```
+
+**`docs/guide.md`.** Replace the first bullet under "Known limits." (line 359) with this bullet, and keep the two bullets after it:
+
+```markdown
+- An entry in a `.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand.
+```
+
+Other follow-ups:
+
+- **Type the `side` that `holder_parents` yields**, from the comment review.
+- **No test covers a skills directory inside the checkout**, which the sweep skips because `layout` refuses it.
+
+Scratch files for this run are under `/tmp/d105-repro/`: `repro.py`, `before.txt`, and `full-suite.txt`.
+"""
+A_LIST_THEN_A_PROSE_SECTION = """## Follow-ups
+
+1. `docs/light-mode.md`, in its review-file table, still describes one `<item>-review.md` file per item.
+
+## Round 2
+
+### Follow-ups
+
+Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.
+
+`integration.head()` is still read inside two transactions.
+"""
+NO_WORK = """## Follow-ups
+
+1. **Docs.** `README.md` and `docs/guide.md` do not mention the `recovered`, `removed`, and `left` lines.
+2. None.
+3. **None required.**
+4. NONE NEEDED
+5. _Nothing._
+6. `Nothing needed`.
+7. n/a
+8. Not applicable.
+9. **No follow-ups**.
+"""
+LONGER_THAN_A_NO_WORK_PHRASE = [
+    "**No test covers a skills directory inside the checkout**, which the sweep now skips because `layout` refuses it.",
+    "Docs. `README.md` and `docs/guide.md` do not name owner `queue` reports, so they need no change. The batched docs "
+    "change could add a note to `docs/live-runs.md` that owners now use `auto`.",
+    "`scripts/install.py` HARNESSES has no Muse entry. No Muse skills directory was confirmed, so nothing was added.",
+    "The README roadmap and `docs/guide.md` do not name the script. No doc edit is needed unless the guide's release "
+    "paragraph is touched.",
+    "**Configure `escalate`.** The design lists `scripts/install.py` for this repository. None is set, so the trial ran "
+    "light.",
+    "None of the tests cover the retry path.",
+    "Nothing in this change explains the release of lease L2.",
+    "No lock is taken by `status`, though one is required.",
+    "Decide whether `pass record --report` should refuse a path outside `reports/`, so it needs no second check.",
+    "Add a test that verifies no edit is needed.",
+    "No retry test exists and one is needed.",
+    "None in the suite covers the retry path.",
+    "None for `README.md` or `docs/guide.md`. They do not name this printed line.",
+    "None required. The `changes/pstack-t3%2Fd57.md` fragment from the previous attempt still describes the change and "
+    "was left as is.",
+    "Nothing needed here until the guide's release paragraph moves.",
+    "Not applicable. This lease holds no docs.",
+    "No follow-ups for the docs batch, and one for the installer.",
+    "Docs: none. No README or guide names the changed sentences.",
+    "No README or `docs/guide.md` edit is needed.",
+    "**No README or guide edit needed.** Neither file names these tools.",
+    "`docs/guide.md` has no sentence about syncing upstream, so it needs no edit.",
+]
+
+
 class BrigadeTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -452,6 +614,352 @@ class BrigadeTest(unittest.TestCase):
                              f"brigade: {name} is not a review report of D1; name a file like reports/D1-review-1.md")
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
         self.assertEqual(self.dish_fields("state"), ("sent-back",))
+
+    def store_files(self):
+        """Every file of the store but restaurant.lock, which is empty and is not store data."""
+        return {str(path.relative_to(self.at)): path.read_bytes() for path in sorted(self.at.rglob("*"))
+                if path.is_file() and path.name != "restaurant.lock"}
+
+    def tables(self):
+        return {path.name: path.read_bytes() for path in sorted(self.at.glob("*.tsv"))}
+
+    def follow_ups_in(self, body, *extra, name="D1.md", ok=True, owner=True):
+        self.review_file(name, body)
+        return self.brigade("ticket", "add", "--from-report", f"reports/{name}", *extra, ok=ok, owner=owner)
+
+    def test_from_report_files_one_waiting_ticket_per_bullet_and_a_rerun_adds_nothing(self):
+        self.fired_bug_fix()
+        first = ("A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read "
+                 "`ticket list` before refiling. A `brigade.py` guard would make that structural.")
+        second = ("`docs/guide.md` still describes intake as `gh issue list` and `gh pr list` when the standing orders name "
+                  "them. That file is outside this lease.")
+        third = "PR #87 was not commented on, approved, or closed."
+        self.assertEqual(self.follow_ups_in(BULLETS).splitlines(), [
+            f"T2 added from perf/reports/D1.md#1: {first}",
+            f"T3 added from perf/reports/D1.md#2: {second}",
+            f"T4 added from perf/reports/D1.md#3: {third}",
+        ])
+        self.assertEqual(self.brigade("ticket", "list").splitlines()[-1],
+                         f"T4 waiting [report] {third} perf/reports/D1.md#3")
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["summary"], first)
+        self.assertIn(f"\tticket\tT4\twaiting\t{third}\n", (self.at / "log.tsv").read_text())
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.follow_ups_in(BULLETS).splitlines(), [
+            f"skipped perf/reports/D1.md#1, same text as T2 (waiting): {first}",
+            f"skipped perf/reports/D1.md#2, same text as T3 (waiting): {second}",
+            f"skipped perf/reports/D1.md#3, same text as T4 (waiting): {third}",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+        self.brigade("ticket", "set", "T4", "--state", "dropped")
+        self.brigade("ticket", "set", "T3", "--state", "done")
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.follow_ups_in(BULLETS).splitlines()[1:], [
+            f"skipped perf/reports/D1.md#2, same text as T3 (done): {second}",
+            f"skipped perf/reports/D1.md#3, same text as T4 (dropped): {third}",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_files_a_numbered_list_and_prints_the_paragraph_after_it(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(NUMBERED, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **Hillclimb.** `t3/overrides/poteto-mode/playbooks/hillclimb.md` has a "
+            "code-delegate line with the same missing step 5 pointer. It was outside the lease.",
+            "would add from perf/reports/D1.md#2: **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only "
+            "the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.",
+            "would add from perf/reports/D1.md#3: No README or `docs/guide.md` edit is needed.",
+            "not filed, prose after the last list item: Scratch is under `~/.cache/d87`.",
+        ])
+
+    def test_from_report_files_prose_that_neither_introduces_a_list_nor_follows_the_last_item(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(PROSE_ABOVE_A_LEAD_IN, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **`README.md`.** Replace the `**Known limits.**` bullet (line 284), "
+            "which still says \"Nothing deletes it or moves it back\", with these two bullets: ```markdown "
+            "- **Interrupted runs are recovered.** Every later install or uninstall looks in those directories. "
+            "- **Known limits.** Nothing returns or deletes it, so delete it by hand. ```",
+            "would add from perf/reports/D1.md#2: **`docs/guide.md`.** Replace the first bullet under \"Known limits.\" "
+            "(line 359) with this bullet, and keep the two bullets after it: ```markdown - An entry in a "
+            "`.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand. ```",
+            "would add from perf/reports/D1.md#3: **Type the `side` that `holder_parents` yields**, from the comment review.",
+            "would add from perf/reports/D1.md#4: **No test covers a skills directory inside the checkout**, which the "
+            "sweep skips because `layout` refuses it.",
+            "not filed, prose that introduces a list: Other follow-ups:",
+            "not filed, prose after the last list item: Scratch files for this run are under `/tmp/d105-repro/`: "
+            "`repro.py`, `before.txt`, and `full-suite.txt`.",
+        ])
+
+    def test_from_report_files_the_prose_of_a_section_with_no_list_beside_a_section_with_one(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(A_LIST_THEN_A_PROSE_SECTION, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: `docs/light-mode.md`, in its review-file table, still describes one "
+            "`<item>-review.md` file per item.",
+            "would add from perf/reports/D1.md#2: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
+            "would add from perf/reports/D1.md#3: `integration.head()` is still read inside two transactions.",
+        ])
+
+    def test_from_report_does_not_file_a_block_that_is_one_of_eight_no_work_phrases_and_nothing_more(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(NO_WORK, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **Docs.** `README.md` and `docs/guide.md` do not mention the "
+            "`recovered`, `removed`, and `left` lines.",
+            "not filed, says no work is needed: None.",
+            "not filed, says no work is needed: **None required.**",
+            "not filed, says no work is needed: NONE NEEDED",
+            "not filed, says no work is needed: _Nothing._",
+            "not filed, says no work is needed: `Nothing needed`.",
+            "not filed, says no work is needed: n/a",
+            "not filed, says no work is needed: Not applicable.",
+            "not filed, says no work is needed: **No follow-ups**.",
+        ])
+
+    def test_from_report_files_every_block_longer_than_a_no_work_phrase(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n" + "".join(f"- {text}\n" for text in LONGER_THAN_A_NO_WORK_PHRASE)
+        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
+            f"would add from perf/reports/D1.md#{number}: {text}"
+            for number, text in enumerate(LONGER_THAN_A_NO_WORK_PHRASE, 1)])
+        for text in LONGER_THAN_A_NO_WORK_PHRASE[-3:]:
+            self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{text}\n", "--dry-run"),
+                             f"would add from perf/reports/D1.md#1: {text}")
+
+    def test_from_report_folds_nested_bullets_and_an_indented_paragraph_into_their_item(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(NESTED, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **D90-dependent wording.** These sentences hold for main and change if "
+            "D90 lands: - Prompt caps step 1: \"It still applies the Haiku prompt cap.\" - Step 4: the rerun of a "
+            "seat-launching child on `inherit`. If D90 makes the flag skip capped models, step 1 should say the flag never "
+            "returns a capped model.",
+            "would add from perf/reports/D1.md#2: **Docs batch.** - Change 4's Files list in `docs/light-mode.md` should "
+            "add `t3/scripts/roles.py`. - `docs/light-mode.md` is not leased.",
+        ])
+
+    def test_from_report_keeps_a_fenced_block_in_its_item_and_reads_no_heading_inside_it(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(FENCED, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Run this command to set the user's panel. It must use a fresh catalog. "
+            "```bash # write the panel python3 roles.py write --catalog <file> --keep \\ "
+            "--set \"review backups=opencode/step-5-preview-free?variant=high\" ```",
+            "would add from perf/reports/D1.md#2: `family()` keeps the provider path for namespaced ids such as "
+            "`opencode/...`. The panel compares bare ids locally.",
+        ])
+
+    def test_from_report_files_each_paragraph_of_a_section_with_no_list(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(PROSE, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
+            "would add from perf/reports/D1.md#2: `integration.head()` is still read inside two transactions. "
+            "Both sites predate this change.",
+            "would add from perf/reports/D1.md#3: No test under `tests/` asserts these sentences. "
+            "That directory is outside this lease.",
+        ])
+
+    def test_from_report_adds_nothing_for_a_section_that_says_none_or_a_report_without_one(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        for written, text in (("None.", "None."), ("**None.**", "**None.**"), ("  - n/a", "- n/a"),
+                              ("No\nfollow-ups.", "No follow-ups.")):
+            self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{written}\n").splitlines(), [
+                "reports/D1.md lists no follow-ups; nothing added",
+                f"not filed, says no work is needed: {text}",
+            ])
+        self.assertEqual(self.follow_ups_in("# D1 report\n\nStatus: done\n\n## Deviations\n\n- None.\n"),
+                         "reports/D1.md has no follow-ups section; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_reads_every_form_of_the_heading(self):
+        self.fired_bug_fix()
+        for heading in ("## Follow-ups (outside lease L91)", "### Follow-ups", "## Follow-up",
+                        "## Follow-ups outside my lease", "## follow-ups"):
+            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run"),
+                             "would add from perf/reports/D1.md#1: One thing.", heading)
+
+    def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(LEAD_IN, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: `pass record` without `--pr` overwrites the item's recorded PR with an "
+            "empty value, because `--pr` defaults to `\"\"`.",
+            "would add from perf/reports/D1.md#2: `--same-family` is not checked. It writes the `same model family;` note "
+            "even when the families differ.",
+            "not filed, prose that introduces a list: The explainer found these in `brigade.py`. All are outside L81, "
+            "so I did not fix them.",
+        ])
+
+    def test_from_report_numbers_the_items_of_two_sections_as_one_list(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(TWO_SECTIONS, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: `docs/light-mode.md`, in its review-file table, still describes one "
+            "`<item>-review.md` file per item.",
+            "would add from perf/reports/D1.md#2: The panel sentences in step 7 still say \"handle the send-back below\" "
+            "while that bullet sits above them.",
+            "would add from perf/reports/D1.md#3: Decide whether `ticket move` should refuse a ticket of an item that owes "
+            "its decision.",
+        ])
+
+    def test_from_report_dry_run_changes_no_table_and_no_log_and_needs_no_owner(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--thread", "t1")
+        before = self.tables()
+        self.assertIn("log.tsv", before)
+        self.assertEqual(self.follow_ups_in(BULLETS, "--dry-run", owner=False).splitlines()[2],
+                         "would add from perf/reports/D1.md#3: PR #87 was not commented on, approved, or closed.")
+        self.assertEqual(self.follow_ups_in(BULLETS, ok=False, owner=False),
+                         "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
+        self.assertEqual(self.tables(), before)
+
+    def test_from_report_dry_run_waits_for_a_writer_that_holds_the_store_lock(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", BULLETS)
+        held = os.open(self.at / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        self.addCleanup(os.close, held)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        dry_run = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                    "ticket", "add", "--from-report", "reports/D1.md", "--dry-run"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(dry_run.poll())
+            fcntl.flock(held, fcntl.LOCK_UN)
+            out, err = dry_run.communicate(timeout=10)
+        finally:
+            dry_run.kill()
+        self.assertEqual([line.split(":")[0] for line in out.splitlines()],
+                         [f"would add from perf/reports/D1.md#{number}" for number in (1, 2, 3)], err)
+
+    def test_from_report_changes_only_the_ticket_table_the_log_and_last_activity(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", BULLETS)
+
+        def changed_by(*command):
+            before = self.store_files()
+            self.brigade(*command)
+            after = self.store_files()
+            return before, sorted(name for name in after if after[name] != before.get(name))
+
+        _, by_hand = changed_by("ticket", "add", "--summary", "by hand")
+        (self.at / "restaurant.lock").unlink()
+        before, from_report = changed_by("ticket", "add", "--from-report", "reports/D1.md")
+        self.assertEqual(from_report, ["log.tsv", "rail.tsv", "restaurant.json"])
+        self.assertEqual(from_report, by_hand)
+        old, new = json.loads(before["restaurant.json"]), json.loads((self.at / "restaurant.json").read_text())
+        self.assertEqual([key for key in new if new[key] != old.get(key)], ["lastActivityAt"])
+
+    def test_from_report_skips_text_a_ticket_already_holds_whatever_its_spacing_and_case(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--summary", "pr #87   was NOT commented on, approved, or closed.")
+        self.assertEqual(self.follow_ups_in(BULLETS).splitlines()[2],
+                         "skipped perf/reports/D1.md#3, same text as T2 (waiting): "
+                         "PR #87 was not commented on, approved, or closed.")
+        self.assertEqual(self.brigade("ticket", "list").splitlines()[-1].split(" ", 1)[0], "T4")
+
+    def test_from_report_skips_the_second_of_two_items_with_the_same_text(self):
+        self.fired_bug_fix()
+        twice = "## Follow-ups\n\n- Same thing.\n- same  THING.\n- Other thing.\n"
+        self.assertEqual(self.follow_ups_in(twice, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Same thing.",
+            "skipped perf/reports/D1.md#2, same text as #1 above: same  THING.",
+            "would add from perf/reports/D1.md#3: Other thing.",
+        ])
+        self.assertEqual(self.follow_ups_in(twice).splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Same thing.",
+            "skipped perf/reports/D1.md#2, same text as T2 (waiting): same  THING.",
+            "T3 added from perf/reports/D1.md#3: Other thing.",
+        ])
+
+    def test_from_report_drops_a_list_item_with_no_text(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- One thing.\n", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: One thing.")
+
+    def test_from_report_takes_the_report_by_name_or_by_a_path_into_this_store(self):
+        self.fired_bug_fix()
+        path = self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
+        for spelling in ("D1.md", "reports/D1.md", str(path)):
+            self.assertEqual(self.brigade("ticket", "add", "--from-report", spelling, "--dry-run"),
+                             "would add from perf/reports/D1.md#1: One thing.", spelling)
+
+    def test_from_report_refuses_what_is_not_an_item_report_of_this_store(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n- One thing.\n"
+        self.review_file("D1.md", body)
+        before = (self.at / "rail.tsv").read_bytes()
+        add = ("ticket", "add", "--from-report")
+        for name in ("D1-review-1.md", "notes.md", "D1-attempt1.md"):
+            self.review_file(name, body)
+            self.assertEqual(self.brigade(*add, f"reports/{name}", ok=False),
+                             f"brigade: {name} is not an item report; name a file like reports/D2.md")
+        elsewhere = Path(self.temporary.name) / "elsewhere" / "D1.md"
+        elsewhere.parent.mkdir()
+        elsewhere.write_text(body)
+        self.assertEqual(self.brigade(*add, str(elsewhere), ok=False),
+                         f"brigade: {elsewhere} is outside this store's reports/; name reports/D1.md")
+        self.assertEqual(self.brigade(*add, "reports/D7.md", ok=False),
+                         "brigade: reports/D7.md does not exist; nothing added")
+        self.review_file("D9.md", body)
+        self.assertEqual(self.brigade(*add, "reports/D9.md", ok=False), "brigade: no D9 in dishes.tsv")
+        (self.at / "reports" / "D1.md").write_bytes(b"## Follow-ups\n\n- caf\xe9\n")
+        self.assertEqual(self.brigade(*add, "reports/D1.md", ok=False),
+                         "brigade: reports/D1.md is not UTF-8 text; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_refuses_a_symbolic_link_and_a_file_that_resolves_outside_reports(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n- Outside file was read.\n"
+        report = self.at / "reports" / "D1.md"
+        outside = Path(self.temporary.name) / "outside"
+        (outside / "reports").mkdir(parents=True)
+        (outside / "D1.md").write_text(body)
+        (outside / "reports" / "D1.md").write_text(body)
+        notes = self.review_file("notes.md", body)
+        before = (self.at / "rail.tsv").read_bytes()
+        add = ("ticket", "add", "--from-report")
+        for target in (outside / "D1.md", notes):
+            report.symlink_to(target)
+            for spelling in ("D1.md", "reports/D1.md", str(report)):
+                for extra in ((), ("--dry-run",)):
+                    self.assertEqual(self.brigade(*add, spelling, *extra, ok=False),
+                                     "brigade: reports/D1.md is a symbolic link; nothing added")
+            self.assertEqual(self.brigade(*add, str(outside / "D1.md"), "--dry-run", ok=False),
+                             f"brigade: {outside / 'D1.md'} is outside this store's reports/; name reports/D1.md")
+            report.unlink()
+        notes.unlink()
+        (self.at / "reports").rmdir()
+        (self.at / "reports").symlink_to(outside / "reports")
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade(*add, "reports/D1.md", *extra, ok=False),
+                             "brigade: reports/D1.md resolves outside this store's reports/; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_refuses_a_path_with_a_dot_dot_component_wherever_it_resolves(self):
+        self.fired_bug_fix()
+        reports = self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n").parent
+        before = (self.at / "rail.tsv").read_bytes()
+        for spelling in ("reports/../reports/D1.md", "../D1.md", f"{reports}/../reports/D1.md",
+                         f"{reports}/../../../../outside/D1.md", "reports/.."):
+            for extra in ((), ("--dry-run",)):
+                self.assertEqual(self.brigade("ticket", "add", "--from-report", spelling, *extra, ok=False),
+                                 f"brigade: {spelling} has a .. component; name a file like reports/D2.md")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_refuses_the_flags_of_a_hand_written_ticket(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
+        before = (self.at / "rail.tsv").read_bytes()
+        add = ("ticket", "add", "--from-report", "reports/D1.md")
+        for extra in (("--source", "github"), ("--ref", "x"), ("--request", "A1")):
+            self.assertEqual(self.brigade(*add, *extra, ok=False),
+                             "brigade: --from-report takes no --source, --ref, or --request")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--dry-run", ok=False),
+                         "brigade: --dry-run needs --from-report")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--source", "report", ok=False),
+                         "brigade: no coordinator owns intake from report; the one that reads it runs set --intake report")
+        for flags, message in ((("--summary", "x", "--from-report", "reports/D1.md"),
+                                "argument --from-report: not allowed with argument --summary"),
+                               ((), "one of the arguments --summary --from-report is required")):
+            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                     "ticket", "add", *flags], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(message, result.stderr)
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
     def test_a_member_send_back_recorded_before_the_passing_rows_changes_no_verdict(self):
         self.fired_bug_fix()
@@ -776,6 +1284,23 @@ class BrigadeTest(unittest.TestCase):
                      f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+
+    def test_a_report_that_follows_the_brief_is_read_by_ticket_add_from_report(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
+                            "--lease", "L4", "--base", "origin/main")
+        line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
+        asked = "List each follow-up as one top-level list item under a `"
+        heading = line.split(asked, 1)[1].split("`", 1)[0]
+        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there."), line)
+        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
+                         "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
+        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\nNone.\n")
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
+                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, says no work is needed: None.")
 
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
@@ -3433,6 +3958,18 @@ class StoresTest(unittest.TestCase):
 
 
 class HandoffTest(StoresTest):
+    def test_from_report_files_the_same_report_name_in_two_siblings(self):
+        body = "## Follow-ups\n\n- Shared text.\n"
+        for name in ("core", "engine"):
+            self.open(name)
+            self.brigade(name, "ticket", "add", "--summary", "s")
+            self.brigade(name, "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+            (self.dir(name) / "reports").mkdir(exist_ok=True)
+            (self.dir(name) / "reports" / "D1.md").write_text(body)
+            self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
+                             f"T2 added from {name}/reports/D1.md#1: Shared text.")
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text."])
+
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")
         self.assertEqual(json.loads((self.dir("docs") / "restaurant.json").read_text())["intake"], ["github"])

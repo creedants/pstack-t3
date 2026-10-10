@@ -72,15 +72,19 @@ add, list, update, move, or take tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add --summary SUMMARY [--source SOURCE] [--ref REF] [--request REQUEST]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST]
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--summary SUMMARY` | yes |  |  |  |
+| `--summary SUMMARY` |  |  |  |  |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt |
+| `--dry-run` |  |  |  | with --from-report: print what it would add; it changes no table and no log |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
+
+Give exactly one of `--summary`, `--from-report`.
 
 ## brigade.py ticket list
 

@@ -61,6 +61,7 @@ NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_t
 NOTHING_HANDED = "nothing handed to you"
 SNAPSHOT_CHUNK = 1 << 16
 REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
+ITEM_REPORT = re.compile(r"(D\d+)\.md")
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -623,11 +624,152 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None):
     refuse_live_ref(restaurant, ref, rails or {})
     if request:
         source = f"{source} (request {request})"
+    return append_ticket(restaurant, summary, source, ref)
+
+
+def append_ticket(restaurant, summary, source, ref):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
                                    "ref": ref, "summary": summary})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
+
+
+def item_report(restaurant, report):
+    """The bare name of an item report under this store's reports/.
+
+    Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
+    A path that names a file elsewhere is refused instead of re-anchored as review_report does, and so is a symbolic link.
+    A `..` component is refused as written, before anything is resolved.
+    """
+    if ".." in Path(report).parts:
+        raise BrigadeError(f"{report} has a .. component; name a file like reports/D2.md")
+    name = Path(report).name
+    if not ITEM_REPORT.fullmatch(name):
+        raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
+    path = restaurant.dir / "reports" / name
+    home = restaurant.dir.resolve() / "reports" / name
+    if report not in (name, f"reports/{name}") and Path(report).parent.resolve() != home.parent:
+        raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
+    if path.is_symlink():
+        raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
+    if not path.is_file():
+        raise BrigadeError(f"reports/{name} does not exist; nothing added")
+    if path.resolve() != home:
+        raise BrigadeError(f"reports/{name} resolves outside this store's reports/; nothing added")
+    return name
+
+
+@dataclass(frozen=True)
+class FollowUps:
+    """What a report's follow-ups sections hold. A report with no such section is None, not this.
+
+    Each of `items` becomes one ticket, and its position plus one is the `#<n>` in its ref.
+    `asides` are the (reason, text) pairs the command prints and never files.
+    """
+    items: tuple
+    asides: tuple
+
+
+# A block that is one of these and nothing more says the report has no follow-up. Every longer block is read as work.
+NO_WORK = ("none", "none required", "none needed", "nothing", "nothing needed", "n/a", "not applicable", "no follow-ups")
+
+
+def says_no_work(text):
+    """True when the block is one of NO_WORK and nothing more.
+
+    Case does not count. Neither do list markers, the `*`, `_`, and backtick marks around it, or a final period.
+    """
+    text = re.sub(r"^(?:(?:[-*+]|\d+[.)])\s+)+", "", text.strip())
+    return text.strip("*_` ").removesuffix(".").strip("*_` ").casefold() in NO_WORK
+
+
+def follow_ups(text):
+    """Every follow-ups section of a report, or None when no heading says follow-ups.
+
+    A top-level list item or a paragraph is one block, and the indented lines, nested bullets, and fenced code under it
+    are part of it. Each block is a follow-up, with three exceptions that are asides. A block that is one of NO_WORK
+    and nothing more is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph
+    below its section's last list item, which closes the section.
+    """
+    sections, level, fenced, blank, block = [], 0, False, True, None
+    for line in text.splitlines():
+        fence = line.strip().startswith("```")
+        plain = not fence and not fenced
+        fenced = fenced != fence
+        heading = plain and re.match(r"(#{1,6})(\s|$)", line)
+        if heading:
+            depth = len(heading.group(1))
+            if re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I):
+                level = depth
+                sections.append([])
+            elif depth <= level:
+                level = 0
+            block, blank = None, True
+        elif not level:
+            continue
+        elif not line.strip():
+            blank = plain
+        else:
+            marker = plain and re.match(r"(?:[-*+]|\d+[.)])\s+", line)
+            if marker or block is None or plain and blank and not line[0].isspace():
+                block = ("item" if marker else "para", [])
+                sections[-1].append(block)
+            block[1].append(line[marker.end():] if marker else line)
+            blank = False
+    if not sections:
+        return None
+    items, asides = [], []
+    for blocks in sections:
+        blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
+        blocks = [(kind, text) for kind, text in blocks if text]
+        kinds = [kind for kind, _ in blocks] + ["end"]
+        last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
+        for index, (kind, text) in enumerate(blocks):
+            if says_no_work(text):
+                asides.append(("says no work is needed", text))
+            elif kind == "para" and kinds[index + 1] == "item":
+                asides.append(("prose that introduces a list", text))
+            elif kind == "para" and index > last:
+                asides.append(("prose after the last list item", text))
+            else:
+                items.append(text)
+    return FollowUps(tuple(items), tuple(asides))
+
+
+def same_text(value):
+    return " ".join(value.split()).casefold()
+
+
+def file_follow_ups(restaurant, name, found, write):
+    """One waiting ticket per follow-up whose text no ticket of this store holds, in any state.
+
+    A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
+    The ref ends in a position, which is not an identity, so the text is the only key and refuse_live_ref is not asked.
+    """
+    restaurant.find("dishes.tsv", name[:-3])
+    if found is None:
+        return f"reports/{name} has no follow-ups section; nothing added"
+    aside = [f"not filed, {reason}: {text}" for reason, text in found.asides]
+    if not found.items:
+        return "\n".join([f"reports/{name} lists no follow-ups; nothing added", *aside])
+    holders = {}
+    for row in sorted(restaurant.rows("rail.tsv"), key=lambda row: row["state"] not in LIVE_TICKET_STATES):
+        holders.setdefault(same_text(row["summary"]), f"{row['id']} ({row['state']})")
+    lines = []
+    for number, text in enumerate(found.items, 1):
+        ref = f"{restaurant.dir.name}/reports/{name}#{number}"
+        key = same_text(text)
+        if key in holders:
+            lines.append(f"skipped {ref}, same text as {holders[key]}: {text}")
+        elif write:
+            ident = append_ticket(restaurant, text, "report", ref)
+            holders[key] = f"{ident} (waiting)"
+            lines.append(f"{ident} added from {ref}: {text}")
+        else:
+            holders[key] = f"#{number} above"
+            lines.append(f"would add from {ref}: {text}")
+    return "\n".join(lines + aside)
 
 
 def sibling_named(restaurant, to):
@@ -1466,7 +1608,8 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
         "", "REPORT:",
         WAIT_RULE,
-        f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups.",
+        f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
+        "List each follow-up as one top-level list item under a `## Follow-ups` heading, or write `None.` there.",
         "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
@@ -2106,7 +2249,12 @@ def parser():
     p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
     a = t.add_parser("add")
-    a.add_argument("--summary", required=True)
+    how = a.add_mutually_exclusive_group(required=True)
+    how.add_argument("--summary")
+    how.add_argument("--from-report", metavar="FILE",
+                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it "
+                          "and changes only the ticket table, the log, and lastActivityAt")
+    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it changes no table and no log")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
@@ -2386,6 +2534,18 @@ def run(argv):
             result = command(restaurant, args)
         lines = fragment_lines(restaurant, args.id, args.branch)
         return f"{result}\n{lines}" if lines else result
+    if args.command == "ticket" and args.action == "add" and args.from_report is not None:
+        if args.source != "user" or args.ref or args.request:
+            raise BrigadeError("--from-report takes no --source, --ref, or --request")
+        name = item_report(restaurant, args.from_report)
+        try:
+            found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
+        except UnicodeDecodeError as error:
+            raise BrigadeError(f"reports/{name} is not UTF-8 text; nothing added") from error
+        with restaurant.checked():
+            return file_follow_ups(restaurant, name, found, not args.dry_run)
+    if args.command == "ticket" and args.action == "add" and args.dry_run:
+        raise BrigadeError("--dry-run needs --from-report")
     rails = None
     if args.command == "ticket" and (args.action == "move" or args.action == "add" and args.ref):
         rails = sibling_rails(restaurant)
