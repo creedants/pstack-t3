@@ -955,7 +955,7 @@ def counts(restaurant):
         "merged": dishes.count("merged"),
         "decisions for you": len(questions),
         "handed to you": handed_count(restaurant),
-        "requests from the user": len(request_files(restaurant)[0]),
+        "requests from the executive admin": len(request_files(restaurant)[0]),
     }
 
 

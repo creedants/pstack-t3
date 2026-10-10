@@ -4785,16 +4785,25 @@ class AdminTest(StoresTest):
         # A failed send leaves the file. The coordinator's next wake prints it again.
         for _ in range(2):
             self.assertEqual(self.brigade("docs", "inbox", "take"), f"A1: {line}")
-        self.assertIn("requests from the user: 1", self.brigade("docs", "status"))
+        self.assertIn("requests from the executive admin: 1", self.brigade("docs", "status"))
         self.assertEqual(self.brigade("docs", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.brigade("docs", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.brigade("docs", "inbox", "done", "A2", ok=False), "brigade: no request A2 in the inbox")
         self.assertEqual(self.inbox("docs"), [])
         self.assertEqual(self.brigade("docs", "inbox", "take"), "nothing handed to you")
-        self.assertNotIn("requests from the user", self.brigade("docs", "status"))
+        self.assertNotIn("requests from", self.brigade("docs", "status"))
         self.assertEqual([row[1:4] for row in self.rows("docs", "log.tsv") if row[1] == "inbox-done"], [["inbox-done", "A1", "done"]])
         self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[1] == "request"],
                          [["request", "A1", "sent", f"to docs: {line}"]])
+
+    def test_status_and_walk_count_every_pending_request_as_from_the_executive_admin(self):
+        self.open("docs")
+        self.open_admin()
+        self.admin("request", "--to", "docs", "reports-to docs th-admin")
+        self.admin("request", "--to", "docs", "from-user docs: add a FAQ")
+        for printed in (self.brigade("docs", "status"), self.brigade("docs", "walk", "--repo", str(self.project))):
+            self.assertIn("requests from the executive admin: 2", printed)
+            self.assertNotIn("requests from the user", printed)
 
     def test_a_request_killed_before_its_file_is_republished_once(self):
         self.open("docs")
@@ -4823,7 +4832,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.brigade("core", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
         self.assertEqual(self.inbox("core"), [])
-        self.assertNotIn("requests from the user", self.brigade("core", "status"))
+        self.assertNotIn("requests from", self.brigade("core", "status"))
 
     def test_a_request_finished_while_republish_runs_stays_finished(self):
         self.open("core")
@@ -4837,7 +4846,7 @@ class AdminTest(StoresTest):
         (case / "proceed").touch()
         code, out, err = self.finish(proc)
         self.assertEqual(code, 0, err)
-        self.assertNotIn("requests from the user", self.brigade("core", "status"))
+        self.assertNotIn("requests from", self.brigade("core", "status"))
         self.assertEqual(self.brigade("core", "inbox", "take"), "nothing handed to you")
         self.assertEqual(self.inbox("core"), [])
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
