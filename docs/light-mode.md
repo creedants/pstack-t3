@@ -110,7 +110,7 @@ Each row is one place a skill spawns a child or a thread. "Items" is the mean `i
 | # | Spawn | Source | Children per run | When | Items |
 | --- | --- | --- | --- | --- | --- |
 | 32 | Coordinator thread | `t3/added/brigade/SKILL.md:106` | 1 `t3_thread_launch` | `open` printed `opened` | standing |
-| 33 | Executive admin thread | `brigade/SKILL.md:291` | 1 `t3_thread_launch` | `open --admin` printed `opened` | standing |
+| 33 | Executive admin thread | `t3/added/brigade-admin/SKILL.md:33` | 1 `t3_thread_launch` | `open --admin` printed `opened` | standing |
 | 34 | brigade worker | `brigade/SKILL.md:135` | 1 top-level thread per attempt | Every work item, and again on a bounce (`:141`), a send-back (`:142`), a missing worker (`:202`), and a timebox replacement (`:206`) | 29 to 354 per worker |
 | 35 | brigade gate verifier | `brigade/SKILL.md:138` | 1 from `verifiers`, another family than the author | Every attempt, at its head SHA | 38 |
 | 36 | brigade second reviewer | not in the skill text | 1 trial model | 19 times, on D59 to D70 during the reviewer trial | 110 |
