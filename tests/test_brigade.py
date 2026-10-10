@@ -2142,6 +2142,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "log.tsv", "86.tsv")), before)
         self.assertEqual(self.brigade("watch"), self.PENDING)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
 
     def test_86_add_round_budget_writes_the_three_option_decision(self):
         self.started()
@@ -2151,9 +2152,10 @@ class BrigadeTest(unittest.TestCase):
         self.send_back("a3", "--report", "D1-review-3.md")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         row = self.table_row(self.at, "86.tsv", "Q1")
-        self.assertEqual((row["state"], row["dish"], row["question"], row["options"], row["default"]),
+        self.assertEqual((row["state"], row["dish"], row["question"], row["options"], row["default"], row["kind"],
+                          row["answered"]),
                          ("open", "D1", f"{self.ROUND_QUESTION} Findings: reports/D1-review-3.md.",
-                          "known limits, redesign, drop, keep parked", "keep parked"))
+                          "known limits, redesign, drop, keep parked", "keep parked", "round-budget", ""))
         table = (self.at / "86.tsv").read_bytes()
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual((self.at / "86.tsv").read_bytes(), table)
@@ -2185,7 +2187,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, "--question", "Move?", ok=False), alone)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, "--default", "drop", ok=False), alone)
         self.assertEqual((self.at / "86.tsv").read_text().splitlines(),
-                         ["id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer"])
+                         ["id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer\tkind\tanswered"])
         self.assertEqual(self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no"), "Q1")
         self.assertEqual(self.park_item(), "Q2")
 
@@ -2233,21 +2235,193 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["question"], self.ROUND_QUESTION)
 
-    def test_a_queue_bounce_at_three_send_backs_is_not_refused(self):
+    def test_a_queue_bounce_is_refused_only_while_the_decision_is_owed(self):
         self.started()
         self.sent_back(2)
         self.brigade("dish", "D1", "--state", "in-progress")
-        self.assertEqual(self.send_back("a0", "--late"), "D1: late send-back on record; D1 stays in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
-        self.brigade("pass", "record", "D1", "--sha", "a3", "--verdict", "pass", "--author", CODEX, "--verifier", CLAUDE)
+        self.passed("a3")
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.passed("a4")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.assertEqual(self.send_back("a0", "--late"),
+                         "D1: late send-back on record; D1 stays queued; 3 send-backs, decision pending")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "known limits"), "Q1 answered")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+
+    def unchanged(self, before=None):
+        now = tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "rail.tsv", "log.tsv", "86.tsv"))
+        if before is not None:
+            self.assertEqual(now, before)
+        return now
+
+    def test_a_detour_through_review_starts_no_fix_round(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        before = self.unchanged()
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker", ok=False),
+                         self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("dish", "D1", "--task", "fresh-task", ok=False), self.NO_FIX_ROUND)
+        self.unchanged(before)
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("86", "list"), "no open decisions")
+
+    def test_watch_names_the_pending_decision_in_every_open_state(self):
+        self.started()
+        self.sent_back(3)
+        verdict = ("pass", "record", "D1", "--sha", "a3", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
+        for command in (("dish", "D1", "--state", "in-review"), (*verdict, "blocked"), (*verdict, "pass")):
+            self.brigade(*command)
+            self.assertEqual(self.brigade("watch"), self.PENDING, command)
+        self.assertEqual(self.dish_fields("state"), ("passed",))
+
+    def test_a_late_third_send_back_holds_an_item_in_progress(self):
+        self.started()
+        self.sent_back(2)
+        self.brigade("dish", "D1", "--state", "in-progress", "--thread", "w3")
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread w3)")
+        self.assertEqual(self.send_back("a0", "--late"),
+                         "D1: late send-back on record; D1 stays in-progress; 3 send-backs, decision pending")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        before = self.unchanged()
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("dish", "D1", "--task", "fresh-task", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
+        self.unchanged(before)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "w3", "--reported"), "D1 in-progress")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+
+    def test_a_late_send_back_below_the_budget_names_no_decision(self):
+        self.started()
+        self.sent_back(1)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.send_back("a0", "--late"), "D1: late send-back on record; D1 stays in-progress")
+        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "w2"), "D1 in-progress")
+
+    FIRE_AGAIN = ("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fourth fix", "--thread", "fresh-worker")
+    NO_FIRE = ("brigade: T1 is D1's ticket; D1 has 3 send-backs; no fix round until its decision is answered; "
+               "run 86 add --dish D1 --round-budget")
+
+    def test_fire_refuses_a_ticket_of_an_item_that_owes_its_decision(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "waiting"), "T1 waiting")
+        before = self.unchanged()
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
+        self.unchanged(before)
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] one")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
+
+    def test_fire_refuses_the_ticket_of_an_item_dropped_without_its_decision(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "drop"), "Q1 answered")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
+
+    def test_fire_takes_the_ticket_of_an_item_under_its_budget(self):
+        self.started()
+        self.sent_back(2)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
+
+    FIX_BRIEF = ("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+
+    def test_brief_refuses_an_item_that_owes_its_decision(self):
+        self.started()
+        self.brigade("set", "--thread", "c1")
+        self.sent_back(2)
+        self.assertIn("GOAL: g\n", self.brigade(*self.FIX_BRIEF))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.send_back("a3")
+        written = (self.at / "briefs" / "D1.md").read_bytes()
+        before = self.unchanged()
+        self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
+        self.unchanged(before)
+        self.assertEqual((self.at / "briefs" / "D1.md").read_bytes(), written)
+        self.brigade(*self.ROUND_BUDGET)
+        self.brigade("86", "answer", "Q1", "--answer", "redesign")
+        self.assertIn("GOAL: g\n", self.brigade(*self.FIX_BRIEF))
+
+    def test_an_ordinary_decision_answered_with_a_round_option_lifts_no_refusal(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Redesign the title wording?",
+                                      "--options", "redesign, keep parked", "--default", "keep parked"), "Q1")
+        held = "brigade: D1 is held by Q1; answer it, then run 86 add --dish D1 --round-budget"
+        table = (self.at / "86.tsv").read_bytes()
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), held)
+        self.assertEqual((self.at / "86.tsv").read_bytes(), table)
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
+        self.assertEqual(self.table_row(self.at, "86.tsv", "Q1")["kind"], "")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
+        self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["kind"], "round-budget")
+        self.assertEqual(self.brigade("86", "answer", "Q2", "--answer", "redesign"), "Q2 answered")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+
+    def test_late_rows_recorded_while_the_decision_is_open_stop_counting_at_its_answer(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
+        for count in (4, 5, 6):
+            self.assertEqual(self.send_back(f"missed{count}", "--late"),
+                             f"D1: late send-back on record; D1 stays sent-back; {count} send-backs, decision pending")
+        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
+        row = self.table_row(self.at, "86.tsv", "Q1")
+        self.assertGreater(row["answered"], self.pass_rows()[-1][0])
+        self.assertGreater(row["answered"], row["at"])
+        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.send_back("missed7", "--late"), "D1: late send-back on record; D1 stays in-progress")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
+                         "brigade: D1 has 1 send-back since its last round decision; the decision opens at 3")
+
+    def test_a_decision_table_written_before_the_kind_and_answered_columns_still_reads(self):
+        self.started()
+        self.assertEqual(self.sent_back(3), "D1 sent-back; 3 send-backs, decision pending")
+        stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        old = ["\t".join(["Q1", stamp, "answered", "D1", "Drop this item?", "drop, keep parked", "keep parked", "drop"]),
+               "\t".join(["Q2", stamp, "open", "", "Ship it?", "yes, no", "no", ""])]
+        table = self.at / "86.tsv"
+        table.write_text("id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer\n" + "\n".join(old) + "\n")
+        self.assertEqual(self.brigade("86", "list"), "Q2: Ship it? Options: yes, no. Default: no.")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q3")
+        lines = table.read_text().splitlines()
+        self.assertEqual(lines[1:3], old)
+        self.assertEqual(lines[3].split("\t")[5:], ["known limits, redesign, drop, keep parked", "keep parked", "",
+                                                     "round-budget", ""])
+        self.assertEqual(self.brigade("86", "answer", "Q3", "--answer", "drop"), "Q3 answered")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        stored = [self.table_row(self.at, "86.tsv", ident) for ident in ("Q1", "Q2", "Q3")]
+        self.assertEqual([(row["state"], row["answer"], row["kind"], bool(row["answered"])) for row in stored],
+                         [("answered", "drop", "", False), ("open", "", "", False), ("answered", "drop", "round-budget", True)])
+        for fields, line in ((old[1].split("\t")[:7], 5), ([*old[1].split("\t"), "", "", "extra"], 5)):
+            table.write_text(table.read_text() + "\t".join(fields) + "\n")
+            self.assertEqual(self.brigade("86", "list", ok=False),
+                             f"brigade: 86.tsv line {line} is malformed; fix or remove it")
+            table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
 
     def test_an_unrelated_answered_item_decision_lifts_no_refusal(self):
         self.started()
         self.sent_back(3)
         self.assertEqual(self.park_item(), "Q1")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
+        self.assertNotEqual(self.table_row(self.at, "86.tsv", "Q1")["answered"], "")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade("watch"), self.PENDING)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
@@ -2439,7 +2613,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
                                       "--options", "moved, keep parked", "--default", "ship it", ok=False), ITEM_DECISION)
         self.assertEqual((self.at / "86.tsv").read_text().splitlines(),
-                         ["id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer"])
+                         ["id\tat\tstate\tdish\tquestion\toptions\tdefault\tanswer\tkind\tanswered"])
         self.assertEqual(self.park_item(), "Q1")
         table = (self.at / "86.tsv").read_text()
         self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--question", "Move?",
@@ -2975,6 +3149,8 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn(f"{line}{second}\n", self.brigade(*self.BRIEF))
         self.brigade("dish", "D1", "--state", "in-progress")
         self.record("a3", "send-back")
+        self.brigade("86", "add", "--dish", "D1", "--round-budget")
+        self.brigade("86", "answer", "Q1", "--answer", "known limits")
         self.assertNotIn(line, self.brigade(*self.BRIEF))
         plain = self.review_file("D1-review.md")
         self.assertIn(f"{line}{plain}\n", self.brigade(*self.BRIEF))
@@ -4393,6 +4569,11 @@ class RoundBudgetDocTest(unittest.TestCase):
     def test_the_script_section_names_the_closing_answers_and_the_budget(self):
         script = self.text.split("## The script", 1)[1].split("\n## ", 1)[0]
         self.assertIn("Only `known limits`, `redesign`, or `drop` closes it.", script)
+        self.assertIn("Only that answer lifts the refusal, and no other decision does, whatever its answer.", script)
+        self.assertIn("The count starts again at the time of the answer", script)
+        self.assertIn("whatever state it is in", script)
+        for command in ("`dish --state in-progress`", "`dish --thread` or `--task`", "`brief`", "`fire` refuses each ticket"):
+            self.assertIn(command, script)
         self.assertIn("`ROUND_BUDGET`", script)
 
     def test_step_6_records_every_round_with_its_report(self):
@@ -4402,7 +4583,8 @@ class RoundBudgetDocTest(unittest.TestCase):
         ))
 
     def test_step_7_stops_fix_rounds_at_a_pending_decision(self):
-        pending = [line for line in self.service if line.startswith("   - Decision pending:")]
+        pending = [line for line in self.service
+                   if line.startswith("   - When `pass record` or `watch` prints `<n> send-backs, decision pending`,")]
         self.assertEqual(len(pending), 1)
         bullet = pending[0]
         send_back = next(line for line in self.service if line.startswith("   - `send-back`:"))
