@@ -225,7 +225,7 @@ class Assignment:
     evidence: Evidence
 
 
-# The types below hold what a person reads. No field holds a thread id, a sub-agent id, a request name, or a path.
+# The types below hold what a person reads. No field is for a thread id, a sub-agent id, a request name, or a path.
 
 
 @dataclass(frozen=True)
@@ -308,7 +308,7 @@ class Hidden:
     `totals.agents + totals.subagents` on every page.
     """
 
-    dropped_items: int = 0       # finished work items drop_old_items removed
+    dropped_items: int = 0       # merged or dropped work items drop_old_items removed
     dropped_agents: int = 0      # the agents of those items
     cut_agents: int = 0          # agents whose row cap_everything removed
     cut_in_flight: int = 0       # in-flight items cap_everything removed from the strip
@@ -734,7 +734,9 @@ def path_like(part):
 
 
 def scrub(text):
-    """The first line of text without its path-like and id-like parts. Every string on a Page but a link and a model name went through it.
+    """The first line of text without its path-like and id-like parts.
+
+    Every string that build_page takes from the store or from T3 goes through it, but a link and a model name.
 
     A part is the text between spaces, read after any opening quote or bracket.
     It is path-like when it starts with / or ~, holds two or more / or two or more backslashes, or holds :// and does not start with http:// or https://.
@@ -1176,7 +1178,7 @@ def squeezed(source):
     return "".join(part if part.startswith("'") else tight(part) for part in re.split(r"('[^']*')", source.strip()))
 
 
-# The page sets no background on html, body, or #o, and takes every color from a theme variable of html_render.
+# The page sets no background on html, body, or #o. The only colors it names are theme variables of html_render and transparent.
 STYLE = joined_lines("""
     #o{font:13px/1.4 var(--font-sans);color:var(--foreground)}
     #o a{color:inherit;text-decoration:none}
