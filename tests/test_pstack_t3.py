@@ -70,6 +70,8 @@ class RolesTest(unittest.TestCase):
             policy = roles.ROLE_DEFAULTS[name]
             if name == "verifiers":
                 self.assertIs(policy, roles.AdaptiveDefault.VERIFIERS)
+            elif name == "review backups":
+                self.assertIs(policy, roles.AdaptiveDefault.UNSET)
             else:
                 self.assertEqual(len(policy), 2)
 
@@ -129,6 +131,24 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         proposals = (ROOT / "t3/setup.md").read_text().split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
         self.assertIn("`skill tests`", proposals)
+
+    def test_setup_proposes_review_backups_only_when_the_user_names_a_panel(self):
+        text = (ROOT / "t3/setup.md").read_text()
+        proposals = text.split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
+        for phrase in (
+            "`review backups` is optional and has no built-in seats.",
+            "Leave it unset unless the user names a panel.",
+            "When set, a `verifiers` seat whose paid backups are all out runs that panel instead of parking.",
+            "Never propose a Cursor, Codex, or `inherit` seat for it.",
+        ):
+            self.assertIn(phrase, proposals)
+        self.assertNotIn("opencode", text)
+        self.assertNotIn("opencode", (ROOT / "t3/runtime.md").read_text())
+
+    def test_review_backups_is_unset_by_default(self):
+        for catalog in (None, CATALOG):
+            entry = roles.resolve(config(), catalog, ["review backups"])["roles"]["review backups"]
+            self.assertEqual(entry, {"source": "default", "seats": "unset", "note": roles.UNSET_NOTE})
 
     def test_panel_default_is_one_seat_per_runnable_provider_with_parent_inheriting(self):
         seats = roles.resolve(config(), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
@@ -2083,8 +2103,22 @@ class StalledChildDocTest(unittest.TestCase):
     def test_failure_handling_relaunches_a_usage_limit_on_the_backup_ladder(self):
         section = runtime_section("### Failure handling", "\n### ")
         self.assertIn("roles.py backup", section)
-        for decision in ("relaunch", "park", "not-usage-limit"):
+        for decision in ("relaunch", "panel", "park", "not-usage-limit"):
             self.assertIn(f"`{decision}`", section)
+        parks = "When every backup family is an author family, the command parks."
+        panel = "For a `verifiers` seat with `review backups` set, the command prints `panel` instead."
+        for phrase in (
+            "The command prints `relaunch`, `panel`, `park`, or `not-usage-limit`.",
+            panel,
+            "a stable `clientRequestId` ending in `-panel-<n>`",
+            "Wait until every member is terminal, even after two pass.",
+            'runs this command with `--role "review backups"`, which parks it, and it counts as no pass.',
+            "A member that fails otherwise respawns once.",
+            "Land only if no reviewer reproduces a blocker and at least two of the panel pass.",
+            "With `review backups` unset, or fewer than two usable seats, the command prints `park`.",
+        ):
+            self.assertIn(phrase, section)
+        self.assertLess(section.index(parks), section.index(panel))
         self.assertIn("Backup never selects Codex or Cursor.", section)
         self.assertIn("Codex stays the default reviewer.", section)
         self.assertIn("A limit on `claudeAgent` parks a worker.", section)
@@ -2129,6 +2163,47 @@ class StalledChildDocTest(unittest.TestCase):
         section = runtime_section("## Local state")
         self.assertIn("A task in `result_available` finished", section)
         self.assertIn("before you respawn its slice", section)
+
+
+class OpenCodeLongCommandDocTest(unittest.TestCase):
+    PARAGRAPH = (
+        "Nobody resumes you after your turn ends, so a command left running in the background is lost.",
+        "Run every long command in the foreground with a long enough timeout, for example a bash timeout of 600000 ms.",
+        "If your shell moves a command to the background anyway, keep checking its output, "
+        "with `sleep 60` between checks, until it finishes.",
+        "Do not end your turn until your report is written.",
+    )
+
+    def test_delegation_step_3_carries_the_opencode_brief_paragraph(self):
+        step = runtime_section("3. Spawn every independent child", "\n4. A child starts")
+        cursor = "A Cursor harness sent `options` as a string, T3 refused the call, and the child then dropped the options."
+        rule = step.split(cursor, 1)[1].split("\n   - ", 2)[1]
+        self.assertTrue(rule.startswith("OpenCode moves a long command to the background, tells the model to end its turn"))
+        self.assertNotIn("only OpenCode", rule)
+        self.assertIn("T3 publishes the task's result when the first turn ends, and the later turn does not reopen the task.", rule)
+        self.assertIn("Paste this paragraph unchanged into the brief of every child seated on OpenCode.", rule)
+        self.assertIn("     > " + " ".join(self.PARAGRAPH) + "\n", rule)
+        self.assertIn(
+            "When an OpenCode child's task is terminal and the report file its brief named is missing, "
+            "the task is not finished. Read its activity with `t3_thread_read`. "
+            "While a later turn on its thread still runs, wait on it per step 5. "
+            "Otherwise handle it per [Failure handling](#failure-handling).",
+            rule,
+        )
+
+    def test_step_5_two_minute_rule_skips_a_background_wait(self):
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        bullet = runtime_bullet(step, "   - A child with a final assistant message that holds the result")
+        self.assertIn(
+            "A message that says more work follows does not hold the result. "
+            "A last message that says the child waits on a background command does not hold the result either, "
+            "so this two-minute rule does not apply to it.",
+            bullet,
+        )
+
+    def test_the_paragraph_is_stated_once(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        self.assertEqual(text.count("Nobody resumes you after your turn ends"), 1)
 
 
 class SeatLaunchDocTest(unittest.TestCase):

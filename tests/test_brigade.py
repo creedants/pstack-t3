@@ -3999,6 +3999,34 @@ class UsageLimitDocTest(unittest.TestCase):
         self.assertIn("A parked verifier stays in review.", bullet)
         self.assertNotIn("relaunch per this bullet on the first service after it", bullet)
 
+    def test_step_7_runs_a_review_backups_panel(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        service = text.split("## Run a service", 1)[1].split("\n## ", 1)[0]
+        bullet = next(line for line in service.splitlines() if line.startswith("   - Usage limit:"))
+        relaunch = "When it prints `relaunch`, spawn a fresh verifier per step 6 on the printed seat."
+        panel = (
+            "When it prints `panel`, spawn one fresh verifier per step 6 on each printed seat, "
+            "keep the dish in review until every one is terminal, then apply the printed rule per "
+            "[Failure handling](../pstack-runtime/SKILL.md#failure-handling)."
+        )
+        passes = (
+            "When the rule passes, run `$B pass record` with `--verdict pass` once for each member that passed, "
+            "with that member's seat as `--verifier`, and record no row for the others."
+        )
+        resumed = "When `--resume` prints `panel`, run the panel the same way."
+        for phrase in (
+            panel,
+            "`<restaurant dir>/reports/<dish>-review-panel-<n>.md`",
+            passes,
+            "copy its findings into `<restaurant dir>/reports/<dish>-review.md`",
+            "When fewer than two pass and none reproduces a blocker, record no row, and the dish stays in review as on `park`.",
+            resumed,
+        ):
+            self.assertIn(phrase, bullet)
+        self.assertLess(bullet.index(relaunch), bullet.index(panel))
+        self.assertLess(bullet.index(panel), bullet.index("On `park`"))
+        self.assertLess(bullet.index("When `--resume` prints `relaunch` for `verifiers`"), bullet.index(resumed))
+
 
 class AnswerRelayDocTest(unittest.TestCase):
     def test_the_requests_answer_row_names_still_open(self):
