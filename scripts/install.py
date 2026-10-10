@@ -58,11 +58,26 @@ def extra_dirs(scope_root, user):
     }
 
 
+IGNORED = "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}"
+
+
+def config_home(environ, default):
+    value = environ.get("XDG_CONFIG_HOME")
+    if not value:
+        return Path(default()), None
+    if not os.path.isabs(value):
+        home = Path(default())
+        return home, IGNORED.format(value=value, home=str(home))
+    return Path(value), None
+
+
 def state_dir(scope_root, user):
-    if user:
-        config = Path(os.environ.get("XDG_CONFIG_HOME") or Path(os.environ.get("HOME", str(Path.home()))) / ".config")
-        return config / "pstack-t3"
-    return scope_root / ".pstack"
+    if not user:
+        return scope_root / ".pstack"
+    config, ignored = config_home(os.environ, lambda: Path(os.environ.get("HOME", str(Path.home()))) / ".config")
+    if ignored:
+        print(ignored, file=sys.stderr)
+    return config / "pstack-t3"
 
 
 def owner_path(state, checkout):
@@ -304,8 +319,7 @@ def read_legacy(state, scope, user):
     return links, backups
 
 
-def load(scope, user):
-    state = state_dir(scope, user)
+def load(state, scope, user):
     root = str(ROOT)
     links, backups = read_legacy(state, scope, user)
     return View(current_claims(state, root), links, backups)
@@ -1434,7 +1448,7 @@ def install(args):
     def strays(view):
         return survey(view, scope, user, state, root, args.harness)
 
-    view = load(scope, user)
+    view = load(state, scope, user)
     plan = make_plan(view)
     found = strays(view)
     if plan.conflicts and not args.replace:
@@ -1445,8 +1459,8 @@ def install(args):
         report_install(plan, state, root, None, args.dry_run)
         return 0
     with locked(state):
-        settle(strays(load(scope, user)), state, root, False)
-        plan = make_plan(load(scope, user))
+        settle(strays(load(state, scope, user)), state, root, False)
+        plan = make_plan(load(state, scope, user))
         reject(plan)
         executed = execute(plan, state, root) if plan.steps else None
         report_install(plan, state, root, executed, False)
@@ -1465,7 +1479,7 @@ def uninstall(args):
     def strays(view):
         return survey(view, scope, user, state, root, args.harness)
 
-    view = load(scope, user)
+    view = load(state, scope, user)
     with ExitStack() as holds:
         plan = make_plan(view, holds)
     found = strays(view)
@@ -1474,8 +1488,8 @@ def uninstall(args):
         report_uninstall(plan, None, args.dry_run)
         return 0
     with locked(state), ExitStack() as holds:
-        settle(strays(load(scope, user)), state, root, False)
-        plan = make_plan(load(scope, user), holds)
+        settle(strays(load(state, scope, user)), state, root, False)
+        plan = make_plan(load(state, scope, user), holds)
         executed = execute(plan, state, root) if plan.steps else None
         report_uninstall(plan, executed, False)
     return SKIPPED if executed and executed["skipped"] else 0

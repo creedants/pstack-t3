@@ -4370,3 +4370,99 @@ class RuntimeModeBackupCliTest(unittest.TestCase):
                         "so review backups runs 3 seats; land only if no reviewer reproduces a blocker and at least two pass"
                     ),
                 })
+
+
+class RelativeConfigHomeCliTest(unittest.TestCase):
+    """roles.py under XDG_CONFIG_HOME=.config, run from a working directory that is not the home."""
+
+    OPUS = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+    GROK = {"providerInstanceId": "grok", "model": "grok-4.7"}
+
+    def setUp(self):
+        wrapper = tempfile.TemporaryDirectory()
+        self.addCleanup(wrapper.cleanup)
+        root = Path(os.path.realpath(wrapper.name))
+        self.home, self.work = root / "home", root / "work"
+        self.home.mkdir()
+        (self.work / ".git").mkdir(parents=True)
+        self.default = self.home / ".config" / "pstack-t3"
+        self.earlier = self.work / ".config" / "pstack-t3"
+        self.ignored = (
+            "XDG_CONFIG_HOME='.config' is not an absolute path, so it is ignored "
+            f"and the config home is {str(self.home / '.config')!r}\n"
+        )
+
+    def put(self, path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def run_roles(self, *args):
+        env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": ".config"}
+        return subprocess.run(
+            [sys.executable, str(ROOT / "t3/scripts/roles.py"), *args],
+            env=env,
+            cwd=self.work,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_show_under_a_relative_xdg_config_home_reads_the_default_roles_file_and_prints_the_ignored_line_once(self):
+        self.put(self.default / "roles.json", {"version": 1, "roles": {"bug-fix": [self.OPUS]}})
+        self.put(self.default / "catalog.json", json.loads(CATALOG.read_text()))
+        self.put(self.earlier / "roles.json", {"version": 1, "roles": {"bug-fix": [self.GROK]}})
+        completed = self.run_roles("show", "--cwd", str(self.work), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, self.ignored)
+        self.assertEqual(json.loads(completed.stdout), {
+            "budget": "default",
+            "mode": "full",
+            "modeSource": "default",
+            "escalate": None,
+            "catalog": True,
+            "roles": {"bug-fix": {"source": str(self.default / "roles.json"), "seats": [self.OPUS]}},
+        })
+
+    def test_write_under_a_relative_xdg_config_home_writes_under_the_default_config_home_and_leaves_the_working_directory_unchanged(self):
+        self.put(self.earlier / "roles.json", {"version": 1, "roles": {"bug-fix": [self.OPUS]}})
+        self.put(self.earlier / "catalog.json", {"providers": []})
+        kept = {name: (self.earlier / name).read_bytes() for name in ("catalog.json", "roles.json")}
+        completed = self.run_roles("write", "--cwd", str(self.work), "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, f"wrote {self.default / 'roles.json'}\n")
+        self.assertEqual(completed.stderr, self.ignored)
+        self.assertEqual(
+            json.loads((self.default / "roles.json").read_text()),
+            {"version": 1, "roles": {"bug-fix": [self.GROK]}, "budget": "default", "mode": "full"},
+        )
+        self.assertEqual(json.loads((self.default / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
+        self.assertEqual(sorted(os.listdir(self.work)), [".config", ".git"])
+        self.assertEqual(os.listdir(self.work / ".config"), ["pstack-t3"])
+        self.assertEqual({name: (self.earlier / name).read_bytes() for name in sorted(os.listdir(self.earlier))}, kept)
+
+    def test_a_roles_command_that_reads_no_user_config_home_prints_no_ignored_line(self):
+        brief = self.work / "brief.md"
+        brief.write_text("x\n", encoding="utf-8")
+        roles_file = self.work / "roles.json"
+        self.put(roles_file, {"version": 1, "roles": {}, "mode": "light"})
+        runs = (
+            (("check-brief", str(brief)), 1),
+            (("show", "--help"), 0),
+            (("mode", "--cwd", str(self.work), "--config", str(roles_file)), 0),
+        )
+        for args, status in runs:
+            with self.subTest(args=args):
+                completed = self.run_roles(*args)
+                self.assertEqual(completed.returncode, status, completed.stdout + completed.stderr)
+                self.assertEqual(completed.stderr, "")
+
+    def test_a_refused_show_under_a_relative_xdg_config_home_prints_the_ignored_line_then_the_error_and_exits_2(self):
+        file = self.default / "roles.json"
+        file.parent.mkdir(parents=True)
+        file.write_text("{", encoding="utf-8")
+        completed = self.run_roles("show", "--cwd", str(self.work), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            self.ignored
+            + f"error: {file}: invalid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n"
+        ))

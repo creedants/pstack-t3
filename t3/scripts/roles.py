@@ -8,6 +8,7 @@ T3's orchestrator_capabilities tool returns.
 
 import argparse
 import fnmatch
+import functools
 import json
 import os
 import posixpath
@@ -241,9 +242,25 @@ class Backup:
     notes: tuple = ()
 
 
+IGNORED = "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}"
+
+
+def config_home(environ, default):
+    value = environ.get("XDG_CONFIG_HOME")
+    if not value:
+        return Path(default()), None
+    if not os.path.isabs(value):
+        home = Path(default())
+        return home, IGNORED.format(value=value, home=str(home))
+    return Path(value), None
+
+
+@functools.lru_cache(maxsize=None)
 def user_config_path():
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "pstack-t3" / "roles.json"
+    config, ignored = config_home(os.environ, lambda: Path.home() / ".config")
+    if ignored:
+        print(ignored, file=sys.stderr)
+    return config / "pstack-t3" / "roles.json"
 
 
 def snapshot_path():

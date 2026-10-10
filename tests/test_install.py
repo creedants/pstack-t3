@@ -3,6 +3,8 @@
 import errno
 import fcntl
 import hashlib
+import importlib.util
+import inspect
 import json
 import os
 import re
@@ -3641,19 +3643,132 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(os.listdir(link.parent), ["grok"])
         self.assertEqual(os.listdir(link.parent.parent), [link.parent.name])
 
-    RELATIVE = {"XDG_CONFIG_HOME": ".config"}
+    RELATIVE_HOME = {"HOME": "."}
+    RELATIVE_XDG = {"XDG_CONFIG_HOME": ".config"}
 
-    def test_an_uninstall_under_a_relative_config_home_restores_a_replaced_file_and_leaves_backups_empty(self):
+    def ignored_line(self):
+        return f"XDG_CONFIG_HOME='.config' is not an absolute path, so it is ignored and the config home is {str(self.home / '.config')!r}\n"
+
+    def another_directory(self):
+        """Make the empty directory work under the home and return it."""
+        work = self.home / "work"
+        work.mkdir()
+        return work
+
+    def test_an_install_with_replace_and_an_uninstall_under_a_relative_xdg_config_home_run_from_another_directory_keep_their_records_under_the_default_config_home(self):
         a = make_checkout(self.home, "a")
+        work = self.another_directory()
         swarm = provider_link(self.home, "grok", "swarm")
         swarm.parent.mkdir(parents=True)
         swarm.write_bytes(b"mine\x00grok\n")
-        self.ok(run(self.home, a, "--harness", "grok", "--replace", env=self.RELATIVE), "linked 3 skills into grok")
-        self.assertEqual(len(self.under_backups()), 3)
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE), "removed 3 links, restored 1 entries")
+        linked = run(self.home, a, "--harness", "grok", "--replace", env=self.RELATIVE_XDG, cwd=work)
+        self.assertEqual(linked.returncode, 0, linked.stdout + linked.stderr)
+        self.assertEqual(linked.stdout, f"linked 3 skills into grok\nmanifest: {legacy_file(self.home)}\n")
+        self.assertEqual(linked.stderr, self.ignored_line())
+        stamps = os.listdir(state_dir(self.home) / "backups")
+        self.assertEqual(len(stamps), 1, stamps)
+        self.assertEqual([row["backup"] for row in read_legacy(self.home)["backups"]], [f"{state_dir(self.home)}/backups/{stamps[0]}/grok/swarm"])
+        removed = run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE_XDG, cwd=work)
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(removed.stdout, "removed 3 links, restored 1 entries\n")
+        self.assertEqual(removed.stderr, self.ignored_line())
         self.assertFalse(swarm.is_symlink())
         self.assertEqual(swarm.read_bytes(), b"mine\x00grok\n")
         self.assertEqual(self.under_backups(), [])
+        self.assertEqual(os.listdir(work), [])
+
+    def test_each_command_under_a_relative_xdg_config_home_prints_the_ignored_line_once_and_the_stdout_and_exit_status_it_has_with_the_variable_unset(self):
+        for variable, env in (("unset", None), ("relative", self.RELATIVE_XDG)):
+            self.use_fresh()
+            a = make_checkout(self.home, "a")
+            work = self.another_directory()
+            directory = provider_link(self.home, "grok", "swarm").parent
+            manifest = f"manifest: {legacy_file(self.home)}"
+            planned = [f"would link {directory / name} -> {a / 'skills' / name}" for name in NAMES]
+            runs = (
+                (("doctor",), 1, [f"grok    {directory}: 0/3 pstack-t3, 3 missing"]),
+                (("install", "--dry-run"), 0, [*planned, "3 links planned"]),
+                (("install",), 0, ["linked 3 skills into grok", manifest]),
+                (("install",), 0, ["linked 0 skills into nothing (already installed)", manifest]),
+                (("doctor",), 0, [f"grok    {directory}: 3/3 pstack-t3"]),
+                (("uninstall", "--dry-run"), 0, ["would remove 3 links, would restore 0 entries"]),
+                (("uninstall",), 0, ["removed 3 links, restored 0 entries"]),
+            )
+            for index, (command, status, lines) in enumerate(runs):
+                with self.subTest(variable=variable, index=index, command=command):
+                    done = run(self.home, a, *command, "--harness", "grok", env=env, cwd=work)
+                    self.assertEqual(done.returncode, status, done.stdout + done.stderr)
+                    self.assertEqual(done.stdout.splitlines(), lines)
+                    self.assertEqual(done.stderr, self.ignored_line() if env else "")
+            self.assertEqual(os.listdir(work), [])
+
+    def test_a_command_that_does_not_read_xdg_config_home_prints_no_ignored_line(self):
+        a = make_checkout(self.home, "a")
+        work = self.another_directory()
+        project = self.home / "project"
+        project.mkdir()
+        for command in ("install", "doctor", "uninstall"):
+            with self.subTest(command=command, project=True):
+                done = run(self.home, a, command, "--harness", "grok", f"--project={project}", env=self.RELATIVE_XDG, cwd=work)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(done.stderr, "")
+        for flags, status in ((("--help",), 0), (("--harness", "nope"), 2)):
+            with self.subTest(flags=flags):
+                done = run(self.home, a, *flags, env=self.RELATIVE_XDG, cwd=work)
+                self.assertEqual(done.returncode, status, done.stdout + done.stderr)
+                self.assertNotIn("XDG_CONFIG_HOME", done.stderr)
+        (a / "skills").rename(a / "skills.away")
+        stopped = run(self.home, a, "install", "--harness", "grok", env=self.RELATIVE_XDG, cwd=work)
+        self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+        self.assertEqual(stopped.stderr, self.UNBUILT + "\n")
+        checked = run(self.home, a, "doctor", "--harness", "grok", env=self.RELATIVE_XDG, cwd=work)
+        self.assertEqual(checked.returncode, 1, checked.stdout + checked.stderr)
+        self.assertEqual(checked.stdout, self.UNBUILT + "\n")
+        self.assertEqual(checked.stderr, "")
+
+    def test_an_empty_or_absolute_xdg_config_home_prints_nothing_on_stderr(self):
+        values = (
+            ("empty", lambda: "", lambda: self.home / ".config"),
+            ("absolute", lambda: f"{self.home}/kept", lambda: f"{self.home}/kept"),
+            ("absolute with dot dot", lambda: f"{self.home}/x/../kept", lambda: f"{self.home}/x/../kept"),
+        )
+        for name, value, config in values:
+            with self.subTest(value=name):
+                self.use_fresh()
+                a = make_checkout(self.home, "a")
+                (self.home / "x").mkdir()
+                done = run(self.home, a, "--harness", "grok", env={"XDG_CONFIG_HOME": value()}, cwd=self.another_directory())
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(done.stdout, f"linked 3 skills into grok\nmanifest: {config()}/pstack-t3/install-manifest.json\n")
+                self.assertEqual(done.stderr, "")
+
+    def test_no_command_under_a_relative_xdg_config_home_changes_an_installation_recorded_under_that_path_in_the_working_directory(self):
+        a = make_checkout(self.home, "a", old=True)
+        work = self.another_directory()
+        swarm = provider_link(self.home, "grok", "swarm")
+        swarm.parent.mkdir(parents=True)
+        swarm.write_bytes(b"mine\x00grok\n")
+        self.ok(run(self.home, a, "--harness", "grok", "--replace", env=self.RELATIVE_XDG, cwd=work), "linked 3 skills into grok")
+        self.assertEqual(sorted(os.listdir(work / ".config" / "pstack-t3")), ["backups", "install-manifest.json"])
+        upgrade(a)
+        before = snapshot(work)
+        directory = swarm.parent
+        manifest = f"manifest: {legacy_file(self.home)}"
+        runs = (
+            (("doctor",), [f"grok    {directory}: 3/3 pstack-t3"]),
+            (("install",), ["linked 0 skills into nothing (already installed)", f"3 {UNTRACKED}", manifest]),
+            (("uninstall", "--dry-run"), ["would remove 0 links, would restore 0 entries"]),
+            (("uninstall",), ["removed 0 links, restored 0 entries"]),
+        )
+        for command, lines in runs:
+            with self.subTest(command=command):
+                done = run(self.home, a, *command, "--harness", "grok", env=self.RELATIVE_XDG, cwd=work)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(done.stdout.splitlines(), lines)
+                self.assertEqual(done.stderr, self.ignored_line())
+                self.assertEqual(snapshot(work), before)
+        self.assertFalse(os.path.lexists(self.home / ".config"))
+        self.assert_grok_text(a)
 
     def test_an_uninstall_under_a_config_home_spelled_with_dot_dot_restores_a_replaced_file_and_leaves_backups_empty(self):
         a = make_checkout(self.home, "a")
@@ -3670,28 +3785,28 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(self.under_backups(), [])
 
     def restore_recorded_as(self, backup):
-        """Under a relative config home, restore swarm from <stamp>/grok/swarm through a row whose backup is `backup`."""
+        """Under a relative HOME, restore swarm from <stamp>/grok/swarm through a row whose backup is `backup`."""
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
         saved.parent.mkdir(parents=True)
         saved.write_bytes(b"saved\x00\xfe")
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": backup}])
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE), "removed 0 links, restored 1 entries")
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE_HOME), "removed 0 links, restored 1 entries")
         self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
 
-    def test_a_restore_under_a_relative_config_home_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
+    def test_a_restore_under_a_relative_home_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
         self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
-    def test_a_restore_under_a_relative_config_home_that_is_a_symlink_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
+    def test_a_restore_under_a_relative_home_that_is_a_symlink_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
         real = self.home / "dotfiles" / "kept"
         real.mkdir(parents=True)
         os.symlink(real, self.home / ".config")
         self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(os.listdir(real / "pstack-t3" / "backups"), [])
 
-    def test_a_restore_under_a_relative_config_home_whose_working_directory_is_removed_before_the_prune_restores_the_file_with_no_traceback(self):
+    def test_a_restore_under_a_relative_home_whose_working_directory_is_removed_before_the_prune_restores_the_file_with_no_traceback(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
@@ -3700,7 +3815,7 @@ class OwnershipTest(unittest.TestCase):
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}])
         gone = self.home / "gone"
         code = (
-            "os.environ['XDG_CONFIG_HOME'] = '.config'\n"
+            "os.environ['HOME'] = '.'\n"
             "original = module.remove_records\n"
             "def removing(*args):\n"
             "    original(*args)\n"
@@ -3713,11 +3828,11 @@ class OwnershipTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
 
-    def test_a_restore_under_a_relative_config_home_from_a_backup_recorded_as_a_relative_path_leaves_backups_empty(self):
+    def test_a_restore_under_a_relative_home_from_a_backup_recorded_as_a_relative_path_leaves_backups_empty(self):
         self.restore_recorded_as(".config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
-    def test_a_restore_under_a_relative_config_home_through_a_symlink_at_each_level_leaves_the_link_and_the_emptied_harness_directory(self):
+    def test_a_restore_under_a_relative_home_through_a_symlink_at_each_level_leaves_the_link_and_the_emptied_harness_directory(self):
         behind = {
             "backups": lambda link, real, emptied: (os.listdir(real), os.listdir(emptied.parent)),
             "stamp": lambda link, real, emptied: (os.listdir(real), os.listdir(link.parent)),
@@ -3731,9 +3846,9 @@ class OwnershipTest(unittest.TestCase):
         for level in ("backups", "stamp", "harness"):
             with self.subTest(level=level):
                 self.use_fresh()
-                self.assertEqual(behind[level](*self.restore_through_symlink(level, self.RELATIVE)), kept[level])
+                self.assertEqual(behind[level](*self.restore_through_symlink(level, self.RELATIVE_HOME)), kept[level])
 
-    def test_a_restore_under_a_relative_config_home_from_a_backup_recorded_with_dot_dot_leaves_both_harness_directories(self):
+    def test_a_restore_under_a_relative_home_from_a_backup_recorded_with_dot_dot_leaves_both_harness_directories(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         backups = state_dir(self.home) / "backups"
@@ -3744,7 +3859,7 @@ class OwnershipTest(unittest.TestCase):
         (other / "swarm").write_bytes(b"saved\x00\xfe")
         backup = f"{named}/../../20260202T000000-2-ef01/codex/swarm"
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": backup}])
-        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE), "removed 0 links, restored 1 entries")
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE_HOME), "removed 0 links, restored 1 entries")
         self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
         self.assertEqual(
             self.under_backups(),
@@ -3827,7 +3942,7 @@ class OwnershipTest(unittest.TestCase):
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}])
         # With a directory mounted at <stamp> below the state path as given, that name opens as the mounted directory under a backups descriptor opened through that path.
         code = (
-            "os.environ['XDG_CONFIG_HOME'] = '.config'\n"
+            "os.environ['HOME'] = '.'\n"
             "opening, closing = os.open, os.close\n"
             "given = set()\n"
             "def mounted(path, flags, mode=0o777, *, dir_fd=None):\n"
@@ -4880,16 +4995,16 @@ class OwnershipTest(unittest.TestCase):
             self.assertEqual(done.stdout.splitlines(), [line, counts])
             self.assertEqual(snapshot(self.home), before)
 
-    def test_an_uninstall_under_a_relative_config_home_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
+    def test_an_uninstall_under_a_relative_home_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
         a, swarm, saved, held = self.held_beside_absolute_row()
-        self.assert_left(a, self.RELATIVE, self.UNNAMED)
+        self.assert_left(a, self.RELATIVE_HOME, self.UNNAMED)
         self.assertEqual(held.read_bytes(), b"stray\x00\xfd")
         self.assertFalse(os.path.lexists(swarm))
         self.assertEqual(read_legacy(self.home)["backups"], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}])
 
-    def test_doctor_under_a_relative_config_home_prints_the_delete_the_row_line_for_a_backup_row_recorded_as_an_absolute_path_with_an_entry_held_beside_it(self):
+    def test_doctor_under_a_relative_home_prints_the_delete_the_row_line_for_a_backup_row_recorded_as_an_absolute_path_with_an_entry_held_beside_it(self):
         a = make_checkout(self.home, "a")
-        self.ok(run(self.home, a, "--harness", "grok", env=self.RELATIVE), "linked 3 skills into grok")
+        self.ok(run(self.home, a, "--harness", "grok", env=self.RELATIVE_HOME), "linked 3 skills into grok")
         notes = provider_link(self.home, "grok", "notes")
         saved = state_dir(self.home) / "backups" / self.STAMP / "grok" / "notes"
         data = read_legacy(self.home)
@@ -4897,20 +5012,20 @@ class OwnershipTest(unittest.TestCase):
         legacy_file(self.home).write_text(json.dumps(data, indent=2) + "\n")
         self.plant(saved, ".pstack-t3-probe")
         before = snapshot(self.home)
-        checked = run(self.home, a, "doctor", "--harness", "grok", env=self.RELATIVE)
+        checked = run(self.home, a, "doctor", "--harness", "grok", env=self.RELATIVE_HOME)
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
         self.assertEqual(checked.stderr, "")
         self.assertEqual(
             checked.stdout.splitlines(),
             [
-                self.harness_line("grok", "3/3 pstack-t3"),
+                "grok    .grok/skills: 3/3 pstack-t3",
                 f"        backup row {saved}: nothing is there (recorded as the backup of {notes}); uninstall skips the row "
                 'while that path is empty; to drop it, delete the row from "backups" in .config/pstack-t3/install-manifest.json',
             ],
         )
         self.assertEqual(snapshot(self.home), before)
 
-    def test_an_uninstall_under_a_relative_config_home_leaves_a_second_name_held_beside_a_backup_recorded_as_an_absolute_path_and_leaves_the_row(self):
+    def test_an_uninstall_under_a_relative_home_leaves_a_second_name_held_beside_a_backup_recorded_as_an_absolute_path_and_leaves_the_row(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         swarm.parent.mkdir(parents=True)
@@ -4921,16 +5036,16 @@ class OwnershipTest(unittest.TestCase):
         os.link(swarm, held)
         row = {"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}
         write_legacy(self.home, [], [row])
-        self.assert_left(a, self.RELATIVE, self.UNNAMED)
+        self.assert_left(a, self.RELATIVE_HOME, self.UNNAMED)
         self.assertEqual(held.read_bytes(), b"mine\x00grok\n")
         self.assertEqual(os.stat(swarm).st_nlink, 2)
         self.assertEqual(read_legacy(self.home)["backups"], [row])
 
-    def test_a_dry_run_under_a_relative_config_home_prints_left_and_kept_backup_for_a_backup_recorded_as_an_absolute_path_with_an_entry_held_beside_it_and_changes_nothing(self):
+    def test_a_dry_run_under_a_relative_home_prints_left_and_kept_backup_for_a_backup_recorded_as_an_absolute_path_with_an_entry_held_beside_it_and_changes_nothing(self):
         a, swarm, saved, held = self.held_beside_absolute_row()
         saved.write_bytes(b"other\x00\xfc")
         before = snapshot(self.home)
-        dry = run(self.home, a, "--harness", "grok", "uninstall", "--dry-run", env=self.RELATIVE)
+        dry = run(self.home, a, "--harness", "grok", "uninstall", "--dry-run", env=self.RELATIVE_HOME)
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(
             dry.stdout.splitlines(),
@@ -4942,12 +5057,12 @@ class OwnershipTest(unittest.TestCase):
         )
         self.assertEqual(snapshot(self.home), before)
 
-    def test_an_uninstall_under_a_relative_config_home_that_is_a_symlink_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
+    def test_an_uninstall_under_a_relative_home_that_is_a_symlink_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
         real = self.home / "dotfiles" / "kept"
         real.mkdir(parents=True)
         os.symlink(real, self.home / ".config")
         a, swarm, saved, held = self.held_beside_absolute_row()
-        self.assert_left(a, self.RELATIVE, self.UNNAMED)
+        self.assert_left(a, self.RELATIVE_HOME, self.UNNAMED)
         self.assertEqual((real / "pstack-t3" / "backups" / self.STAMP / "grok" / ".pstack-t3-probe" / "swarm").read_bytes(), b"stray\x00\xfd")
 
     def test_an_uninstall_under_a_config_home_whose_dot_dot_follows_a_symlink_leaves_an_entry_held_in_the_state_directory_when_the_row_names_the_other_directory(self):
@@ -4963,12 +5078,12 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(held.read_bytes(), b"stray\x00\xfd")
         self.assertEqual(os.listdir(saved.parent), [])
 
-    def test_an_uninstall_under_a_relative_config_home_leaves_an_entry_held_beside_a_backup_recorded_through_a_missing_directory_and_dot_dot(self):
+    def test_an_uninstall_under_a_relative_home_leaves_an_entry_held_beside_a_backup_recorded_through_a_missing_directory_and_dot_dot(self):
         a, swarm, saved, held = self.held_beside_absolute_row()
         backup = f"{state_dir(self.home)}/nope/../backups/{self.STAMP}/grok/swarm"
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": backup}])
         self.ok(
-            run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE),
+            run(self.home, a, "--harness", "grok", "uninstall", env=self.RELATIVE_HOME),
             self.UNNAMED,
             "removed 0 links, restored 0 entries",
         )
@@ -5326,12 +5441,12 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual((swarm / "SKILL.md").read_bytes(), b"saved\x00\xfe")
         self.assertEqual(os.listdir(swarm), ["SKILL.md"])
 
-    def test_an_install_with_replace_under_a_relative_config_home_records_the_backup_under_the_config_home_as_given(self):
+    def test_an_install_with_replace_under_a_relative_home_records_the_backup_under_the_config_home_as_given(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         swarm.parent.mkdir(parents=True)
         swarm.write_bytes(b"mine\x00grok\n")
-        self.ok(run(self.home, a, "--harness", "grok", "--replace", env=self.RELATIVE), "linked 3 skills into grok")
+        self.ok(run(self.home, a, "--harness", "grok", "--replace", env=self.RELATIVE_HOME), "linked 3 skills into grok")
         stamps = os.listdir(state_dir(self.home) / "backups")
         self.assertEqual(len(stamps), 1, stamps)
         self.assertEqual([row["backup"] for row in read_legacy(self.home)["backups"]], [f".config/pstack-t3/backups/{stamps[0]}/grok/swarm"])
@@ -5371,13 +5486,34 @@ class OwnershipTest(unittest.TestCase):
         for name in NAMES:
             self.assertFalse(os.path.lexists(provider_link(self.home, "grok", name)))
 
-    def test_a_dry_run_under_a_relative_config_home_with_a_backup_row_recorded_as_an_absolute_path_whose_stamp_holds_a_nul_byte_prints_only_the_counts_line_and_exits_0(self):
+    def test_a_dry_run_under_a_relative_home_with_a_backup_row_recorded_as_an_absolute_path_whose_stamp_holds_a_nul_byte_prints_only_the_counts_line_and_exits_0(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
         (state_dir(self.home) / "backups").mkdir(parents=True)
         backup = f"{state_dir(self.home)}/backups/a\x00b/grok/swarm"
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": backup}])
-        dry = run(self.home, a, "uninstall", "--dry-run", "--harness", "grok", env=self.RELATIVE)
+        dry = run(self.home, a, "uninstall", "--dry-run", "--harness", "grok", env=self.RELATIVE_HOME)
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(dry.stdout, "would remove 0 links, would restore 0 entries\n")
         self.assertNotIn("Traceback", dry.stderr)
+
+
+def loaded(name, file):
+    """Load the Python file `file` as the module `name` and return it."""
+    spec = importlib.util.spec_from_file_location(name, file)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[name]
+    return module
+
+
+class SharedSourceTest(unittest.TestCase):
+    def test_install_and_roles_hold_the_same_ignored_line_and_the_same_config_home_source(self):
+        install = loaded("install_under_test", ROOT / "scripts" / "install.py")
+        roles = loaded("roles_under_test", ROOT / "t3" / "scripts" / "roles.py")
+        self.assertEqual(install.IGNORED, "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}")
+        self.assertEqual(roles.IGNORED, install.IGNORED)
+        self.assertEqual(inspect.getsource(roles.config_home), inspect.getsource(install.config_home))
