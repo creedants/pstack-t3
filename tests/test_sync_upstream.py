@@ -1,5 +1,3 @@
-"""What sync_upstream.py reports about an upstream repository the test builds. No test uses the network."""
-
 import hashlib
 import json
 import os
@@ -19,7 +17,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import sync_upstream  # noqa: E402
 
-# A developer's git config, identity, and locale must not change a result.
 GIT_ENV = {
     **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
     "GIT_CONFIG_GLOBAL": os.devnull,
@@ -32,7 +29,6 @@ GIT_ENV = {
 }
 PLUGIN = "pstack/.cursor-plugin/plugin.json"
 SKILL = "---\nname: fixture\ndescription: A fixture skill.\n---\n\n# Fixture\n\n"
-# Every file ends in a line no other file has, so a rendered file names the layer it came from.
 PINNED_TREE = {
     "other/notes.md": "upstream other/notes.md\n",
     PLUGIN: '{"name": "pstack", "version": "1.0.0"}\n',
@@ -58,7 +54,6 @@ T3_TREE = {
     "t3/scripts/roles.py": "# t3 scripts/roles.py\n",
     "t3/setup.md": SKILL + "t3 setup.md\n",
 }
-# Skill-relative path -> the checkout file the build ships for it, or None when it ships nothing.
 RENDERED_FROM = {
     "alpha/SKILL.md": "t3/overrides/alpha/SKILL.md",
     "alpha/both.md": "t3/added/alpha/both.md",
@@ -110,7 +105,6 @@ def write_tree(base, files):
 
 
 def commit(repository, files):
-    """Write each file, delete the ones mapped to None, and return the new commit."""
     write_tree(repository, files)
     git(repository, "add", "--all")
     git(repository, "commit", "--quiet", "--message", "change")
@@ -125,7 +119,6 @@ def new_upstream(directory):
 
 
 def new_checkout(directory, repository, pinned):
-    """A checkout holding copies of the two scripts, a t3 layer, and the pinned vendor tree."""
     root = Path(directory) / "checkout"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts/sync_upstream.py")
@@ -178,7 +171,6 @@ class CheckTest(CheckoutCase):
         return self.sync("--check", *flags, **environment)
 
     def rows(self, files, version="1.0.0"):
-        """Commit files upstream and return the rows the check prints under its header."""
         head = commit(self.upstream, files)
         result = self.check()
         self.assertEqual((result.returncode, result.stderr), (0, ""))
@@ -420,7 +412,6 @@ class SyncTest(CheckoutCase):
         )
         result = self.sync()
         self.assertEqual(result.stdout.splitlines()[0], f"vendor/pstack: {self.pinned[:12]} -> {head[:12]} (1.1.0)")
-        # The checkout has overrides and no lock, so the build the sync runs last reports drift.
         self.assertEqual(result.returncode, 1)
         self.assertIn("override drift", result.stdout)
         meta = json.loads((self.root / "upstream.json").read_text())
@@ -463,7 +454,6 @@ class ClassifyTest(unittest.TestCase):
                 with self.subTest(path=rel.as_posix()):
                     self.assertIn(handling, ("overridden", "unchanged", "dropped"))
                     self.assertEqual((rendered / rel).is_file(), handling != "dropped")
-                    # render() rewrites each skill's SKILL.md, so only its presence can be compared.
                     if handling == "dropped" or (len(rel.parts) == 2 and rel.name == "SKILL.md"):
                         continue
                     source = ROOT / t3_path if handling == "overridden" else skills / rel

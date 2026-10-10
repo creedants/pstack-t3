@@ -32,8 +32,6 @@ HANDLING_TEXT = {
     "unchanged": "ships unchanged",
     "not-shipped": "not shipped",
 }
-# The copies that end build.render(), so they win over every other layer.
-# Skill-relative key -> file under t3/. render() also copies t3/agents/*.md.
 FIXED_COPIES = {
     "pstack-runtime/SKILL.md": "runtime.md",
     "pstack-runtime/scripts/roles.py": "scripts/roles.py",
@@ -43,20 +41,18 @@ FIXED_COPIES = {
 
 @dataclass(frozen=True)
 class Layers:
-    """The files under t3/ that decide what ships, read once and never written."""
-
-    hand_ported: Mapping[str, str]  # path under upstream's prefix -> the t3 file shipped in its place
-    added: frozenset[str]  # skill-relative keys under t3/added
-    overrides: frozenset[str]  # skill-relative keys under t3/overrides
-    removed: frozenset[str]  # t3/removed.txt entries, each a file or a directory
+    hand_ported: Mapping[str, str]
+    added: frozenset[str]
+    overrides: frozenset[str]
+    removed: frozenset[str]
 
 
 @dataclass(frozen=True)
 class Entry:
-    path: str  # repository-relative, as upstream names it
-    change: Change  # what upstream did to the path
-    handling: Handling  # what pstack-t3 does with the path today
-    t3_path: str | None  # the t3 file to re-port, set exactly when handling is overridden
+    path: str
+    change: Change
+    handling: Handling
+    t3_path: str | None
 
 
 @dataclass(frozen=True)
@@ -66,7 +62,7 @@ class Report:
     pinned: str
     commit: str
     version: str | None
-    changes: tuple[Entry, ...]  # sorted by path
+    changes: tuple[Entry, ...]
 
     @property
     def up_to_date(self):
@@ -97,10 +93,6 @@ def load_layers():
 
 
 def classify(path, prefix, layers):
-    """What pstack-t3 does with an upstream path today, as (handling, t3 file or None).
-
-    Reads build.render() backwards, because its last write wins.
-    """
     rest = PurePosixPath(path).relative_to(prefix)
     if "__pycache__" in rest.parts:
         return "not-shipped", None
@@ -119,10 +111,6 @@ def classify(path, prefix, layers):
 
 
 def upstream_changes(repository, ref, pinned, prefix):
-    """Return (commit at ref, its plugin version or None, [(change, path)] since pinned).
-
-    Every git call and the temporary clone live here. Nothing is checked out.
-    """
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         clone = Path(temporary) / "upstream.git"
 
@@ -154,7 +142,6 @@ def upstream_changes(repository, ref, pinned, prefix):
 
 
 def quoted(text):
-    """Upstream picks these strings. One with a newline must not pass for a second row."""
     return text if text.isprintable() and " " not in text else json.dumps(text)
 
 
