@@ -1134,23 +1134,28 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
 
 
 def unrecorded_reviews(restaurant):
-    """The review reports under reports/ that no pass.tsv row accounts for, by file name.
+    """(name, kind) for each entry under reports/ named like a review report that no pass.tsv row accounts for.
 
-    A row that names no report cannot say which file it reviewed, so it accounts for every report of its dish written before it.
+    The kind is report_entry's. A row that names a report accounts for the entry of that name, and nothing is read from
+    that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
+    dish written before it, and for no entry of another kind.
     """
     rows = restaurant.rows("pass.tsv")
     reports = restaurant.dir / "reports"
-    missing = []
+    unrecorded = []
     for path in sorted(reports.iterdir()) if reports.is_dir() else []:
         match = REVIEW_FILE.fullmatch(path.name)
         if not match:
             continue
-        written = path.stat().st_mtime
-        if not any(row["report"] == path.name if row["report"]
-                   else datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= written
-                   for row in rows if row["dish"] == match.group(1)):
-            missing.append(path.name)
-    return missing
+        mine = [row for row in rows if row["dish"] == match.group(1)]
+        if any(row["report"] == path.name for row in mine):
+            continue
+        kind = report_entry(restaurant, path.name)
+        if kind == "file" and any(datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= path.stat().st_mtime
+                                  for row in mine if not row["report"]):
+            continue
+        unrecorded.append((path.name, kind))
+    return unrecorded
 
 
 def report(restaurant, write=True):
@@ -2845,10 +2850,14 @@ def command(restaurant, args, contract=None, rails=None):
         if not args.dry_run and is_admin(restaurant.meta):
             log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
-        for name in unrecorded_reviews(restaurant):
+        for name, kind in unrecorded_reviews(restaurant):
             dish = name.split("-")[0]
-            print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
-                  f"and --late when {dish} has moved past that round", file=sys.stderr)
+            if kind == "file":
+                print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
+                      f"and --late when {dish} has moved past that round", file=sys.stderr)
+            else:
+                print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row names it; "
+                      "make it a regular file in this store's reports/, or remove it", file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text

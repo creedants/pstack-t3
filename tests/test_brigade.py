@@ -1268,6 +1268,54 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.close_run("--dry-run")[2],
                          "\n".join([self.no_row("D1-review-1.md"), self.no_row("D7-review.md", "D7")]))
 
+    def not_a_file(self, name, words):
+        return (f"brigade: warning: reports/{name} {words} and no review row names it; "
+                "make it a regular file in this store's reports/, or remove it")
+
+    def linked(self, name, target):
+        link = self.at / "reports" / name
+        link.parent.mkdir(exist_ok=True)
+        link.symlink_to(Path(self.temporary.name) / target)
+        return link
+
+    def test_close_warns_about_a_dangling_link_named_like_a_review_report_and_still_exits_0(self):
+        self.fired_bug_fix()
+        code, before, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.linked("D1-review-7.md", "gone.md")
+        warning = ("brigade: warning: reports/D1-review-7.md is a symbolic link and no review row names it; "
+                   "make it a regular file in this store's reports/, or remove it")
+        self.assertEqual(self.close_run("--dry-run"), (0, before, warning))
+        self.assertEqual(self.close_run(), (0, before, warning))
+
+    def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports(self):
+        self.fired_bug_fix()
+        (Path(self.temporary.name) / "findings.md").write_text("findings\n")
+        self.linked("D1-review-7.md", "findings.md")
+        (self.at / "reports" / "D1-review-8.md").mkdir()
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join([
+            self.not_a_file("D1-review-7.md", "is a symbolic link"),
+            self.not_a_file("D1-review-8.md", "is not a regular file"),
+        ])))
+
+    def test_close_does_not_warn_about_a_dangling_link_a_row_names(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md")
+        self.record("abc", "send-back", "--report", "D1-review-1.md")
+        (self.at / "reports" / "D1-review-1.md").unlink()
+        self.linked("D1-review-1.md", "gone.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_a_row_that_names_no_report_accounts_for_no_link_to_a_file_written_before_it(self):
+        self.fired_bug_fix()
+        target = Path(self.temporary.name) / "findings.md"
+        target.write_text("findings\n")
+        stamp = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(target, (stamp, stamp))
+        self.linked("D1-review-1.md", "findings.md")
+        self.record("abc", "send-back")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.not_a_file("D1-review-1.md", "is a symbolic link")))
+
     def test_close_ignores_a_file_that_is_not_a_review_report(self):
         self.fired_bug_fix()
         for name in ("D1.md", "notes.md", "D1-review.txt", "D1-reviewed.md", "xD1-review.md"):
