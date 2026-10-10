@@ -1150,6 +1150,27 @@ os.execv(real, [real, *args])
         """What a.txt, b.txt, and lib/x.py hold at this ref on origin."""
         return [self.on_origin("show", f"{ref}:{path}") for path in ("a.txt", "b.txt", "lib/x.py")]
 
+    def checks(self, number, kind):
+        """Post one check result on pull request <number> for the head it has now."""
+        branch = json.loads((self.base / "prs.json").read_text())[str(number)]["head"]
+        (self.base / f"pr-{number}-checks").write_text(f"{kind} {self.on_origin('rev-parse', branch)}")
+
+    def merge_calls(self):
+        path = self.base / "merge-calls"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def open_line(self, count):
+        """Squash merge mode with E1 to E<count> open as pull requests 9 and up, each built on the one ahead."""
+        self.init(mode="merge", merge_method="squash")
+        self.queue_entries(count)
+        self.land("land")
+
+    def killed_land(self):
+        """Run land and require that it died from SIGKILL."""
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
+                                capture_output=True, text=True, env=os.environ.copy())
+        self.assertEqual(result.returncode, -9, result.stdout + result.stderr)
+
     def gh(self, *args):
         """Run the fake gh the way a person at GitHub would."""
         result = subprocess.run([os.environ["LAND_GH"], *args], capture_output=True, text=True)
@@ -2205,6 +2226,90 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "landing/e2"))
             self.assertEqual(self.origin_log(), ["init"])
             self.assertFalse((self.base / "merge-calls").exists())
+
+    def test_merge_mode_lands_three_stacked_entries_in_order_in_the_run_after_their_checks_pass(self):
+        with self.fake_gh():
+            self.open_line(3)
+            for number in (9, 10, 11):
+                self.checks(number, "passed")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2), E3 (r/D3)")
+            self.assertEqual(self.origin_log(), ["w3", "w2", "w1", "init"])
+            self.assertEqual([self.on_origin("show", "--format=", "--name-only", commit) for commit in ("main~2", "main~1", "main")],
+                             ["a.txt", "b.txt", "lib/x.py"])
+            self.assertEqual(self.origin_files("main"), ["one", "two", "three"])
+            self.assertEqual(self.merge_calls(), [
+                "pr merge https://github.com/o/r/pull/9 --auto --squash",
+                "pr merge https://github.com/o/r/pull/9 --squash",
+                "pr merge https://github.com/o/r/pull/10 --auto --squash",
+                "pr merge https://github.com/o/r/pull/10 --squash",
+                "pr merge https://github.com/o/r/pull/11 --auto --squash",
+                "pr merge https://github.com/o/r/pull/11 --squash",
+            ])
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_merges_nothing_while_the_first_entry_is_pending_and_notes_the_entry_ahead_on_the_passed_ones(self):
+        with self.fake_gh():
+            self.open_line(3)
+            self.checks(9, "pending")
+            self.checks(10, "passed")
+            self.checks(11, "passed")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertEqual(self.merge_calls(), [])
+            self.assertEqual(self.origin_log(), ["init"])
+            self.assertEqual(self.land("status", "E1"),
+                             "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. waiting for required checks before merging")
+            self.assertEqual(self.land("status", "E2"),
+                             "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for E1 to merge first")
+            self.assertEqual(self.land("status", "E3"),
+                             "E3 awaiting-merge (r/D3, w3). https://github.com/o/r/pull/11. waiting for E2 to merge first")
+            self.checks(9, "passed")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2), E3 (r/D3)")
+            self.assertEqual(self.origin_log(), ["w3", "w2", "w1", "init"])
+
+    def test_merge_mode_keeps_a_failed_entry_behind_a_pending_first_and_bounces_it_in_the_run_that_lands_the_first(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "pending")
+            self.checks(10, "failed")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertEqual(self.land("status", "E2"),
+                             "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for E1 to merge first")
+            self.assertEqual(self.listed(), ["L1 submitted r/D1: a.txt", "L2 submitted r/D2: b.txt"])
+            self.checks(9, "passed")
+            self.assertEqual(self.land("land"),
+                             "landed E1 (r/D1)\n"
+                             "bounced E2 (r/D2): required checks failed on https://github.com/o/r/pull/10: test (3.12)")
+            self.assertEqual(self.origin_log(), ["w1", "init"])
+            self.assertEqual(self.merge_calls(), [
+                "pr merge https://github.com/o/r/pull/9 --auto --squash",
+                "pr merge https://github.com/o/r/pull/9 --squash",
+            ])
+
+    def test_merge_mode_with_no_posted_checks_opens_two_entries_and_lands_both_in_the_second_run(self):
+        with self.fake_gh():
+            self.init(mode="merge", merge_method="squash")
+            self.queue_entries(2)
+            self.assertEqual(
+                self.land("land"),
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9, "
+                "E2 (r/D2) https://github.com/o/r/pull/10")
+            self.assertEqual(self.merge_calls(), [])
+            self.assertEqual(self.origin_log(), ["init"])
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
+
+    def test_merge_mode_lands_both_entries_in_the_run_after_one_killed_right_after_the_first_merge(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "passed")
+            self.checks(10, "passed")
+            (self.base / "crash-after-merge").write_text("")
+            self.killed_land()
+            self.assertEqual(self.origin_log(), ["w1", "init"])
+            self.assertEqual(self.land("status", "E1").split(". ")[0], "E1 awaiting-merge (r/D1, w1)")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
+            self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_human_mode_builds_each_candidate_alone_on_trunk_and_lands_the_second_entry_before_the_first(self):
         with self.fake_gh():

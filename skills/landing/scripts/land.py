@@ -1187,15 +1187,19 @@ def build(store, integration, entry, onto, trunk, out):
         store.set_entry(db, ident, "awaiting-merge", candidate=head, onto=onto, pr="", note="")
     ensure_pr(store, {**dict(entry), "candidate": head})
     out.opened.append(ident)
+    if contract["mode"] == "merge":
+        request_merge(store, ident, out)
     return onto if entry_row(store, ident)["state"] == "bounced" else head
 
 
 def build_line(store, integration, out):
-    """Merge mode: build the unheld queued entries in id order, each on the tip of the line."""
+    """Merge mode: build the unheld queued entries in id order, each on the tip of the line. Returns their ids."""
     trunk = fetch_trunk(store)
     tip = line_of(store, trunk).tip
-    for entry in unheld_queued(store):
+    todo = unheld_queued(store)
+    for entry in todo:
         tip = build(store, integration, entry, tip, trunk, out)
+    return {entry["id"] for entry in todo}
 
 
 def human_branch(entry):
@@ -1264,8 +1268,6 @@ def ensure_pr(store, entry):
         adopted = False
     with store.tx() as db:
         store.set_entry(db, entry["id"], "awaiting-merge", pr=url, note="")
-    if contract["mode"] == "merge":
-        request_merge(store, entry["id"], url)
     return "adopted" if adopted else "created"
 
 
@@ -1280,7 +1282,8 @@ BLOCKER_QUERY = (
     '| ($c == "FAILURE" or $c == "CANCELLED" or $c == "TIMED_OUT" or $s == "FAILURE" or $s == "ERROR")) '
     '| (.name // .context)] | join(",")), '
     '((.statusCheckRollup // []) | length), '
-    '(.autoMergeRequest != null)] | @tsv'
+    '(.autoMergeRequest != null), '
+    '(.headRefOid // "")] | @tsv'
 )
 
 
@@ -1332,6 +1335,10 @@ def built_on(store, entry, trunk):
     return base.stdout.strip() if base.returncode == 0 else ""
 
 
+def merge_method(store):
+    return store.contract.get("mergeMethod") or "merge"
+
+
 def line_of(store, trunk):
     """Merge mode's line against one trunk commit. Reads the store and git and writes nothing.
 
@@ -1346,7 +1353,7 @@ def line_of(store, trunk):
     first = next((row for row in built if same_tree(store.repo, built_on(store, row, trunk), trunk)), None)
     entries = [first] if first else []
     behind = {row["onto"]: row for row in reversed(built)}
-    if (store.contract.get("mergeMethod") or "merge") != "rebase":
+    if merge_method(store) != "rebase":
         while entries and entries[-1]["candidate"] in behind:
             entries.append(behind[entries[-1]["candidate"]])
     inside = {row["id"] for row in entries}
@@ -1378,20 +1385,21 @@ def remember_absent(store, ident, drain):
 
 
 def merge_blocker(store, url):
-    """Why this PR must not merge yet, and whether auto-merge is requested.
+    """Why this PR must not merge yet, whether auto-merge is requested, and the head the read describes.
 
     One gh pr view supplies the review, the pending count, the failed names, how many
-    checks are posted, and whether autoMergeRequest is set. Returns the classify_rollup
-    pair plus True when autoMergeRequest is not null. A failed command or an unparseable
-    rollup raises Infrastructure, and the caller must not merge."""
-    view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup,autoMergeRequest", "-q", BLOCKER_QUERY, cwd=store.repo)
+    checks are posted, whether autoMergeRequest is set, and the head commit. Returns the
+    classify_rollup pair, True when autoMergeRequest is not null, and that head. A failed
+    command or an unparseable rollup raises Infrastructure, and the caller must not merge."""
+    view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup,autoMergeRequest,headRefOid",
+              "-q", BLOCKER_QUERY, cwd=store.repo)
     if view.returncode != 0:
         raise Infrastructure(f"could not read checks for {url}: {view.stderr.strip() or 'gh pr view failed'}")
     fields = view.stdout.rstrip("\n").split("\t")
-    if len(fields) != 5 or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
+    if len(fields) != 6 or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
         raise Infrastructure(f"could not read checks for {url}: unparseable check rollup")
     blocker, detail = classify_rollup(fields[0], int(fields[1]), fields[2], int(fields[3]))
-    return blocker, detail, fields[4] == "true"
+    return blocker, detail, fields[4] == "true", fields[5]
 
 
 def disarm_auto_merge(store, url, armed):
@@ -1428,8 +1436,8 @@ def pause_for_review(store, url, detail, disarm, armed=False):
     raise Infrastructure(f"{url} {requirement}")
 
 
-def request_merge(store, ident, url):
-    """Merge only after a successful check read shows nothing pending, failed, or awaiting review.
+def request_merge(store, ident, out):
+    """Judge one entry of the line from one check read. Returns True when a merge command succeeded.
 
     The read runs before any gh pr merge, including --auto. A pending posted check waits.
     A failed posted check bounces. With no posted check, the land run that first sees it
@@ -1437,24 +1445,47 @@ def request_merge(store, ident, url):
     the queue waits and does not pause only when the plain merge itself is refused because
     the base branch policy prohibits the merge. Any other plain-merge failure pauses and
     names that failure, whatever the --auto attempt said. An approving review, or changes
-    requested, pauses the queue and does not call gh pr merge."""
-    blocker, detail, armed = merge_blocker(store, url)
+    requested, pauses the queue and does not call gh pr merge.
+
+    Only the first entry of the line merges or bounces. It merges when the read shows the
+    candidate as the head and, after a fresh fetch, trunk holds the tree the candidate was
+    built on. An entry behind the first keeps the pending and absent notes. On any other
+    read its note names the entry ahead of it. An entry outside the line is not read. A
+    head that is not the candidate waits in any position."""
+    entry = entry_row(store, ident)
+    url = entry["pr"]
+    line = line_of(store, trunk_commit(store)).entries
+    place = next((index for index, row in enumerate(line) if row["id"] == ident), None)
+    if place is None:
+        return False
+    blocker, detail, armed, head = merge_blocker(store, url)
+    if head != entry["candidate"]:
+        return False
     if blocker == "review":
         pause_for_review(store, url, detail, disarm=False)
     drain = int(store.contract.get("drain") or 0)
     seen = absent_seen(store, ident)
     repeat_absent = blocker == "absent" and seen is not None and seen < drain
-    if blocker == "pending" or (blocker == "absent" and not repeat_absent):
+    if blocker == "pending" or (blocker == "absent" and (place or not repeat_absent)):
         if blocker == "absent":
             remember_absent(store, ident, drain)
         else:
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
         return False
+    if place:
+        ahead = entry_label(line[place - 1]["id"])
+        with store.tx() as db:
+            store.set_entry(db, ident, "awaiting-merge", note=f"waiting for {ahead} to merge first")
+        return False
     if blocker == "failed":
         bounce_open_pr(store, ident, url, f"required checks failed on {url}: {detail}", armed)
+        out.bounced.append(ident)
         return False
-    method = f"--{store.contract.get('mergeMethod') or 'merge'}"
+    trunk = fetch_trunk(store)
+    if not same_tree(store.repo, built_on(store, entry, trunk), trunk):
+        return False
+    method = f"--{merge_method(store)}"
     queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
     if queued.returncode == 0:
         with store.tx() as db:
@@ -1641,6 +1672,9 @@ def take_pr(store, entry, landed, bounced):
                 outcome = "bounced"
             db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
         (landed if outcome == "landed" else bounced).append(entry["id"])
+        if store.contract["mode"] == "merge":
+            # The line is read against trunk as this merge left it.
+            fetch_trunk(store)
         return True
     if state == "CLOSED":
         with store.tx() as db:
@@ -1654,46 +1688,58 @@ def take_pr(store, entry, landed, bounced):
     return False
 
 
-def poll_human(store, out):
-    landed, bounced, adopted, opened = out.landed, out.bounced, out.adopted, out.opened
-    for entry in store.entries("awaiting-merge"):
-        if not entry["pr"]:
-            outcome = ensure_pr(store, entry)
-            if outcome == "adopted":
-                adopted.append(entry["id"])
-            elif outcome == "created":
-                opened.append(entry["id"])
-            entry = entry_row(store, entry["id"])
-        if take_pr(store, entry, landed, bounced):
-            continue
-        if store.contract["mode"] != "merge":
-            continue
-        if entry["note"] == MERGE_REQUESTED:
-            blocker, detail, armed = merge_blocker(store, entry["pr"])
-            if take_pr(store, entry, landed, bounced):
-                continue
-            if blocker == "failed":
-                bounce_open_pr(store, entry["id"], entry["pr"], f"required checks failed on {entry['pr']}: {detail}", armed)
-                bounced.append(entry["id"])
-                continue
-            if blocker == "review":
-                pause_for_review(store, entry["pr"], detail, disarm=True, armed=armed)
-            continue
-        # A merge command can return before pr view reports MERGED.
-        reads = 4 if request_merge(store, entry["id"], entry["pr"]) else 1
+def poll(store, entry, out):
+    """One awaiting-merge entry. Give it a PR, settle a merged or closed one, and in merge mode judge it."""
+    merging = store.contract["mode"] == "merge"
+    if not entry["pr"]:
+        outcome = ensure_pr(store, entry)
+        (out.adopted if outcome == "adopted" else out.opened).append(entry["id"])
+        if merging:
+            request_merge(store, entry["id"], out)
         entry = entry_row(store, entry["id"])
-        if entry["state"] == "bounced":
-            bounced.append(entry["id"])
-            continue
         if entry["state"] != "awaiting-merge":
-            continue
-        for attempt in range(reads):
-            if take_pr(store, entry, landed, bounced):
-                break
-            entry = entry_row(store, entry["id"])
-            if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
-                break
-            time.sleep(0.5)
+            return
+    if take_pr(store, entry, out.landed, out.bounced) or not merging:
+        return
+    if entry["note"] == MERGE_REQUESTED:
+        blocker, detail, armed, _head = merge_blocker(store, entry["pr"])
+        if take_pr(store, entry, out.landed, out.bounced):
+            return
+        if blocker == "failed":
+            bounce_open_pr(store, entry["id"], entry["pr"], f"required checks failed on {entry['pr']}: {detail}", armed)
+            out.bounced.append(entry["id"])
+        elif blocker == "review":
+            pause_for_review(store, entry["pr"], detail, disarm=True, armed=armed)
+        return
+    # A merge command can return before pr view reports MERGED.
+    reads = 4 if request_merge(store, entry["id"], out) else 1
+    entry = entry_row(store, entry["id"])
+    if entry["state"] != "awaiting-merge":
+        return
+    for attempt in range(reads):
+        if take_pr(store, entry, out.landed, out.bounced):
+            break
+        entry = entry_row(store, entry["id"])
+        if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
+            break
+        time.sleep(0.5)
+
+
+def walk(store, out, only=None):
+    """Merge mode: poll each awaiting-merge entry once, or each of the ids in only.
+
+    Entries outside the line go first by id, then the line from its first entry. The order is
+    read again after every poll, so an entry is judged after the entry ahead of it settled."""
+    polled = set()
+    while True:
+        line = line_of(store, trunk_commit(store)).entries
+        inside = {row["id"] for row in line}
+        rows = [row for row in store.entries("awaiting-merge") if row["id"] not in inside] + line
+        entry = next((row for row in rows if row["id"] not in polled and (only is None or row["id"] in only)), None)
+        if entry is None:
+            return
+        polled.add(entry["id"])
+        poll(store, entry, out)
 
 
 def second_of(row):
@@ -1834,12 +1880,11 @@ def land(store):
                 return report(store, out)
             if mode == "merge":
                 advance_drain(store)
-            poll_human(store, out)
-            if mode == "merge":
-                build_line(store, integration, out)
-                if out.opened:
-                    poll_human(store, out)
+                walk(store, out)
+                walk(store, out, build_line(store, integration, out))
             else:
+                for entry in store.entries("awaiting-merge"):
+                    poll(store, entry, out)
                 for entry in unheld_queued(store):
                     trunk = fetch_trunk(store)
                     build(store, integration, entry, trunk, trunk, out)
@@ -1875,8 +1920,7 @@ def land(store):
 def report(store, out):
     """The lines of one land run. An entry this run opened prints as opened only while it still awaits its merge."""
     rows = {row["id"]: row for row in store.db.execute("SELECT * FROM entry")}
-    landed, adopted = out.landed, out.adopted
-    bounced = out.bounced + [i for i in out.opened if rows[i]["state"] == "bounced" and i not in out.bounced]
+    landed, bounced, adopted = out.landed, out.bounced, out.adopted
     opened = [i for i in out.opened if rows[i]["state"] == "awaiting-merge"]
     lines = []
     if landed:
