@@ -1031,23 +1031,6 @@ def backup_place(state, backup):
     return parts[0], parts[1]
 
 
-def same_directory(first, second):
-    """Whether both paths open as one directory. A symlink at the last name of either path makes it False."""
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    try:
-        one = os.open(first, flags)
-        try:
-            other = os.open(second, flags)
-            try:
-                return os.path.samestat(os.fstat(one), os.fstat(other))
-            finally:
-                os.close(other)
-        finally:
-            os.close(one)
-    except OSError:
-        return False
-
-
 def prune(state, backup):
     """Remove the <harness> directory `backup` was in if it is empty, then its <stamp> directory if that is empty.
 
@@ -1055,22 +1038,22 @@ def prune(state, backup):
     backups/, <stamp>, or <harness>. A symlink at `state` or above it is followed like any other path to the state
     directory, so a state directory kept behind a symlink is pruned too.
     It removes nothing unless `backup_place` matches `backup` under `state` as given or as `os.path.abspath` spells it.
-    Under the second spelling it also removes nothing unless `same_directory` holds for the two spellings of
-    <state>/backups.
+    Under the second spelling `empty_out_matched` does the removing, with that spelling as its `recorded`.
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
-    if place is None:
-        # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
-        try:
-            spelled = os.path.abspath(state)
-        except OSError:
-            return
-        place = backup_place(spelled, backup)
+    if place is not None:
+        empty_out(state, *place)
+        return
+    # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
+    try:
+        spelled = os.path.abspath(state)
+    except OSError:
+        return
+    place = backup_place(spelled, backup)
+    if place is not None:
         # abspath removes ".." as text and the system applies it after following a symlink, so the two spellings can name two directories.
-        if place is None or not same_directory(os.path.join(str(state), "backups"), os.path.join(spelled, "backups")):
-            return
-    empty_out(state, *place)
+        empty_out_matched(state, spelled, *place)
 
 
 def empty_out(state, stamp, harness=None):
@@ -1095,6 +1078,37 @@ def empty_out(state, stamp, harness=None):
             os.rmdir(stamp, dir_fd=top)
         finally:
             os.close(top)
+
+
+def empty_out_matched(state, recorded, stamp, harness):
+    """Remove <state>/backups/<stamp>/<harness> if it is empty, then <stamp> if it is empty, when both match those under `recorded`.
+
+    Under `state` and under `recorded` it opens backups/ by path, then <stamp> under that descriptor, then <harness>
+    under the <stamp> descriptor, all with O_RDONLY | O_DIRECTORY | O_NOFOLLOW. To match, the two <harness> descriptors
+    must have one device and inode, and so must the two <stamp> descriptors, read while all six are open. A failed open
+    or a pair that does not match ends it with nothing removed. It removes <harness> by name under the <stamp>
+    descriptor it compared, and <stamp> by name under the backups descriptor it opened that <stamp> from.
+    The first rmdir that fails ends it. Call it only inside `locked`. It never raises and prints nothing.
+    """
+    if os.rmdir not in os.supports_dir_fd:
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with suppress(OSError), ExitStack() as stack:
+        def opened(path, dir_fd=None):
+            descriptor = os.open(path, flags, dir_fd=dir_fd)
+            stack.callback(os.close, descriptor)
+            return descriptor
+
+        def levels(root):
+            top = opened(os.path.join(str(root), "backups"))
+            inner = opened(stamp, top)
+            return top, inner, opened(harness, inner)
+
+        top, inner, leaf = levels(state)
+        _recorded_top, recorded_inner, recorded_leaf = levels(recorded)
+        if os.path.samestat(os.fstat(leaf), os.fstat(recorded_leaf)) and os.path.samestat(os.fstat(inner), os.fstat(recorded_inner)):
+            os.rmdir(harness, dir_fd=inner)
+            os.rmdir(stamp, dir_fd=top)
 
 
 def settle(strays, state, root, dry_run):
