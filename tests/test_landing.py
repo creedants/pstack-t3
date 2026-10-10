@@ -202,10 +202,20 @@ exit 0
             self.assertNotIn("--dry-run", line)
             self.assertFalse(any(part.startswith(":") for part in line.split()), line)
 
+    def open_pr_with_a_merge_requested(self):
+        """One merge-mode entry whose PR is open and noted merge requested by the queue."""
+        (self.base / "required-checks").write_text("")
+        self.init(mode="merge")
+        self.queue_one()
+        self.land("land")
+        self.assertEqual(self.land("land"), "nothing to land")
+        self.assertIn("merge requested by the queue", self.land("status", "E1"))
+
     def merged_queue_branch(self):
-        """Save the queue head, then mark the PR merged at that head with that head as the merge commit."""
+        """Save the queue head, move trunk to it, then mark the PR merged at that head with that head as the merge commit."""
         remote = self.base / "origin.git"
         sha = sh("git", "rev-parse", "refs/heads/landing/e1", cwd=remote)
+        sh("git", "update-ref", "refs/heads/main", sha, cwd=remote)
         (self.base / "pr-state").write_text(f"MERGED {sha} {sha}")
         return sha
 
@@ -1192,8 +1202,8 @@ os.execv(real, [real, *args])
                 "E1 stays awaiting merge. Check that origin serves that commit, then run land.py resume and land.py land")
 
     @contextlib.contextmanager
-    def git_fails_for_the_merge_commit_of_pr_9(self, names):
-        """Once the fake gh has merged PR 9, fail every git command with an argument <names> accepts.
+    def git_fails_for_the_merge_commit_of_pr_9(self, names, code=1):
+        """Once the fake gh has merged PR 9, exit <code> from every git command with an argument <names> accepts.
 
         <names> is an expression over arg and merged, the merge commit."""
         bindir = self.base / "unreadable-bin"
@@ -1206,7 +1216,7 @@ os.execv(real, [real, *args])
             f"table = Path({str(self.base / 'prs.json')!r})\n"
             "merged = json.loads(table.read_text()).get('9', {}).get('merge', '') if table.exists() else ''\n"
             f"if merged and any({names} for arg in sys.argv[1:]):\n"
-            "    sys.exit(1)\n"
+            f"    sys.exit({code})\n"
             f"os.execv({real!r}, [{real!r}, *sys.argv[1:]])\n")
         (bindir / "git").chmod(0o755)
         with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ["PATH"]}):
@@ -1664,6 +1674,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9")
             self.assertEqual(self.land("land"), "nothing to land")
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
+            self.on_origin("update-ref", "refs/heads/main", candidate)
             (self.base / "pr-state").write_text(f"MERGED {candidate} {candidate}")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertEqual(len((self.base / "merge-calls").read_text().splitlines()), 1)
@@ -1770,6 +1781,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
+            self.on_origin("update-ref", "refs/heads/main", candidate)
             (self.base / "pr-state").write_text(f"MERGED {candidate} {candidate}")
             (self.base / "checks").write_text("failed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
@@ -2041,9 +2053,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_merge_mode_leaves_the_entry_when_the_branch_query_fails(self):
         with self.fake_gh():
-            self.init(mode="merge")
-            self.queue_one()
-            self.land("land")
+            self.open_pr_with_a_merge_requested()
             remote = self.base / "origin.git"
             self.merged_queue_branch()
             sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
@@ -2056,9 +2066,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_merge_mode_leaves_the_entry_when_another_push_url_dropped_the_branch(self):
         with self.fake_gh():
-            self.init(mode="merge")
-            self.queue_one()
-            self.land("land")
+            self.open_pr_with_a_merge_requested()
             remote = self.base / "origin.git"
             backup = self.base / "backup.git"
             ref = "refs/heads/landing/e1"
@@ -2078,9 +2086,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_merge_mode_leaves_the_entry_when_the_other_push_url_keeps_the_branch(self):
         with self.fake_gh():
-            self.init(mode="merge")
-            self.queue_one()
-            self.land("land")
+            self.open_pr_with_a_merge_requested()
             origin = self.base / "origin.git"
             backup = self.base / "backup.git"
             ref = "refs/heads/landing/e1"
@@ -2101,9 +2107,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_merge_mode_leaves_the_entry_when_the_push_url_names_another_repo(self):
         with self.fake_gh():
-            self.init(mode="merge")
-            self.queue_one()
-            self.land("land")
+            self.open_pr_with_a_merge_requested()
             remote = self.base / "origin.git"
             self.merged_queue_branch()
             sh("git", "remote", "set-url", "origin", "https://github.com/else/where.git", cwd=self.work)
@@ -2117,9 +2121,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_merge_mode_leaves_the_entry_when_the_forge_repo_cannot_be_read(self):
         with self.fake_gh():
-            self.init(mode="merge")
-            self.queue_one()
-            self.land("land")
+            self.open_pr_with_a_merge_requested()
             remote = self.base / "origin.git"
             self.merged_queue_branch()
             sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
@@ -2203,6 +2205,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
             (self.base / "pr-state").write_text(f"OPEN {candidate} ")
+            self.on_origin("update-ref", "refs/heads/main", candidate)
             (self.base / "pr-state-after").write_text(f"MERGED {candidate} {candidate}")
             (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
@@ -2641,17 +2644,102 @@ os.execv({real!r}, [{real!r}, *args])
     def test_merge_mode_pauses_when_the_state_read_of_a_merged_pr_names_an_abbreviated_merge_commit(self):
         self.pauses_on_a_merged_pr_whose_state_read_reports_the_merge_commit_as("abc123")
 
-    def test_merge_mode_fetches_a_merge_commit_that_trunk_no_longer_holds_lands_the_entry_and_pauses_on_the_next_run(self):
+    def off_trunk_pause(self, merged, trunk):
+        return (f"https://github.com/o/r/pull/9 is recorded as merged at {merged[:12]}, and trunk at {trunk[:12]} "
+                "does not hold that commit. E1 stays awaiting merge. Check what happened to trunk. "
+                "Once trunk holds that commit again, run land.py resume and land.py land")
+
+    def pauses_on_a_merge_of_the_first_of_two_entries_that_trunk_was_rewound_past(self, outside):
+        """PR 9 merges outside the queue and trunk is put back to init before land runs.
+
+        With <outside>, trunk gains another commit just before that merge, so the merge commit holds another tree
+        than the candidate. Returns the candidate and the merge commit, with the merge commit back on trunk and
+        the queue resumed."""
+        self.open_line(2)
+        self.post_check(9, "passed")
+        self.post_check(10, "passed")
+        initial, candidate = self.on_origin("rev-parse", "main"), self.on_origin("rev-parse", "landing/e1")
+        if outside:
+            (self.base / "outside-commit-before-merge").write_text("")
+        self.gh("pr", "merge", "https://github.com/o/r/pull/9", "--squash", "--match-head-commit", candidate)
+        merged = self.on_origin("rev-parse", "main")
+        self.assertEqual(self.on_origin("rev-parse", f"{merged}^{{tree}}") != self.on_origin("rev-parse", f"{candidate}^{{tree}}"),
+                         outside)
+        self.on_origin("update-ref", "refs/heads/main", initial)
+        self.assertFalse(self.ref_exists(f"{merged}^{{commit}}", self.work))
+        pause = self.off_trunk_pause(merged, initial)
+        for _run in range(2):
+            self.assertEqual(self.land("land"), f"queue paused: {pause}")
+            self.assertEqual(self.origin_log(), ["init"])
+            self.assertTrue(self.ref_exists(f"{merged}^{{commit}}", self.work))
+            self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
+                                                        "waiting for required checks before merging")
+            self.assertEqual(self.listed(), ["L1 submitted r/D1: a.txt", "L2 submitted r/D2: b.txt"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e1"), candidate)
+            self.assertEqual(self.land("resume"), "queue resumed")
+        self.on_origin("update-ref", "refs/heads/main", merged)
+        return candidate, merged
+
+    def test_merge_mode_claims_nothing_about_what_trunk_holds_when_a_merge_with_another_tree_is_not_on_trunk_then_reports_it_once_trunk_holds_it(self):
+        with self.fake_gh():
+            candidate, merged = self.pauses_on_a_merge_of_the_first_of_two_entries_that_trunk_was_rewound_past(outside=True)
+            other_tree = (f"E1 merged as {merged[:12]}, whose tree is not the checked candidate {candidate[:12]}. "
+                          "Trunk holds a change no check ran against. Check trunk, then run land.py resume")
+            self.assertEqual(self.land("land"), f"landed E1 (r/D1)\nqueue paused: {other_tree}")
+            self.assertEqual(self.land("resume"), "queue resumed")
+            self.assertEqual(self.land("land"), "rebuilt E2 (r/D2) https://github.com/o/r/pull/10")
+            self.post_check(10, "passed")
+            self.assertEqual(self.land("land"), "landed E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "outside", "init"])
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_leaves_an_entry_awaiting_merge_when_its_merge_with_the_candidate_tree_is_not_on_trunk_then_lands_the_line_once_trunk_holds_it(self):
+        with self.fake_gh():
+            self.pauses_on_a_merge_of_the_first_of_two_entries_that_trunk_was_rewound_past(outside=False)
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+
+    def test_merge_mode_fetches_a_merge_commit_that_trunk_lost_during_the_run_and_pauses_with_the_entry_awaiting_merge(self):
         with self.fake_gh():
             self.open_line(1)
             self.post_check(9, "passed")
+            initial, candidate = self.on_origin("rev-parse", "main"), self.on_origin("rev-parse", "landing/e1")
             (self.base / "trunk-rewound-after-merge").write_text("")
-            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+            out = self.land("land")
             self.assertEqual(self.origin_log(), ["init"])
             merged = json.loads((self.base / "prs.json").read_text())["9"]["merge"]
+            self.assertEqual(out, f"queue paused: {self.off_trunk_pause(merged, initial)}")
             self.assertEqual(sh("git", "log", "-1", "--format=%s", merged, cwd=self.work), "w1")
-            self.assertEqual(self.land("status", "E1"), f"E1 landed (r/D1, w1). landed as {merged[:12]}. https://github.com/o/r/pull/9")
-            self.assertIn(f"queue paused: trunk no longer contains the last landed commit {merged[:12]}", self.land("land"))
+            self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
+                                                        "merge requested by the queue")
+            self.assertEqual(self.on_origin("rev-parse", "landing/e1"), candidate)
+
+    def test_merge_mode_says_the_merge_could_not_be_checked_when_git_cannot_tell_whether_trunk_holds_the_merge_commit(self):
+        with self.fake_gh():
+            self.open_line(1)
+            self.post_check(9, "passed")
+            initial, candidate = self.on_origin("rev-parse", "main"), self.on_origin("rev-parse", "landing/e1")
+            (self.base / "outside-commit-before-merge").write_text("")
+            with self.git_fails_for_the_merge_commit_of_pr_9("arg == '--is-ancestor'", code=128):
+                out = self.land("land")
+                merged = self.on_origin("rev-parse", "main")
+                self.assertEqual(
+                    out,
+                    "queue paused: The merge of E1 could not be checked. "
+                    f"Git could not tell whether trunk at {merged} holds merge commit {merged} "
+                    "(git merge-base --is-ancestor exited 128), "
+                    "so the tree of the merge commit was not compared with the tree of the candidate. "
+                    "E1 stays awaiting merge. Check that git can read both commits here, "
+                    "then run land.py resume and land.py land")
+                self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
+                                                            "merge requested by the queue")
+                self.assertEqual(self.on_origin("rev-parse", "landing/e1"), candidate)
+            self.assertNotEqual(merged, initial)
+            self.assertEqual(self.land("resume"), "queue resumed")
+            other_tree = (f"E1 merged as {merged[:12]}, whose tree is not the checked candidate {candidate[:12]}. "
+                          "Trunk holds a change no check ran against. Check trunk, then run land.py resume")
+            self.assertEqual(self.land("land"), f"landed E1 (r/D1)\nqueue paused: {other_tree}")
 
     def test_merge_mode_says_it_could_not_check_trunk_when_git_cannot_read_the_last_landed_commit(self):
         with self.fake_gh():

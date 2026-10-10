@@ -368,6 +368,10 @@ class UnverifiedMerge(Infrastructure):
     pass
 
 
+class MergeNotOnTrunk(Infrastructure):
+    pass
+
+
 class HeadChanged(Infrastructure):
     pass
 
@@ -1706,10 +1710,11 @@ def head_changed_note(head):
     return f"PR head changed to {head[:12]} outside the queue"
 
 
-def tree_mismatch_pause(store, entry, merged):
-    """The pause text when the merge commit and the candidate hold different trees, and empty when they hold the same one.
+def tree_mismatch_pause(store, entry, merged, trunk):
+    """The pause text when trunk holds the merge commit and its tree is not the candidate's, and empty when trunk holds it and the trees are the same.
 
-    Raises UnverifiedMerge when the merge commit has no full id or either tree cannot be read."""
+    Raises MergeNotOnTrunk when git says the trunk commit does not hold the merge commit. Raises UnverifiedMerge when
+    the merge commit has no full id, either tree cannot be read, or git cannot tell whether trunk holds the merge commit."""
     label, remote, url = entry_label(entry["id"]), store.contract["remote"], entry["pr"]
     unverified = (f"The merge of {label} could not be checked. {{cause}}, so the tree of the merge commit was not "
                   f"compared with the tree of the candidate. {label} stays awaiting merge. "
@@ -1726,6 +1731,17 @@ def tree_mismatch_pause(store, entry, merged):
                 cause=f"Git could not read commit {commit} even after asking {remote} for it",
                 fix=f"Check that {remote} serves that commit"))
         trees.append(tree)
+    # The exit codes are those in rewound. Only 0 shows that the merge commit is on trunk.
+    code = git("merge-base", "--is-ancestor", merged, trunk, cwd=store.repo, check=False).returncode
+    if code == 1:
+        raise MergeNotOnTrunk(f"{url} is recorded as merged at {merged[:12]}, and trunk at {trunk[:12]} does not hold "
+                              f"that commit. {label} stays awaiting merge. Check what happened to trunk. Once trunk "
+                              "holds that commit again, run land.py resume and land.py land")
+    if code != 0:
+        raise UnverifiedMerge(unverified.format(
+            cause=f"Git could not tell whether trunk at {trunk} holds merge commit {merged} "
+                  f"(git merge-base --is-ancestor exited {code})",
+            fix="Check that git can read both commits here"))
     if trees[0] == trees[1]:
         return ""
     return (f"{label} merged as {merged[:12]}, whose tree is not the checked candidate "
@@ -1742,8 +1758,8 @@ def take_pr(store, entry, landed, bounced):
     if state == "MERGED":
         checked, unchecked = head == entry["candidate"], ""
         if store.contract["mode"] == "merge":
-            fetch_trunk(store)
-            unchecked = tree_mismatch_pause(store, entry, merged) if checked else ""
+            trunk = fetch_trunk(store)
+            unchecked = tree_mismatch_pause(store, entry, merged, trunk) if checked else ""
         deleted, warning = delete_queue_branch(store, entry)
         if not deleted:
             return True
@@ -1984,7 +2000,7 @@ def land(store):
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
-        if isinstance(problem, (AutoMergeStillEnabled, UncheckedTrunk, UnverifiedMerge, HeadChanged)):
+        if isinstance(problem, (AutoMergeStillEnabled, UncheckedTrunk, UnverifiedMerge, MergeNotOnTrunk, HeadChanged)):
             pause(store, str(problem))
         else:
             suggestion = suggested_merge_method(store.repo, str(problem))

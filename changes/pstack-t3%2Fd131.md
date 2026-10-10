@@ -6,6 +6,7 @@
 - In `merge` mode `land` now pauses the queue when a landed entry's merge commit does not hold its candidate's tree.
 - In `merge` mode `land` now makes that tree comparison before it deletes `landing/e<n>` and lands the entry, and fetches a commit it cannot read by its full id.
 - In `merge` mode `land` now pauses the queue and leaves the entry awaiting merge when it cannot read the tree of the merge commit or of the candidate.
+- In `merge` mode `land` now runs `git merge-base --is-ancestor` on the merge commit and trunk before it compares the tree of the merge commit with the tree of the candidate, and pauses the queue and leaves the entry awaiting merge when trunk does not hold the merge commit or git cannot tell.
 - `land` now passes `--match-head-commit` with the entry's candidate on the `gh pr merge --auto` command and on each plain `gh pr merge`.
 - A head pushed to the PR between the check read and a merge request, including a repeat after `Base branch was modified`, is now refused by that flag and not merged.
 - After a plain merge refusal other than `Base branch was modified` and the base branch policy refusal with no check posted, `land` now reads the PR state, and pauses the queue naming both commits when the PR is open at a head that is not the candidate.
