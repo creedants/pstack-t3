@@ -5,9 +5,9 @@ description: How pstack-t3 skills delegate, pick models, isolate work, schedule,
 
 # pstack-t3 runtime
 
-pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, OpenCode, Muse, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
+pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, Pi, OpenCode, Muse, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
 
-Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If the T3 tools do not appear in your first tool scan, make one direct call to `orchestrator_capabilities` before concluding they are missing. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback).
+Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If a T3 tool this skill names is not in your tool list, find it with the host's tool search when the host has one, and call it by the name the search returns. When the host has no tool search, call the tool directly. Start with `orchestrator_capabilities`, and do not conclude the tools are missing until a search or a direct call has failed. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback).
 
 ## Vocabulary
 
@@ -431,7 +431,10 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 
 ## Verification surfaces
 
-- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Keep the `tabId` that `preview_open` returns and close each preview you opened with `t3_preview_close` and that `tabId`.
+- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Close each preview you opened with `t3_preview_close` and its `tabId`.
+- Preview tabs. Pass the `tabId` that `preview_open` returns on every later preview call. Without it, T3 chooses the tab for you, which can be one you did not mean. The one exception is a new tab, which takes no `tabId` (see Clean state). Act only on tabs you opened. Never act on a tab whose `owner` in `preview_status` is `human`, and treat another session's tab as read-only.
+- Preview images. Pass `includeImage` explicitly on every `preview_snapshot`, because its default differs between builds. Pass `includeImage: true` when you need to see the page. When the result holds no image, or you need a PNG file, pass `save: true` and open the file at the `screenshotPath` it returns.
+- Clean state. Do not assume a tab is logged out or logged in. Check. For a logged-out or first-run check, call `preview_open` with `reuseExistingTab: false`, no `tabId`, and an `incognito` `profileId` when `preview_status` lists one. Read the page with `preview_snapshot` and confirm it shows the state you need before you rely on it. Never clear storage in a profile a human uses.
 - Devices and simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`.
 - CLIs and TUIs: run them in the terminal and assert on output.
 - A project `verify-*` skill beats all of these when one exists.

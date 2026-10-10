@@ -31,6 +31,8 @@ python3 <runtime>/scripts/roles.py show --cwd "$PWD" --catalog /tmp/pstack-t3-ca
 
 This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped. A saved `contextWindow` on a native Claude 5 seat shows as `dropped unknown options contextWindow`, because T3 Code 0.0.46-nightly.20261008.2801 fixed those models at 1M context. Rewrite that seat without it in step 4.
 
+When a `claude-opus-5-5`, `claude-sonnet-5-5`, or `claude-haiku-5-5` seat is missing on a native Claude provider, look at T3's model picker for an update notice that names the Claude Code version that model needs. If the notice is there, tell the user to update Claude Code in T3's provider settings and rerun setup. Do not seat a replacement family without saying so.
+
 ### 3. Budget, map, and confirm
 
 **(a) Ask for a budget.** Use the host's question tool if it has one. Offer these labels, and name the current budget.
