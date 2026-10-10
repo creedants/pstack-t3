@@ -1039,7 +1039,8 @@ def publish(store, base, candidate):
 
 def pause(store, reason):
     with store.tx() as db:
-        mark_paused(store, db, reason)
+        if store.contract.get("paused") != reason:
+            mark_paused(store, db, reason)
 
 
 def mark_paused(store, db, reason):
@@ -1284,7 +1285,8 @@ MERGE_REQUESTED = "merge requested by the queue"
 
 
 WAITING_FOR_CHECKS = "waiting for required checks before merging"
-BASE_MOVED = "Base branch was modified"
+BASE_MOVED_RETRIES = 3
+BASE_MOVED_WAIT = 2
 BLOCKER_QUERY = (
     '[.reviewDecision // "", '
     '([(.statusCheckRollup // [])[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
@@ -1315,7 +1317,16 @@ def unposted_merge_refusal(stderr):
     return "the base branch policy prohibits the merge" in (stderr or "")
 
 
+def base_moved_refusal(stderr):
+    return "Base branch was modified" in (stderr or "")
+
+
+def merge_requested(row):
+    return row["note"] == MERGE_REQUESTED
+
+
 Line = namedtuple("Line", "entries stale tip")
+CheckRead = namedtuple("CheckRead", "blocker detail armed head")
 
 
 def trunk_commit(store):
@@ -1355,7 +1366,7 @@ def line_of(store, trunk):
         while entries and entries[-1]["candidate"] in behind:
             entries.append(behind[entries[-1]["candidate"]])
     inside = {row["id"] for row in entries}
-    stale = [row for row in waiting if row["id"] not in inside and row["pr"] and row["note"] != MERGE_REQUESTED]
+    stale = [row for row in waiting if row["id"] not in inside and row["pr"] and not merge_requested(row)]
     return Line(entries, stale, entries[-1]["candidate"] if entries else trunk)
 
 
@@ -1391,7 +1402,7 @@ def merge_blocker(store, url):
     if len(fields) != 6 or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
         raise Infrastructure(f"could not read checks for {url}: unparseable check rollup")
     blocker, detail = classify_rollup(fields[0], int(fields[1]), fields[2], int(fields[3]))
-    return blocker, detail, fields[4] == "true", fields[5]
+    return CheckRead(blocker, detail, fields[4] == "true", fields[5])
 
 
 def disarm_auto_merge(store, url, armed):
@@ -1432,31 +1443,31 @@ def request_merge(store, ident, out):
     entry = entry_row(store, ident)
     url = entry["pr"]
     line = line_of(store, trunk_commit(store)).entries
-    place = next((index for index, row in enumerate(line) if row["id"] == ident), None)
-    if place is None:
+    ahead_of = {row["id"]: ahead for ahead, row in zip([None, *line], line)}
+    if ident not in ahead_of:
         return False
-    blocker, detail, armed, head = merge_blocker(store, url)
-    if head != entry["candidate"]:
+    ahead = ahead_of[ident]
+    checks = merge_blocker(store, url)
+    if checks.head != entry["candidate"]:
         return False
-    if blocker == "review":
-        pause_for_review(store, url, detail, disarm=False)
+    if checks.blocker == "review":
+        pause_for_review(store, url, checks.detail, disarm=False)
     drain = int(store.contract.get("drain") or 0)
     seen = absent_seen(store, ident)
-    repeat_absent = blocker == "absent" and seen is not None and seen < drain
-    if blocker == "pending" or (blocker == "absent" and (place or not repeat_absent)):
-        if blocker == "absent":
+    repeat_absent = checks.blocker == "absent" and seen is not None and seen < drain
+    if checks.blocker == "pending" or (checks.blocker == "absent" and (ahead or not repeat_absent)):
+        if checks.blocker == "absent":
             remember_absent(store, ident, drain)
         else:
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
         return False
-    if place:
-        ahead = entry_label(line[place - 1]["id"])
+    if ahead:
         with store.tx() as db:
-            store.set_entry(db, ident, "awaiting-merge", note=f"waiting for {ahead} to merge first")
+            store.set_entry(db, ident, "awaiting-merge", note=f"waiting for {entry_label(ahead['id'])} to merge first")
         return False
-    if blocker == "failed":
-        bounce_open_pr(store, ident, url, f"required checks failed on {url}: {detail}", armed)
+    if checks.blocker == "failed":
+        bounce_open_pr(store, ident, url, f"required checks failed on {url}: {checks.detail}", checks.armed)
         out.bounced.append(ident)
         return False
     trunk = fetch_trunk(store)
@@ -1468,18 +1479,18 @@ def request_merge(store, ident, out):
         with store.tx() as db:
             store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
         return True
-    for asked in range(4):
+    for asked in range(BASE_MOVED_RETRIES + 1):
         now_ = gh("pr", "merge", url, method, cwd=store.repo)
-        if now_.returncode == 0 or BASE_MOVED not in (now_.stderr or "") or asked == 3:
+        if now_.returncode == 0 or not base_moved_refusal(now_.stderr) or asked == BASE_MOVED_RETRIES:
             break
-        time.sleep(2)
+        time.sleep(BASE_MOVED_WAIT)
     if now_.returncode != 0:
         plain = (now_.stderr or "").strip()
-        if blocker == "absent" and unposted_merge_refusal(plain):
+        if checks.blocker == "absent" and unposted_merge_refusal(plain):
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
             return False
-        if BASE_MOVED in plain:
+        if base_moved_refusal(plain):
             return False
         raise Infrastructure(f"GitHub refused to merge {url}: {plain or 'gh pr merge failed'}")
     with store.tx() as db:
@@ -1636,7 +1647,7 @@ def read_pr_state(store, url):
     return (view.stdout.strip().split(" ") + ["", "", ""])[:3]
 
 
-def unchecked_trunk(store, entry, merged):
+def tree_mismatch_pause(store, entry, merged):
     resolved = git("rev-parse", "--verify", "--quiet", f"{merged}^{{commit}}", cwd=store.repo, check=False)
     if resolved.returncode != 0 or same_tree(store.repo, merged, entry["candidate"]):
         return ""
@@ -1653,7 +1664,7 @@ def take_pr(store, entry, landed, bounced):
         checked, unchecked = head == entry["candidate"], ""
         if store.contract["mode"] == "merge":
             fetch_trunk(store)
-            unchecked = unchecked_trunk(store, entry, merged) if checked else ""
+            unchecked = tree_mismatch_pause(store, entry, merged) if checked else ""
         with store.tx() as db:
             if checked:
                 settle_landed(store, db, entry["id"], merged, warning)
@@ -1691,15 +1702,16 @@ def poll(store, entry, out):
             return
     if take_pr(store, entry, out.landed, out.bounced) or not merging:
         return
-    if entry["note"] == MERGE_REQUESTED:
-        blocker, detail, armed, _head = merge_blocker(store, entry["pr"])
+    if merge_requested(entry):
+        checks = merge_blocker(store, entry["pr"])
         if take_pr(store, entry, out.landed, out.bounced):
             return
-        if blocker == "failed":
-            bounce_open_pr(store, entry["id"], entry["pr"], f"required checks failed on {entry['pr']}: {detail}", armed)
+        if checks.blocker == "failed":
+            bounce_open_pr(store, entry["id"], entry["pr"],
+                           f"required checks failed on {entry['pr']}: {checks.detail}", checks.armed)
             out.bounced.append(entry["id"])
-        elif blocker == "review":
-            pause_for_review(store, entry["pr"], detail, disarm=True, armed=armed)
+        elif checks.blocker == "review":
+            pause_for_review(store, entry["pr"], checks.detail, disarm=True, armed=checks.armed)
         return
     # A merge command can return before pr view reports MERGED.
     reads = 4 if request_merge(store, entry["id"], out) else 1
@@ -1890,9 +1902,9 @@ def land(store):
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
-        if isinstance(problem, AutoMergeStillEnabled):
+        if isinstance(problem, (AutoMergeStillEnabled, UncheckedTrunk)):
             pause(store, str(problem))
-        elif not isinstance(problem, UncheckedTrunk):
+        else:
             suggestion = suggested_merge_method(store.repo, str(problem))
             if suggestion:
                 pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
