@@ -25,7 +25,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 TICKET_STATES = ("waiting", "assigned", "moved", "done", "dropped")
@@ -43,11 +43,27 @@ ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
-# Highest first.
+# Highest first. --priority choices, AUTOFIRE, and the sort rank in next all derive from it.
 PRIORITIES = ("urgent", "normal", "low")
 AUTOFIRE = ("off", *PRIORITIES)
 # The priority of a ticket whose priority cell is empty, by base_source. Every other source reads as normal.
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
+# A low ticket is startable only while more than this many workers are idle.
+LOW_RESERVE = 1
+# A low ticket filed more than this many days ago is flagged in next.
+LOW_FLAG_DAYS = 7
+# Where a waiting ticket stands in next: the label on the count line, then the words on the ticket's line.
+STANDINGS = {
+    "start": ("startable", "startable"),
+    "rides": ("riding", "rides with {why}"),
+    "blocked": ("blocked", "blocked, {why}"),
+    "unknown": ("unknown", "unknown, no paths recorded"),
+    "decision": ("decisions", "decision for the owner"),
+    "below": ("below auto-start", "below auto-start"),
+    "reserve": ("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
+}
+NO_WORKER = "waiting for an idle worker"
+STARTS_AFTER = "starts after {tickets}"
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision"),
@@ -62,7 +78,7 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch")
+WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "next")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -1521,6 +1537,23 @@ def fire_command(ident, note):
     return " ".join(shlex.quote(str(word)) for word in words)
 
 
+def lease_block(project_root, holder_name, paths, kind="lease"):
+    """What the landing queue answers for a claim on these paths now, as (kind, text), or None for free.
+
+    `kind` is the kind of an answer that names neither a lease nor the repository cap.
+    """
+    code, out, err = lease_check(project_root, holder_name, paths)
+    if code == 0:
+        return None
+    held = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
+    if held:
+        return "lease", "waiting on " + ", ".join(f"{lease} ({holder_name})" for lease, holder_name in held)
+    room = re.search(r"(\d+ of \d+ changes in flight)", out)
+    if room:
+        return "repository", f"waiting for room in the repository ({room.group(1)})"
+    return kind, f"waiting on the landing queue ({out or err or 'lease check failed'})"
+
+
 def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     """The block on a waiting ticket that holds now, as (kind, text), or None. Workers come first, as in fire."""
     if running >= cap:
@@ -1529,16 +1562,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    code, out, err = lease_check(project_root, f"{prefix}/{ident}", with_fragment(requested, known))
-    if code == 0:
-        return None
-    overlap = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
-    if overlap:
-        return "lease", "waiting on " + ", ".join(f"{lease} ({holder_name})" for lease, holder_name in overlap)
-    room = re.search(r"(\d+ of \d+ changes in flight)", out)
-    if room:
-        return "repository", f"waiting for room in the repository ({room.group(1)})"
-    return note.get("kind") or "lease", f"waiting on the landing queue ({out or err or 'lease check failed'})"
+    return lease_block(project_root, f"{prefix}/{ident}", with_fragment(requested, known), note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):
@@ -1558,6 +1582,141 @@ def holding_blocks(restaurant):
     with restaurant.checked():
         inputs = block_inputs(restaurant)
     return {ident: held for ident, _, held in recheck_blocks(restaurant, inputs) if held}
+
+
+def overlap(first, second):
+    """True when a path of one list equals, or is a directory above, a path of the other. Between waiting tickets only."""
+    return any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in first for b in second)
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """A waiting ticket as next reads it. Empty `paths` means unknown."""
+    id: str
+    priority: str
+    filed: datetime
+    paths: tuple
+    decision: bool
+    summary: str
+
+
+@dataclass(frozen=True)
+class Standing:
+    """Where one waiting ticket stands. `kind` is a key of STANDINGS.
+
+    `why` fills the kind's words: a ticket id for rides, the reason for blocked, else empty.
+    `overdue` is true for a low ticket filed more than LOW_FLAG_DAYS days before now.
+    """
+    ticket: Waiting
+    kind: str
+    why: str
+    overdue: bool
+
+
+def waiting_ticket(row):
+    filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
+    if filed.tzinfo is None:
+        filed = filed.replace(tzinfo=timezone.utc)
+    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"])
+
+
+def plan(tickets, running, cap, level, answers, now):
+    """One Standing per waiting ticket, in the order the tickets should start. Pure. It starts nothing.
+
+    The order is priority, then the oldest filed, then the number in the id. Each ticket takes the first standing
+    whose test holds. `answers` holds the landing queue's refusal by ticket id.
+    """
+    allowed = () if level == "off" else PRIORITIES[:PRIORITIES.index(level) + 1]
+    idle = max(0, cap - running)
+    priorities = {ticket.id: ticket.priority for ticket in tickets}
+    # Each ticket called startable so far, in start order, with its paths and the paths of the tickets riding with it.
+    started = {}
+    standings = []
+    for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES.index(ticket.priority), ticket.filed,
+                                                     int(ticket.id[1:]) if ticket.id[1:].isdigit() else 0)):
+        low = ticket.priority == "low"
+        shared = [ident for ident, paths in started.items() if overlap(ticket.paths, paths)]
+        kind, why = "start", ""
+        if ticket.decision:
+            kind = "decision"
+        elif not ticket.paths:
+            kind = "unknown"
+        elif ticket.id in answers:
+            kind, why = "blocked", answers[ticket.id]
+        elif low and len(shared) == 1 and priorities[shared[0]] != "low":
+            kind, why = "rides", shared[0]
+            started[why] += ticket.paths
+        elif shared:
+            kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))
+        elif ticket.priority not in allowed:
+            kind = "below"
+        elif not idle:
+            kind, why = "blocked", NO_WORKER
+        elif low and idle <= LOW_RESERVE:
+            kind = "reserve"
+        else:
+            idle -= 1
+            started[ticket.id] = ticket.paths
+        standings.append(Standing(ticket, kind, why, low and now - ticket.filed > timedelta(days=LOW_FLAG_DAYS)))
+    return standings
+
+
+def lease_answers(meta, tickets, next_dish):
+    """The landing queue's refusal of each waiting ticket's recorded paths, by ticket id. land.py runs here.
+
+    A decision ticket and a ticket that records no paths are not asked. Each distinct path list is asked once,
+    with the changelog fragment of the branch the next fire would use.
+    """
+    root, prefix = meta["projectRoot"], slug(meta["restaurant"])
+    asked, answers = {}, {}
+    for ticket in tickets:
+        if ticket.decision or not ticket.paths:
+            continue
+        if ticket.paths not in asked:
+            asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
+                                              with_fragment(",".join(ticket.paths), f"{prefix}/{next_dish.lower()}"))
+        if asked[ticket.paths]:
+            answers[ticket.id] = asked[ticket.paths][1]
+    return answers
+
+
+def age(delta):
+    """A span as whole days at one day or more, whole hours at one hour or more, else whole minutes."""
+    seconds = max(0, int(delta.total_seconds()))
+    if seconds >= 86400:
+        return f"{seconds // 86400}d"
+    if seconds >= 3600:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 60}m"
+
+
+def next_lines(standings, meta, running, now):
+    lines = [workers_line(meta, running)]
+    if not standings:
+        return "\n".join([*lines, "no waiting tickets"])
+    kinds = [standing.kind for standing in standings]
+    lines.append(", ".join([f"waiting tickets: {len(standings)}",
+                            *(f"{label}: {kinds.count(kind)}" for kind, (label, _) in STANDINGS.items() if kind in kinds)]))
+    for standing in standings:
+        ticket = standing.ticket
+        flag = " (over a week)" if standing.overdue else ""
+        paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
+        words = STANDINGS[standing.kind][1].format(why=standing.why)
+        lines.append(f"{ticket.id} {ticket.priority}, {age(now - ticket.filed)}{flag}: {words}{paths}")
+        if standing.kind in ("start", "rides"):
+            lines.append(f"  {ticket.summary}")
+    return "\n".join(lines)
+
+
+def next_up(restaurant):
+    with restaurant.checked():
+        meta = restaurant.meta
+        tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
+    # land.py waits on the landing database, so every call runs outside the store lock.
+    answers = lease_answers(meta, tickets, next_dish)
+    moment = datetime.now(timezone.utc)
+    return next_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), answers, moment), meta, running, moment)
 
 
 def ticket_lines(restaurant, state, held):
@@ -2512,6 +2671,8 @@ def parser():
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
+    sub.add_parser("next", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
+                                "it starts nothing")
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
     p.add_argument("id")
@@ -2746,6 +2907,8 @@ def run(argv):
                     args.paths, args.reason)
     if args.command == "watch":
         return watch(restaurant)
+    if args.command == "next":
+        return next_up(restaurant)
     if args.command == "ticket" and args.action == "list":
         held = holding_blocks(restaurant)
         with restaurant.checked():
