@@ -3632,6 +3632,49 @@ class OwnershipTest(unittest.TestCase):
             ],
         )
 
+    def test_doctor_names_a_claim_in_a_checkout_with_no_skills_directory(self):
+        a, swarm = self.installed_for_grok()
+        swarm.unlink()
+        (a / "skills").rename(a / "skills.away")
+        self.assertEqual(
+            self.doctor(a, 0, "--harness", "grok"),
+            [
+                self.harness_line("grok", "0/0 pstack-t3"),
+                f"        claim {swarm}: nothing is there; skills/ is missing, so install stops before it plans a link; "
+                "run python3 scripts/build.py first and rerun doctor",
+            ],
+        )
+        stopped = run(self.home, a, "install", "--harness", "grok")
+        self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+        self.assertEqual(stopped.stderr, "skills/ is missing; run python3 scripts/build.py first\n")
+
+    def test_doctor_under_project_ends_each_advised_command_with_the_project_and_they_clear_the_claim(self):
+        a = make_checkout(self.home, "a")
+        project = self.home / "project"
+        project.mkdir()
+        scope = ("--project", str(project), "--harness", "grok")
+        self.ok(run(self.home, a, *scope), "linked 3 skills into grok")
+        swarm = project / ".grok" / "skills" / "swarm"
+        swarm.unlink()
+        self.assertEqual(
+            self.doctor(a, 1, *scope),
+            [
+                f"grok    {swarm.parent}: 2/3 pstack-t3, 1 missing",
+                f'        claim {swarm}: nothing is there; run "python3 scripts/install.py install --harness grok '
+                f'--project {project}" to link it again, then "python3 scripts/install.py uninstall --harness grok '
+                f'--project {project}" removes the link and this claim',
+            ],
+        )
+        owners = project / ".pstack" / "install-owners"
+        self.assertEqual(os.listdir(owners), [owner_file(self.home, a).name])
+        self.ok(run(self.home, a, "install", "--harness", "grok", "--project", str(project)), "linked 1 skills into grok")
+        self.ok(
+            run(self.home, a, "uninstall", "--harness", "grok", "--project", str(project)),
+            "removed 3 links, restored 0 entries",
+        )
+        self.assertFalse((owners / owner_file(self.home, a).name).exists())
+        self.assertEqual(os.listdir(swarm.parent), [])
+
     def test_doctor_names_a_claim_whose_link_sits_in_a_holder_beside_it(self):
         a, swarm, raced, aside = self.strand_link()
         self.assertEqual(
