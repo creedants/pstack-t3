@@ -1342,6 +1342,23 @@ class Finding:
     item: str = ""
 
 
+@dataclass(frozen=True)
+class Unread:
+    """One record file doctor could not use. `line` names the file and says what doctor did not check.
+
+    `blinds` is true for the manifest and for this checkout's owner file, the two files install and uninstall stop on.
+    """
+    line: str
+    blinds: bool
+
+
+@dataclass(frozen=True)
+class Audit:
+    """What doctor found in the records. `findings` are Findings and `unread` are Unreads, each in the order they print."""
+    findings: tuple
+    unread: tuple
+
+
 RELINK = ('claim {path}: nothing is there; run "{install}" to link it again, '
           'then "{uninstall}" removes the link and this claim')
 RELINK_MANY = ('claims have nothing at their paths; run "{install}" to link them again, '
@@ -1439,7 +1456,7 @@ def grouped(findings):
 
 
 def audit(args, scope, user, names):
-    """Read the records and return every Finding. Reads only: no lock, no directory made, no file written."""
+    """Read the records and return an Audit. Reads only: no lock, no directory made, no file written."""
     state, root = state_dir(scope, user), str(ROOT)
     stale, away, unread = [], [], []
     mine = owner_path(state, root)
@@ -1450,11 +1467,11 @@ def audit(args, scope, user, names):
         try:
             data = read_object(file)
         except (Unreadable, OSError) as error:
-            unread.append(Finding((), f"{error} (doctor read no checkout from it)"))
+            unread.append(Unread(f"{error} (doctor read no checkout from it)", False))
             continue
         checkout = data.get("checkout")
         if not isinstance(checkout, str):
-            unread.append(Finding((), f"{file} names no checkout (doctor read no checkout from it)"))
+            unread.append(Unread(f"{file} names no checkout (doctor read no checkout from it)", False))
             continue
         if os.path.isdir(checkout):
             continue
@@ -1464,15 +1481,18 @@ def audit(args, scope, user, names):
             if count:
                 away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout, manifest=state / LEGACY_NAME)))
     try:
-        links, backups = read_legacy(state, scope, user)
+        manifest = read_legacy(state, scope, user)
     except (Unreadable, OSError) as error:
-        return tuple(away + unread) + (Finding((), f"{error} (doctor checked no claims and no backup rows)"),)
+        manifest = None
+        unread.append(Unread(f"{error} (doctor checked no claims and no backup rows)", True))
     try:
         claims = current_claims(state, root)
     except (Unreadable, OSError) as error:
         claims = {}
-        unread.append(Finding((), f"{error} (doctor checked no claims of this checkout)"))
-    view = View(claims, links, backups)
+        unread.append(Unread(f"{error} (doctor checked no claims of this checkout)", True))
+    if manifest is None:
+        return Audit(tuple(away), tuple(unread))
+    view = View(claims, *manifest)
     strays = survey(view, scope, user, state, root, HARNESSES)
     present = stacks(view)
     for path, harnesses in claims.items():
@@ -1485,7 +1505,7 @@ def audit(args, scope, user, names):
     for row in view.backups:
         if not os.path.lexists(row.backup):
             stale.append(row_finding(args, state, row, held_for.get(row.backup)))
-    return tuple(stale + away + unread)
+    return Audit(tuple(stale + away), tuple(unread))
 
 
 def link_health(harness, directory, names, scope, user):
@@ -1530,11 +1550,13 @@ def doctor(args):
         if harness not in args.harness:
             continue
         healthy &= link_health(harness, directory, names, scope, user)
-        for line in grouped([finding for finding in found if harness in finding.harnesses]):
+        for line in grouped([finding for finding in found.findings if harness in finding.harnesses]):
             print(f"        {line}")
-    for line in grouped([finding for finding in found if not finding.harnesses]):
+    for line in grouped([finding for finding in found.findings if not finding.harnesses]):
         print(line)
-    return 0 if healthy else 1
+    for item in found.unread:
+        print(item.line)
+    return 0 if healthy and not any(item.blinds for item in found.unread) else 1
 
 
 def main(argv=None):
