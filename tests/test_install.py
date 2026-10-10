@@ -3683,7 +3683,7 @@ class OwnershipTest(unittest.TestCase):
         self.restore_recorded_as(".config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
-    def test_a_restore_under_a_relative_config_home_through_a_symlink_at_each_level_leaves_the_link_and_the_directories_behind_it(self):
+    def test_a_restore_under_a_relative_config_home_through_a_symlink_at_each_level_leaves_the_link_and_the_emptied_harness_directory(self):
         behind = {
             "backups": lambda link, real, emptied: (os.listdir(real), os.listdir(emptied.parent)),
             "stamp": lambda link, real, emptied: (os.listdir(real), os.listdir(link.parent)),

@@ -250,7 +250,7 @@ def read_object(path):
 
 
 def legacy_lists(path):
-    """Return the manifest's object and its links and backups lists, or None when no file is at `path`."""
+    """Return the manifest's object and its links and backups lists, or None when `read_object` finds no file."""
     data = read_object(path)
     if data is None:
         return None
@@ -1021,7 +1021,7 @@ def backup_place(state, backup):
     """Return (stamp, harness) when `backup` is spelled <state>/backups/<stamp>/<harness>/<name>, else None.
 
     <state> is `state` as given or as `os.path.abspath` spells it. The inverse of the path `execute` builds for a move.
-    It compares text only and follows no symlink.
+    It follows no symlink and reads no file.
     """
     top = os.path.join(str(state), "backups") + os.sep
     if not backup.startswith(top):
