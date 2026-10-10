@@ -1023,9 +1023,18 @@ def prune(state, backup):
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
-    if place is None or os.rmdir not in os.supports_dir_fd:
+    if place is not None:
+        empty_out(state, *place)
+
+
+def empty_out(state, stamp, harness=None):
+    """Remove <state>/backups/<stamp>/<harness> if `harness` is given and it is empty, then <stamp> if it is empty.
+
+    The first rmdir that fails ends it. It never follows a symlink at backups/ or <stamp>.
+    Call it only inside `locked`. It never raises and prints nothing.
+    """
+    if os.rmdir not in os.supports_dir_fd:
         return
-    stamp, harness = place
     # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with suppress(OSError):
@@ -1033,7 +1042,8 @@ def prune(state, backup):
         try:
             inner = os.open(stamp, flags, dir_fd=top)
             try:
-                os.rmdir(harness, dir_fd=inner)
+                if harness is not None:
+                    os.rmdir(harness, dir_fd=inner)
             finally:
                 os.close(inner)
             os.rmdir(stamp, dir_fd=top)
@@ -1110,7 +1120,6 @@ def act(step, root):
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
         os.symlink(link_target(root, step.path), step.path, target_is_directory=True)
     elif step.kind == "move":
-        os.makedirs(os.path.dirname(step.backup), exist_ok=True)
         shutil.move(step.path, step.backup)
     elif step.kind == "unlink":
         return remove_link(step.path, root, step.path, "link")
@@ -1125,54 +1134,68 @@ def execute(plan, state, root):
     counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0, "skipped": 0}
     failed = set()
     stamp = None
-    for step in plan.steps:
-        if step.kind == "move":
-            if stamp is None:
-                backups = Path(state) / "backups"
-                backups.mkdir(parents=True, exist_ok=True)
-                stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
-            backup = os.path.join(stamp, step.place)
-            step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
-        # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
-        if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
-            counts["kept_extra"] += len(step.remove_claims)
-            continue
-        if not ready(step, root):
-            note = skip_note(step)
-            if note:
-                print(note)
+    made = []
+    try:
+        for step in plan.steps:
+            if step.kind == "move":
+                if stamp is None:
+                    backups = Path(state) / "backups"
+                    backups.mkdir(parents=True, exist_ok=True)
+                    stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
+                backup = os.path.join(stamp, step.place)
+                step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
+            # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
+            if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
+                counts["kept_extra"] += len(step.remove_claims)
+                continue
+            if not ready(step, root):
+                note = skip_note(step)
+                if note:
+                    print(note)
+                    counts["skipped"] += 1
+                failed.add(step.path)
+                continue
+            undo = add_records(step, state, root)
+            try:
+                if step.kind == "move":
+                    harness = os.path.basename(os.path.dirname(step.backup))
+                    if harness not in made:
+                        # mkdir refuses a <harness> that is already there, so this run never uses one it did not make.
+                        os.mkdir(os.path.dirname(step.backup))
+                        made.append(harness)
+                declined = act(step, root)
+            except OSError as error:
+                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+                if not (step.kind == "move" and os.path.lexists(step.backup)):
+                    undo()
+                print(f"skipped {subject(step)}: {error}")
                 counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        undo = add_records(step, state, root)
-        try:
-            declined = act(step, root)
-        except OSError as error:
-            # A move can fail after copying part of the entry, and then the row is the only record of that copy.
-            if not (step.kind == "move" and os.path.lexists(step.backup)):
+                failed.add(step.path)
+                continue
+            if declined:
                 undo()
-            print(f"skipped {subject(step)}: {error}")
-            counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        if declined:
-            undo()
-            print(f"skipped {subject(step)}: {declined}")
-            counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        remove_records(step, state, root)
-        for backup in step.remove_backups:
-            prune(state, backup)
-        if step.kind == "create":
-            counts["linked"] += 1
-        elif step.kind == "unlink":
-            counts["removed"] += 1
-        elif step.kind == "withdraw":
-            counts["removed"] += 1
-            counts["withdrawn"] += 1
-        elif step.kind == "restore":
-            counts["restored"] += 1
+                print(f"skipped {subject(step)}: {declined}")
+                counts["skipped"] += 1
+                failed.add(step.path)
+                continue
+            remove_records(step, state, root)
+            for backup in step.remove_backups:
+                prune(state, backup)
+            if step.kind == "create":
+                counts["linked"] += 1
+            elif step.kind == "unlink":
+                counts["removed"] += 1
+            elif step.kind == "withdraw":
+                counts["removed"] += 1
+                counts["withdrawn"] += 1
+            elif step.kind == "restore":
+                counts["restored"] += 1
+    finally:
+        if stamp is not None:
+            name = os.path.basename(stamp)
+            for harness in made:
+                empty_out(state, name, harness)
+            empty_out(state, name)
     return counts
 
 
