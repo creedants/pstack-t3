@@ -3656,6 +3656,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(written.stderr, f"error: {user}: {refusal}")
         self.assertEqual(validated.returncode, 2)
         self.assertEqual(validated.stderr, f"error: {user}: {refusal}")
+
     PANEL_CONFIG = {"roles": {"review backups": [
         MUSE_SEAT,
         {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
@@ -3690,22 +3691,11 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             repo.put(repo.user, roles_file)
         return repo, str(path)
 
-    def test_show_prints_the_kept_seats_and_a_note_for_each_dropped_seat(self):
+    def test_show_and_backup_print_the_panel_literals_for_one_config_and_catalog(self):
         with tempfile.TemporaryDirectory() as directory:
             repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
-            completed = repo.run("show", "--catalog", catalog, "--role", "review backups")
-            user = str(repo.user)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": {
-            "source": user,
-            "seats": [MUSE_SEAT, STEP_SEAT],
-            "notes": self.PANEL_NOTES,
-        }})
-
-    def test_backup_panel_for_an_author_of_another_family_matches_show(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
-            completed = subprocess.run(
+            shown = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            backed = subprocess.run(
                 [
                     sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
                     "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
@@ -3715,8 +3705,15 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
                 text=True,
                 input=_LIMIT,
             )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
+            user = str(repo.user)
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertEqual(json.loads(shown.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [MUSE_SEAT, STEP_SEAT],
+            "notes": self.PANEL_NOTES,
+        }})
+        self.assertEqual(backed.returncode, 0, backed.stderr)
+        payload = json.loads(backed.stdout)
         self.assertEqual(payload["decision"], "panel")
         self.assertEqual(payload["seats"], [MUSE_SEAT, STEP_SEAT])
         self.assertEqual(payload["notes"], self.PANEL_NOTES)
@@ -3801,7 +3798,6 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             ),
             "notes": skipped,
         }})
-
 
 
 def plain_provider(provider_id, *model_ids, runs=True):
