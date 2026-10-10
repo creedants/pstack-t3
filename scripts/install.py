@@ -1023,9 +1023,18 @@ def prune(state, backup):
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
-    if place is None or os.rmdir not in os.supports_dir_fd:
+    if place is not None:
+        empty_out(state, *place)
+
+
+def empty_out(state, stamp, harness=None):
+    """Remove <state>/backups/<stamp>/<harness> if `harness` is given and it is empty, then <stamp> if it is empty.
+
+    The first rmdir that fails ends it. It never follows a symlink at backups/ or <stamp>.
+    Call it only inside `locked`. It never raises and prints nothing.
+    """
+    if os.rmdir not in os.supports_dir_fd:
         return
-    stamp, harness = place
     # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with suppress(OSError):
@@ -1033,7 +1042,8 @@ def prune(state, backup):
         try:
             inner = os.open(stamp, flags, dir_fd=top)
             try:
-                os.rmdir(harness, dir_fd=inner)
+                if harness is not None:
+                    os.rmdir(harness, dir_fd=inner)
             finally:
                 os.close(inner)
             os.rmdir(stamp, dir_fd=top)
@@ -1110,7 +1120,6 @@ def act(step, root):
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
         os.symlink(link_target(root, step.path), step.path, target_is_directory=True)
     elif step.kind == "move":
-        os.makedirs(os.path.dirname(step.backup), exist_ok=True)
         shutil.move(step.path, step.backup)
     elif step.kind == "unlink":
         return remove_link(step.path, root, step.path, "link")
@@ -1125,54 +1134,68 @@ def execute(plan, state, root):
     counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0, "skipped": 0}
     failed = set()
     stamp = None
-    for step in plan.steps:
-        if step.kind == "move":
-            if stamp is None:
-                backups = Path(state) / "backups"
-                backups.mkdir(parents=True, exist_ok=True)
-                stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
-            backup = os.path.join(stamp, step.place)
-            step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
-        # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
-        if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
-            counts["kept_extra"] += len(step.remove_claims)
-            continue
-        if not ready(step, root):
-            note = skip_note(step)
-            if note:
-                print(note)
+    made = []
+    try:
+        for step in plan.steps:
+            if step.kind == "move":
+                if stamp is None:
+                    backups = Path(state) / "backups"
+                    backups.mkdir(parents=True, exist_ok=True)
+                    stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
+                backup = os.path.join(stamp, step.place)
+                step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
+            # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
+            if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
+                counts["kept_extra"] += len(step.remove_claims)
+                continue
+            if not ready(step, root):
+                note = skip_note(step)
+                if note:
+                    print(note)
+                    counts["skipped"] += 1
+                failed.add(step.path)
+                continue
+            undo = add_records(step, state, root)
+            try:
+                if step.kind == "move":
+                    harness = os.path.basename(os.path.dirname(step.backup))
+                    if harness not in made:
+                        # mkdir refuses a <harness> that is already there, so this run never uses one it did not make.
+                        os.mkdir(os.path.dirname(step.backup))
+                        made.append(harness)
+                declined = act(step, root)
+            except OSError as error:
+                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+                if not (step.kind == "move" and os.path.lexists(step.backup)):
+                    undo()
+                print(f"skipped {subject(step)}: {error}")
                 counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        undo = add_records(step, state, root)
-        try:
-            declined = act(step, root)
-        except OSError as error:
-            # A move can fail after copying part of the entry, and then the row is the only record of that copy.
-            if not (step.kind == "move" and os.path.lexists(step.backup)):
+                failed.add(step.path)
+                continue
+            if declined:
                 undo()
-            print(f"skipped {subject(step)}: {error}")
-            counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        if declined:
-            undo()
-            print(f"skipped {subject(step)}: {declined}")
-            counts["skipped"] += 1
-            failed.add(step.path)
-            continue
-        remove_records(step, state, root)
-        for backup in step.remove_backups:
-            prune(state, backup)
-        if step.kind == "create":
-            counts["linked"] += 1
-        elif step.kind == "unlink":
-            counts["removed"] += 1
-        elif step.kind == "withdraw":
-            counts["removed"] += 1
-            counts["withdrawn"] += 1
-        elif step.kind == "restore":
-            counts["restored"] += 1
+                print(f"skipped {subject(step)}: {declined}")
+                counts["skipped"] += 1
+                failed.add(step.path)
+                continue
+            remove_records(step, state, root)
+            for backup in step.remove_backups:
+                prune(state, backup)
+            if step.kind == "create":
+                counts["linked"] += 1
+            elif step.kind == "unlink":
+                counts["removed"] += 1
+            elif step.kind == "withdraw":
+                counts["removed"] += 1
+                counts["withdrawn"] += 1
+            elif step.kind == "restore":
+                counts["restored"] += 1
+    finally:
+        if stamp is not None:
+            name = os.path.basename(stamp)
+            for harness in made:
+                empty_out(state, name, harness)
+            empty_out(state, name)
     return counts
 
 
@@ -1329,30 +1352,64 @@ def points_here(path):
 
 @dataclass(frozen=True)
 class Finding:
-    """One record that no longer matches the disk. `line` is the whole sentence doctor prints, advice included.
+    """One record that no longer matches the disk.
 
-    `harnesses` are the harnesses it prints under. A finding with none prints once, after the last harness.
+    `line` is the whole sentence doctor prints when the record is alone in its head, advice included.
+    `head` is the sentence doctor prints once over every record with the same `head`, without its leading count.
+    `item` is this record's line under that head. A finding with an empty `head` is never grouped.
+    `harnesses` are the harnesses it prints under. A finding with none prints after the last harness.
     """
     harnesses: tuple
     line: str
+    head: str = ""
+    item: str = ""
+
+
+@dataclass(frozen=True)
+class Unread:
+    """One record file doctor could not use. `line` names the file and says what doctor did not check.
+
+    `blinds` is true for the manifest and for this checkout's owner file, the two files install and uninstall stop on.
+    """
+    line: str
+    blinds: bool
+
+
+@dataclass(frozen=True)
+class Audit:
+    """What doctor found in the records. `findings` are Findings and `unread` are Unreads."""
+    findings: tuple
+    unread: tuple
 
 
 RELINK = ('claim {path}: nothing is there; run "{install}" to link it again, '
           'then "{uninstall}" removes the link and this claim')
+RELINK_MANY = ('claims have nothing at their paths; run "{install}" to link them again, '
+               'then "{uninstall}" removes the links and these claims:')
 REPLACE = ('claim {path}: {there}; "{install}" stops on {n} taken paths; with --replace it moves them aside '
            'and links this path (uninstall restores them and removes this claim)')
+REPLACE_MANY = ('claims; "{install}" stops on {n} taken paths; with --replace it moves them aside '
+                'and links the path of each claim (uninstall restores them and removes these claims):')
 EDIT = ('claim {path}: {there}; install plans no link at that path, so no command clears this claim; '
         'to drop it, delete the "{path}" entry from {owner_file}')
+EDIT_MANY = ('claims; install plans no link at the path of any of them, so no command clears them; '
+             'to drop one, delete the entry named by its path from {owner_file}:')
 UNBUILT = ('claim {path}: {there}; skills/ is missing, so install stops before it plans a link; '
            'run python3 scripts/build.py first and rerun doctor')
+UNBUILT_MANY = ('claims; skills/ is missing, so install stops before it plans a link; '
+                'run python3 scripts/build.py first and rerun doctor:')
 HELD_CLAIM = ('claim {path}: {there}, and {aside} holds this checkout\'s link for it; '
               '"{dry_run}" prints what the next run does with it')
+HELD_MANY = 'records; "{dry_run}" prints what the next run does with the entry held for each:'
 INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {original}); uninstall skips the row '
              'while that path is empty; to drop it, delete the row from "backups" in {manifest}')
+INERT_ROW_MANY = ('backup rows have nothing at their backup paths; uninstall skips each row while its backup path is empty; '
+                  'to drop one, delete the row from "backups" in {manifest}:')
 HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
             '"{dry_run}" prints what the next run does with it')
 AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory is at {checkout}; '
-        'delete this file unless that checkout will be back at that path')
+        'delete this file unless that checkout will be back at that path; deleting it removes that checkout\'s claims '
+        'and removes no link they name and no row of {manifest}')
 
 
 def command(args, *words):
@@ -1361,13 +1418,15 @@ def command(args, *words):
     return shlex.join(("python3", "scripts/install.py", *words, *project))
 
 
-def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
-    """The sentence for one stale claim. The advice comes from what `plan_install` plans for the path right now."""
+def claim_finding(args, view, scope, user, names, root, path, harnesses, aside):
+    """The Finding for one stale claim. The advice comes from what `plan_install` plans for the path right now."""
     there = f"a {describe(path)} is there" if os.path.lexists(path) else "nothing is there"
     if aside:
-        return HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
+        dry_run = command(args, "uninstall", "--dry-run")
+        return Finding(harnesses, HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=dry_run),
+                       HELD_MANY.format(dry_run=dry_run), f"claim {path}: {there}, and {aside} holds this checkout's link for it")
     if not SKILLS.is_dir():
-        return UNBUILT.format(path=path, there=there)
+        return Finding(harnesses, UNBUILT.format(path=path, there=there), UNBUILT_MANY, f"{path}: {there}")
     plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
     forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
 
@@ -1376,20 +1435,51 @@ def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
 
     install = command(args, "install", "--harness", ",".join(harnesses))
     if links(plain) and not plain.conflicts:
-        return RELINK.format(path=path, install=install, uninstall=command(args, "uninstall", "--harness", ",".join(harnesses)))
+        uninstall = command(args, "uninstall", "--harness", ",".join(harnesses))
+        return Finding(harnesses, RELINK.format(path=path, install=install, uninstall=uninstall),
+                       RELINK_MANY.format(install=install, uninstall=uninstall), path)
     if links(forced):
-        return REPLACE.format(path=path, there=there, install=install, n=len(plain.conflicts))
-    return EDIT.format(path=path, there=there, owner_file=owner_path(state_dir(scope, user), root))
+        n = len(plain.conflicts)
+        return Finding(harnesses, REPLACE.format(path=path, there=there, install=install, n=n),
+                       REPLACE_MANY.format(install=install, n=n), f"{path}: {there}")
+    owner_file = owner_path(state_dir(scope, user), root)
+    return Finding(harnesses, EDIT.format(path=path, there=there, owner_file=owner_file),
+                   EDIT_MANY.format(owner_file=owner_file), f"{path}: {there}")
 
 
-def row_line(args, state, row, aside):
+def row_finding(args, state, row, aside):
+    """The Finding for one backup row with nothing at its backup path."""
     if aside:
-        return HELD_ROW.format(backup=row.backup, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
-    return INERT_ROW.format(backup=row.backup, original=row.original, manifest=Path(state) / LEGACY_NAME)
+        dry_run = command(args, "uninstall", "--dry-run")
+        return Finding(row.harnesses, HELD_ROW.format(backup=row.backup, aside=aside, dry_run=dry_run),
+                       HELD_MANY.format(dry_run=dry_run),
+                       f"backup row {row.backup}: nothing is there, and {aside} holds an entry under that name")
+    manifest = Path(state) / LEGACY_NAME
+    return Finding(row.harnesses, INERT_ROW.format(backup=row.backup, original=row.original, manifest=manifest),
+                   INERT_ROW_MANY.format(manifest=manifest), f"{row.backup} (recorded as the backup of {row.original})")
+
+
+def grouped(findings):
+    """The lines doctor prints for `findings`.
+
+    Findings with the same non-empty `head` print as one group at the position of the first of them: the count and
+    the head, then the `item` of each, two columns deeper. A finding alone in its head prints its `line`.
+    """
+    groups = {}
+    for index, finding in enumerate(findings):
+        groups.setdefault(finding.head or index, []).append(finding)
+    lines = []
+    for head, members in groups.items():
+        if len(members) == 1:
+            lines.append(members[0].line)
+        else:
+            lines.append(f"{len(members)} {head}")
+            lines.extend(f"  {member.item}" for member in members)
+    return lines
 
 
 def audit(args, scope, user, names):
-    """Read the records and return every Finding. Reads only: no lock, no directory made, no file written."""
+    """Read the records and return an Audit. Reads only: no lock, no directory made, no file written."""
     state, root = state_dir(scope, user), str(ROOT)
     stale, away, unread = [], [], []
     mine = owner_path(state, root)
@@ -1400,11 +1490,11 @@ def audit(args, scope, user, names):
         try:
             data = read_object(file)
         except (Unreadable, OSError) as error:
-            unread.append(Finding((), f"{error} (doctor read no checkout from it)"))
+            unread.append(Unread(f"{error} (doctor read no checkout from it)", False))
             continue
         checkout = data.get("checkout")
         if not isinstance(checkout, str):
-            unread.append(Finding((), f"{file} names no checkout (doctor read no checkout from it)"))
+            unread.append(Unread(f"{file} names no checkout (doctor read no checkout from it)", False))
             continue
         if os.path.isdir(checkout):
             continue
@@ -1412,17 +1502,20 @@ def audit(args, scope, user, names):
         for harness in HARNESSES:
             count = sum(1 for harnesses in claimed.values() if harness in harnesses)
             if count:
-                away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout)))
+                away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout, manifest=state / LEGACY_NAME)))
     try:
-        links, backups = read_legacy(state, scope, user)
+        manifest = read_legacy(state, scope, user)
     except (Unreadable, OSError) as error:
-        return tuple(away + unread) + (Finding((), f"{error} (doctor checked no claims and no backup rows)"),)
+        manifest = None
+        unread.append(Unread(f"{error} (doctor checked no claims and no backup rows)", True))
     try:
         claims = current_claims(state, root)
     except (Unreadable, OSError) as error:
         claims = {}
-        unread.append(Finding((), f"{error} (doctor checked no claims of this checkout)"))
-    view = View(claims, links, backups)
+        unread.append(Unread(f"{error} (doctor checked no claims of this checkout)", True))
+    if manifest is None:
+        return Audit(tuple(away), tuple(unread))
+    view = View(claims, *manifest)
     strays = survey(view, scope, user, state, root, HARNESSES)
     present = stacks(view)
     for path, harnesses in claims.items():
@@ -1430,12 +1523,12 @@ def audit(args, scope, user, names):
             continue
         aside = next((stray.path for stray in strays
                       if stray.kind in ("home", "own") and slot_of(stray.home) == slot_of(path)), None)
-        stale.append(Finding(harnesses, claim_line(args, view, scope, user, names, root, path, harnesses, aside)))
+        stale.append(claim_finding(args, view, scope, user, names, root, path, harnesses, aside))
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
-            stale.append(Finding(row.harnesses, row_line(args, state, row, held_for.get(row.backup))))
-    return tuple(stale + away + unread)
+            stale.append(row_finding(args, state, row, held_for.get(row.backup)))
+    return Audit(tuple(stale + away), tuple(unread))
 
 
 def link_health(harness, directory, names, scope, user):
@@ -1480,13 +1573,13 @@ def doctor(args):
         if harness not in args.harness:
             continue
         healthy &= link_health(harness, directory, names, scope, user)
-        for finding in found:
-            if harness in finding.harnesses:
-                print(f"        {finding.line}")
-    for finding in found:
-        if not finding.harnesses:
-            print(finding.line)
-    return 0 if healthy else 1
+        for line in grouped([finding for finding in found.findings if harness in finding.harnesses]):
+            print(f"        {line}")
+    for line in grouped([finding for finding in found.findings if not finding.harnesses]):
+        print(line)
+    for item in found.unread:
+        print(item.line)
+    return 0 if healthy and not any(item.blinds for item in found.unread) else 1
 
 
 def main(argv=None):
