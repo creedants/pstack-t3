@@ -5056,7 +5056,7 @@ class OwnershipTest(unittest.TestCase):
         """Run checkout a's install with a first step that runs `breaks` on the manifest path and then `fails`. Return the run and the manifest path."""
         a = make_checkout(self.home, "a")
         manifest = legacy_file(self.home)
-        # Stands in for a step that fails while another program rewrites the manifest between the step's record and its undo.
+        # Stands in for a step that fails while another program rewrites the manifest or changes its mode between the step's record and its undo.
         code = (
             "import errno\n"
             "def act(step, root):\n"
@@ -5105,7 +5105,7 @@ class OwnershipTest(unittest.TestCase):
     )
 
     def assert_adrift(self, checkout, file, unchecked):
-        """From a removed working directory, assert that install, uninstall, and a dry run exit 1 with the ADRIFT line for `file` alone on stderr,
+        """From a removed working directory, assert that install, uninstall, and uninstall --dry-run exit 1 with the ADRIFT line for `file` alone on stderr,
 
         that doctor prints its harness line and that line with `unchecked` in parentheses at exit 1, and that no record or link changed.
         """

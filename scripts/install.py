@@ -1096,10 +1096,9 @@ def backup_place(state, backup):
 
 
 def chains(state, recorded, stamp, harness, stack):
-    """Open backups/, <stamp>, and <harness> under `state` and under `recorded`. Return the two triples of descriptors.
+    """Open backups/, <stamp>, and <harness> under `state` and under `recorded`, each the way `empty_out_matched` states.
 
-    backups/ is opened by path, <stamp> under that descriptor, <harness> under the <stamp> descriptor, all with
-    O_RDONLY | O_DIRECTORY | O_NOFOLLOW. Every descriptor it opened closes when `stack` closes. A failed open raises OSError.
+    Return the two triples of descriptors, in that order of levels. Every descriptor it opened closes when `stack` closes.
     """
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -1133,7 +1132,7 @@ def home_of(state, backup):
     place = backup_place(spelled, backup)
     if place is None:
         return backup
-    # os.open raises ValueError for a name with a NUL byte or a lone surrogate, and a JSON record can hold either.
+    # os.open raises ValueError for a name with a NUL byte, and a JSON record can hold one.
     with suppress(OSError, ValueError), ExitStack() as stack:
         given, named = chains(state, spelled, *place, stack)
         if os.path.samestat(os.fstat(given[2]), os.fstat(named[2])):
