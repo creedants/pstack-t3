@@ -866,6 +866,7 @@ MODE_POINTER_SITES = {
 MODES_UNCHANGED = {
     "pstack-runtime/SKILL.md": "the Modes section's home",
     "brigade/SKILL.md": "brigade's mode lands in its own change",
+    "brigade-admin/SKILL.md": "launches only standing threads, the admin and a coordinator the user asks for, which light mode keeps",
     "setup-pstack/SKILL.md": "the smoke test is kept, one per provider",
     "poteto-help/SKILL.md": "names delegate_task to explain the persona and spawns nothing",
     "poteto-mode/playbooks/autonomous-run.md": "the watcher is kept",
@@ -2580,6 +2581,81 @@ class NoCommentsReadOnlyDocTest(unittest.TestCase):
         self.assertIn('Spawn Comment Sicko as a fresh child with `delegate_task` (`role: "review"`', self.text)
         self.assertIn("It edits comments in the shared checkout, so run it alone", self.text)
         self.assertNotIn("readonly", self.scope)
+
+
+class BrigadeAdminSplitDocTest(unittest.TestCase):
+    def setUp(self):
+        self.brigade = (ROOT / "skills/brigade/SKILL.md").read_text()
+        self.admin = (ROOT / "skills/brigade-admin/SKILL.md").read_text()
+
+    @staticmethod
+    def headings(text, prefix="#"):
+        return [line for line in unfenced_lines(text) if line.startswith(prefix)]
+
+    @classmethod
+    def slugs(cls, text):
+        return {heading_slug(line.lstrip("#").strip()) for line in cls.headings(text)}
+
+    def test_admin_headings_are_in_brigade_admin_and_not_in_brigade(self):
+        admin = self.headings(self.admin, "## ")
+        brigade = [line.lstrip("#").strip() for line in self.headings(self.brigade)]
+        for heading in (
+            "Open an executive admin",
+            "Admin first service",
+            "Admin service",
+            "Admin messages",
+            "Rulings",
+            "What the admin never does",
+            "Admin recovery and retirement",
+            "What the user hears from the admin",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(f"## {heading}", admin)
+                self.assertNotIn(heading, brigade)
+
+    def test_no_line_of_40_characters_is_in_both_skills_but_the_runtime_pointer_and_the_pin_step(self):
+        def long_lines(text):
+            return {line for line in text.splitlines() if len(line) >= 40}
+
+        self.assertEqual(
+            long_lines(self.brigade) & long_lines(self.admin),
+            {
+                "Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, "
+                "choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.",
+                '1. `t3_thread_organize` with `action: "pin"` and no `threadId`.',
+            },
+        )
+
+    def test_reporting_section_links_brigade_admin(self):
+        section = self.brigade.split("\n## Reporting to an executive admin\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("(../brigade-admin/SKILL.md)", section)
+
+    def test_brigade_links_in_brigade_admin_and_in_file_links_in_both_skills_name_a_heading(self):
+        cross = re.findall(r"\(\.\./brigade/SKILL\.md#([^)\s]+)\)", self.admin)
+        self.assertIn("reporting-to-an-executive-admin", cross)
+        self.assertEqual([fragment for fragment in cross if fragment not in self.slugs(self.brigade)], [])
+        for name, text in (("brigade", self.brigade), ("brigade-admin", self.admin)):
+            with self.subTest(skill=name):
+                own = re.findall(r"\]\(#([^)\s]+)\)", text)
+                self.assertIn("filing-tracker-work" if name == "brigade" else "rulings", own)
+                self.assertEqual([fragment for fragment in own if fragment not in self.slugs(text)], [])
+
+    def test_admin_links_brigades_script_and_ships_none(self):
+        self.assertIn("(../brigade/scripts/brigade.py)", self.admin)
+        self.assertTrue((ROOT / "skills/brigade/scripts/brigade.py").is_file())
+        self.assertFalse((ROOT / "skills/brigade-admin/scripts").exists())
+
+    def test_brigade_description_sends_the_admin_trigger_to_brigade_admin(self):
+        description = next(line for line in self.brigade.splitlines() if line.startswith("description:"))
+        self.assertIn(
+            "For an executive admin over the coordinators on one repository, use brigade-admin.", description
+        )
+        self.assertNotIn("an executive admin over the coordinators on one repository'", description)
+
+    def test_catalog_lists_brigade_admin_under_plan_and_run_long_work(self):
+        import catalog
+        group = catalog.render(ROOT / "skills").split("\n## Plan and run long work\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("| [`brigade-admin`](../skills/brigade-admin/SKILL.md) |", group)
 
 
 if __name__ == "__main__":
