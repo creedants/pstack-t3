@@ -42,6 +42,8 @@ REQUIRED_TOOLS = {
     "setup-pstack/SKILL.md": ("watch_pull_request", "0.0.46-nightly.20261005.2702"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
+# A T3 thread link is `t3-thread://v1/<threadId>`. It names no file.
+THREAD_LINK = re.compile(r"t3-thread://v1/[^)\s]")
 # Bash ends a <<'JSON' body only on a line that is JSON and nothing else.
 CATALOG_HEREDOC_OPEN = "<<'JSON'"
 CATALOG_HEREDOC_CLOSER = "JSON"
@@ -147,6 +149,8 @@ def check_tree(root):
             if rel_s != "pstack-runtime/SKILL.md":
                 findings.extend(light_table_findings(rel_s, text, cells))
             for target in LINK.findall(text):
+                if THREAD_LINK.match(target):
+                    continue
                 path = target.split("#", 1)[0]
                 # Template placeholders such as (url) are not paths.
                 if "/" not in path and "." not in path:
