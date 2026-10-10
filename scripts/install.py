@@ -201,33 +201,63 @@ def harnesses_for(path, entry, scope, user):
     return ordered(found) if found else HARNESSES
 
 
-def parse_link(entry, scope, user):
+def parse_link(entry, scope, user, file):
     if isinstance(entry, str):
-        return LinkRec(entry, entry, harnesses_for(entry, None, scope, user), None)
+        return LinkRec(entry, anchored(file, entry), harnesses_for(entry, None, scope, user), None)
     if not isinstance(entry, dict):
         return None
     path = entry.get("path")
     if not isinstance(path, str):
         return None
     checkout = entry.get("checkout") if isinstance(entry.get("checkout"), str) else None
-    return LinkRec(entry, path, harnesses_for(path, entry, scope, user), checkout)
+    return LinkRec(entry, anchored(file, path), harnesses_for(path, entry, scope, user), checkout)
 
 
-def parse_backup(entry, scope, user):
+def parse_backup(entry, scope, user, file):
     if not isinstance(entry, dict):
         return None
     original, backup = entry.get("original"), entry.get("backup")
     if not isinstance(original, str) or not isinstance(backup, str):
         return None
-    return BackupRec(entry, original, backup, harnesses_for(original, entry, scope, user))
+    return BackupRec(entry, anchored(file, original), backup, harnesses_for(original, entry, scope, user))
 
 
 class Unreadable(Exception):
-    """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
+    """A record file that cannot be used, or that could not be removed. Its text is the line install and uninstall exit 1 with."""
 
 
 # Path.exists() reads each of these as "not there" on Python 3.10 and 3.12.
 ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+ADRIFT = ("{file} records the relative path {path}, and the system could not name this run's working directory "
+          "({reason}); change to another directory and rerun")
+NO_PROJECT = ("the --project path {project} is relative, and the system could not name this run's working directory "
+              "({reason}); change to another directory and rerun, or give --project a full path")
+
+
+def anchored(file, path):
+    """Return `path`, which a record in `file` holds. Raise Unreadable with ADRIFT when it is relative and os.getcwd() raises OSError."""
+    if not os.path.isabs(path):
+        try:
+            os.getcwd()
+        except OSError as error:
+            raise Unreadable(ADRIFT.format(file=file, path=path, reason=error.strerror)) from None
+    return path
+
+
+def scope_of(args):
+    """Return the directory --project names, resolved, or None when --project is not given or is empty.
+
+    A relative --project while os.getcwd() raises OSError ends the run at exit 1 with NO_PROJECT on stderr.
+    """
+    if not args.project:
+        return None
+    if not os.path.isabs(args.project):
+        try:
+            os.getcwd()
+        except OSError as error:
+            sys.exit(NO_PROJECT.format(project=args.project, reason=error.strerror))
+    return Path(args.project).resolve()
 
 
 def read_object(path):
@@ -264,12 +294,13 @@ def legacy_lists(path):
 
 
 def read_legacy(state, scope, user):
-    found = legacy_lists(Path(state) / LEGACY_NAME)
+    file = Path(state) / LEGACY_NAME
+    found = legacy_lists(file)
     if found is None:
         return (), ()
     _data, raw_links, raw_backups = found
-    links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
-    backups = tuple(item for item in (parse_backup(entry, scope, user) for entry in raw_backups) if item)
+    links = tuple(item for item in (parse_link(entry, scope, user, file) for entry in raw_links) if item)
+    backups = tuple(item for item in (parse_backup(entry, scope, user, file) for entry in raw_backups) if item)
     return links, backups
 
 
@@ -482,15 +513,32 @@ def plan_uninstall(view, root, selected, holds):
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
 
+def new_file(directory):
+    """Create a file in `directory` under a name no entry has. Return its descriptor, open for writing, and its path.
+
+    The path is os.path.join(directory, name) with `directory` as given. The name is "tmp" and eight hexadecimal digits.
+    tempfile.mkstemp is not used because it passes its directory through os.path.abspath. Like mkstemp, this passes
+    mode 0o600 to os.open. After 100 names that are taken it raises FileExistsError.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    for _attempt in range(100):
+        temporary = os.path.join(directory, f"tmp{os.urandom(4).hex()}")
+        try:
+            return os.open(temporary, flags, 0o600), temporary
+        except FileExistsError:
+            continue
+    raise FileExistsError(errno.EEXIST, "no unused temporary name", os.fspath(directory))
+
+
 def atomic_write(directory, name, text):
     directory.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=directory)
+    fd, temporary = new_file(directory)
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(text)
         os.replace(temporary, directory / name)
     except BaseException:
-        if os.path.exists(temporary):
+        with suppress(OSError):
             os.unlink(temporary)
         raise
 
@@ -498,8 +546,11 @@ def atomic_write(directory, name, text):
 def write_claims(state, root, claims):
     path = owner_path(state, root)
     if not claims:
-        if path.exists():
+        try:
             path.unlink()
+        except OSError as error:
+            if error.errno not in ABSENT:
+                raise Unreadable(f"{path} could not be removed ({error.strerror}); clear that error and rerun") from None
         return
     body = {"checkout": root, "links": {key: {"harnesses": list(claims[key])} for key in claims}}
     atomic_write(path.parent, path.name, json.dumps(body, indent=2) + "\n")
@@ -513,7 +564,10 @@ def current_claims(state, root):
     recorded = data.get("checkout")
     if recorded != root:
         raise Unreadable(f"{path} records {recorded}, not this checkout")
-    return claims_in(data)
+    claims = claims_in(data)
+    for key in claims:
+        anchored(path, key)
+    return claims
 
 
 def claims_in(data):
@@ -730,6 +784,15 @@ def holders(parent):
             yield name, directory
 
 
+def made_directory(parent, prefix):
+    """Make a new directory in `parent` and return os.path.join(parent, <its name>), with `parent` as given.
+
+    tempfile.mkdtemp makes it under `parent` as given on Python 3.10 and 3.12, and from 3.12 on returns the
+    os.path.abspath spelling. Only the last name of what it returns is used.
+    """
+    return os.path.join(parent, os.path.basename(tempfile.mkdtemp(prefix=prefix, dir=parent)))
+
+
 class Stranded(OSError):
     """An OSError that left entries in a holder. Its text is the original error plus where they are kept."""
 
@@ -755,7 +818,7 @@ class Holder:
         parent, name = os.path.split(home)
         # A directory this call just created holds nothing yet, so a move into it cannot land on an existing entry.
         # mkdtemp ends the name with characters from [a-z0-9_], so no HOLDER name starts with SCRAP.
-        self.directory = tempfile.mkdtemp(prefix=prefix, dir=parent)
+        self.directory = made_directory(parent, prefix)
         self.home = home
         self.aside = os.path.join(self.directory, name)
 
@@ -1201,7 +1264,7 @@ def execute(plan, state, root):
                 if stamp is None:
                     backups = Path(state) / "backups"
                     backups.mkdir(parents=True, exist_ok=True)
-                    stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
+                    stamp = made_directory(backups, f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-")
                 backup = os.path.join(stamp, step.place)
                 step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
             # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
@@ -1225,18 +1288,18 @@ def execute(plan, state, root):
                         made.append(harness)
                 declined = act(step, root)
             except OSError as error:
-                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
-                if not (step.kind == "move" and os.path.lexists(step.backup)):
-                    undo()
                 print(f"skipped {subject(step)}: {error}")
                 counts["skipped"] += 1
                 failed.add(step.path)
+                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+                if not (step.kind == "move" and os.path.lexists(step.backup)):
+                    undo()
                 continue
             if declined:
-                undo()
                 print(f"skipped {subject(step)}: {declined}")
                 counts["skipped"] += 1
                 failed.add(step.path)
+                undo()
                 continue
             remove_records(step, state, root)
             for backup in step.remove_backups:
@@ -1334,17 +1397,26 @@ def report_uninstall(plan, executed, dry_run):
 
 
 UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+NO_SKILL = "skills/ holds no skill; run python3 scripts/build.py first"
 
 
 def skill_names():
     return sorted(path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file())
 
 
-def install(args):
+def unbuilt():
+    """Return the line for a checkout with no skill to link, or None. It is UNBUILT when skills/ is not a directory and NO_SKILL when skill_names() is empty."""
     if not SKILLS.is_dir():
-        sys.exit(UNBUILT)
+        return UNBUILT
+    return None if skill_names() else NO_SKILL
+
+
+def install(args):
+    stop = unbuilt()
+    if stop:
+        sys.exit(stop)
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     root = str(ROOT)
     state = state_dir(scope, user)
     names = skill_names()
@@ -1383,7 +1455,7 @@ def install(args):
 
 def uninstall(args):
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     root = str(ROOT)
     state = state_dir(scope, user)
 
@@ -1645,11 +1717,12 @@ def link_health(harness, directory, names, scope, user):
 
 
 def doctor(args):
-    if not SKILLS.is_dir():
-        print(UNBUILT)
+    stop = unbuilt()
+    if stop:
+        print(stop)
         return 1
     user = args.project is None
-    scope = Path(args.project).resolve() if args.project else None
+    scope = scope_of(args)
     names = skill_names()
     found = audit(args, scope, user, names)
     healthy = True
