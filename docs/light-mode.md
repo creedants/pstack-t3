@@ -4,7 +4,7 @@ This is the design of the light mode setting in pstack-t3, which has shipped. Li
 
 The intended readers are a user who runs low on a provider's usage budget, and the engineer who builds the changes below.
 
-**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. Change 6, the measured trial, is still running, so this document has no Results section and the `medium` cap on the gate review stays open to that decision. The sections below keep the design as it was written before those changes landed, including its line numbers and its census of that time.
+**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. Change 6, the measured trial, finished on 2026-10-10. [Results](#results) records it. The trial found that the `medium` cap misses blocking findings, so the gate review keeps its full level in light mode. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap until a follow-up change removes it. The sections below keep the design as it was written before those changes landed, including its line numbers and its census of that time.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item. brigade's commands and files keep their kitchen names only where they name a command or a file, such as `fire`, `dishes.tsv`, and `restaurant.json`.
 
@@ -428,7 +428,7 @@ Light mode keeps the round-1 review, and round 1 is where this repository caught
 
 ## Changes
 
-Changes 1 to 5 landed in order as #81, #83, #84, #85, and #88. Change 6 is the running trial.
+Changes 1 to 5 landed in order as #81, #83, #84, #85, and #88. Change 6 is the trial, and [Results](#results) records it.
 
 Each change is one PR through the landing queue, with its own tests and its own changelog fragment. Each change that edits a skill's behavior needs the fresh-child tests [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) requires, run in `full` mode because the change itself is under review.
 
@@ -484,6 +484,99 @@ Each change is one PR through the landing queue, with its own tests and its own 
 - **Gate during the trial.** The item lands only when both reviews pass at its final head. A blocking finding from the full-level review is a send-back at that SHA, whatever the `medium` review said, and counts as a `medium` miss.
 - **Files.** `docs/light-mode.md` gains a Results section. No code.
 - **Decision.** The gate keeps the `medium` cap only if the full-level reviews found no blocking finding that the `medium` reviews missed on any evaluated SHA. Otherwise the gate keeps its full level in light mode, and only the worker-side cuts remain. Light mode becomes the recommended choice under a usage limit after that decision.
+- **Outcome.** The full-level reviews found a blocking finding the `medium` reviews missed on 3 of 8 evaluated commits. The gate keeps its full level in light mode. See [Results](#results).
+
+## Results
+
+The trial ran 12 work items through one coordinator on 2026-10-09 and 2026-10-10, six in light mode and six in full mode as controls. It asked the question [Change 6](#change-6-a-measured-light-mode-trial) states. Does a `medium` gate review miss a blocking finding that a full-level review reports at the same commit? It did, at 3 of the 8 commits where both reviews ran. The gate therefore keeps its full level in light mode. The cost side of the design is unmeasured.
+
+### Trial method
+
+- **Assignment.** The items alternated. The light items are D97, D99, D101, D104, D106, and D108. The controls are D98, D100, D102, D105, D107, and D109. Each control carries a `mode` row in `log.tsv` with the reason `light-mode trial control`. No light item carries one, and each light brief says `Mode source: restaurant.json`.
+- **Paired gate reviews.** At each reviewed head of a light item, one read-only brief ran twice, once at the `medium` level and once at the full level. `pass.tsv` names `codex/gpt-6.1-sol` as the verifier at each of those heads. A numbered blocker in the full review that the `medium` review did not report is a medium miss, as [Change 6](#change-6-a-measured-light-mode-trial) defines it.
+- **Controls.** A control ran one review per head at the full level. It gives send-backs and findings and no comparison.
+- **Free panel.** When Codex was at its usage limit, the `review backups` seats ran in its place. They are three free OpenCode reviewers, Muse, Step 5, and Space Bunny. A panel pass is 3 of 3 passes.
+- **Verification.** For each of the 8 paired heads, the `medium` and full review files were read side by side and every blocker was matched to its counterpart. The counts below come from that reading. The trial table's note that medium found 5 of the 7 blockers at D108 round 1 is one short. The `medium` review's five blockers cover six of the full review's seven, because its first blocker folds two.
+- **Unit.** A finding is a numbered blocker. A reviewer can fold several defects into one entry, so counts compare reviewers only roughly.
+
+### Trial table
+
+| Item | Playbook | Mode | Send-backs | Blocking findings by round | Medium misses | Reviewer at each round |
+| --- | --- | --- | --- | --- | --- | --- |
+| D97 installer holder recovery | Bug fix | light | 0 | 0 | not measured | free panel, 3 of 3 pass |
+| D98 install docs after D92 | Refactoring | full | 3 | 4, 2, 2, 0 | n/a | Codex |
+| D99 no queue line in PR bodies | Bug fix | light | 0 | medium 0, full 0 | 0 | Codex at both levels |
+| D100 `scripts/release.py` | Feature | full | 2 | 2, 2, 0 | n/a | Codex |
+| D101 record every round, round budget | Feature | light | 2 | medium 3, 1, 0 and full 4, 2, 0 | 2 (rounds 1 and 2) | Codex at both levels |
+| D102 docs batch after D95 to D99 | Refactoring | full | 0 | 0 | n/a | free panel, 3 of 3 pass |
+| D104 remove the `Q<n>` alias | Refactoring | light | 2 | medium 2, 1, 0 and full 2, 1, 0 | 0 | Codex at both levels |
+| D105 installer follow-ups | Bug fix | full | 0 | 0 | n/a | Codex |
+| D106 generated CLI reference | Feature | light | 0 | 0 | not measured | free panel, 3 of 3 pass |
+| D107 `sync_upstream.py --check` | Feature | full | 0 | 0 | n/a | free panel, 3 of 3 pass |
+| D108 landing skill states each rule once | Refactoring | light | 1 | round 1 medium 5 and full 7, round 2 0 | 1 (round 1) | round 1 Codex at both levels, round 2 free panel, 3 of 3 pass |
+| D109 0.3.0 changelog | Refactoring | full | 1 | 4, 1 | n/a | round 1 Codex, round 2 free panel, 2 of 3 pass |
+
+The six light items had 5 send-backs and the six controls had 6. The twelve items change different things, so those counts say nothing about the mode. D109 round 2 counts one finding that sits in the owner notes outside the commit.
+
+### The paired reviews
+
+| Item | Round | Head | Medium | Full | Medium miss |
+| --- | --- | --- | --- | --- | --- |
+| D99 | 1 | `0486ebb` | pass | pass | none |
+| D101 | 1 | `a1e9a27` | fail, 3 | fail, 4 | a mid-sentence colon in new skill prose |
+| D101 | 2 | `e34bcb7` | fail, 1 | fail, 2 | `watch` hid an owed decision on a dropped or merged item |
+| D101 | 3 | `a9ee4f2` | pass | pass | none |
+| D104 | 1 | `0641090` | fail, 2 | fail, 2 | none |
+| D104 | 2 | `ad69aaf` | fail, 1 | fail, 1 | none |
+| D104 | 3 | `3d95e19` | pass | pass | none |
+| D108 | 1 | `c6394ce` | fail, 5 | fail, 7 | the condition on pushing a replacement pull request's branch |
+
+The three misses are these.
+
+1. **D101 round 1.** The full review's fourth blocker is the new line `Decision pending: when ...` in `t3/added/brigade/SKILL.md`, which breaks the mid-sentence colon rule, and the test that pins it. The `medium` review wrote that it found no prose-style blocker. This miss is style only. The worker removed the colon in round 2.
+2. **D101 round 2.** The full review's first blocker is that `watch` printed `no work in progress` for a dropped or merged item that still owed its round decision, while restarting it and firing its ticket stayed refused. The `medium` review reported only the prose promises that overstated the code, and it stated that `watch` shows the pending line in every open state. This miss is a behavior defect under the round 2 rule. Round 3 narrowed the rule so that only an open item owes a decision, which removed the case.
+3. **D108 round 1.** The full review's third blocker is that the new lifecycle text kept the unconditional sentence that `land` pushes the checked candidate to `landing/e<n>` and opens a new pull request. `ensure_pr` calls `publish_absent_branch`, which pushes only when the branch is absent. The same review's first blocker also flags the stale `status Q<n>` sentence at line 91, which the `medium` review did not name. This miss is a sentence the code contradicts, which the review brief counts as a failure. The worker covered both in the same fix round without having read the full review.
+
+The pairs agree on pass or fail at 8 of 8 heads. A `medium`-only gate would have failed the same five heads and passed the same three. It would have handed back 12 blockers where the full level handed back 16, which is 3 misses and 1 fold. The `medium` review also reported two things the full review did not. At D101 round 2 it found that `brief` on a passed item prints the passed-state error and not the promised budget diagnostic. At D108 round 1 it found mid-sentence colons at lines 67 and 78 that the full review left out.
+
+### Decision
+
+The design states the rule in [Change 6](#change-6-a-measured-light-mode-trial).
+
+> The gate keeps the `medium` cap only if the full-level reviews found no blocking finding that the `medium` reviews missed on any evaluated SHA. Otherwise the gate keeps its full level in light mode, and only the worker-side cuts remain. Light mode becomes the recommended choice under a usage limit after that decision.
+
+The rule asks for no miss on any evaluated commit. Three of the eight commits have one, on two of the four items that have a paired comparison. The first clause fails, so the second applies. **The gate review keeps its full level in light mode.**
+
+Two facts show the decision does not hang on one reading of the data.
+
+- Two of the three misses are not style. D101 round 2 is a behavior defect and D108 round 1 is a false statement in skill text.
+- The result does not depend on the path rule. No `escalate` list was configured, so seven of the eight paired heads, on `land.py` and `brigade.py`, ran light where the design's list would have made them full. D108 round 1 changed only skill prose, so it would have stayed light under that list, and it has a miss.
+
+What follows from the decision.
+
+- **The worker-side cuts remain.** These are the single architect runner, the simple `how` path, the source-control-only `why`, the folded Comment Sicko, the waivers, the fan-out cap of 3, and the reasoning cap on every seat that is not the gate.
+- **The code and skills still cap the gate.** Under light mode with budget `default`, `roles.py show` resolves the `verifiers` seat at `medium`, and the runtime's Modes section and the Summary table above say so. A follow-up change must leave the `verifiers` seat at its configured level when it resolves a gate review, with a test that a configured `high` gate stays `high` under light, and must correct those passages. This document does not make that change.
+- **Light mode becomes the recommended choice under a usage limit.** That is the rule's last sentence. The trial supports the gate half of it. The saving the recommendation rests on is the design's estimate, which the trial did not test.
+- **The saving estimate does not change.** [Saving per change](#saving-per-change) counted no reasoning saving, so a gate at full level leaves its figures as they were.
+
+### What the trial did not measure
+
+- **Cost.** Child activity counts were not collected for any of the 12 items, so the trial says nothing about the 45 to 60 percent estimate. A measurement needs, for each item, the sum of `itemCount` from `t3_thread_read` over the worker thread and every child task it launched, across all attempts, and the same sum for each gate review at each level. It also needs matched pairs of comparable size in the same playbook. T3 records no tokens or reasoning level, so the unit stays activity items and a reasoning cap's saving stays invisible. The counts for these 12 items can be taken after the fact only if T3 still holds their threads.
+- **The comparison on most items.** Paired reviews exist for 4 items and 8 heads. D97 and D106 are light items reviewed only by the free panel, because Codex was at its usage limit, so they give no comparison. D108 round 2 ran on the panel too, and D108 landed on that pass and not on the two Codex passes the protocol asks for.
+- **Run-to-run variance.** Each head had one review per level. No level ran twice, so a difference between two reviews may come from the run and not from the level. The two things the `medium` review reported alone are the evidence that variance is not zero.
+- **The review level.** The review files do not record the reasoning level. It comes from the file names and the `pass.tsv` notes, and T3 holds none.
+- **Matched work.** The 12 items are not matched pairs. The playbook mix is close, with two bug fixes, two features, and two refactorings among the light items against one, two, and three among the controls, but the changes differ.
+- **Escalation.** No `escalate` list was configured, so rule 1 never fired. D101 and D104 each reached two send-backs while light, and `log.tsv` holds no `mode` row for either, so rule 2 did not fire. Four of the six light items changed `install.py`, `land.py`, or `brigade.py`, which the design's list would have escalated. The trial measures the gate cap and the worker-side cuts, and not light mode as the design escalates it.
+
+### What the trial showed outside its question
+
+- **Prose items drew more send-backs than code items.** D98, D102, D108, and D109 changed prose and had 3, 0, 1, and 1 send-backs, 5 in 4 items. The eight code items had 6. D102 is the one prose item with no send-back, and only the free panel reviewed it.
+- **A prose send-back was a false statement checked against code.** D98 held 8 false or too-broad statements across rounds 1 to 3. D108 round 1 and D109 round 1 held stale or false lines. No prose send-back was style alone.
+- **Six of the 11 send-backs held a behavior bug with a reproducing command.** They are D100 rounds 1 and 2, D101 rounds 1 and 2, and D104 rounds 1 and 2. The other five held only false or stale statements.
+- **A fix round seeded the next round's finding in three items.** D100 round 2 found signal windows in the rollback that round 1 added. D101 round 2 found the debt rule applied to terminal items after round 1 widened the guards. D104 round 2 found a hidden branch treated as gone in the settlement fallback that round 1 added. The next round's review caught all three.
+- **Half of the items landed on the free panel.** D97, D102, D106, D107, D108, and D109 passed their final head there because Codex was at its limit. The panel passed 3 of 3 on five heads and 2 of 3 on D109, where one member's only blocker was a false line in the owner notes outside the commit.
+- **The panel's non-blocking notes held real defects.** It passed D97 with notes that became ticket T142 and then D105. D105 fixed a holder sweep that ignored `--harness`, an install that exited on a conflict without a `left` line, and a state directory created for a run that found only unproven entries. Four items had no reviewer other than the panel, so the trial cannot say what it missed on them.
+- **A thorough worker closed a miss without reading the full review.** At D108 the worker fixed from the `medium` review only, and its rewrite of the section against the code also covered the full review's two extra findings. A miss that the next fix round absorbs still counts, since the gate cannot rely on a worker's diligence.
 
 ## Out of scope
 
