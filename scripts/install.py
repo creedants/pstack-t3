@@ -1322,18 +1322,18 @@ def execute(plan, state, root):
                         made.append(harness)
                 declined = act(step, root)
             except OSError as error:
-                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
-                if not (step.kind == "move" and os.path.lexists(step.backup)):
-                    undo()
                 print(f"skipped {subject(step)}: {error}")
                 counts["skipped"] += 1
                 failed.add(step.path)
+                # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+                if not (step.kind == "move" and os.path.lexists(step.backup)):
+                    undo()
                 continue
             if declined:
-                undo()
                 print(f"skipped {subject(step)}: {declined}")
                 counts["skipped"] += 1
                 failed.add(step.path)
+                undo()
                 continue
             remove_records(step, state, root)
             for backup in step.remove_backups:
