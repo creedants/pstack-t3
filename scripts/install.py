@@ -500,7 +500,6 @@ def current_claims(state, root):
 
 
 def claims_in(data):
-    """The claims an owner file's object holds, as link path to harnesses."""
     links = data.get("links")
     if not isinstance(links, dict):
         return {}
@@ -1353,7 +1352,6 @@ AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory
 
 
 def command(args, *words):
-    """The command line doctor prints as advice, with this run's scope."""
     return "python3 scripts/install.py " + " ".join(words) + (f" --project {args.project}" if args.project else "")
 
 
@@ -1364,13 +1362,18 @@ def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
         return HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
     if not SKILLS.is_dir():
         return UNBUILT.format(path=path, there=there)
-    plan = plan_install(view, scope, user, harnesses, names, root, True)
+    plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
+    forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
+
+    def links(plan):
+        return any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps)
+
     install = command(args, "install", "--harness", ",".join(harnesses))
-    if not any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps):
-        return EDIT.format(path=path, there=there, owner_file=owner_path(state_dir(scope, user), root))
-    if plan.conflicts:
-        return REPLACE.format(path=path, there=there, install=install, n=len(plan.conflicts))
-    return RELINK.format(path=path, install=install, uninstall=command(args, "uninstall", "--harness", ",".join(harnesses)))
+    if links(plain) and not plain.conflicts:
+        return RELINK.format(path=path, install=install, uninstall=command(args, "uninstall", "--harness", ",".join(harnesses)))
+    if links(forced):
+        return REPLACE.format(path=path, there=there, install=install, n=len(plain.conflicts))
+    return EDIT.format(path=path, there=there, owner_file=owner_path(state_dir(scope, user), root))
 
 
 def row_line(args, state, row, aside):
@@ -1397,7 +1400,6 @@ def audit(args, scope, user, names):
         if not isinstance(checkout, str):
             unread.append(Finding((), f"{file} names no checkout (doctor read no checkout from it)"))
             continue
-        # A checkout that is away and one that was deleted look the same here, so the line only says what to check.
         if os.path.isdir(checkout):
             continue
         claimed = claims_in(data)
