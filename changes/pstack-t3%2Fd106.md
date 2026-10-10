@@ -1,0 +1,1 @@
+- `docs/cli.md` is a new command-line reference for `brigade.py`, `land.py`, and `roles.py`. `python3 scripts/build.py` generates it from each script's argparse definition, with every command, flag, choice, and default. A renamed flag fails the tests until the build is rerun.
