@@ -18,9 +18,9 @@ whitespace has no argument boundary left, so it has no basename and does
 not count. claude-desktop and the codex app-server hosts do not match those
 basenames. A shell whose script text only mentions these words counts zero.
 
-build_procs counts the Python process that is running this repo's build
-script, its test runner, or the unittest module. The basename of argv[0] is
-python or python plus a numeric version, and argv[1] is scripts/build.py or
+build_procs counts a Python process that is running a build script, a test
+runner, or the unittest module. The basename of argv[0] is python or python
+plus a numeric version, and argv[1] is scripts/build.py or
 scripts/run_tests.py or a path that ends in /scripts/build.py or
 /scripts/run_tests.py, or argv[1] is -m and argv[2] is unittest. A direct
 exec whose argv[0] is one of those scripts counts too. One run of

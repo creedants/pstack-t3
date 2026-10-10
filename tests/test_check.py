@@ -49,7 +49,7 @@ class FrontmatterWithoutPyYamlTest(unittest.TestCase):
 
 
 class BuildProcessCounterTest(unittest.TestCase):
-    def test_a_python_process_running_a_repo_script_or_unittest_counts(self):
+    def test_a_python_process_running_the_build_script_the_test_runner_or_unittest_counts(self):
         counted = [
             ["python3", "scripts/run_tests.py"],
             ["/usr/bin/python3.12", "/work/pstack-t3/scripts/run_tests.py", "--worker", "spec.json"],
