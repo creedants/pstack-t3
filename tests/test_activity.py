@@ -2608,9 +2608,12 @@ class BudgetTest(OutputCase):
     def test_stdout_of_the_text_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it_where_it_marks_each_cut_and_counts_the_link(self):
         fixture = self.long_values()
         whole = fixture.stdout_bytes("--text", "--max-bytes", "500000", clock=fixture.now)
-        self.assertEqual((len(whole), whole.endswith(b" at work\n")), (125520, True))
+        self.assertTrue(len(whole) > 100000 and whole.endswith(b" at work\n"), len(whole))
         self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", str(len(whole)), clock=fixture.now), whole)
         under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertLess(len(under), 16000)
+        self.assertLessEqual(len(fixture.stdout_bytes("--text", clock=fixture.now)), 16000)
+        self.assertEqual(len(whole), 125520)
         self.assertEqual(under.decode().split("\n"), [
             "Agent activity for name name name name name name nam…, last 3h",
             "1 running now, 1 agent, 1 sub-agent, 1 failed",
