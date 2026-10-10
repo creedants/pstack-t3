@@ -917,7 +917,7 @@ class BrigadeTest(unittest.TestCase):
                          "reports/D1.md has no follow-ups section; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
-    def test_from_report_reads_every_form_of_the_heading(self):
+    def test_from_report_reads_five_heading_forms(self):
         self.fired_bug_fix()
         for heading, rest in (("## Follow-ups (outside lease L91)", ["(outside lease L91)"]), ("### Follow-ups", []),
                               ("## Follow-up", []), ("## Follow-ups outside my lease", ["outside my lease"]),
