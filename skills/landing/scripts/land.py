@@ -364,6 +364,14 @@ class UncheckedTrunk(Infrastructure):
     pass
 
 
+class UnverifiedMerge(Infrastructure):
+    pass
+
+
+class HeadChanged(Infrastructure):
+    pass
+
+
 def trunk_ref(contract):
     if contract["mode"] == "local":
         return f"refs/landing/{contract['trunk']}"
@@ -1096,13 +1104,22 @@ def reconcile(store):
 
 
 def rewound(store, base):
-    """Pause when trunk no longer contains the last landed commit. Returns True when paused."""
+    """Pause when trunk no longer contains the last landed commit, or when git cannot tell. Returns True when paused."""
     tip = store.contract.get("tip") or ""
-    if tip and git("merge-base", "--is-ancestor", tip, base, cwd=store.repo, check=False).returncode != 0:
+    if not tip:
+        return False
+    # git merge-base --is-ancestor exits 0 for an ancestor, 1 for a commit that is not one, and another code on an error.
+    code = git("merge-base", "--is-ancestor", tip, base, cwd=store.repo, check=False).returncode
+    if code == 0:
+        return False
+    if code == 1:
         pause(store, f"trunk no longer contains the last landed commit {tip[:12]} (now {base[:12]}); "
                      "check what happened to trunk, then run land.py resume")
-        return True
-    return False
+    else:
+        pause(store, f"could not check that trunk contains the last landed commit {tip[:12]} "
+                     f"(git merge-base --is-ancestor exited {code}); check that git can read that commit here, "
+                     "then run land.py resume")
+    return True
 
 
 def attempt(store, integration, entries):
@@ -1325,6 +1342,8 @@ def merge_requested(row):
     return row["note"] == MERGE_REQUESTED
 
 
+OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+PR_STATES = ("OPEN", "CLOSED", "MERGED")
 Line = namedtuple("Line", "entries stale tip")
 CheckRead = namedtuple("CheckRead", "blocker detail armed head")
 
@@ -1343,6 +1362,20 @@ def same_tree(repo, first, second):
     found = git("rev-parse", f"{first}^{{tree}}", f"{second}^{{tree}}", cwd=repo, check=False)
     trees = found.stdout.split()
     return found.returncode == 0 and len(trees) == 2 and trees[0] == trees[1]
+
+
+def read_tree(store, commit):
+    """The tree of the commit with this full id, or None when git cannot read it.
+
+    After a failed read the id is fetched from the contract remote and read once more."""
+    for fetched in (False, True):
+        found = git("rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}", cwd=store.repo, check=False)
+        tree = found.stdout.strip()
+        if found.returncode == 0 and OBJECT_ID.fullmatch(tree):
+            return tree
+        if not fetched:
+            git("fetch", store.contract["remote"], commit, cwd=store.repo, check=False)
+    return None
 
 
 def built_on(store, entry, trunk):
@@ -1473,14 +1506,14 @@ def request_merge(store, ident, out):
     trunk = fetch_trunk(store)
     if not same_tree(store.repo, built_on(store, entry, trunk), trunk):
         return False
-    method = f"--{merge_method(store)}"
-    queued = gh("pr", "merge", url, "--auto", method, cwd=store.repo)
+    pinned = (f"--{merge_method(store)}", "--match-head-commit", entry["candidate"])
+    queued = gh("pr", "merge", url, "--auto", *pinned, cwd=store.repo)
     if queued.returncode == 0:
         with store.tx() as db:
             store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
         return True
     for asked in range(BASE_MOVED_RETRIES + 1):
-        now_ = gh("pr", "merge", url, method, cwd=store.repo)
+        now_ = gh("pr", "merge", url, *pinned, cwd=store.repo)
         if now_.returncode == 0 or not base_moved_refusal(now_.stderr) or asked == BASE_MOVED_RETRIES:
             break
         time.sleep(BASE_MOVED_WAIT)
@@ -1492,6 +1525,15 @@ def request_merge(store, ident, out):
             return False
         if base_moved_refusal(plain):
             return False
+        head = open_pr_head(store, url)
+        if head and head != entry["candidate"]:
+            with store.tx() as db:
+                store.set_entry(db, ident, "awaiting-merge", note=head_changed_note(head))
+            raise HeadChanged(
+                f"GitHub refused to merge {url}, and its head is now {head[:12]}, not the checked candidate "
+                f"{entry['candidate'][:12]}. {entry_label(ident)} was not merged. Close that PR to bounce "
+                f"{entry_label(ident)}, or push {entry['candidate'][:12]} back to that PR's branch. "
+                "Then run land.py resume and land.py land")
         raise Infrastructure(f"GitHub refused to merge {url}: {plain or 'gh pr merge failed'}")
     with store.tx() as db:
         store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
@@ -1642,29 +1684,69 @@ def entry_row(store, ident):
 
 
 def read_pr_state(store, url):
+    """State, head commit, and merge commit of a PR. Raises Infrastructure when gh fails or prints no known state."""
     view = gh("pr", "view", url, "--json", "state,headRefOid,mergeCommit",
               "-q", '.state + " " + .headRefOid + " " + (.mergeCommit.oid // "")', cwd=store.repo)
-    return (view.stdout.strip().split(" ") + ["", "", ""])[:3]
+    fields = (view.stdout.strip().split(" ") + ["", "", ""])[:3]
+    if view.returncode != 0 or fields[0] not in PR_STATES:
+        raise Infrastructure(f"could not read the state of {url}. gh said {view.stderr.strip() or 'nothing'}")
+    return fields
+
+
+def open_pr_head(store, url):
+    """The head commit of a PR that a state read shows open. Empty when the read fails or shows another state."""
+    try:
+        state, head, _merged = read_pr_state(store, url)
+    except Infrastructure:
+        return ""
+    return head if state == "OPEN" else ""
+
+
+def head_changed_note(head):
+    return f"PR head changed to {head[:12]} outside the queue"
 
 
 def tree_mismatch_pause(store, entry, merged):
-    resolved = git("rev-parse", "--verify", "--quiet", f"{merged}^{{commit}}", cwd=store.repo, check=False)
-    if resolved.returncode != 0 or same_tree(store.repo, merged, entry["candidate"]):
+    """The pause text when the merge commit and the candidate hold different trees, and empty when they hold the same one.
+
+    Raises UnverifiedMerge when the merge commit has no full id or either tree cannot be read."""
+    label, remote, url = entry_label(entry["id"]), store.contract["remote"], entry["pr"]
+    unverified = (f"The merge of {label} could not be checked. {{cause}}, so the tree of the merge commit was not "
+                  f"compared with the tree of the candidate. {label} stays awaiting merge. "
+                  "{fix}, then run land.py resume and land.py land")
+    if not OBJECT_ID.fullmatch(merged or ""):
+        raise UnverifiedMerge(unverified.format(
+            cause=f"The state read of {url} gave no full commit id for the merge commit",
+            fix=f"Check what gh pr view {url} --json mergeCommit prints"))
+    trees = []
+    for commit in (merged, entry["candidate"]):
+        tree = read_tree(store, commit)
+        if tree is None:
+            raise UnverifiedMerge(unverified.format(
+                cause=f"Git could not read commit {commit} even after asking {remote} for it",
+                fix=f"Check that {remote} serves that commit"))
+        trees.append(tree)
+    if trees[0] == trees[1]:
         return ""
-    return (f"{entry_label(entry['id'])} merged as {merged[:12]}, whose tree is not the checked candidate "
+    return (f"{label} merged as {merged[:12]}, whose tree is not the checked candidate "
             f"{entry['candidate'][:12]}. Trunk holds a change no check ran against. Check trunk, then run land.py resume")
 
 
 def take_pr(store, entry, landed, bounced):
-    state, head, merged = read_pr_state(store, entry["pr"])
+    try:
+        state, head, merged = read_pr_state(store, entry["pr"])
+    except Infrastructure:
+        if store.contract["mode"] == "merge":
+            raise
+        return False
     if state == "MERGED":
-        deleted, warning = delete_queue_branch(store, entry)
-        if not deleted:
-            return True
         checked, unchecked = head == entry["candidate"], ""
         if store.contract["mode"] == "merge":
             fetch_trunk(store)
             unchecked = tree_mismatch_pause(store, entry, merged) if checked else ""
+        deleted, warning = delete_queue_branch(store, entry)
+        if not deleted:
+            return True
         with store.tx() as db:
             if checked:
                 settle_landed(store, db, entry["id"], merged, warning)
@@ -1685,7 +1767,7 @@ def take_pr(store, entry, landed, bounced):
         return True
     if state == "OPEN" and head and head != entry["candidate"]:
         with store.tx() as db:
-            store.set_entry(db, entry["id"], "awaiting-merge", note=f"PR head changed to {head[:12]} outside the queue")
+            store.set_entry(db, entry["id"], "awaiting-merge", note=head_changed_note(head))
         return True
     return False
 
@@ -1902,7 +1984,7 @@ def land(store):
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
-        if isinstance(problem, (AutoMergeStillEnabled, UncheckedTrunk)):
+        if isinstance(problem, (AutoMergeStillEnabled, UncheckedTrunk, UnverifiedMerge, HeadChanged)):
             pause(store, str(problem))
         else:
             suggestion = suggested_merge_method(store.repo, str(problem))
