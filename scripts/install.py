@@ -1377,7 +1377,7 @@ class Unread:
 
 @dataclass(frozen=True)
 class Audit:
-    """What doctor found in the records. `findings` are Findings and `unread` are Unreads, each in the order they print."""
+    """What doctor found in the records. `findings` are Findings and `unread` are Unreads."""
     findings: tuple
     unread: tuple
 
@@ -1460,7 +1460,7 @@ def row_finding(args, state, row, aside):
 
 
 def grouped(findings):
-    """The lines doctor prints for `findings`, in order.
+    """The lines doctor prints for `findings`.
 
     Findings with the same non-empty `head` print as one group at the position of the first of them: the count and
     the head, then the `item` of each, two columns deeper. A finding alone in its head prints its `line`.
