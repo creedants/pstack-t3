@@ -868,6 +868,9 @@ def _resolve_inherit(catalog, budget, name):
         )
     parent_seat = {"providerInstanceId": parent.provider, "model": parent.model}
     if excluded_id(parent.model):
+        if provider and not provider.get("canRunChildTask"):
+            reason = "; ".join(provider.get("constraints") or []) or "cannot run child tasks"
+            raise RolesError(f"{excluded_refusal(name, parent_seat, inherit=True)}; {parent.provider} is not runnable ({reason})")
         model = _first_pickable(provider) if runnable(provider) else None
         if model is None:
             raise RolesError(f"{excluded_refusal(name, parent_seat, inherit=True)}; {parent.provider} has no other model pstack may pick")

@@ -1692,6 +1692,37 @@ class VertexHaikuCliTest(unittest.TestCase):
         ))
 
 
+class UnrunnableHaikuParentCliTest(unittest.TestCase):
+    def show(self, constraints):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [{
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": False,
+                "constraints": constraints,
+                "models": [{"id": "claude-haiku-4-5", "options": []}, {"id": "claude-opus-5-5", "options": []}],
+            }]})
+            repo.put(repo.user, {"version": 1, "roles": {"bug-fix": ["inherit"]}})
+            return repo.run("show", "--catalog", str(path), "--parent", "claudeAgent/claude-haiku-4-5", "--role", "bug-fix")
+
+    def test_inherit_of_a_haiku_4_5_parent_whose_provider_cannot_run_child_tasks_is_refused_with_the_reason_the_provider_is_not_runnable(self):
+        reasons = (
+            (["Provider is not authenticated.", "Sign in again."], "Provider is not authenticated.; Sign in again."),
+            ([], "cannot run child tasks"),
+        )
+        for constraints, reason in reasons:
+            with self.subTest(constraints=constraints):
+                completed = self.show(constraints)
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, (
+                    "error: role 'bug-fix' cannot inherit claudeAgent/claude-haiku-4-5: "
+                    "claude-haiku-4-5 is Claude Haiku 4.5, and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker; "
+                    f"claudeAgent is not runnable ({reason})\n"
+                ))
+
+
 class BedrockHaikuBriefCliTest(unittest.TestCase):
     """Bedrock and dated Haiku 5.5 spellings still get haikuBrief."""
 
