@@ -1229,8 +1229,7 @@ def ensure_pr(store, entry):
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
-        receipt = f"Queued by {entry['holder']} from `{entry['branch']}`. Reviewed by {entry['reviewer']} at {entry['sha']}."
-        body = f"{entry['body'].rstrip()}\n\n{receipt}" if entry["body"] else receipt
+        body = entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
         created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title, "--body", body, cwd=store.repo)
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())

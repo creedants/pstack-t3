@@ -1,3 +1,4 @@
+import ast
 import contextlib
 import inspect
 import json
@@ -2403,8 +2404,38 @@ os.execv({real!r}, [{real!r}, *args])
             self.land("land")
         create = [line for line in log.read_text().splitlines() if "'create'" in line][0]
         self.assertIn("'--title', 'Faster load'", create)
-        self.assertIn("Cuts load time by 300 ms.", create)
-        self.assertIn("Reviewed by codex/gpt-6.1-sol", create)
+        self.assertIn("'--body', 'Cuts load time by 300 ms.\\n'", create)
+        self.assertNotIn("Queued by", create)
+        self.assertNotIn("Reviewed by", create)
+
+    def create_args_without_a_submitted_body(self, *message):
+        """Land a worker commit with this message and no --body-file. Returns the gh pr create arguments."""
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            self.worker("w1", {"a.txt": "agent\n"})
+            sh("git", "commit", "-q", "--amend", *message, cwd=self.base / "w1")
+            sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w1")
+            self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+            self.land("land")
+        return ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][0])
+
+    def test_human_mode_without_a_submitted_body_uses_the_commit_body(self):
+        create = self.create_args_without_a_submitted_body("-m", "Faster load", "-m", "Cuts load time by 300 ms.\n\nMeasured on a cold start.")
+        self.assertEqual(create[create.index("--title") + 1], "Faster load")
+        self.assertEqual(create[create.index("--body") + 1], "Cuts load time by 300 ms.\n\nMeasured on a cold start.")
+        self.assertNotIn("Queued by", " ".join(create))
+        self.assertNotIn("Reviewed by", " ".join(create))
+
+    def test_human_mode_without_any_body_opens_the_pr_with_an_empty_body(self):
+        create = self.create_args_without_a_submitted_body("-m", "Faster load")
+        self.assertEqual(create[create.index("--body") + 1], "")
+        self.assertNotIn("Queued by", " ".join(create))
+        self.assertNotIn("Reviewed by", " ".join(create))
 
     def test_a_store_from_before_pr_text_columns_is_migrated(self):
         self.init()

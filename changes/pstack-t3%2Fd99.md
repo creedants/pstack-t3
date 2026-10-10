@@ -1,0 +1,1 @@
+- landing: the queue no longer adds a "Queued by ... Reviewed by ..." line to a pull request body. `gh pr create` gets the submitted body unchanged, or the commit's body when none was submitted. The holder and reviewer stay in the local queue store and in `land.py status`.
