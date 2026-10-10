@@ -252,7 +252,7 @@ class Row:
     `seconds` is the time spent in turns inside the window.
     `open_seconds` is how long the open turn has run, counted from its start. It is None when `status` is not in OPEN, and on the coordinator's row.
     `stands_for` is 1 for an agent that ran in the window. It is 0 for an ancestor that did not, which has a row so that its child has a parent row.
-    A summary row's is the sum over the rows it replaced, which is 2 or more.
+    On a summary row it is the sum over the rows the summary replaced, which is 2 or more.
     """
 
     depth: int
