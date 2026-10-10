@@ -245,9 +245,9 @@ $A --hours 12      # the last 12 hours
 $A --text          # plain lines instead of the HTML document
 ```
 
-1. Run `$A`. Its stdout is the whole document. Never edit it.
-2. Publish that document per steps 2 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports), with the title `Agent activity`.
-3. When the preview shows `This copy differs from what the tool wrote`, the `html` argument is not the script's output. Run `$A` again and pass its stdout unchanged.
+1. Run `$A`. Its stdout is the whole document.
+2. Call `html_preview` with that document, then `html_render` with it and the title `Agent activity`, per steps 2 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports). Pass the document unchanged to both. A console error or a clipped element in the preview is a fault in the script. Name it in the reply and do not edit the document.
+3. When the preview shows `This copy differs from what the tool wrote`, the `html` argument is not the script's output. Run `$A` again and call `html_preview` with its stdout.
 4. When `html_preview` or `html_render` is missing, or `html_render` fails, send the stdout of `$A --text` as the reply.
 5. On exit status 1 or 3 the script prints one line on stderr and nothing on stdout. Status 3 means it could not use T3 Code's database. Send that line as the reply. Status 1 names a fault in the arguments or the store.
 
