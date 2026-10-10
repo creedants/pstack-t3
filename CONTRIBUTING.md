@@ -34,15 +34,45 @@ The build then lists each override whose upstream file changed. Re-port each one
 
 ## Releasing
 
-1. List the fragments in the order they were added.
+1. Print the section. This changes nothing.
+
+```bash
+python3 scripts/release.py --dry-run X.Y.Z
+```
+
+2. Read the section. It is a `## X.Y.Z (YYYY-MM-DD)` heading with today's date, then one group of bullets per fragment. `--date YYYY-MM-DD` sets another date.
+3. Run it for real. The script writes that section above the latest heading in `CHANGELOG.md` and deletes the fragments. It never stages, commits, tags, pushes, or calls `gh`. It prints steps 4 and 5 when it finishes.
+
+```bash
+python3 scripts/release.py X.Y.Z
+```
+
+4. Commit `CHANGELOG.md` and the deleted fragments in one commit. Tag `vX.Y.Z` on the commit that lands on main, and push the tag.
+5. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
+
+The script orders the fragments by the commit that added each one. It reads this log with `--no-renames` added, and it orders the fragments that one commit added by name.
 
 ```bash
 git log --reverse --diff-filter=A --format= --name-only -- changes/
 ```
 
-2. Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it. Read that file once. Under a new version heading in `CHANGELOG.md`, write those bullets in that order. The new section must match the bullets the fragments hold.
-3. Delete those fragment files in that same commit.
-4. Commit, tag `vX.Y.Z`, and push the tag.
-5. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
+To check the order by hand, read that log. Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it.
+
+The script exits 1, names the fix, and changes nothing when one of these holds:
+
+- `CHANGELOG.md` or `changes/` has uncommitted changes.
+- `CHANGELOG.md` is missing or is a symlink.
+- `CHANGELOG.md` already has a `## X.Y.Z` heading, or the version is not above the latest heading.
+- `changes/` holds no fragments, or holds an entry that is not a `.md` file.
+- A fragment holds a line that is not a bullet or a continuation line.
+- The clone is shallow, or no commit added a fragment that sits in `changes/`.
+
+The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. It holds `SIGINT`, `SIGTERM`, and `SIGHUP` for that whole step. When a write or a delete fails, or one of those signals arrives, it writes `CHANGELOG.md` back and re-creates each deleted fragment from the bytes it read first. It then checks every file against those bytes. It prints `nothing changed` and exits 1 only when the check passes. Otherwise it names each file that differs and prints the command below. A kill that cannot be caught, or power loss, can leave a partial run. The command below restores that too.
+
+To undo a finished or partial run before you commit it, run this. It works whether or not you ran `git add`.
+
+```bash
+git restore --staged --worktree CHANGELOG.md changes/
+```
 
 Cut a release after each upstream sync and any user-facing fix.
