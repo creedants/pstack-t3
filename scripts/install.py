@@ -226,9 +226,22 @@ class Unreadable(Exception):
     """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
 
 
+# The errors Path.exists() reads as "not there" on Python 3.10 and 3.12.
+ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+
 def read_object(path):
+    """Read one record file. Return its JSON object, or None when no file is at `path`.
+
+    No file is there when the read fails with an errno in ABSENT. Any other OSError from the read, and any content
+    that is not a JSON object, raises Unreadable.
+    """
     try:
         data = json.loads(path.read_text())
+    except OSError as error:
+        if error.errno in ABSENT:
+            return None
+        raise Unreadable(f"{path} could not be read ({error.strerror}); clear that error and rerun") from None
     except ValueError:
         raise Unreadable(f"{path} is not valid JSON; fix or move it and rerun") from None
     if not isinstance(data, dict):
@@ -237,7 +250,10 @@ def read_object(path):
 
 
 def legacy_lists(path):
+    """Return the manifest's object and its links and backups lists, or None when no file is at `path`."""
     data = read_object(path)
+    if data is None:
+        return None
     found = []
     for key in ("links", "backups"):
         value = data.get(key, [])
@@ -248,10 +264,10 @@ def legacy_lists(path):
 
 
 def read_legacy(state, scope, user):
-    path = Path(state) / LEGACY_NAME
-    if not path.exists():
+    found = legacy_lists(Path(state) / LEGACY_NAME)
+    if found is None:
         return (), ()
-    _data, raw_links, raw_backups = legacy_lists(path)
+    _data, raw_links, raw_backups = found
     links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
     backups = tuple(item for item in (parse_backup(entry, scope, user) for entry in raw_backups) if item)
     return links, backups
@@ -491,9 +507,9 @@ def write_claims(state, root, claims):
 
 def current_claims(state, root):
     path = owner_path(state, root)
-    if not path.exists():
-        return {}
     data = read_object(path)
+    if data is None:
+        return {}
     recorded = data.get("checkout")
     if recorded != root:
         raise Unreadable(f"{path} records {recorded}, not this checkout")
@@ -517,9 +533,10 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
     if not add_links and not add_backups and not remove_links and not remove_backups:
         return (), ()
     path = Path(state) / LEGACY_NAME
+    found = legacy_lists(path)
     # Older installers still read this file, so a cleanup leaves empty lists in place.
-    if path.exists():
-        data, links, backups = legacy_lists(path)
+    if found is not None:
+        data, links, backups = found
     elif adding:
         data, links, backups = {}, [], []
     else:
@@ -1103,10 +1120,10 @@ def settle(strays, state, root, dry_run):
 
 def buried(state, root, path):
     """Whether a backup row now holds this checkout's entry for the slot of `path`."""
-    file = Path(state) / LEGACY_NAME
-    if not file.exists():
+    found = legacy_lists(Path(state) / LEGACY_NAME)
+    if found is None:
         return False
-    _data, _links, backups = legacy_lists(file)
+    _data, _links, backups = found
     return any(
         isinstance(row, dict) and isinstance(row.get("original"), str) and isinstance(row.get("backup"), str)
         and slot_of(row["original"]) == slot_of(path) and proves(root, row["backup"], row["original"])
@@ -1489,8 +1506,10 @@ def audit(args, scope, user, names):
             continue
         try:
             data = read_object(file)
-        except (Unreadable, OSError) as error:
+        except Unreadable as error:
             unread.append(Unread(f"{error} (doctor read no checkout from it)", False))
+            continue
+        if data is None:
             continue
         checkout = data.get("checkout")
         if not isinstance(checkout, str):
@@ -1510,7 +1529,7 @@ def audit(args, scope, user, names):
         unread.append(Unread(f"{error} (doctor checked no claims and no backup rows)", True))
     try:
         claims = current_claims(state, root)
-    except (Unreadable, OSError) as error:
+    except Unreadable as error:
         claims = {}
         unread.append(Unread(f"{error} (doctor checked no claims of this checkout)", True))
     if manifest is None:
