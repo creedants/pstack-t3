@@ -43,16 +43,11 @@ ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
-# Highest first. --priority choices, AUTOFIRE, and the sort rank in next all derive from it.
 PRIORITIES = ("urgent", "normal", "low")
 AUTOFIRE = ("off", *PRIORITIES)
-# The priority of a ticket whose priority cell is empty, by base_source. Every other source reads as normal.
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
-# A low ticket is startable only while more than this many workers are idle.
 LOW_RESERVE = 1
-# A low ticket filed more than this many days ago is flagged in next.
 LOW_FLAG_DAYS = 7
-# Where a waiting ticket stands in next: the label on the count line, then the words on the ticket's line.
 STANDINGS = {
     "start": ("startable", "startable"),
     "rides": ("riding", "rides with {why}"),
@@ -152,7 +147,7 @@ class BrigadeError(Exception):
 
 
 class MalformedTable(BrigadeError):
-    """A finished line of a table does not parse. walk prints it for that store and goes on to the next."""
+    pass
 
 
 def now():
@@ -200,10 +195,7 @@ def is_timestamp(value):
 
 
 def parse_row(table, line):
-    """One complete line of a table as a row, or None when its field count or timestamp is wrong.
-
-    A row written before a table gained its `ADDED_COLUMNS` is read padded. Reading never rewrites it.
-    """
+    """One complete line of a table as a row, or None when its field count or timestamp is wrong."""
     header = TABLES[table]
     fields = line.split("\t")
     missing = len(header) - len(fields)
@@ -571,17 +563,14 @@ def base_source(source):
 
 
 def priority_of(row):
-    """A ticket's priority: its priority cell, or SOURCE_PRIORITY for its base_source, or normal."""
     return row["priority"] or SOURCE_PRIORITY.get(base_source(row["source"]), "normal")
 
 
 def paths_of(row):
-    """A ticket's recorded paths as a tuple. Empty means unknown."""
     return tuple(part for part in row["paths"].split(",") if part)
 
 
 def ticket_paths(text):
-    """The --paths value of ticket add and ticket set as a sorted tuple with no repeats. "" is the empty tuple."""
     if text == "":
         return ()
     found = set()
@@ -595,16 +584,11 @@ def ticket_paths(text):
 
 @dataclass(frozen=True)
 class Tracked:
-    """The repository's tracked files and every directory above one."""
     files: frozenset
     directories: frozenset
 
 
 def tracked_paths(project_root):
-    """Tracked, from one `git -C <root> ls-files -z`. None when git fails, such as outside a repository.
-
-    A subprocess, so every caller runs it before Restaurant.checked.
-    """
     try:
         result = subprocess.run(["git", "-C", str(project_root), "ls-files", "-z"], capture_output=True, text=True)
     except OSError:
@@ -617,12 +601,6 @@ def tracked_paths(project_root):
 
 
 def quoted_paths(text, tracked):
-    """The paths a ticket's text quotes, as a sorted tuple with no repeats. Pure. tracked None gives ().
-
-    A quote is a backtick span on one line, without one trailing `:<line>` or `:<line>-<line>`.
-    A span with none of `*`, `?`, and `[` counts when it is a tracked file or a directory above one.
-    A span with one of them counts when it matches a tracked file, as the components before its first one with a mark.
-    """
     if tracked is None:
         return ()
     found = set()
@@ -642,7 +620,6 @@ def quoted_paths(text, tracked):
 
 
 def record_paths(restaurant, tracked, write):
-    """One line per waiting ticket that records no paths. With write, each records the quoted_paths of its summary when it has any."""
     rows = restaurant.rows("rail.tsv")
     lines, recorded = [], False
     for row in rows:
@@ -940,7 +917,6 @@ def file_follow_ups(restaurant, name, found, write, tracked):
 
     A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
     The ref ends in a position, which is not an identity, so the text is the only key and refuse_live_ref is not asked.
-    Each ticket records the quoted_paths of its text.
     """
     restaurant.find("dishes.tsv", name[:-3])
     if found is None:
@@ -1548,10 +1524,6 @@ def fire_command(ident, note):
 
 
 def lease_block(project_root, holder_name, paths, kind="lease"):
-    """What the landing queue answers for a claim on these paths now, as (kind, text), or None for free.
-
-    `kind` is the kind of an answer that names neither a lease nor the repository cap.
-    """
     code, out, err = lease_check(project_root, holder_name, paths)
     if code == 0:
         return None
@@ -1595,13 +1567,11 @@ def holding_blocks(restaurant):
 
 
 def overlap(first, second):
-    """True when a path of one list equals, or is a directory above, a path of the other. Between waiting tickets only."""
     return any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in first for b in second)
 
 
 @dataclass(frozen=True)
 class Waiting:
-    """A waiting ticket as next reads it. Empty `paths` means unknown."""
     id: str
     priority: str
     filed: datetime
@@ -1612,11 +1582,6 @@ class Waiting:
 
 @dataclass(frozen=True)
 class Standing:
-    """Where one waiting ticket stands. `kind` is a key of STANDINGS.
-
-    `why` fills the kind's words: a ticket id for rides, the reason for blocked, else empty.
-    `overdue` is true for a low ticket filed more than LOW_FLAG_DAYS days before now.
-    """
     ticket: Waiting
     kind: str
     why: str
@@ -1631,15 +1596,9 @@ def waiting_ticket(row):
 
 
 def plan(tickets, running, cap, level, answers, now):
-    """One Standing per waiting ticket, in the order the tickets should start. Pure. It starts nothing.
-
-    The order is priority, then the oldest filed, then the number in the id. Each ticket takes the first standing
-    whose test holds. `answers` holds the landing queue's refusal by ticket id.
-    """
     allowed = () if level == "off" else PRIORITIES[:PRIORITIES.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
-    # Each ticket called startable so far, in start order, with its paths and the paths of the tickets riding with it.
     started = {}
     standings = []
     for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES.index(ticket.priority), ticket.filed,
@@ -1672,11 +1631,6 @@ def plan(tickets, running, cap, level, answers, now):
 
 
 def lease_answers(meta, tickets, next_dish):
-    """The landing queue's refusal of each waiting ticket's recorded paths, by ticket id. land.py runs here.
-
-    A decision ticket and a ticket that records no paths are not asked. Each distinct path list is asked once,
-    with the changelog fragment of the branch the next fire uses when it names none.
-    """
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, answers = {}, {}
     for ticket in tickets:
@@ -1691,7 +1645,6 @@ def lease_answers(meta, tickets, next_dish):
 
 
 def age(delta):
-    """A span as whole days at one day or more, whole hours at one hour or more, else whole minutes."""
     seconds = max(0, int(delta.total_seconds()))
     if seconds >= 86400:
         return f"{seconds // 86400}d"
@@ -1723,7 +1676,6 @@ def next_up(restaurant):
         meta = restaurant.meta
         tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
-    # land.py waits on the landing database, so every call runs outside the store lock.
     answers = lease_answers(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
     return next_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), answers, moment), meta, running, moment)
@@ -2340,10 +2292,7 @@ def leases_for(listing, prefix):
 
 
 def walk(root, stale_hours=24, repo=None):
-    """Coordinators grouped by projectRoot, as (text, failures). One land.py status and one lease list per root, outside any store lock.
-
-    A store with a malformed table prints that message as its one line, and the message joins failures.
-    """
+    """Coordinators grouped by projectRoot. One land.py status and one lease list per root, outside any store lock."""
     wanted = str(Path(repo).resolve()) if repo is not None else None
     groups = {}
     for meta_path in sorted(root.glob("*/*/restaurant.json")):
