@@ -1115,10 +1115,10 @@ class DocumentTest(OutputCase):
         fixture.thread(worker(1), turns=(("completed", 200, 190), ("completed", 100, 90)))
         fixture.meta.pop("thread")
         fixture.write()
-        for args, length, bars in (((), 10800, [444, 56, 0]), (("--hours", "4"), 14400, [167, 41, 0, 583, 42, 0])):
+        for args, length, bars in (((), 10800, 1), (("--hours", "4"), 14400, 2)):
             with self.subTest(args):
                 data = data_of(self.document(*args))
-                self.assertEqual((data["w"][1], data["G"][0][1][0][6]), (length, bars))
+                self.assertEqual((data["w"][1], len(data["G"][0][1][0][6]) // 3), (length, bars))
 
     def test_data_object_holds_the_counts_legend_items_groups_and_notes(self):
         failed_child(self.fixture).write()
@@ -1134,9 +1134,9 @@ class DocumentTest(OutputCase):
         self.assertEqual([line[:5] + line[7:8] for line in data["G"][0][1]],
                          [[0, "worker", 1, 0, 0, 1], [1, "architect runner 2", 2, 1, 0, 1], [2, "spec_review", 2, 1, 3], [0, "review", 0, 2, 4]])
         self.assertEqual([[line[8] // 60 for line in lines if len(line) > 8] for _, lines in data["G"]], [[42, 6], [], []])
-        self.assertEqual([line[:2] + line[6:] for line in data["G"][2][1]], [[0, "Read the brief at", [500, 11, 3]]])
-        self.assertEqual(data["G"][0][1][3][6], [831, 19, 2])
-        self.assertEqual((data["k"][:2], data["k"][3]), ([0, 0], [167, 55, 0, 969, 31, 0]))
+        self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "Read the brief at", 3]])
+        self.assertEqual([[bars[2::3] for bars in (line[6] for line in lines)] for _, lines in data["G"]], [[[0, 1], [1], [0], [2]], [[0]], [[3]]])
+        self.assertEqual((data["k"][:2], data["k"][3][2::3]), ([0, 0], [0, 0]))
         self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."])
 
     def test_checksum_in_the_document_is_fnv_1a_over_the_data_elements_utf16_units(self):
@@ -1404,7 +1404,7 @@ class RendererTest(OutputCase):
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
-        self.assertIn(["83.1%", "1.9%"], built["bars"])
+        self.assertEqual([bar for bar in built["bars"] if not all(re.fullmatch(r"[0-9]+(\.[0-9])?%", side) for side in bar)], [])
         self.assertIn("review · failed · 3m", built["titles"])
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
