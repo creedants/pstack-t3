@@ -21,11 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/activity.py"
 MOD = runpy.run_path(str(SCRIPT))
 
-# Every invented id and path holds one of these words, so a leak is a substring search.
 MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "0a1b2c3")
 COORDINATOR = "mcp:threadmarker-coordinator"
 CHANGED = "this T3 build stores threads differently, so update pstack-t3"
-# T3's tables as this change reads them, written out here so a wrong name in the script cannot also be in the fixture.
 SCHEMA = {
     "orchestration_v2_projection_metadata": ("projection_name", "schema_version"),
     "orchestration_v2_projection_threads": ("thread_id", "title", "default_provider", "payload_json"),
@@ -50,7 +48,6 @@ def delegated(parent, request):
 
 
 def listing(directory):
-    """Each file's name and the SHA-256 of its bytes."""
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(Path(directory).iterdir()) if path.is_file()}
 
 
@@ -61,8 +58,6 @@ def live_listing(directory, files=None):
 
 
 class Fixture:
-    """A temp store and a temp T3 base directory. Times are minutes before `now`."""
-
     def __init__(self, root):
         self.root = Path(root)
         self.store = self.root / "pathmarker state" / "proj" / "kit"
@@ -86,11 +81,6 @@ class Fixture:
         self.log.append({"at": self.stamp(500), "kind": "worker", "id": ident, "state": "retired", "note": thread})
 
     def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None):
-        """Add a thread with its turns, each (status, start, end). A thread with a parent also gets a delegation.
-
-        Unless `delegation` gives (status, start, end), it runs from the first turn's start to the last turn's end with the last turn's status.
-        Returns the delegation's sub-agent id, or None.
-        """
         self.threads.append((ident, title, provider, json.dumps({"modelSelection": {"model": model}}) if payload is None else payload))
         self.turns += [(ident, status, self.stamp(start), self.stamp(end)) for status, start, end in turns]
         if parent is None:
@@ -143,7 +133,6 @@ class Fixture:
             self.writer.close()
 
     def command(self, *args, at=True, t3_home=True, env=None):
-        """The words and keyword arguments that run the script. --at and --t3-home name this fixture unless given, and None leaves one out."""
         words = [sys.executable, str(SCRIPT)]
         words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
         words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
@@ -159,7 +148,6 @@ class Fixture:
         return subprocess.Popen(words, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
 
     def read(self, hours=3.0):
-        """read_store and read_t3 over this fixture, as (Store, T3, Window)."""
         store = MOD["read_store"](self.store)
         window = MOD["Window"](self.now - hours * 3600, self.now)
         connection = MOD["open_t3"](self.database)
@@ -180,7 +168,6 @@ class ActivityCase(unittest.TestCase):
         self.addCleanup(self.fixture.close)
 
     def fails(self, status, *args, **how):
-        """The one line a failed run prints, after checking its status and that stdout is empty."""
         result = self.fixture.run(*args, **how)
         self.assertEqual((result.returncode, result.stdout), (status, ""), result.stderr)
         self.assertEqual(result.stderr.count("\n"), 1, result.stderr)
@@ -542,7 +529,6 @@ def page_of(fixture, hours=3.0):
 
 
 def labels(page):
-    """Each group's rows as (depth, label), keyed by the work item's id, or None for the agents tied to no work item."""
     return {group.item.id if group.item else None: [(row.depth, row.label) for row in group.rows] for group in page.groups}
 
 
@@ -868,14 +854,6 @@ class LabelTest(unittest.TestCase):
 
 
 def populate(fixture, units, agents, running=0, failed=0, heavy=False, in_flight=None, failed_every=0):
-    """A coordinator, `units` work items with the last `in_flight` in flight, a quarter of them by default, and `agents` agents spread over them.
-
-    Each item has a worker, children of the worker with written titles, review children of the coordinator, and
-    sub-agents of a provider under the worker's children. `running` agents have an open turn and `failed` agents
-    failed, all in the in-flight items. Of the agents of the other items, counted in order, every `failed_every`th failed.
-    With heavy, each summary and each how-explorer title starts with 50 characters that include four-byte ones, each model name
-    ends in 30 four-byte characters, and the link of each odd-numbered item is 120 ASCII characters longer.
-    """
     fixture.coordinator(turns=(("completed", 170, 160), ("running", 5, None)))
     states = ("in-progress", "in-review", "passed", "queued", "sent-back", "blocked")
     wide = "𝔸𝔹ℂ𝔻 " * 10 if heavy else ""
@@ -931,13 +909,11 @@ def page(*groups, items=(), coordinator=None, hidden=None, name="kit"):
 
 
 def drawn(folded):
-    """Each group's rows as (depth, label, stands_for), keyed by the work item's id."""
     return {one.item.id if one.item else None: [(each.depth, each.label, each.stands_for) for each in one.rows] for one in folded.groups}
 
 
 class FoldTest(ActivityCase):
     def family(self, number, state, children, last=("completed", "completed")):
-        """A unit with a worker and `children` children of it. `last` gives the last child's turn status and its delegation's status. A running delegation is open."""
         fixture = self.fixture
         fixture.unit(f"D{number}", state, thread=worker(number))
         start = 170 - number * 10
@@ -1115,7 +1091,6 @@ PROGRAM = re.compile(r"<script>(const H=(\d+);.*)</script>$", re.S)
 STORE_WORDS = re.compile(r"\b(dish|dishes|rail|86|pass|station|restaurant|fire|chef)\b", re.I)
 PR7 = "https://example.test/o/r/pull/7"
 PR6 = "https://example.test/o/r/pull/6"
-# A document with no HTML parser. It keeps every node the renderer makes.
 STUB = """
 const nodes = [];
 const make = tag => ({
@@ -1140,14 +1115,12 @@ console.log(JSON.stringify({
 """
 
 
-# Markup, a quote, a backslash, an ampersand, a tab, text that reads as an entity, and U+2028. Then the same text as entities() writes it and as the renderer draws it.
 HOSTILE = "x</script><img onerror=a(1)> \"q\" \\ & 'p'\t&lt;\u2028z"
 HOSTILE_WRITTEN = "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; 'p' &amp;lt; z"
 HOSTILE_DRAWN = "x</script><img onerror=a(1)> \"q\" \\ & 'p' &lt; z"
 
 
 def hostile():
-    """A page whose name, work item id and summary, row label, and model name each hold HOSTILE."""
     return page(group(item("D1 " + HOSTILE, summary=HOSTILE), row(HOSTILE, model="model " + HOSTILE)), name=HOSTILE)
 
 
@@ -1191,7 +1164,6 @@ def busy(fixture):
 
 
 def day(fixture):
-    """The shape of a measured 24 hour window. 36 items with 6 in flight, 400 agents, and 30 failed agents across the merged and dropped items."""
     return populate(fixture, units=36, agents=400, running=8, failed=2, in_flight=6, failed_every=11)
 
 
@@ -1200,7 +1172,6 @@ def extreme(fixture):
 
 
 def declarations(style):
-    """Each declaration of a stylesheet as (selector, property, value), once for each selector of its rule."""
     rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", ""))
     return [(selector, *declaration.split(":", 1)) for selectors, body in rules for selector in selectors.split(",") for declaration in body.split(";")]
 
@@ -1226,7 +1197,6 @@ class OutputCase(ActivityCase):
         return result.stdout
 
     def document(self, *args, **how):
-        """The document a run prints, without the newline print adds."""
         out = self.out(*args, **how)
         self.assertTrue(out.startswith("<!doctype html>") and out.endswith("</script>\n"), out[:80])
         return out[:-1]
@@ -1348,7 +1318,6 @@ class DocumentTest(OutputCase):
         self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
 
         def other_words(value):
-            """The words of a declaration's value that are not a variable, a number, `solid`, `transparent`, `inherit`, or the gradient function."""
             plain = r"var\(--[\w-]+\)|[0-9.]+(px|%|deg)?|solid|transparent|inherit|repeating-linear-gradient"
             return [word for word in re.findall(r"var\([^)]*\)|[\w.%-]+", value) if not re.fullmatch(plain, word)]
 
@@ -1557,7 +1526,6 @@ class RunTest(OutputCase):
 @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
 class RendererTest(OutputCase):
     def render(self, document, spoil=False):
-        """What the renderer builds from a document, in a document object that has no HTML parser."""
         data, program = DATA.search(document).group(1), PROGRAM.search(document).group(1)
         if spoil:
             data = data.replace('"kit"', '"kat"', 1)
