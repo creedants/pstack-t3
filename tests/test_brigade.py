@@ -548,7 +548,7 @@ class BrigadeTest(unittest.TestCase):
         section = text.split("## Filing tracker work", 1)[1].split("\n## ", 1)[0]
         step = next(row for row in section.splitlines() if row.startswith("4. **Refusals.**"))
         self.assertEqual(line, "brigade: same text as T1 (waiting); nothing added; pass --again to file a second ticket")
-        self.assertIn(f"`{line}`", step)
+        self.assertIn("`" + line.replace("T1 (waiting)", "T<n> (<state>)") + "`", step)
         self.assertNotIn("never refused", step)
 
     def test_pass_refuses_a_verifier_from_the_author_family(self):
