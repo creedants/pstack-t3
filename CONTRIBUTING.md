@@ -18,7 +18,7 @@ python3 scripts/build.py
 python3 scripts/run_tests.py
 ```
 
-`scripts/run_tests.py` runs every test under `tests/` in worker processes and prints one report. `-j N` sets how many worker processes run at once. `python3 -m unittest discover -s tests` runs the same tests in one process.
+`scripts/run_tests.py` runs every test under `tests/` in worker processes and prints one report. `-j N` sets the largest number of worker processes that run at once. `python3 -m unittest discover -s tests` runs the same tests in one process.
 
 Commit the regenerated `skills/` with your change. For a user-facing change, add one fragment under `changes/`. The file name is the branch name with `%` encoded as `%25` and `/` encoded as `%2F`, then `.md`. Encode `%` before `/`. Branch `pstack-t3/d50` writes `changes/pstack-t3%2Fd50.md`. The file holds markdown bullets only. A bullet starts with `- `. Indent a continuation line under that bullet. A branch reused before the release adds its next bullet to the same file. CI fails if `skills/` does not match what the build produces.
 

@@ -31,6 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARD_SIZE = 10
+# land.py's governor defaults to one slot per four cores, with at least 1 slot and at most 4. A run inside one slot starts at most four workers by default.
 MAX_DEFAULT_JOBS = 4
 DEFAULT_TIMEOUT = 300.0
 # A child holds the start directory of the runner that started it. The runner refuses that directory.
@@ -63,7 +64,7 @@ OUTCOMES = {
 @dataclass(frozen=True)
 class Problem:
     kind: str        # "fail" or "error"
-    label: str       # str(test) or str(subtest) as the worker's Python formats it
+    label: str       # the text after the word in the block heading
     traceback: str
 
 
@@ -72,7 +73,7 @@ class Verdict:
     kind: str        # "ok", "skip", "xfail", "xpass", "lost", or "bad"
     problems: tuple[Problem, ...] = ()   # non-empty exactly when kind is "bad"
     cause: str = ""  # why a "lost" test has no result
-    output: str = "" # what the shard of a "lost" test wrote to stdout and stderr
+    output: str = "" # what the shard wrote to stdout and stderr, on the first "lost" test of that shard
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,7 @@ class LedgerError(Exception):
 
 
 class Ledger:
-    """Holds one verdict per seq of the plan. settle is the only writer."""
+    """Holds at most one verdict per seq of the plan. settle is the only writer of verdicts."""
 
     def __init__(self, size: int) -> None:
         self.size = size
@@ -160,6 +161,10 @@ def exit_status(ledger: Ledger) -> int:
     return 1 if any(OUTCOMES[kind].fails for kind in tallies(ledger)) else 0
 
 
+def count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+
 def block(kind: str, label: str, body: str) -> str:
     return f"{SEP1}\n{OUTCOMES[kind].word}: {label}\n{SEP2}\n{body}\n" if body else f"{SEP1}\n{OUTCOMES[kind].word}: {label}\n"
 
@@ -171,7 +176,7 @@ def lost_body(verdict: Verdict) -> str:
     return f"{verdict.cause}\nOutput of its shard:\n{lines}"
 
 
-def render(plan: tuple[Test, ...], ledger: Ledger, seconds: float, jobs: int) -> str:
+def render(plan: tuple[Test, ...], ledger: Ledger, seconds: float) -> str:
     out = []
     for seq in sorted(ledger.verdicts):
         verdict = ledger.verdicts[seq]
@@ -185,7 +190,7 @@ def render(plan: tuple[Test, ...], ledger: Ledger, seconds: float, jobs: int) ->
     counted = tallies(ledger)
     listed = ", ".join(f"{outcome.tally}={counted[kind]}" for kind, outcome in OUTCOMES.items() if outcome.tally and counted[kind])
     word = "FAILED" if exit_status(ledger) else "OK"
-    out.append(f"{SEP2}\nRan {ran} test{'' if ran == 1 else 's'} in {seconds:.1f}s ({jobs} worker{'' if jobs == 1 else 's'})\n\n")
+    out.append(f"{SEP2}\nRan {count(ran, 'test')} in {seconds:.1f}s\n\n")
     out.append(f"{word} ({listed})\n" if listed else f"{word}\n")
     return "".join(out)
 
@@ -249,7 +254,7 @@ def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
     shards = []
     for module, seqs in sorted(modules.items(), key=lambda item: -len(item[1])):
         count = math.ceil(len(seqs) / size)
-        # A stride keeps neighbours in discovery order out of one shard.
+        # When a module needs more than one shard, a stride puts neighbours in discovery order in different shards.
         for offset in range(count):
             shards.append(Shard(len(shards) + 1, module, tuple(seqs[offset::count])))
     return shards
@@ -379,7 +384,9 @@ def run(start: Path, jobs: int, timeout: float) -> int:
             accounting = account(shard, read_events(worker.home / "results.jsonl"), ended)
             output = read_output(worker.home)
             for seq, verdict in accounting.verdicts.items():
-                settle(seq, replace(verdict, output=output) if verdict.kind == "lost" else verdict)
+                if verdict.kind == "lost":
+                    verdict, output = replace(verdict, output=output), ""
+                settle(seq, verdict)
             for problem in accounting.fixtures:
                 run_error(problem)
             for seq, what in accounting.violations:
@@ -396,13 +403,13 @@ def run(start: Path, jobs: int, timeout: float) -> int:
                 not_ok = sum(fails(verdict) for verdict in ledger.verdicts.values()) + len(ledger.run_errors)
                 say(f"run_tests: {len(ledger.verdicts)}/{len(plan)} done, {not_ok} not ok, {now - began:.0f}s")
 
-        say(f"run_tests: {len(plan)} tests in {len(shards)} shards, {jobs} workers")
+        say(f"run_tests: {count(len(plan), 'test')}, {count(len(shards), 'shard')}, {min(jobs, len(shards))} at a time")
         for test in plan:
             if test.preset is not None:
                 settle(test.seq, test.preset)
         run_pool(shards, jobs, timeout, lambda shard: launch(shard, plan, scratch, start), finish, tick)
         ledger.close()
-        sys.stderr.write(render(plan, ledger, time.monotonic() - began, jobs))
+        sys.stderr.write(render(plan, ledger, time.monotonic() - began))
         return exit_status(ledger)
     except KeyboardInterrupt:
         print("run_tests: interrupted", file=sys.stderr)
@@ -426,7 +433,7 @@ def flatten(suite):
 
 
 class Recorder(unittest.TestResult):
-    """Emits a start and a result event for each test it was given, and a fixture event for an error on anything else."""
+    """Emits a start and a result event for each given test that runs, and a fixture event for an error or failure on anything else."""
 
     def __init__(self, tests: list[tuple[unittest.TestCase, int]], emit) -> None:
         super().__init__()
@@ -529,8 +536,8 @@ def positive(kind):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, len(os.sched_getaffinity(0))),
-                        help=f"Worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the number of cores this process may use.")
+    parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, os.cpu_count() or 1),
+                        help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and os.cpu_count().")
     parser.add_argument("-s", "--start-directory", default=str(ROOT / "tests"),
                         help="Directory to discover tests under. Each worker runs in its parent directory. The default is tests/ in this repository.")
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,

@@ -58,10 +58,22 @@ class RunTestsTest(unittest.TestCase):
         """)
         result = self.runner()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 3 tests in 2 shards, 2 workers")
-        self.assertTrue(result.stderr.endswith("s (2 workers)\n\nOK\n"), result.stderr)
+        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 3 tests, 2 shards, 2 at a time")
+        self.assertRegex(result.stderr, r"\nRan 3 tests in \d+\.\ds\n\nOK\n\Z")
         self.assertEqual(RAN.search(result.stderr).group(1), "3")
         self.assertEqual(self.serial_count(), "3")
+
+    def test_a_one_test_suite_run_with_j_4_prints_1_test_1_shard_1_at_a_time(self):
+        self.write("test_single.py", """
+            import unittest
+
+            class SingleTest(unittest.TestCase):
+                def test_one(self):
+                    pass
+        """)
+        result = self.runner("-j", "4")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 1 test, 1 shard, 1 at a time")
 
     def test_a_failing_assertion_exits_1_with_its_message_and_the_serial_test_count(self):
         self.write("test_alpha.py", PASSING)
@@ -215,7 +227,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
 
-    def test_a_test_that_exits_its_worker_with_status_3_is_lost_with_the_test_after_it(self):
+    def test_a_test_that_exits_its_worker_with_status_3_is_lost_with_the_test_after_it_and_the_shard_output_prints_once(self):
         self.write("test_exit.py", """
             import os
             import unittest
@@ -239,6 +251,7 @@ class RunTestsTest(unittest.TestCase):
                       "Output of its shard:\n  about to exit\n", result.stderr)
         self.assertIn("\nLOST: test_exit.ExitTest.test_c_after\n" + "-" * 70 + "\n"
                       "The worker for shard 1 exited with status 3 before it started this test.\n", result.stderr)
+        self.assertEqual(result.stderr.count("Output of its shard:"), 1)
         self.assertEqual(RAN.search(result.stderr).group(1), "3")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (lost=2)\n"), result.stderr)
 
@@ -254,7 +267,7 @@ class RunTestsTest(unittest.TestCase):
         result = self.runner("--timeout", "2")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("\nLOST: test_slow.SlowTest.test_sleeps\n" + "-" * 70 + "\n"
-                      "The worker for shard 1 exceeded the limit of 2 s while this test was running.\n", result.stderr)
+                      "The worker for shard 1 exceeded the limit of 2 s ", result.stderr)
         self.assertTrue(result.stderr.endswith("\n\nFAILED (lost=1)\n"), result.stderr)
 
     def test_a_raising_setupclass_prints_its_traceback_and_loses_the_tests_of_its_class(self):
