@@ -4423,7 +4423,11 @@ class OwnershipTest(unittest.TestCase):
     NO_CLAIMS = "doctor checked no claims of this checkout"
 
     def assert_unread(self, checkout, file, reason, unchecked):
-        """Assert doctor's whole output and what install and uninstall stop with on a fully linked home where `file` cannot be read."""
+        """On a fully linked home where `file` cannot be read, assert what doctor and the commands `assert_stops` runs print.
+
+        Doctor prints its harness line, then the could-not-be-read sentence with `unchecked` in parentheses, and exits 1.
+        Each command exits 1 with that sentence alone on stderr.
+        """
         sentence = f"{file} could not be read ({reason}); clear that error and rerun"
         self.assertEqual(
             self.doctor(checkout, 1, "--harness", "grok"),
@@ -4432,7 +4436,7 @@ class OwnershipTest(unittest.TestCase):
         self.assert_stops(checkout, sentence)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
-    def test_doctor_install_and_uninstall_stop_with_one_sentence_on_a_manifest_of_mode_000(self):
+    def test_a_manifest_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
         a, swarm = self.installed_for_grok()
         before = snapshot(self.home)
         legacy_file(self.home).chmod(0)
@@ -4441,7 +4445,7 @@ class OwnershipTest(unittest.TestCase):
         legacy_file(self.home).chmod(0o644)
         self.assertEqual(snapshot(self.home), before)
 
-    def test_doctor_install_and_uninstall_stop_with_one_sentence_on_a_directory_at_the_manifest_path(self):
+    def test_a_directory_at_the_manifest_path_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
         a, swarm = self.installed_for_grok()
         legacy_file(self.home).unlink()
         legacy_file(self.home).mkdir()
@@ -4450,7 +4454,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(snapshot(self.home), before)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
-    def test_doctor_install_and_uninstall_stop_with_one_sentence_on_this_checkouts_owner_file_of_mode_000(self):
+    def test_this_checkouts_owner_file_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
         a, swarm = self.installed_for_grok()
         owner = owner_file(self.home, a)
         before = snapshot(self.home)
@@ -4460,7 +4464,7 @@ class OwnershipTest(unittest.TestCase):
         owner.chmod(0o644)
         self.assertEqual(snapshot(self.home), before)
 
-    def test_doctor_install_and_uninstall_stop_with_one_sentence_on_a_directory_at_this_checkouts_owner_file_path(self):
+    def test_a_directory_at_this_checkouts_owner_file_path_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
         a, swarm = self.installed_for_grok()
         owner = owner_file(self.home, a)
         owner.unlink()
@@ -4470,7 +4474,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(snapshot(self.home), before)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads inside a directory of mode 000")
-    def test_doctor_install_and_uninstall_stop_with_one_sentence_on_an_install_owners_directory_of_mode_000(self):
+    def test_an_install_owners_directory_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
         a, swarm = self.installed_for_grok()
         owner = owner_file(self.home, a)
         before = snapshot(self.home)
@@ -4510,7 +4514,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(self.doctor(a, 0, "--harness", "grok"), [self.harness_line("grok", "3/3 pstack-t3")])
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
-    def test_an_uninstall_whose_manifest_turns_mode_000_after_the_sweep_unlinked_a_second_name_exits_1_with_one_line_and_no_left_line(self):
+    def test_an_uninstall_whose_manifest_turns_mode_000_before_the_sweep_unlinks_a_second_name_exits_1_with_one_line_and_no_left_line(self):
         a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"), kind="file")
         manifest = legacy_file(self.home)
         self.addCleanup(manifest.chmod, 0o644)
