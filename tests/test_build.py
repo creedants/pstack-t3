@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 CASES = (
     ("t3/added/brigade/scripts/brigade.py", "brigade/scripts/brigade.py", 0o644),
+    ("t3/added/brigade-admin/SKILL.md", "brigade-admin/SKILL.md", None),
     ("t3/added/landing/scripts/land.py", "landing/scripts/land.py", 0o644),
     (
         "vendor/pstack/skills/poteto-mode/scripts/watch-pr/watch-pr",
