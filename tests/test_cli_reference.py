@@ -151,6 +151,17 @@ class CliReferenceTest(unittest.TestCase):
             render("def main(argv=None):\n    return 0\n")
         self.assertIn("fixture.py: main([]) returned without parsing arguments", str(raised.exception))
 
+    def test_committed_reference_matches_the_generator(self):
+        with tempfile.TemporaryDirectory() as elsewhere, mock.patch.dict(os.environ, HOSTILE):
+            previous = os.getcwd()
+            os.chdir(elsewhere)
+            try:
+                text = cli_reference.render()
+            finally:
+                os.chdir(previous)
+        self.assertEqual(text, (ROOT / "docs/cli.md").read_text(), "run python3 scripts/build.py")
+        self.assertNotIn(str(ROOT), text)
+
     def test_every_t3_script_with_a_parser_is_documented(self):
         parsers = sorted(
             str(path.relative_to(ROOT))

@@ -1,3 +1,4 @@
+import shutil
 import stat
 import subprocess
 import sys
@@ -56,3 +57,29 @@ class BuildModeTest(unittest.TestCase):
                     if expected is not None:
                         self.assertEqual(source_mode, expected, source_rel)
                         self.assertEqual(built_mode, expected, output_rel)
+
+
+class BuildReferenceTest(unittest.TestCase):
+    def test_default_build_writes_the_committed_command_line_reference(self):
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed, so the tracked tree cannot be listed")
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\0")
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory)
+            for rel in listed:
+                if rel and rel != "docs/cli.md" and (ROOT / rel).is_file():
+                    (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / rel, copy / rel)
+            result = subprocess.run(
+                [sys.executable, str(copy / "scripts/build.py")],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((copy / "docs/cli.md").read_text(), (ROOT / "docs/cli.md").read_text())
