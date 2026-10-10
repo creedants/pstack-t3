@@ -60,6 +60,8 @@ The level is chosen when the coordinator opens. `brigade.py set --reporting` cha
 
 Every level sends the 18:00 report. The 09:00 run is not a report. A message from you gets at least one line, and a direct question gets an answer. The [guide](guide.md#reporting-levels) walks through the same choice. A missing report-back is a defect. The liveness check fires a fix at its cause.
 
+Ask a coordinator what its agents are doing and it shows the activity page. `activity.py` builds the page from the coordinator's store and T3 Code's state database. It shows what is running now, a timeline of agents grouped by unit, and the units in flight with their state and pull request link. It covers the last 3 hours unless the coordinator passes `--hours`. Your request is a message from you, so it gets a reply at every level, `digest` included. A host without the page tools gets the same counts as plain lines from `--text`. The [command-line reference](cli/activity.md) lists the flags.
+
 ## How work lands
 
 A writer claims a lease on the paths it will change before it starts. An overlapping claim is refused. The writer commits in its own worktree and stops. It never merges, rebases a shared branch, or pushes trunk. A reviewer from another model family checks that exact commit. The queue lands that commit, and bounces it when the rebased result differs from the reviewed one. Whoever runs `land.py land` while the lock is free drains the queue. Builds and tests run under `land.py slot`, which limits how many heavy commands run at once.
