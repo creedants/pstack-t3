@@ -4,7 +4,14 @@
 - A failed posted check no longer bounces an entry behind the first entry of the line. `land` notes such an entry whose checks passed or failed `waiting for E<n> to merge first`.
 - In `merge` mode `land` now rebuilds an awaiting-merge entry that is outside the line on the same PR and prints `rebuilt E<n> (<holder>) <url>`.
 - In `merge` mode `land` now pauses the queue when a landed entry's merge commit does not hold its candidate's tree.
+- In `merge` mode `land` now makes that tree comparison before it deletes `landing/e<n>` and lands the entry, and fetches a commit it cannot read by its full id.
+- In `merge` mode `land` now pauses the queue and leaves the entry awaiting merge when it cannot read the tree of the merge commit or of the candidate.
+- `land` now passes `--match-head-commit` with the entry's candidate on the `gh pr merge --auto` command and on each plain `gh pr merge`.
+- A head pushed to the PR between the check read and a merge request, including a repeat after `Base branch was modified`, is now refused by that flag and not merged.
+- After a plain merge refusal other than `Base branch was modified` and the base branch policy refusal with no check posted, `land` now reads the PR state, and pauses the queue naming both commits when the PR is open at a head that is not the candidate.
+- In `merge` mode `land` now pauses the queue when its read of an entry's PR state, head, and merge commit fails.
+- When `git merge-base --is-ancestor` exits with a code other than 0 or 1 on the last landed commit, the pause now says the check could not be made and no longer says trunk lost that commit.
 - With the merge method `rebase`, `land` now builds at most one entry in a run, and none while an awaiting-merge entry is in the line or is noted `merge requested by the queue`.
 - A plain merge refused with `Base branch was modified` is now run again after 2 seconds, at most 3 more times, and a last refusal of that kind no longer pauses the queue.
-- In `merge` mode a `land` run that pauses now prints what it landed, opened, adopted, bounced, and rebuilt before the pause line.
+- In `merge` mode a `land` run that pauses now prints its `landed`, `adopted`, and `bounced` lines before the pause line, and its `opened` and `rebuilt` lines for entries still awaiting merge.
 - The landing skill now tells a coordinator to run `land` again, at most 3 more times 5 seconds apart, when `land` prints `queue busy`.
