@@ -403,8 +403,6 @@ LONGER_THAN_A_NO_WORK_PHRASE = [
 ]
 
 
-# Follow-ups from item reports of 2026-10-10, each with the paths cell `ticket add --from-report` records for it
-# in a repository that tracks TRACKED.
 REAL_FOLLOW_UPS = [
     ('`docs/guide.md:246`. "`ticket add` refuses a source this coordinator does not own, and a ref that is still '
      'open here or in a sibling." leaves out the same-summary refusal. Add after "So one issue becomes one '
@@ -4327,12 +4325,10 @@ class BrigadeTest(unittest.TestCase):
 
 
     def cells(self, ident):
-        """A ticket's priority, paths, and decision cells as rail.tsv stores them."""
         row = self.table_row(self.at, "rail.tsv", ident)
         return row["priority"], row["paths"], row["decision"]
 
     def old_rail(self, stamp="2026-10-01T00:00:00+00:00"):
-        """Three waiting tickets as a store wrote them before the priority, paths, and decision cells."""
         (self.at / "rail.tsv").write_text(
             "id\tat\tstate\tsource\tref\tdish\tsummary\n"
             f"T1\t{stamp}\twaiting\tuser\t\t\tFix login\n"
@@ -4547,7 +4543,6 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("watch").splitlines()[0], workers)
 
     def tracked_project(self, *files):
-        """The project as a git repository that tracks these files."""
         for name in files:
             path = self.project / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -4602,7 +4597,6 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.store_files(), before)
 
     def unrecorded_tickets(self):
-        """T1 and T2 waiting with no paths, T3 waiting with paths, and T4 dropped with no paths."""
         self.tracked_project(*TRACKED)
         self.open()
         self.brigade("ticket", "add", "--summary", "Fix `docs/guide.md:246` and `tests/test_install.py`")
@@ -4653,7 +4647,6 @@ class BrigadeTest(unittest.TestCase):
     NONE_RUNNING = "workers: 0 of 2 running, 2 idle, auto-start: normal"
 
     def queue(self, *open_flags):
-        """A local landing contract on a git project, and the Perf coordinator."""
         self.init_landing()
         self.landing_env()
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *open_flags)
@@ -4662,7 +4655,6 @@ class BrigadeTest(unittest.TestCase):
         return self.brigade("ticket", "add", "--summary", summary, *flags)
 
     def refile(self, ident, **ago):
-        """Rewrite the ticket's `at` cell to this long before now."""
         stamp = (datetime.now(timezone.utc) - timedelta(**ago)).isoformat()
         rail = self.at / "rail.tsv"
         lines = [line.split("\t") for line in rail.read_text().splitlines()]
