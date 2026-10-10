@@ -18,7 +18,7 @@ import run_tests
 
 RAN = re.compile(r"^Ran (\d+) tests? in ", re.M)
 LINUX = sys.platform.startswith("linux")
-NEEDS_LINUX = "the runner ends a process outside its worker's group on Linux only"
+NEEDS_LINUX = "the runner sweeps the processes below it on Linux only"
 
 PASSING = """
     import unittest
@@ -180,7 +180,7 @@ class RunTestsTest(unittest.TestCase):
             pass
 
     def pid_from(self, name, limit=30):
-        """Return the pid a test of the temporary project wrote with marks.mark. At cleanup, end that process where /proc shows the project path in its command line."""
+        """Return the pid code in the temporary project wrote with marks.mark. At cleanup, end that process where /proc shows the project path in its command line."""
         path = self.proj / name
         deadline = time.monotonic() + limit
         while not path.exists():
@@ -510,6 +510,15 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stderr, f"run_tests: no test found under {self.tests}\n")
 
+    def test_help_exits_0_and_ends_with_the_last_paragraph_of_the_module_docstring_with_10_seconds_for_sweep_seconds(self):
+        result = subprocess.run([sys.executable, str(RUNNER), "--help"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        paragraph = " ".join(run_tests.__doc__.split("\n\n")[-1].split())
+        self.assertEqual(paragraph.count("SWEEP_SECONDS"), 2)
+        self.assertTrue(paragraph.startswith("The runner sends SIGKILL to the process group of each child it starts "), paragraph)
+        self.assertTrue(" ".join(result.stdout.split()).endswith(" " + paragraph.replace("SWEEP_SECONDS", "10 seconds")),
+                        result.stdout)
+
     def test_a_start_directory_with_no_test_ends_as_the_serial_command_ends(self):
         result = self.runner()
         serial = self.serial()
@@ -581,7 +590,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1)\n"), result.stderr)
 
-    def test_a_test_a_load_tests_hook_built_with_42_runs_with_42_and_fails_as_in_the_serial_command(self):
+    def test_a_test_built_by_a_load_tests_hook_with_42_runs_with_42_and_fails_as_in_the_serial_command(self):
         self.write("test_good.py", GOOD)
         self.write("test_probe.py", """
             import unittest
@@ -626,6 +635,29 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.stderr.splitlines()[-1], "FAILED (failures=1)")
         self.assertEqual(self.serial().stderr.splitlines()[-1], "FAILED (failures=1)")
 
+    def test_25_tests_with_one_id_run_once_each_in_3_shards(self):
+        self.write("test_probe.py", """
+            import unittest
+            from pathlib import Path
+
+            class Probe(unittest.TestCase):
+                def __init__(self, methodName="runTest", value=0):
+                    super().__init__(methodName)
+                    self.value = value
+
+                def test_probe(self):
+                    with open(Path(__file__).resolve().parents[1] / "ran", "a") as out:
+                        out.write(f"{self.value}\\n")
+
+            def load_tests(loader, tests, pattern):
+                return unittest.TestSuite(Probe("test_probe", value) for value in range(25))
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 25 tests, 3 shards, 2 at a time")
+        self.assertEqual(sorted(map(int, (self.proj / "ran").read_text().split())), list(range(25)))
+        self.assertEqual(RAN.search(result.stderr).group(1), "25")
+
     def test_one_test_object_discovered_twice_runs_twice_and_counts_2_tests(self):
         self.write("test_probe.py", """
             import unittest
@@ -669,6 +701,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("\nLOST: test_shift.ShiftTest.test_a\n" + "-" * 70 + "\n"
                       "The worker for shard 1 exited with status 1 before it started this test.\n", result.stderr)
+        self.assertEqual(result.stderr.count("The worker for shard 1 exited with status 1 before it started this test.\n"), 2)
         self.assertIn("  run_tests: this worker discovered 2 tests and the listing discovered 2. "
                       "The ids first differ at position 0.\n", result.stderr)
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
@@ -771,6 +804,25 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1)\n"), result.stderr)
 
+    def test_a_test_that_removes_its_result_file_exits_1_with_an_error_for_its_shard_and_is_lost(self):
+        self.write("test_remove.py", """
+            import json
+            import os
+            import sys
+            import unittest
+
+            class RemoveTest(unittest.TestCase):
+                def test_remove(self):
+                    os.remove(json.load(open(sys.argv[sys.argv.index("--worker") + 1]))["results"])
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("\nERROR: shard 1 of test_remove\n" + "-" * 70 + "\n"
+                      "The worker for shard 1 exited with status 0 before it reported that it had finished.\n"
+                      "Its result file cannot be read. ", result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
+
     def test_a_passing_result_a_test_writes_for_the_failing_test_after_it_exits_1_with_an_error_for_its_shard(self):
         self.write("test_forge.py", """
             import json
@@ -806,6 +858,13 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1)\n"), result.stderr)
 
+    def test_a_module_that_exits_the_listing_with_status_0_at_import_exits_2_with_no_plan(self):
+        self.write("test_good.py", GOOD)
+        self.write("test_leave.py", "import os\nos._exit(0)\n")
+        result = self.runner()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr, f"run_tests: the listing of {self.tests} left no plan the runner can read\n")
+
     def test_a_module_that_sleeps_at_import_past_a_2_second_timeout_exits_2_with_its_output_and_no_listing_process(self):
         self.write("marks.py", MARKS)
         self.write("test_hang.py", HANG_AT_IMPORT.format(escape=False))
@@ -816,6 +875,16 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.stderr, f"run_tests: the listing of {self.tests} exceeded the limit of 2 s\nimporting\n")
         self.assert_gone(listing)
         self.assertEqual(os.listdir(self.scratch), [])
+
+    @unittest.skipUnless(LINUX, NEEDS_LINUX)
+    def test_a_listing_killed_at_a_2_second_timeout_exits_2_and_ends_a_process_it_started_in_a_new_session(self):
+        self.write("marks.py", MARKS)
+        self.write("test_hang.py", HANG_AT_IMPORT.format(escape=True))
+        proc = self.start("--timeout", "2")
+        child = self.pid_from("child")
+        result = self.finish(proc, limit=20)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assert_gone(child)
 
     @unittest.skipUnless(LINUX, NEEDS_LINUX)
     def test_sigterm_while_a_module_sleeps_at_import_exits_130_and_ends_the_listing_and_a_process_it_started_in_a_new_session(self):
@@ -945,6 +1014,25 @@ class RunTestsTest(unittest.TestCase):
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
 
 
+class BuildShardsTest(unittest.TestCase):
+    def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):
+        for sizes in ([1], [10], [11], [25, 3], [100, 1, 10, 7, 31]):
+            with self.subTest(sizes=sizes):
+                # Round-robin, so the tests of different modules interleave in the plan while each has tests left.
+                modules = [f"m{index}" for turn in range(max(sizes)) for index, size in enumerate(sizes) if turn < size]
+                plan = tuple(run_tests.Test(seq, "one.id", module) for seq, module in enumerate(modules))
+                shards = run_tests.build_shards(plan)
+                self.assertEqual(sorted(seq for shard in shards for seq in shard.seqs), list(range(len(plan))))
+                self.assertEqual([shard.number for shard in shards], list(range(1, len(shards) + 1)))
+                for shard in shards:
+                    self.assertIn(len(shard.seqs), range(1, 11))
+                    self.assertEqual({plan[seq].module for seq in shard.seqs}, {shard.module})
+                    self.assertEqual(list(shard.seqs), sorted(shard.seqs))
+
+    def test_no_test_makes_no_shard(self):
+        self.assertEqual(run_tests.build_shards(()), [])
+
+
 class AccountTest(unittest.TestCase):
     OK = {"ev": "result", "status": "ok", "problems": []}
     SHARD = run_tests.Shard(2, "test_x", (4, 5))
@@ -1022,7 +1110,10 @@ class AccountTest(unittest.TestCase):
             (True, -9, 2.0): "The worker for shard 2 exceeded the limit of 2 s after it reported that it had finished.",
             (True, 0, 2.0): "The worker for shard 2 exceeded the limit of 2 s after it reported that it had finished.",
             (False, 0, None): "The worker for shard 2 exited with status 0 before it reported that it had finished.",
+            (False, 3, None): "The worker for shard 2 exited with status 3 before it reported that it had finished.",
+            (False, -9, None): "The worker for shard 2 was killed by signal 9 before it reported that it had finished.",
             (False, -9, 2.0): "The worker for shard 2 exceeded the limit of 2 s before it reported that it had finished.",
+            (False, 0, 2.0): "The worker for shard 2 exceeded the limit of 2 s before it reported that it had finished.",
         }
         for (finished, status, over), ending in endings.items():
             with self.subTest(finished=finished, status=status, over=over):

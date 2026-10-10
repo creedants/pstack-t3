@@ -5,29 +5,32 @@ A listing child discovers the tests. The runner cuts them into shards of at most
 classes are defined in one module and runs each shard in a fresh process. A worker makes the same discovery
 call as the listing child. It runs nothing unless its test ids equal the listing's in number and order. It
 then runs the test objects its own discovery put at the positions of its shard. It appends one JSON line per
-event to its own result file. The runner settles exactly one verdict per discovered test, so the `Ran` line
-counts the tests discovery returned.
+event to its own result file. Before it prints the report, the runner settles exactly one verdict per
+discovered test, so the `Ran` line counts the tests discovery returned.
 
-A shard finished cleanly when its worker reported that it had finished, then exited with status 0 inside the
-`--timeout` limit, and its result file holds only events the shard may write. Every other shard adds one
-error to the report, whatever results its worker wrote. A test with no result is LOST, with one exception. A
-worker reports a test as behind a fixture when the suite passes over it and the setUpClass of its class or
-the setUpModule of its module failed or raised SkipTest since the last test started. It reports that when the
-next test starts or the suite returns. A test reported behind a fixture that raised SkipTest is skipped.
+A shard finished cleanly when its worker reported that it had finished, then exited with status 0 before the
+runner found it past the `--timeout` limit, and its result file holds only events the shard may write. Every
+other shard adds one error to the report, whatever results its worker wrote. A test with no result is LOST,
+with one exception. A worker reports a test as behind a fixture when the suite passes over it, the setUpClass
+of its class or the setUpModule of its module failed or raised SkipTest, and no test started between those
+two events. It reports that when the next test starts or the suite returns. A test reported behind a fixture
+that raised SkipTest is skipped. The runner cannot tell an event its worker wrote from the same event written
+by a test that runs in that worker.
 
-The exit status is 0 when the report ends in OK, 1 when it ends in FAILED, 2 when the runner did not start
-the tests, 5 when it ends in NO TESTS RAN, and 130 when SIGINT or SIGTERM stops the run. When discovery
-returns no test, the report ends as `python3 -m unittest discover` ends on the same Python. That is NO TESTS
-RAN from Python 3.12 on and OK before it.
+The exit status is 0 when the last line of the report starts with OK, 1 when it starts with FAILED, 2 when
+the runner did not start the tests, 5 when it is NO TESTS RAN, and 130 when SIGINT or SIGTERM stops the run.
+When discovery returns no test, the report ends as `python3 -m unittest discover` ends on the same Python.
+That is NO TESTS RAN from Python 3.12 on and OK before it.
 
-The runner kills the process group of a child when the child ends or exceeds the limit. On Linux with /proc
-it tries to become the child subreaper, so that a process orphaned below it becomes its child. Where that
-succeeds, before the run ends, it sends SIGKILL to every process below it in /proc's parent links, and
+The runner sends SIGKILL to the process group of each child it starts when that child ends, when that child
+is past the `--timeout` limit, and when the run stops before that child ends. On Linux with /proc the runner
+tries to become the child subreaper, so that a process orphaned below it becomes its child. Where that
+succeeds, after its last child ends, it sends SIGKILL to every process below it in /proc's parent links and
 repeats until none is left or SWEEP_SECONDS pass. That reaches a process that left its group for a new
-session. The runner names any process still there after SWEEP_SECONDS. It leaves alone the children it had
-before the run and what is below them. There it also reaps every exited child of its process, so nothing
-else in that process may start children. Everywhere else the runner does not end a process that left the
-process group of its worker.
+session. The runner names each process still there after SWEEP_SECONDS. Such a process does not change the
+exit status. The runner sends no signal to a child its process had before the run and does not look below
+one. Everywhere else the runner does not end a process that left the process group of the child that started
+it.
 """
 
 from __future__ import annotations
@@ -79,7 +82,7 @@ EVENTS = {
 }
 STATUSES = ("ok", "skip", "xfail", "xpass", "bad")
 PROBLEM = {"kind": str, "label": str, "traceback": str}
-# The name unittest gives a class or module fixture that ran before the tests it covers.
+# The name unittest reports a setUpClass or setUpModule under when it failed or raised SkipTest.
 SETUP = re.compile(r"(setUpClass|setUpModule) \((.+)\)")
 
 
@@ -260,11 +263,11 @@ class Channel:
         self.offset = 0
         self.lines = 0
         self.events: list[dict] = []
-        self.errors: list[str] = []   # the report's text for lines that are not events, and for a file that cannot be read
+        self.errors: list[str] = []   # the report's text for what the file holds that is not an event, and for a file that cannot be read
         self.unquoted = 0             # lines that are not events, past the QUOTED_LINES that errors quotes
 
     def read(self, last: bool = False) -> bool:
-        """Take what the file gained since the last read. Return whether that held an event."""
+        """Take the complete lines the file gained since the last read. Return whether they held an event."""
         try:
             with open(self.path, "rb") as file:
                 file.seek(self.offset)
@@ -383,7 +386,7 @@ def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
 
 
 def adopt_orphans() -> bool:
-    """Make this process the child subreaper. Return whether Linux did and /proc lists this process."""
+    """Try to make this process the child subreaper. Return whether Linux did and /proc lists this process."""
     if not sys.platform.startswith("linux") or not Path("/proc/self/stat").exists():
         return False
     try:
@@ -418,14 +421,14 @@ class Watch:
         signal.signal(signal.SIGINT, self.note)
         signal.signal(signal.SIGTERM, self.note)
         self.adopts = adopt_orphans()
-        # The children this process had before the run. sweep leaves them and what is below them alone.
+        # The children this process had before the run. Empty where adopt_orphans did not work.
         self.spared = frozenset(children_by_parent().get(os.getpid(), ())) if self.adopts else frozenset()
 
     def note(self, signum, frame) -> None:
         self.signals.append(signum)
 
     def pause(self, owned: set[int]) -> None:
-        """Sleep one poll. Raise Interrupted after a signal. Where adopt_orphans works, reap each exited child up to the first one in owned."""
+        """Sleep one poll. Raise Interrupted after a signal. Where adopt_orphans worked, reap each exited child up to the first one in owned, so nothing else in this process may wait for a child."""
         time.sleep(POLL_SECONDS)
         if self.signals:
             raise Interrupted
@@ -440,7 +443,7 @@ class Watch:
             os.waitpid(exited.si_pid, 0)
 
     def sweep(self, seconds: float = SWEEP_SECONDS) -> list[int]:
-        """End what the module docstring says the runner ends before the run ends, for at most `seconds`. Return the pids still there."""
+        """Do what the module docstring says the runner does after its last child ends, for at most `seconds`. Return the pids still there."""
         if not self.adopts:
             return []
         deadline = time.monotonic() + seconds
@@ -462,7 +465,7 @@ class Watch:
 
 
 def child_env(environ: dict[str, str], home: Path, start: Path) -> dict[str, str]:
-    # argparse reads the terminal size from COLUMNS and LINES, and tests compare help text.
+    # shutil.get_terminal_size reads COLUMNS and LINES, argparse wraps help text at its width, and tests compare help text.
     env = {name: value for name, value in environ.items() if name not in ("COLUMNS", "LINES")}
     env.update(TMPDIR=str(home / "tmp"), XDG_STATE_HOME=str(home / "state"), XDG_CONFIG_HOME=str(home / "config"))
     env[ACTIVE] = str(start)
@@ -650,7 +653,7 @@ def discover(start: Path) -> list:
 
 
 class Recorder(unittest.TestResult):
-    """Emits a start and a result event for each given test that runs, a behind event for each given test the suite passes over behind a fixture, and a fixture event for an error or a failure on anything else. A subtest counts as its test."""
+    """Turns what unittest reports into the start, result, behind, and fixture events of EVENTS. A subtest counts as its test."""
 
     def __init__(self, tests: list[tuple[unittest.TestCase, int]], emit) -> None:
         super().__init__()
@@ -759,7 +762,8 @@ def positive(kind):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
+                                     epilog=__doc__.split("\n\n")[-1].replace("SWEEP_SECONDS", f"{SWEEP_SECONDS:g} seconds"))
     parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, os.cpu_count() or 1),
                         help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the CPU count, or 1 when the CPU count is unknown.")
     parser.add_argument("-s", "--start-directory", default=str(ROOT / "tests"),
