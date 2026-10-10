@@ -231,13 +231,13 @@ Every coordinator event is durable too, because it is a row in the coordinator's
 
 ### How the user opens it
 
-The user asks any thread for an executive admin, through the brigade skill.
+The user asks any thread for an executive admin, through the brigade-admin skill.
 
 1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`, because the admin exists so the user hears less.
 2. `python3 <skills>/brigade/scripts/brigade.py open --admin --project-root <root> --reporting <level>`. It creates `<store>/<project>/.admin/` with `mkdir` and no `exist_ok`, so there is one per repository. A second open prints `exists`, and only the caller that got `opened` launches a thread. It prints every coordinator on the repository, with its purpose, as `open` prints siblings.
 3. Write the user's priorities under `## Priorities` in its `menu.md`, with the user, highest first. Add which intake sources it should own. The rules read the priorities. Without them, the rules fall back to purposes and age.
 4. Move shared intake. Each coordinator that lists the shared source runs `set --intake` without it. Change 4 refuses that while it still has waiting or assigned tickets from the source, so it finishes them first or moves them to the admin with `ticket move`. Then the admin store runs `set --intake <source>`.
-5. Launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record it with `set --thread`. Then send it "Run your first service." with `t3_thread_send` and mode `"auto"`. Recording the thread before its first service lets that service pass the fence below.
+5. Launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record it with `set --thread`. Then send it "Run your first service." with `t3_thread_send` and mode `"auto"`. Recording the thread before its first service lets that service pass the fence below.
 6. The admin's first service sends each coordinator the `reports-to` line.
 
 ### Its services
@@ -490,6 +490,8 @@ Adds the code the admin needs, for one repository. It reuses intake ownership, `
 ### Change 10. The executive admin in the brigade skill
 
 It follows changes 8 and 9.
+
+The section this change added to the brigade skill now lives in the `brigade-admin` skill.
 
 - **The admin's section.** A new section of the brigade skill, "Executive admin", with the opening steps, the services, the message tables, the ruling rules and escalation list, the never-do list, recovery and retirement, and the rules for what the user hears, from [The executive admin](#the-executive-admin). It covers one repository.
 - **A coordinator's side.** A coordinator carries out a `ruling` for its own side and may `appeal`. When its item and another coordinator's would conflict in the queue, it runs `land.py contest` and then sends the `contest` line. It treats `from-user` as a message from the user and answers with `reply`. The liveness check sends the `blocked` line after an hour. Change 4's handoff message becomes the `ticket` line, with the handoff id as its `clientRequestId`.
