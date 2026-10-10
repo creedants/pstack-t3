@@ -20,7 +20,7 @@ The responsiveness probe is one HTTP GET of `/` on 127.0.0.1. It measures that r
 
 `sessions` counts a live process from the NUL-separated arguments in `/proc/<pid>/cmdline`. The basename of argv[0] is `grok` and argv[1] is `agent`, or the basename of argv[0] is `claude` and a later element is `--model` or begins with `--model=`. An argv[0] value that contains whitespace has no argument boundary, so it does not count. `claude-desktop` and the `codex` app-server hosts do not match those basenames. A shell whose script text only mentions these words counts zero.
 
-`build_procs` counts a Python process whose argv[1] is `scripts/build.py` or a path ending in `/scripts/build.py`, or whose argv[1] is `-m` and argv[2] is `unittest`. A direct exec of that build script counts too. A shell whose script text only mentions those strings counts zero. The count shows that those processes existed. Exit status in the loop log is what shows that an iteration passed. The idle-ramp table is the exception. Its `sessions` and `build_procs` cells came from the older substring counter, which that section names.
+`build_procs` counts a Python process whose argv[1] is `scripts/build.py` or `scripts/run_tests.py`, or a path ending in `/scripts/build.py` or `/scripts/run_tests.py`, or whose argv[1] is `-m` and argv[2] is `unittest`. A direct exec of one of those scripts counts too. One run of `scripts/run_tests.py` counts its runner and each worker or listing child it has alive, so a run at `-j 4` counts 5 while its four workers are alive. A test that starts one of those scripts itself adds to the count while it runs. A shell whose script text only mentions those strings counts zero. The count shows that those processes existed. Exit status in the loop log is what shows that an iteration passed. The idle-ramp table is the exception. Its `sessions` and `build_procs` cells came from the older substring counter, which that section names.
 
 Each official step is five samples, five seconds apart.
 
@@ -143,3 +143,53 @@ Forty idle Haiku agents on the first ramp had 5.9 GiB available, swap at 4.6 per
 The 129 MiB figure is the first ramp's average net change in available memory across 40 added agents. The rerun's matching average is 128 MiB. Neither one was measured as the cost of a single extra agent, and neither one was checked against shared file pages. Using 129 MiB to project a 1 GiB floor at about 79 agents remains a projection. Those agents were not started.
 
 The estimate's figure of about 25 agents with 4 builds describes a heavier build than `scripts/build.py` plus this unit suite. Each suite here took about 33 seconds and passed 85 tests. Four of them left `load1` under 5 on 16 threads and did not move swap during the window. That does not confirm the estimate, and it does not refute it. A heavier build would be a different measurement. Cursor `gpt-5.4-nano` with reasoning `none` was not measured.
+
+## Concurrent runs of the test runner
+
+On 2026-10-10 one to four copies of `python3 scripts/run_tests.py` ran at once on this machine, and four copies ran at `-j 2`. The checkout was `pstack-t3/d138` at `035988f`, the suite had 1,346 tests, and the interpreter was Python 3.12.15. All 28 runs exited 0 and printed `Ran 1346 tests` and `OK`. No test was lost and no worker timed out.
+
+### Method
+
+A script outside the repository started K copies together from one checkout, each as `python3 scripts/run_tests.py -j J` with its own output file. It recorded each copy's wall time from the start of the group to the copy's exit, and ran `scripts/measure_capacity.py` with `--interval 10` for the same window. Each group ran under one `land.py slot --`, so it held one governor slot while it used K times J workers. It did not use `--exclusive`, so other agents' slotted commands could run beside every step.
+
+Each configuration ran twice. The sampler's output was lost in round 1 because it was block-buffered when the script stopped it, so round 1 has wall times and exit statuses only. The sampler now flushes each row. Round 2 has both. Before each step of round 2 the script waited up to 120 seconds, 15 seconds for the last step, for `load1` to reach 5 or less. It started at a `load1` of 4.8 to 4.9 in the first four steps and 14.9 in the last.
+
+### What else was running
+
+The machine was not quiet. At the start of the round 2 steps of 2, 3, and 4 runs, and of the `-j 2` step, the process list held one other `python3 -m unittest tests.test_*` command, and the 1-run step held none. The `sessions` column read 8 to 10 in the first four steps and rose to 21 during the `-j 2` step. About 4.5 minutes into that step `build_procs` rose from 13 or 14 to 19 and stayed there to the end, and near the end `ps` listed workers of another worktree's `scripts/run_tests.py`. Round 2's time for that step has another full run beside it for most of its length.
+
+### Wall time
+
+Wall time is the time from the start of the group to the exit of its last copy. Suites per hour is K times 3600 over that time. The slowdown is the step's wall time over the 1-run step's in the same round.
+
+| Concurrent runs | `-j` | Workers | Round 1 wall | Round 2 wall | Round 1 suites per hour | Round 2 suites per hour | Round 2 slowdown |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 4 | 4 | 224.6 s | 217.0 s | 16.0 | 16.6 | 1.00 |
+| 2 | 4 | 8 | 287.6 s | 266.1 s | 25.0 | 27.1 | 1.23 |
+| 3 | 4 | 12 | 358.2 s | 367.2 s | 30.2 | 29.4 | 1.69 |
+| 4 | 4 | 16 | 436.2 s | 457.7 s | 33.0 | 31.5 | 2.11 |
+| 4 | 2 | 8 | 548.2 s | 688.8 s | 26.3 | 20.9 | 3.17 |
+
+### Machine readings, round 2
+
+| Concurrent runs | `-j` | Samples | `load1` median | `load1` max | Probe median ms | Probe max ms | `psi_full_avg10` max | MemAvailable min MiB | Swap used max MiB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 4 | 22 | 6.5 | 6.8 | 2.2 | 961.3 | 0.00 | 11355 | 4464 |
+| 2 | 4 | 27 | 9.1 | 9.9 | 2.5 | 458.9 | 0.28 | 11294 | 4735 |
+| 3 | 4 | 37 | 15.0 | 17.2 | 3.2 | 946.1 | 0.00 | 11415 | 4746 |
+| 4 | 4 | 45 | 19.2 | 20.5 | 6.8 | 1327.2 | 1.05 | 11165 | 4927 |
+| 4 | 2 | 69 | 15.3 | 17.2 | 3.4 | 615.8 | 0.32 | 9979 | 5267 |
+
+Every `probe_ok` value was 1. The `load1` of other work, 4.8 to 4.9 at the start of the first four steps, is inside these numbers.
+
+### What the numbers show
+
+Four runs at `-j 4` ran 16 workers on 16 threads and 8 cores. Their `load1` median was 19.2, above the 16 line this document uses for degradation. Three runs, 12 workers, had a median of 15.0 and a maximum of 17.2.
+
+A third run added 8% to throughput in round 2 and 21% in round 1. A fourth added 7% in round 2 and 9% in round 1, and in round 2 each run took 2.1 times as long as a run alone. Memory did not run short. MemAvailable stayed above 9.7 GiB in every sample, and swap used rose from 4.4 to 5.1 GiB over the five steps.
+
+Four runs at `-j 2` and two at `-j 4` both used eight workers. Round 1 gave 26.3 suites per hour for the first and 25.0 for the second, and round 2 gave 27.1 for the second. Round 2 of the first, with another full run beside it, gave 20.9. Round 1 has no samples, so what else ran beside it is unknown. This is one pair of points. It does not show how `-j` and the slot count trade off at other worker totals.
+
+Probe maxima of 459 to 1327 ms stayed under the 2000 ms stop line. A maximum of 961 ms also appeared in the 1-run step, so a single slow probe is not specific to the larger steps. The probe median roughly doubled between 3 and 4 runs, from 3.2 to 6.8 ms.
+
+Each round ran the steps in the order one run, two, three, four, then four at `-j 2`, on one afternoon. These times are for a suite of 1,346 tests.
