@@ -1020,22 +1020,32 @@ def survey(view, scope, user, state, root, selected):
 def backup_place(state, backup):
     """Return (stamp, harness) when `backup` is spelled <state>/backups/<stamp>/<harness>/<name>, else None.
 
-    <state> is `state` as given or as `os.path.abspath` spells it. The inverse of the path `execute` builds for a move.
-    It follows no symlink and reads no file.
+    The inverse of the path `execute` builds for a move. It compares text only and resolves nothing.
     """
     top = os.path.join(str(state), "backups") + os.sep
     if not backup.startswith(top):
-        # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
-        try:
-            top = os.path.join(os.path.abspath(state), "backups") + os.sep
-        except OSError:
-            return None
-        if not backup.startswith(top):
-            return None
+        return None
     parts = backup[len(top):].split(os.sep)
     if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
         return None
     return parts[0], parts[1]
+
+
+def same_directory(first, second):
+    """Whether both paths open as one directory. A symlink at the last name of either path makes it False."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        one = os.open(first, flags)
+        try:
+            other = os.open(second, flags)
+            try:
+                return os.path.samestat(os.fstat(one), os.fstat(other))
+            finally:
+                os.close(other)
+        finally:
+            os.close(one)
+    except OSError:
+        return False
 
 
 def prune(state, backup):
@@ -1044,11 +1054,23 @@ def prune(state, backup):
     It removes only empty directories at those two levels, under `state`/backups. It never follows a symlink at
     backups/, <stamp>, or <harness>. A symlink at `state` or above it is followed like any other path to the state
     directory, so a state directory kept behind a symlink is pruned too.
+    It removes nothing unless `backup_place` matches `backup` under `state` as given or as `os.path.abspath` spells it.
+    Under the second spelling it also removes nothing unless `same_directory` holds for the two spellings of
+    <state>/backups.
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
-    if place is not None:
-        empty_out(state, *place)
+    if place is None:
+        # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
+        try:
+            spelled = os.path.abspath(state)
+        except OSError:
+            return
+        place = backup_place(spelled, backup)
+        # abspath removes ".." as text and the system applies it after following a symlink, so the two spellings can name two directories.
+        if place is None or not same_directory(os.path.join(str(state), "backups"), os.path.join(spelled, "backups")):
+            return
+    empty_out(state, *place)
 
 
 def empty_out(state, stamp, harness=None):
@@ -1406,8 +1428,8 @@ class Unread:
 class Planned:
     """What install plans right now for one harness list.
 
-    `plain` and `forced` are the slots, as `slot_of` returns them, of the links install would create without and
-    with --replace. `taken` is the number of paths install without --replace stops on.
+    `plain` and `forced` are the slots, as `slot_of` returns them, of the create steps in the plans returned by
+    `plan_install` without and with --replace. `taken` is the number of conflicts in the plan without --replace.
     """
     plain: frozenset
     forced: frozenset

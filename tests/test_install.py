@@ -3657,6 +3657,13 @@ class OwnershipTest(unittest.TestCase):
         self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
+    def test_a_restore_under_a_relative_config_home_that_is_a_symlink_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
+        real = self.home / "dotfiles" / "kept"
+        real.mkdir(parents=True)
+        os.symlink(real, self.home / ".config")
+        self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
+        self.assertEqual(os.listdir(real / "pstack-t3" / "backups"), [])
+
     def test_a_restore_under_a_relative_config_home_whose_working_directory_is_removed_before_the_prune_restores_the_file_with_no_traceback(self):
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
@@ -3717,7 +3724,7 @@ class OwnershipTest(unittest.TestCase):
             ["20260101T000000-1-abcd", "20260101T000000-1-abcd/grok", "20260202T000000-2-ef01", "20260202T000000-2-ef01/codex"],
         )
 
-    def test_a_restore_under_a_config_home_whose_dot_dot_follows_a_symlink_leaves_the_empty_directories_in_the_state_directory(self):
+    def test_a_restore_under_a_config_home_whose_dot_dot_follows_a_symlink_leaves_the_stamp_and_harness_directories_in_the_state_directory(self):
         a = make_checkout(self.home, "a")
         (self.home / "else" / "sub").mkdir(parents=True)
         os.symlink(self.home / "else" / "sub", self.home / "x")

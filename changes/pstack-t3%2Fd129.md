@@ -1,4 +1,4 @@
 - `install` and `uninstall` now exit 1 with the one line `<file> could not be read (<error>); clear that error and rerun`, where they printed a traceback, when `install-manifest.json` or this checkout's owner file is of mode 000 or is a directory, or when `install-owners/` is of mode 000. `doctor` prints that sentence for the same file where it printed an `[Errno N]` line.
-- Uninstall now also removes the emptied `<harness>` and `<stamp>` directories of a backup whose recorded path starts with the absolute spelling of the state directory. Python 3.12 records that spelling when `XDG_CONFIG_HOME` is relative or holds `..`.
+- Uninstall cleans up empty backup directories under a relative `XDG_CONFIG_HOME` on Python 3.12 when its absolute spelling names the same state directory.
 - `doctor` in a checkout with no `skills/` now prints only `skills/ is missing; run python3 scripts/build.py first` and exits 1. It prints no `0/0 pstack-t3` line there.
 - `doctor` now runs `plan_install` twice for each harness list among this checkout's stale claims that have no entry held aside, where it ran it twice for each such claim. The lines it prints for those claims are unchanged.
