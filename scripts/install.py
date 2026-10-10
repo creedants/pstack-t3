@@ -1020,11 +1020,15 @@ def survey(view, scope, user, state, root, selected):
 def backup_place(state, backup):
     """Return (stamp, harness) when `backup` is spelled <state>/backups/<stamp>/<harness>/<name>, else None.
 
-    The inverse of the path `execute` builds for a move. It compares text only and resolves nothing.
+    <state> is `state` as given or as `os.path.abspath` spells it. The inverse of the path `execute` builds for a move.
+    It compares text only and follows no symlink.
     """
     top = os.path.join(str(state), "backups") + os.sep
     if not backup.startswith(top):
-        return None
+        # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
+        top = os.path.join(os.path.abspath(state), "backups") + os.sep
+        if not backup.startswith(top):
+            return None
     parts = backup[len(top):].split(os.sep)
     if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
         return None
