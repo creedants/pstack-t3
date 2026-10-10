@@ -1324,13 +1324,26 @@ class DocumentTest(OutputCase):
         self.assertEqual([call for call in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function(", "setTimeout", "\"", "`") if call in MOD["RENDERER"]], [])
         self.assertIn(MOD["UNGROUPED"], MOD["RENDERER"])
 
-    def test_stylesheet_sets_no_background_on_the_page_and_takes_colors_only_from_theme_variables(self):
+    def test_stylesheet_has_no_rule_for_html_body_root_or_every_element_sets_only_font_and_color_on_the_outermost_one_and_names_a_color_only_as_a_variable_transparent_or_inherit(self):
         style = MOD["STYLE"]
-        rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", "")))
-        self.assertEqual(rules["#o"], "font:13px/1.4 var(--font-sans);color:var(--foreground)")
-        self.assertEqual([selector for selector in rules if re.fullmatch(r"(html|body|\*|:root)", selector)], [])
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", ""))
+        declared = [(selector, *declaration.split(":", 1)) for selectors, body in rules for selector in selectors.split(",") for declaration in body.split(";")]
+        whole_page = re.compile(r"(html|body|:root)(?![\w-])|\*")
+        self.assertEqual([selector for selector in ("html", "body>div", ":root", "*", "#o", ".html", "bodyguard") if whole_page.match(selector)], ["html", "body>div", ":root", "*"])
+        self.assertEqual([selector for selector, _, _ in declared if whole_page.match(selector)], [])
+        self.assertEqual([(name, value) for selector, name, value in declared if selector == "#o"], [("font", "13px/1.4 var(--font-sans)"), ("color", "var(--foreground)")])
+        self.assertEqual([selector for selector, _, value in declared if "var(--background)" in value], [".grp"])
         self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
-        allowed = {"--foreground", "--muted-foreground", "--border", "--success", "--destructive", "--warning", "--info", "--radius", "--font-sans", "--font-mono"}
+        def other_words(value):
+            """The words of a declaration's value that are not a variable, a number, `solid`, `transparent`, `inherit`, or the gradient function."""
+            plain = r"var\(--[\w-]+\)|[0-9.]+(px|%|deg)?|solid|transparent|inherit|repeating-linear-gradient"
+            return [word for word in re.findall(r"var\([^)]*\)|[\w.%-]+", value) if not re.fullmatch(plain, word)]
+
+        self.assertEqual(other_words("1px solid red"), ["red"])
+        self.assertEqual(other_words("repeating-linear-gradient(135deg,var(--c) 0 4px,canvas 4px 7px)"), ["canvas"])
+        colored = [(name, value) for _, name, value in declared if name in ("color", "--c") or name.startswith(("background", "border"))]
+        self.assertEqual([(name, value) for name, value in colored if other_words(value)], [])
+        allowed = {"--foreground", "--muted-foreground", "--background", "--border", "--success", "--destructive", "--warning", "--info", "--radius", "--font-sans", "--font-mono"}
         allowed |= {f"--chart-{number}" for number in range(1, 7)}
         own = set(re.findall(r"(--[\w-]+):", style))
         self.assertEqual(own, {"--c", "--lab"})

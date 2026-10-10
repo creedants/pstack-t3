@@ -1263,6 +1263,8 @@ def squeezed(source):
 
 
 # The page sets no background on html, body, or #o. The only colors it names are theme variables of html_render and transparent.
+# A group's header row has the thread's own background and is positioned, so it is drawn over the grid lines.
+# An axis label is a box 5.5em wide with its text centred. The renderer centres the box on its tick, or ends it at the track's right edge when the tick is nearer to that edge than 2.75em.
 STYLE = joined_lines("""
     #o{font:13px/1.4 var(--font-sans);color:var(--foreground)}
     #o a{color:inherit;text-decoration:none}
@@ -1284,10 +1286,10 @@ STYLE = joined_lines("""
     .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:var(--c)}
     .tl{position:relative;--lab:230px}
     .axis{position:relative;height:16px;margin-left:var(--lab);font-size:10.5px}
-    .axis i{position:absolute;transform:translateX(-50%);white-space:nowrap;font-style:normal}
+    .axis i{position:absolute;width:5.5em;text-align:center;white-space:nowrap;font-style:normal}
     .grid{position:absolute;left:var(--lab);right:0;top:16px;bottom:0;pointer-events:none}
     .grid i{position:absolute;top:0;bottom:0;width:1px;background:var(--border)}
-    .grp{margin-top:8px;padding:3px 0;border-top:1px solid var(--border);font-weight:600}
+    .grp{position:relative;margin-top:8px;padding:3px 0;border-top:1px solid var(--border);background:var(--background);font-weight:600}
     .chip{font-size:10.5px;padding:1px 7px;border:1px solid;border-radius:99px;white-space:nowrap}
     .go,.live b{color:var(--success)}
     .info{color:var(--info)}
@@ -1386,7 +1388,10 @@ RENDERER = squeezed("""
       day.setHours(0, 0, 0, 0);
       for (let t = day / 1000; t < start + length; t += step) {
         const x = (t - start) / length * 100;
-        if (x > 4 && x < 97) for (const node of [add(axis, 'i', '', clock(t, length > 86400)), add(grid, 'i')]) node.style.left = x + '%';
+        if (x > 4 && x < 97) {
+          add(axis, 'i', '', clock(t, length > 86400)).style.left = 'min(' + x + '% - 2.75em,100% - 5.5em)';
+          add(grid, 'i').style.left = x + '%';
+        }
       }
       const lane = (cls, depth, label, model, status, time, spans) => {
         const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth, label + ' '), track = add(row, 'div', 't');
