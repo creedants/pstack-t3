@@ -1,0 +1,1 @@
+- `land.py lease check` writes nothing. It no longer arms a waiting reservation, so a probe from `brigade.py watch`, `walk`, or `ticket list` cannot start a reservation's hold before the winner claims. It still prints what `lease claim` would answer at that moment.

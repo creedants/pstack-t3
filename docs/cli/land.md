@@ -136,7 +136,7 @@ land.py [flags] lease list
 land.py [flags] lease check --holder HOLDER --paths PATHS
 ```
 
-run the claim's admission test without claiming
+print what a claim would answer now, and write nothing
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
