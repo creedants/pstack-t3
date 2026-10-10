@@ -766,6 +766,32 @@ class BrigadeTest(unittest.TestCase):
                              f"brigade: {report} is outside this store's reports/; name reports/D1-review-1.md")
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
 
+    def test_pass_record_refuses_a_directory_a_live_link_a_dangling_link_and_a_file_under_a_linked_reports(self):
+        self.fired_bug_fix()
+        reports = self.review_file("D1-review-4.md").parent
+        outside = Path(self.temporary.name) / "outside"
+        (outside / "reports").mkdir(parents=True)
+        (outside / "findings.md").write_text("findings\n")
+        (outside / "reports" / "D1-review-5.md").write_text("findings\n")
+        (reports / "D1-review-1.md").mkdir()
+        (reports / "D1-review-2.md").symlink_to(outside / "findings.md")
+        (reports / "D1-review-3.md").symlink_to(outside / "gone.md")
+        self.record("abc", "send-back", "--report", "D1-review-4.md")
+        before = (self.at / "pass.tsv").read_bytes()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md is not a regular file; nothing recorded")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-2.md", ok=False),
+                         "brigade: reports/D1-review-2.md is a symbolic link; nothing recorded")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-3.md", ok=False),
+                         "brigade: reports/D1-review-3.md is a symbolic link; nothing recorded")
+        reports.rename(self.at / "kept")
+        reports.symlink_to(outside / "reports")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-5.md", ok=False),
+                         "brigade: reports/D1-review-5.md resolves outside this store's reports/; nothing recorded")
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+        self.assertEqual([row[8] for row in self.pass_rows()], ["D1-review-4.md"])
+
     def store_files(self):
         """Every file of the store but restaurant.lock, which is empty and is not store data."""
         return {str(path.relative_to(self.at)): path.read_bytes() for path in sorted(self.at.rglob("*"))

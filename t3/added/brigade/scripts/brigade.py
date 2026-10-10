@@ -1089,7 +1089,7 @@ def review_report(restaurant, dish_id, report):
     """The bare name of `report`.
 
     A name that is not a review report of the item is refused. So is a path that in_reports turns down, and so is a
-    name for which reports/<name> does not exist in this store.
+    name for which report_entry does not call reports/<name> a `file`.
     """
     name = Path(report).name
     match = REVIEW_FILE.fullmatch(name)
@@ -1097,8 +1097,11 @@ def review_report(restaurant, dish_id, report):
         raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
     if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
-    if not (restaurant.dir / "reports" / name).exists():
+    kind = report_entry(restaurant, name)
+    if kind == "missing":
         raise BrigadeError(f"reports/{name} does not exist; write the review report first")
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing recorded")
     return name
 
 
