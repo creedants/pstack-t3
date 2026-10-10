@@ -1607,7 +1607,7 @@ class VertexHaikuCliTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertEqual(completed.stderr, (
             "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+            f"({VERTEX_ID}), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
         ))
 
     def test_unset_role_does_not_fall_back_to_it(self):
@@ -1616,7 +1616,7 @@ class VertexHaikuCliTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertEqual(completed.stderr, (
             "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+            f"({VERTEX_ID}), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
         ))
 
     def test_missing_model_does_not_fall_back_to_it(self):
@@ -2291,8 +2291,8 @@ class FastGrokCliTest(unittest.TestCase):
             "models": [{"id": "grok-4.7-build-fast", "options": []}],
         }]}
         stderr = (
-            "error: role 'skill tests' has no seat: every runnable model in the catalog is excluded "
-            f"(grok-4.7-build-fast), and {FAST_RULE}\n"
+            "error: role 'skill tests' has no seat: every runnable model on grok is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
         )
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
@@ -2442,48 +2442,6 @@ class FastGrokCliTest(unittest.TestCase):
             "error: role 'bug-fix' cannot use grok/grok-4.7-build-fast: "
             f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}\n",
         )
-
-    def test_fast_only_catalog_names_the_rule(self):
-        fast_only = {"providers": [{
-            "providerInstanceId": "grok",
-            "canRunChildTask": True,
-            "constraints": [],
-            "models": [{"id": "grok-4.7-build-fast", "options": []}],
-        }]}
-        mixed = {"providers": [
-            {
-                "providerInstanceId": "claudeAgent",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "claude-haiku-4-5", "options": []}],
-            },
-            {
-                "providerInstanceId": "grok",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "grok-4.7-build-fast", "options": []}],
-            },
-        ]}
-        cases = {
-            "fast": (
-                fast_only,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-                f"(grok-4.7-build-fast), and {FAST_RULE}\n",
-            ),
-            "mixed": (
-                mixed,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-                f"(claude-haiku-4-5, grok-4.7-build-fast), and {FAST_RULE}\n",
-            ),
-        }
-        for name, (catalog, stderr) in cases.items():
-            with self.subTest(name=name):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    completed, _path = self.show(repo, catalog, "bug-fix")
-                self.assertEqual(completed.returncode, 2)
-                self.assertEqual(completed.stdout, "")
-                self.assertEqual(completed.stderr, stderr)
 
 
 def blocked_fast_option_provider(provider_id="cursor"):
@@ -3483,11 +3441,6 @@ class BackupCliTest(unittest.TestCase):
             ),
         })
 
-    def test_panel_seats_drops_inherit(self):
-        seats, notes = roles.panel_seats(["inherit", STEP_SEAT, BUNNY_SEAT], backup_catalog(), "default", frozenset(), [])
-        self.assertEqual(seats, [STEP_SEAT, BUNNY_SEAT])
-        self.assertEqual(notes, ["dropped inherit: the parent can be the author"])
-
     def test_one_usable_seat_parks(self):
         completed = self.backup(
             *VERIFIER_OUT,
@@ -3703,3 +3656,315 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(written.stderr, f"error: {user}: {refusal}")
         self.assertEqual(validated.returncode, 2)
         self.assertEqual(validated.stderr, f"error: {user}: {refusal}")
+
+    PANEL_CONFIG = {"roles": {"review backups": [
+        MUSE_SEAT,
+        {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+        {"providerInstanceId": "cursor", "model": "claude-opus-5-5"},
+        {"providerInstanceId": "kilo", "model": "kilo-1"},
+        {"providerInstanceId": "opencode", "model": "opencode/nope-free"},
+        STEP_SEAT,
+        {"providerInstanceId": "openrouter", "model": "muse-lite-2"},
+    ]}}
+    PANEL_SET = (
+        "review backups=opencode/opencode/muse-lite-2-free?variant=high;codex/gpt-6.1-sol;cursor/claude-opus-5-5;"
+        "kilo/kilo-1;opencode/opencode/nope-free;opencode/opencode/step-9-preview-free?variant=high;"
+        "openrouter/muse-lite-2"
+    )
+    PANEL_NOTES = [
+        "dropped codex/gpt-6.1-sol: backup never selects Codex or Cursor",
+        "dropped cursor/claude-opus-5-5: backup never selects Codex or Cursor",
+        "dropped kilo/kilo-1: not runnable or not in the catalog",
+        "dropped opencode/opencode/nope-free: not runnable or not in the catalog",
+        "dropped openrouter/muse-lite-2: family muse already seated",
+    ]
+    PANEL_PROBLEMS = "".join(f"review backups: {note}\n" for note in PANEL_NOTES)
+
+    def panel_repo(self, directory, roles_file=None):
+        repo = Repo(directory)
+        catalog = backup_catalog()
+        catalog["providers"].append(plain_provider("kilo", "kilo-1", runs=False))
+        catalog["providers"].append(plain_provider("openrouter", "muse-lite-2"))
+        path = repo.directory / "catalog.json"
+        repo.put(path, catalog)
+        if roles_file is not None:
+            repo.put(repo.user, roles_file)
+        return repo, str(path)
+
+    def test_show_and_backup_print_the_panel_literals_for_one_config_and_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            shown = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            backed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+                    "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
+                ],
+                env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
+                capture_output=True,
+                text=True,
+                input=_LIMIT,
+            )
+            user = str(repo.user)
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertEqual(json.loads(shown.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [MUSE_SEAT, STEP_SEAT],
+            "notes": self.PANEL_NOTES,
+        }})
+        self.assertEqual(backed.returncode, 0, backed.stderr)
+        payload = json.loads(backed.stdout)
+        self.assertEqual(payload["decision"], "panel")
+        self.assertEqual(payload["seats"], [MUSE_SEAT, STEP_SEAT])
+        self.assertEqual(payload["notes"], self.PANEL_NOTES)
+
+    def test_validate_prints_a_problem_for_each_dropped_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stdout, self.PANEL_PROBLEMS)
+        self.assertEqual(completed.stderr, "")
+
+    def test_write_refuses_dropped_seats_without_force(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory)
+            refused = repo.run("write", "--catalog", catalog, "--set", self.PANEL_SET)
+            written_before_force = repo.user.exists()
+            forced = repo.run("write", "--catalog", catalog, "--set", self.PANEL_SET, "--force")
+            stored = json.loads(repo.user.read_text())
+            user = str(repo.user)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, "")
+        self.assertEqual(
+            refused.stderr,
+            "error: refusing to write; these seats do not match the catalog:\n" + self.PANEL_PROBLEMS,
+        )
+        self.assertFalse(written_before_force)
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertEqual(forced.stdout, f"wrote {user}\n")
+        self.assertEqual(stored["roles"], self.PANEL_CONFIG["roles"])
+
+    def test_show_without_a_catalog_reports_catalog_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, _catalog = self.panel_repo(directory, self.PANEL_CONFIG)
+            completed = repo.run("show", "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": "catalog-required",
+            "note": (
+                "review backups drops seats by the catalog: "
+                "call orchestrator_capabilities and rerun roles.py show --catalog"
+            ),
+        }})
+
+    def test_validate_reports_an_unknown_option_on_a_kept_seat(self):
+        unknown = {**MUSE_SEAT, "options": {"variant": "high", "bogus": "1"}}
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [unknown, STEP_SEAT]}})
+            completed = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(
+            completed.stdout,
+            "review backups: opencode/opencode/muse-lite-2-free: dropped unknown options bogus\n",
+        )
+
+    def test_show_reports_a_role_set_to_one_fast_grok_seat_as_set(self):
+        fast = {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}
+        skipped = [
+            "skipped configured seat grok/grok-4.7-build-fast: grok-4.7-build-fast is a fast Grok variant, "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [fast]}})
+            with_catalog = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            plain = repo.run("show", "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(with_catalog.returncode, 0, with_catalog.stderr)
+        self.assertEqual(json.loads(with_catalog.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [],
+            "notes": skipped,
+        }})
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(json.loads(plain.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": "catalog-required",
+            "note": (
+                "review backups drops seats by the catalog: "
+                "call orchestrator_capabilities and rerun roles.py show --catalog"
+            ),
+            "notes": skipped,
+        }})
+
+
+def plain_provider(provider_id, *model_ids, runs=True):
+    return {
+        "providerInstanceId": provider_id,
+        "canRunChildTask": runs,
+        "constraints": [],
+        "models": [{"id": model_id, "options": []} for model_id in model_ids],
+    }
+
+
+class FamilyCliTest(unittest.TestCase):
+    def roles_shown(self, providers, role, parent, *extra):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": providers})
+            completed = repo.run("show", "--catalog", str(path), "--parent", parent, "--role", role, *extra)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)["roles"]
+
+    def test_verifiers_seat_one_of_a_namespaced_and_a_bare_muse(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5"),
+                plain_provider("opencode", "opencode/muse-lite-2-free"),
+                plain_provider("openrouter", "muse-lite-2"),
+            ],
+            "verifiers",
+            "claudeAgent/claude-opus-5-5",
+        )
+        self.assertEqual(shown, {"verifiers": {"source": "default", "seats": [
+            "inherit",
+            {"providerInstanceId": "opencode", "model": "opencode/muse-lite-2-free"},
+        ]}})
+
+    def test_verifiers_with_a_namespaced_muse_parent_add_no_bare_muse_seat(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("opencode", "opencode/muse-lite-2-free"),
+                plain_provider("openrouter", "muse-lite-2"),
+            ],
+            "verifiers",
+            "opencode/opencode/muse-lite-2-free",
+        )
+        self.assertEqual(shown, {"verifiers": {"source": "default", "seats": ["inherit", "inherit", "inherit"]}})
+
+    def test_interrogate_picks_a_namespaced_grok_as_a_missing_model(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5"),
+                plain_provider("openrouter", "x-ai/grok-4.8"),
+            ],
+            "interrogate reviewers",
+            "claudeAgent/claude-opus-5-5",
+        )
+        self.assertEqual(shown, {"interrogate reviewers": {
+            "source": "default",
+            "seats": [
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "openrouter", "model": "x-ai/grok-4.8"},
+            ],
+            "notes": [
+                "interrogate reviewers seat 2: wanted grok-4.7, using openrouter/x-ai/grok-4.8 (missing model)",
+            ],
+        }})
+
+    def test_an_exact_model_prefers_the_provider_whose_first_model_is_a_bedrock_claude(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("first", "gpt-9", "claude-opus-5-5"),
+                plain_provider("bedrock", "us.anthropic.claude-sonnet-5-5-v1:0", "claude-opus-5-5"),
+            ],
+            "judgment and prose",
+            "first/gpt-9",
+        )
+        self.assertEqual(shown, {"judgment and prose": {"source": "default", "seats": [
+            {"providerInstanceId": "bedrock", "model": "claude-opus-5-5"},
+        ]}})
+
+    def test_launches_seats_pool_takes_a_provider_serving_only_a_namespaced_grok(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-haiku-4-5"),
+                plain_provider("openrouter", "x-ai/grok-4.7"),
+            ],
+            "skill tests",
+            "claudeAgent/claude-haiku-4-5",
+            "--launches-seats",
+        )
+        self.assertEqual(shown, {"skill tests": {
+            "source": "default",
+            "seats": [{"providerInstanceId": "openrouter", "model": "x-ai/grok-4.7"}],
+            "notes": ["skill tests seat 1: wanted claude-haiku-5-5, using openrouter/x-ai/grok-4.7 (missing family)"],
+        }})
+
+
+class NoSeatMessageCliTest(unittest.TestCase):
+    def refusal(self, providers, role, *extra, roles_file=None):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": providers})
+            if roles_file is not None:
+                repo.put(repo.user, roles_file)
+            completed = repo.run(
+                "show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", role, *extra,
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        return completed.stderr
+
+    def test_fast_grok_ids_name_fast_grok_only(self):
+        stderr = self.refusal([plain_provider("grok", "grok-4.7-build-fast")], "bug-fix")
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
+        ))
+
+    def test_haiku_45_ids_name_haiku_45_only(self):
+        stderr = self.refusal([plain_provider("claudeAgent", "claude-haiku-4-5")], "bug-fix")
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(claude-haiku-4-5), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
+        ))
+
+    def test_both_kinds_of_id_name_both(self):
+        stderr = self.refusal(
+            [plain_provider("claudeAgent", "claude-haiku-4-5"), plain_provider("grok", "grok-4.7-build-fast")],
+            "bug-fix",
+        )
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(claude-haiku-4-5, grok-4.7-build-fast), "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker\n"
+        ))
+
+    def test_launch_pool_with_only_excluded_models_names_the_pool_provider(self):
+        stderr = self.refusal(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5", "claude-haiku-4-5"),
+                plain_provider("grok", "grok-4.7-build-fast"),
+            ],
+            "skill tests",
+            "--launches-seats",
+            roles_file={"roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}},
+        )
+        self.assertEqual(stderr, (
+            "error: role 'skill tests' has no seat: every runnable model on grok is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
+        ))
+
+    def test_launch_pool_with_no_runnable_provider_names_the_pool(self):
+        stderr = self.refusal(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5", "claude-haiku-4-5"),
+                plain_provider("kilo", "kilo-1", runs=False),
+                plain_provider("acme", "acme-1", runs=False),
+            ],
+            "skill tests",
+            "--launches-seats",
+            roles_file={"roles": {
+                "bug-fix": [{"providerInstanceId": "kilo", "model": "kilo-1"}],
+                "hillclimb": [{"providerInstanceId": "acme", "model": "acme-1"}],
+            }},
+        )
+        self.assertEqual(stderr, (
+            "error: role 'skill tests' has no seat: "
+            "none of the providers it may use (acme, kilo) can run child tasks\n"
+        ))

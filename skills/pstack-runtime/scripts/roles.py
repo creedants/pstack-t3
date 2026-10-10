@@ -53,7 +53,6 @@ SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
 CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
 FAST_GROK_OPTIONS = frozenset({"fastMode"})  # the user never runs a Grok model in its fast variant
-EXCLUDED_RULE = "pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker"
 HAIKU_BRIEF = (
     "Keep working until everything the user asked for is done, and only stop to ask when you can't go on without the user or before a risky step. When the work the user asked for is done and checked, stop and report. Don't add new features, docs, or refactors that weren't asked for. If you think one would help, mention it at the end instead of doing it.",
     "When you change code that can be run, built, or type-checked, run a real check that exercises the change before reporting it done: the project's tests, type-checker, or build, or the changed command itself. A syntax-only check, or a check command that failed to start, does not count; if all that is missing is the project's declared dependencies, install them with its own package manager and lockfile (e.g. npm install, pip install -r requirements.txt), never via sudo or the system package manager, unless told not to. Only if no real check can run here, say which one you did not run and why instead of reporting the change as done.",
@@ -207,6 +206,10 @@ UNSET_NOTE = (
     "review backups has no built-in seats. Set it to let roles.py backup run a review panel "
     "when every paid reviewer backup is out. Unset, a verifier parks."
 )
+PANEL_CATALOG_NOTE = (
+    "review backups drops seats by the catalog: "
+    "call orchestrator_capabilities and rerun roles.py show --catalog"
+)
 BACKUP_PROVIDERS = {
     WORKER_BACKUP: CLAUDE_BACKUP_PROVIDER,
     LIGHT_BACKUP: CLAUDE_BACKUP_PROVIDER,
@@ -320,14 +323,19 @@ def normalized_bare(model_id):
     return re.sub(r"-\d{8}$", "", text)
 
 
+def family(model_id):
+    """Leading word of normalized_bare(model_id).
+
+    opencode/muse-2-free -> muse, us.anthropic.claude-sonnet-5-5-v1:0 -> claude.
+    """
+    text = normalized_bare(model_id)
+    return re.split(r"[-\d]", text, maxsplit=1)[0] or text
+
+
 def haiku_45(model_id):
     if not isinstance(model_id, str) or not model_id:
         return False
     return re.search(r"(?:^|-)claude-haiku-4-5(?:-|$)", normalized_bare(model_id)) is not None
-
-
-def excluded_id(model_id):
-    return fast_grok(model_id) or haiku_45(model_id)
 
 
 def model_tokens(model_id):
@@ -338,7 +346,24 @@ def fast_grok(model_id):
     """A Grok id whose name marks its fast variant: grok-4.7-build-fast, x-ai/grok-code-fast-1."""
     if not isinstance(model_id, str) or not model_id:
         return False
-    return family(bare_id(model_id)) == "grok" and "fast" in model_tokens(bare_id(model_id))
+    return family(model_id) == "grok" and "fast" in model_tokens(bare_id(model_id))
+
+
+EXCLUDED_KINDS = (
+    ("a fast Grok model", fast_grok),
+    ("Claude Haiku 4.5", haiku_45),
+)
+
+
+def excluded_rule(labels):
+    return f"pstack never runs {' or '.join(labels)} as a seat or a worker"
+
+
+EXCLUDED_RULE = excluded_rule(label for label, _ in EXCLUDED_KINDS)
+
+
+def excluded_id(model_id):
+    return any(matches(model_id) for _, matches in EXCLUDED_KINDS)
 
 
 def pickable(model_id):
@@ -348,7 +373,7 @@ def pickable(model_id):
 
 def fast_options(model):
     """Fast boolean options this Grok model declares. Empty for every other family."""
-    if family(bare_id(model["id"])) != "grok":
+    if family(model["id"]) != "grok":
         return []
     return [item["id"] for item in options_of(model) if item.get("id") in FAST_GROK_OPTIONS and item.get("type") == "boolean"]
 
@@ -371,7 +396,7 @@ def excluded_reason(seat):
     if haiku_45(model_id):
         return f"{bare_id(model_id)} is Claude Haiku 4.5"
     on = sorted(key for key, value in (seat.get("options") or {}).items() if key in FAST_GROK_OPTIONS and value is True)
-    if on and family(bare_id(model_id)) == "grok":
+    if on and family(model_id) == "grok":
         return f"{on[0]}=true runs {bare_id(model_id)} fast"
     return None
 
@@ -446,20 +471,30 @@ def parent_for(args, catalog, catalog_path):
     return inherit_parent(catalog)
 
 
-def no_seat_message(name, catalog):
-    excluded = []
-    for provider in catalog.get("providers") or []:
-        if not runnable(provider):
-            continue
-        for model in models_of(provider):
-            model_id = model.get("id")
-            if not pickable(model_id):
-                label = bare_id(model_id)
-                if label not in excluded:
-                    excluded.append(label)
+def _pool_providers(catalog, providers=None):
+    """Runnable providers a picker may use, in catalog order. providers limits them to a launch pool."""
+    return [
+        provider for provider in catalog.get("providers") or []
+        if (providers is None or provider["providerInstanceId"] in providers) and runnable(provider)
+    ]
+
+
+def no_seat_message(name, catalog, providers=None):
+    pool = _pool_providers(catalog, providers)
+    if providers is not None and not pool:
+        return (
+            f"role {name!r} has no seat: none of the providers it may use "
+            f"({', '.join(sorted(providers))}) can run child tasks"
+        )
+    excluded = [model.get("id") for provider in pool for model in models_of(provider) if not pickable(model.get("id"))]
+    labels = [label for label, matches in EXCLUDED_KINDS if any(matches(model_id) for model_id in excluded)]
+    if providers is None:
+        where = "in the catalog"
+    else:
+        where = f"on {', '.join(sorted(provider['providerInstanceId'] for provider in pool))}"
     return (
-        f"role {name!r} has no seat: every runnable model in the catalog is excluded "
-        f"({', '.join(excluded)}), and {EXCLUDED_RULE}"
+        f"role {name!r} has no seat: every runnable model {where} is excluded "
+        f"({', '.join(dict.fromkeys(bare_id(model_id) for model_id in excluded))}), and {excluded_rule(labels)}"
     )
 
 
@@ -570,12 +605,6 @@ def rank(value):
     return LADDER.get(value)
 
 
-def family(model_id):
-    """Model family from the model id's leading word: claude-opus-5-5 -> claude."""
-    head = re.split(r"[-_.\d]", model_id.lower(), maxsplit=1)[0]
-    return head or model_id.lower()
-
-
 DEFAULT_FAMILIES = frozenset(
     family(preference.model_id) for policy in ROLE_DEFAULTS.values() if isinstance(policy, tuple) for preference in policy
 )
@@ -623,16 +652,12 @@ def apply_budget(seat, model, budget):
 
 
 def _runnable_rows(catalog, providers=None):
-    rows = []
-    for provider in catalog["providers"]:
-        if providers is not None and provider["providerInstanceId"] not in providers:
-            continue
-        if not runnable(provider):
-            continue
-        for model in models_of(provider):
-            if pickable(model["id"]):
-                rows.append((provider, model))
-    return rows
+    return [
+        (provider, model)
+        for provider in _pool_providers(catalog, providers)
+        for model in models_of(provider)
+        if pickable(model["id"])
+    ]
 
 
 def _provider_for_exact(matches, wanted_family):
@@ -652,7 +677,7 @@ def _preferred_seat(preference, catalog, budget="default", role=None, providers=
         raise RolesError("no provider in the catalog can run child tasks")
     rows = _runnable_rows(catalog, providers)
     if not rows:
-        raise RolesError(no_seat_message(role or "bug-fix", catalog))
+        raise RolesError(no_seat_message(role or "bug-fix", catalog, providers))
     wanted = preference.model_id
     wanted_family = family(wanted)
     exact = [(provider, model) for provider, model in rows if model["id"] == wanted]
@@ -952,7 +977,9 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
         if name not in ROLES:
             raise RolesError(f"unknown role {name!r}")
         configured, skipped = configured_seats(config, name)
-        entry = {"source": config["sources"].get(name, "default") if configured else "default"}
+        if configured is None and name == PANEL_BACKUP_ROLE and name in config["roles"]:
+            configured = []
+        entry = {"source": config["sources"].get(name, "default") if configured is not None else "default"}
         role_providers = providers if name == "skill tests" and providers is not None else None
         configured_cursor = (
             launches_seats
@@ -977,10 +1004,21 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
         else:
             seats = configured
             selection_notes = skipped
-        if catalog is None:
+        if name == PANEL_BACKUP_ROLE and catalog is None:
+            entry["seats"] = CATALOG_REQUIRED
+            entry["note"] = PANEL_CATALOG_NOTE
+            if selection_notes:
+                entry["notes"] = selection_notes
+        elif catalog is None:
             entry["seats"] = seats
             if selection_notes:
                 entry["notes"] = selection_notes
+        elif name == PANEL_BACKUP_ROLE:
+            verdicts = panel_verdicts(seats, catalog, budget)
+            entry["seats"] = [verdict.seat for verdict in verdicts if verdict.seat is not None]
+            panel_notes = selection_notes + [note for verdict in verdicts for note in verdict.notes]
+            if panel_notes:
+                entry["notes"] = panel_notes
         else:
             resolved, notes = [], []
             for seat in seats:
@@ -1017,16 +1055,8 @@ def seat_level(options):
     return None
 
 
-def model_family(model_id):
-    """Family of a model id in any form: opencode/opencode/muse-2-free -> muse, us.anthropic.claude-sonnet-5-5-v1:0 -> claude.
-
-    Every comparison of a seat with the authors goes through this, so both sides compare normalized_bare ids.
-    """
-    return family(normalized_bare(model_id))
-
-
 def author_families(authors):
-    return {model_family(author) for author in authors or () if author}
+    return {family(author) for author in authors or () if author}
 
 
 def backup_ladder(role, failed_provider, authors, out):
@@ -1039,7 +1069,7 @@ def backup_ladder(role, failed_provider, authors, out):
         return ()
     if role in REVIEW_ROLES:
         skip = author_families(authors)
-        return tuple(model_id for model_id in REVIEW_LADDER if model_family(model_id) not in skip)
+        return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
     if CLAUDE_BACKUP_PROVIDER == failed_provider or CLAUDE_BACKUP_PROVIDER in out:
         return ()
     if role in LIGHT_ROLES:
@@ -1075,19 +1105,47 @@ def _emit_backup(role, label, provider, model, source_options, budget, resumed):
     return Backup("relaunch", report, seat)
 
 
-def panel_seats(configured, catalog, budget, blocked, authors):
-    """Keep the configured review backups seats a panel can run, with one note per dropped seat in seat order.
+@dataclass(frozen=True)
+class PanelVerdict:
+    """What backup does with one configured review backups seat.
 
-    No inherit and no model fallback, because either can seat the author.
+    Exactly one of seat and reason is set. seat is resolve_seat's output for a
+    pair _catalog_pair accepted, so it is never inherit and never a substituted model.
+    """
+
+    where: str
+    seat: dict | None = None
+    reason: str | None = None
+    option_notes: tuple = ()
+    option_problems: tuple = ()
+
+    @property
+    def notes(self):
+        if self.reason is not None:
+            return (f"dropped {self.where}: {self.reason}",)
+        return tuple(f"{self.where}: {note}" for note in self.option_notes)
+
+    @property
+    def problems(self):
+        if self.reason is not None:
+            return self.notes
+        return tuple(f"{self.where}: {problem}" for problem in self.option_problems)
+
+
+def panel_verdicts(configured, catalog, budget, blocked=frozenset(), authors=()):
+    """One verdict per configured review backups seat, in seat order.
+
+    The caller removes excluded seats first. A seat is dropped for the first of
+    these that holds: a Codex or Cursor provider, a blocked provider, an author's
+    family, a provider that is not runnable or a model not in the catalog, a
+    family an earlier kept seat has.
     """
     skip = author_families(authors)
-    kept, notes, seated = [], [], set()
+    verdicts, seated = [], set()
     for seat in configured:
-        if seat == INHERIT:
-            notes.append("dropped inherit: the parent can be the author")
-            continue
         provider_id, model_id = seat["providerInstanceId"], seat["model"]
-        seat_family = model_family(model_id)
+        where = f"{provider_id}/{model_id}"
+        seat_family = family(model_id)
         if provider_id in NEVER_BACKUP_PROVIDERS:
             reason = "backup never selects Codex or Cursor"
         elif provider_id in blocked:
@@ -1101,19 +1159,19 @@ def panel_seats(configured, catalog, budget, blocked, authors):
         else:
             reason = None
         if reason is not None:
-            notes.append(f"dropped {provider_id}/{model_id}: {reason}")
+            verdicts.append(PanelVerdict(where, reason=reason))
             continue
-        value, seat_notes, _ = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE)
-        kept.append(value)
+        value, seat_notes, seat_problems = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE)
         seated.add(seat_family)
-        notes.extend(f"{provider_id}/{model_id}: {note}" for note in seat_notes)
-    return kept, notes
+        verdicts.append(PanelVerdict(where, value, None, tuple(seat_notes), tuple(seat_problems)))
+    return verdicts
 
 
 def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume):
     configured, skipped = review_backups
-    seats, notes = panel_seats(configured or [], catalog, budget, blocked, authors)
-    notes = skipped + notes
+    verdicts = panel_verdicts(configured or [], catalog, budget, blocked, authors)
+    seats = [verdict.seat for verdict in verdicts if verdict.seat is not None]
+    notes = skipped + [note for verdict in verdicts for note in verdict.notes]
     lead = f"{role}: {label} is still out after the reset" if resume else f"{role}: {label} hit its usage limit"
     if len(seats) >= PANEL_MINIMUM_PASSES:
         report = (
@@ -1140,7 +1198,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
     out = set(out or ())
     blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | out
     if resume:
-        reviews_itself = role in AUTHOR_CHECKED_ROLES and model_family(model_id) in author_families(authors)
+        reviews_itself = role in AUTHOR_CHECKED_ROLES and family(model_id) in author_families(authors)
         if reviews_itself and role == PANEL_BACKUP_ROLE:
             report = f"{role}: {label} is in an author's family, so it does not resume and counts as no pass"
             return Backup("park", report)
@@ -1238,9 +1296,12 @@ def write_atomic(path, data):
 def validate(config, catalog):
     problems = excluded_problems(config["roles"])
     for name, seats in config["roles"].items():
+        seats = [seat for seat in seats if not excluded_reason(seat)]
+        if name == PANEL_BACKUP_ROLE:
+            verdicts = panel_verdicts(seats, catalog, config["budget"])
+            problems.extend(f"{name}: {problem}" for verdict in verdicts for problem in verdict.problems)
+            continue
         for seat in seats:
-            if excluded_reason(seat):
-                continue
             _, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name)
             problems.extend(f"{name}: {problem}" for problem in seat_problems)
     return problems
