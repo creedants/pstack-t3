@@ -1,0 +1,1 @@
+- `python3 scripts/release.py X.Y.Z` writes the changelog section from the fragments in `changes/`, in the order they were added, and deletes the fragments. `--dry-run` prints the section and changes nothing. The script never tags, pushes, or calls `gh`. It prints those steps when it finishes.

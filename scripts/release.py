@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Cut a release section in CHANGELOG.md from the fragments in changes/.
+
+Orders the fragments by the commit that added each one, writes their bullets
+under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
+never stages, commits, tags, pushes, or calls gh. It prints those steps.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
+# From 3.11 date.fromisoformat also takes 20261009. The pattern keeps 3.10 and 3.12 equal.
+DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+UNDO = "git restore CHANGELOG.md changes/"
+COMMIT = "\x01"
+# --no-renames lists a moved fragment as an add. -z stops git quoting a path.
+# --no-show-signature keeps log.showSignature from printing text ahead of the commit marker.
+LOG = ("log", "--reverse", "--diff-filter=A", "--no-renames", "--no-show-signature", "-z",
+       f"--format=%x{ord(COMMIT):02x}", "--name-only", "--", "changes/")
+
+Version = tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class Cut:
+    """A release that passed every check. Building one only reads. apply() is the only writer."""
+    section: str
+    changelog: str
+    fragments: tuple[Path, ...]
+
+
+def git(*args: str) -> str:
+    """Stdout of git run in ROOT. LC_ALL=C keeps git's own messages in one language."""
+    try:
+        result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+                                errors="surrogateescape", env={**os.environ, "LC_ALL": "C"})
+    except OSError as error:
+        sys.exit(f"git {args[0]} failed: {error}")
+    if result.returncode != 0:
+        sys.exit(f"git {args[0]} failed: {(result.stderr or result.stdout).strip()}")
+    return result.stdout
+
+
+def parse_version(text: str) -> Version | None:
+    match = VERSION.fullmatch(text)
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def parse_day(text: str) -> datetime.date | None:
+    if not DAY.fullmatch(text):
+        return None
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def dotted(version: Version) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def bullet_fault(lines: list[str]) -> str | None:
+    """What is wrong with a fragment's lines, or None when every line is a bullet or a continuation."""
+    open_bullet = False
+    for number, line in enumerate(lines, 1):
+        bullet = line.startswith("- ") and line[2:].strip()
+        continuation = open_bullet and line.startswith((" ", "\t")) and line.strip()
+        if "\r" in line or not (bullet or continuation):
+            return f"line {number} is not a bullet or a continuation line"
+        open_bullet = True
+    return None if open_bullet else "holds no bullet"
+
+
+def added_at(log: str) -> dict[str, int]:
+    """Fragment file name to the ordinal of the last commit that added it. A later add overwrites an earlier one.
+
+    Raises ValueError on a record that is neither a commit marker nor a path under changes/, so a git
+    that prints another shape refuses instead of ordering every fragment by name.
+    """
+    at, commit = {}, 0
+    for token in log.split("\0"):
+        if token == COMMIT:
+            commit += 1
+            continue
+        path = token[1:] if token.startswith("\n") else token
+        if not path:
+            continue
+        if not commit or not path.startswith("changes/"):
+            raise ValueError(token)
+        if path.count("/") == 1:
+            at[path[len("changes/"):]] = commit
+    return at
+
+
+def released(changelog: str) -> list[Version]:
+    """Every version a `## X.Y.Z` heading names. Any other `## ` line is not a version."""
+    matches = (HEADING.fullmatch(line) for line in changelog.splitlines())
+    return [tuple(int(part) for part in match.groups()) for match in matches if match]
+
+
+def splice(changelog: str, section: str) -> str:
+    """The changelog with the section before its first `## ` line, or at the end when it has none."""
+    lines = changelog.splitlines(keepends=True)
+    at = next((index for index, line in enumerate(lines) if line.startswith("## ")), len(lines))
+    head, tail = "".join(lines[:at]).rstrip("\n"), "".join(lines[at:])
+    return (head + "\n\n" if head else "") + section + ("\n" + tail if tail else "")
+
+
+def remaining_steps(version: str) -> list[str]:
+    return [
+        "git add CHANGELOG.md changes/",
+        f'git commit -m "release {version}"',
+        f'git tag -a v{version} -m "pstack-t3 {version}"    # on the commit that lands on main',
+        f"git push origin v{version}",
+        f"gh release create v{version} --notes-file <release notes file>",
+    ]
+
+
+def read_utf8(path: Path) -> str:
+    try:
+        return path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        sys.exit(f"{path.relative_to(ROOT).as_posix()} is not UTF-8; fix it")
+
+
+def plan(version_text: str, date_text: str | None) -> Cut:
+    """Run every check and sys.exit on the first that fails. Reads git and files. Writes nothing."""
+    version = parse_version(version_text)
+    if version is None:
+        sys.exit(f"version {version_text} is not X.Y.Z; pass three numbers such as 0.3.0")
+    day = datetime.date.today() if date_text is None else parse_day(date_text)
+    if day is None:
+        sys.exit(f"date {date_text} is not YYYY-MM-DD; pass a real date such as 2026-10-09")
+
+    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+        sys.exit("this clone is shallow, so git cannot tell when each fragment was added; "
+                 "run git fetch --unshallow and rerun")
+    # This runs before the heading check. After a half-finished run CHANGELOG.md already holds the
+    # heading, and "pick the next version" would be the wrong advice.
+    dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/")
+    if dirty:
+        sys.exit("CHANGELOG.md or changes/ has uncommitted changes; commit them, "
+                 f"or run {UNDO} to undo an unfinished release:\n{dirty.rstrip()}")
+
+    changelog_path = ROOT / "CHANGELOG.md"
+    if not changelog_path.is_file():
+        sys.exit("CHANGELOG.md is missing; this script adds a section to an existing changelog")
+    changelog = read_utf8(changelog_path)
+    versions = released(changelog)
+    if version in versions:
+        sys.exit(f"CHANGELOG.md already has a ## {dotted(version)} heading; pick the next version")
+    if versions and version < max(versions):
+        sys.exit(f"{dotted(version)} is not above {dotted(max(versions))}, the latest version in CHANGELOG.md; "
+                 "pick a higher version")
+
+    changes = ROOT / "changes"
+    entries = sorted(changes.iterdir()) if changes.is_dir() else []
+    if not entries:
+        sys.exit("changes/ holds no fragments; there is nothing to release")
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_file() or not entry.name.endswith(".md"):
+            sys.exit(f"changes/{entry.name} is not a fragment; changes/ holds only .md files, so move or delete it")
+    bullets = {}
+    for entry in entries:
+        lines = read_utf8(entry).split("\n")
+        bullets[entry.name] = lines[:-1] if lines[-1] == "" else lines
+        fault = bullet_fault(bullets[entry.name])
+        if fault:
+            sys.exit(f"changes/{entry.name} {fault}; fix the fragment, commit it, and rerun")
+
+    try:
+        at = added_at(git(*LOG))
+    except ValueError as error:
+        sys.exit(f"git log printed {str(error)!r}, which is not a commit marker or a path under changes/; "
+                 "look in git config for a setting that adds output to git log")
+    for entry in entries:
+        if entry.name not in at:
+            sys.exit(f"git log shows no commit that added changes/{entry.name}; commit the fragment and rerun")
+    # Name order inside one commit is this sort, not git's. diff.orderFile reorders the paths git prints.
+    fragments = tuple(sorted(entries, key=lambda entry: (at[entry.name], entry.name)))
+
+    body = "".join(line + "\n" for entry in fragments for line in bullets[entry.name])
+    section = f"## {dotted(version)} ({day.isoformat()})\n\n{body}"
+    return Cut(section=section, changelog=splice(changelog, section), fragments=fragments)
+
+
+def apply(cut: Cut) -> None:
+    """Write CHANGELOG.md, then delete the fragments. The index is untouched, so UNDO restores both."""
+    try:
+        with open(ROOT / "CHANGELOG.md", "w", encoding="utf-8", newline="") as handle:
+            handle.write(cut.changelog)
+        for path in cut.fragments:
+            path.unlink()
+    except OSError as error:
+        sys.exit(f"stopped partway: {error}; run {UNDO} to undo, then rerun")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version", help="the version to cut, as X.Y.Z")
+    parser.add_argument("--dry-run", action="store_true", help="print the section and change nothing")
+    parser.add_argument("--date", help="the date in the heading, as YYYY-MM-DD (default: today)")
+    args = parser.parse_args(argv)
+    cut = plan(args.version, args.date)
+    sys.stdout.write(cut.section)
+    if not args.dry_run:
+        apply(cut)
+    wrote, deleted = ("would write", "would delete") if args.dry_run else ("wrote", "deleted")
+    print(f"\n{wrote} this section to CHANGELOG.md")
+    for path in cut.fragments:
+        print(f"{deleted} changes/{path.name}")
+    if args.dry_run:
+        print("nothing changed")
+    print("this script never stages, commits, tags, or pushes. the remaining steps:")
+    for step in remaining_steps(args.version):
+        print(f"  {step}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
