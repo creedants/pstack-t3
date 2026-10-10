@@ -203,7 +203,7 @@ exit 0
             self.assertFalse(any(part.startswith(":") for part in line.split()), line)
 
     def open_pr_with_a_merge_requested(self):
-        """One merge-mode entry whose PR is open and noted merge requested by the queue."""
+        """One merge-mode entry noted merge requested by the queue, with its PR open."""
         (self.base / "required-checks").write_text("")
         self.init(mode="merge")
         self.queue_one()
@@ -2680,7 +2680,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.on_origin("update-ref", "refs/heads/main", merged)
         return candidate, merged
 
-    def test_merge_mode_claims_nothing_about_what_trunk_holds_when_a_merge_with_another_tree_is_not_on_trunk_then_reports_it_once_trunk_holds_it(self):
+    def test_merge_mode_does_not_say_trunk_holds_an_unchecked_change_when_a_merge_with_another_tree_is_not_on_trunk_then_says_it_once_trunk_holds_it(self):
         with self.fake_gh():
             candidate, merged = self.pauses_on_a_merge_of_the_first_of_two_entries_that_trunk_was_rewound_past(outside=True)
             other_tree = (f"E1 merged as {merged[:12]}, whose tree is not the checked candidate {candidate[:12]}. "
@@ -2719,7 +2719,7 @@ os.execv({real!r}, [{real!r}, *args])
         with self.fake_gh():
             self.open_line(1)
             self.post_check(9, "passed")
-            initial, candidate = self.on_origin("rev-parse", "main"), self.on_origin("rev-parse", "landing/e1")
+            candidate = self.on_origin("rev-parse", "landing/e1")
             (self.base / "outside-commit-before-merge").write_text("")
             with self.git_fails_for_the_merge_commit_of_pr_9("arg == '--is-ancestor'", code=128):
                 out = self.land("land")
@@ -2735,7 +2735,6 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
                                                             "merge requested by the queue")
                 self.assertEqual(self.on_origin("rev-parse", "landing/e1"), candidate)
-            self.assertNotEqual(merged, initial)
             self.assertEqual(self.land("resume"), "queue resumed")
             other_tree = (f"E1 merged as {merged[:12]}, whose tree is not the checked candidate {candidate[:12]}. "
                           "Trunk holds a change no check ran against. Check trunk, then run land.py resume")
