@@ -226,7 +226,7 @@ record or check a review verdict for a dish at a head SHA
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--member | --late] dish
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -239,6 +239,11 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `--verifier VERIFIER` | yes |  |  | provider/model of the reviewer |
 | `--note NOTE` |  |  |  |  |
 | `--same-family` |  |  |  | allow it when no other family is runnable |
+| `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
+| `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
+| `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
+
+Give at most one of `--member`, `--late`.
 
 ## brigade.py pass check
 
@@ -265,15 +270,16 @@ park or answer a decision that needs the user
 ## brigade.py 86 add
 
 ```text
-brigade.py [flags] 86 add --question QUESTION --options OPTIONS --default DEFAULT [--dish DISH]
+brigade.py [flags] 86 add [--question QUESTION] [--options OPTIONS] [--default DEFAULT] [--dish DISH] [--round-budget]
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--question QUESTION` | yes |  |  |  |
-| `--options OPTIONS` | yes |  |  |  |
-| `--default DEFAULT` | yes |  |  |  |
+| `--question QUESTION` |  |  |  |  |
+| `--options OPTIONS` |  |  |  |  |
+| `--default DEFAULT` |  |  |  |  |
 | `--dish DISH` |  |  |  |  |
+| `--round-budget` |  |  |  | with --dish: write the decision a dish owes at 3 send-backs; takes no question, options, or default |
 
 ## brigade.py 86 answer
 
