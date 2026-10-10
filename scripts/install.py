@@ -6,18 +6,28 @@ generated skills into each provider's directory. Every link and every entry
 moved aside is recorded in a manifest so `uninstall` restores the prior state.
 """
 
+from __future__ import annotations
+
 import argparse
+import ctypes
+import errno
+import fcntl
+import hashlib
 import json
 import os
 import shutil
 import sys
 import tempfile
 import time
+from contextlib import ExitStack, contextmanager, suppress
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 HARNESSES = ("claude", "codex", "grok", "cursor")
+LEGACY_NAME = "install-manifest.json"
+OWNERS_DIR = "install-owners"
 
 
 def skill_dirs(scope_root, user):
@@ -52,64 +62,927 @@ def state_dir(scope_root, user):
     return scope_root / ".pstack"
 
 
-def ours(path):
-    """A link whose target is a skill directory in this checkout. Never follows loops."""
-    if not path.is_symlink():
+def owner_path(state, checkout):
+    digest = hashlib.sha256(str(checkout).encode()).hexdigest()[:16]
+    return Path(state) / OWNERS_DIR / f"{digest}.json"
+
+
+def link_target(checkout, path):
+    return os.path.join(str(checkout), "skills", os.path.basename(path))
+
+
+def proves(checkout, entry, original):
+    try:
+        text = os.readlink(entry)
+    except OSError:
         return False
-    target = Path(os.path.normpath(os.path.join(path.parent, os.readlink(path))))
-    return target.parent in (SKILLS, Path(os.path.realpath(SKILLS)))
+    base = os.path.realpath(os.path.dirname(original))
+    return os.path.normpath(os.path.join(base, text)) == link_target(checkout, original)
+
+
+def identity(stat):
+    return stat.st_dev, stat.st_ino, stat.st_ctime_ns
+
+
+# Linux opens the entry itself with O_PATH. macOS opens a symlink itself with O_SYMLINK, and O_NONBLOCK keeps a FIFO from blocking.
+HOLD_FLAGS = (os.O_PATH | os.O_NOFOLLOW) if hasattr(os, "O_PATH") else (os.O_RDONLY | getattr(os, "O_SYMLINK", os.O_NOFOLLOW) | os.O_NONBLOCK)
+
+
+def hold(path, holds):
+    """Open the entry at `path` itself and keep it open until `holds` closes. Return what restore needs to prove it is still there."""
+    try:
+        fd = os.open(path, HOLD_FLAGS)
+    except OSError as error:
+        return Held(None, None, error.strerror or str(error))
+    holds.callback(os.close, fd)
+    return Held(fd, identity(os.fstat(fd)))
+
+
+def slot_of(path):
+    return (os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+def ordered(harnesses):
+    have = {harness for harness in harnesses if harness in HARNESSES}
+    return tuple(harness for harness in HARNESSES if harness in have)
 
 
 def inside_checkout(path):
-    """True when the path is, or resolves into, this checkout's skills tree."""
     real = Path(os.path.realpath(path))
     skills = Path(os.path.realpath(SKILLS))
     return real == skills or skills in real.parents
 
 
 def describe(path):
-    if path.is_symlink():
+    if os.path.islink(path):
         return f"link to {os.readlink(path)}"
-    return "directory" if path.is_dir() else "file"
+    return "directory" if os.path.isdir(path) else "file"
 
 
-def load_manifest(file):
-    if file.exists():
-        return json.loads(file.read_text())
-    return {"links": [], "backups": []}
+@dataclass(frozen=True)
+class LinkRec:
+    raw: object
+    path: str
+    harnesses: tuple
+    checkout: str | None
 
 
-def save_manifest(file, manifest):
-    file.parent.mkdir(parents=True, exist_ok=True)
-    temporary = file.with_suffix(".tmp")
-    temporary.write_text(json.dumps(manifest, indent=2) + "\n")
-    os.replace(temporary, file)
+@dataclass(frozen=True)
+class BackupRec:
+    raw: object
+    original: str
+    backup: str
+    harnesses: tuple
 
 
-def plan(targets, names):
-    """Return (actions, conflicts). Directories sharing a real path are visited once,
-    and each action names every harness that shares it."""
-    actions, conflicts, seen = [], [], {}
-    for harness, directory in targets.items():
-        real = Path(os.path.realpath(directory))
-        if real in seen:
-            seen[real].append(harness)
+@dataclass(frozen=True)
+class View:
+    claims: dict
+    links: tuple
+    backups: tuple
+
+
+@dataclass(frozen=True)
+class Mine:
+    path: str
+    harnesses: tuple
+    claim_paths: tuple
+    tagged: tuple
+    voucher: object
+
+
+@dataclass(frozen=True)
+class Held:
+    """A descriptor open on a backup from the plan to its restore. An inode in use keeps its number, so no new entry can share it."""
+    fd: int | None
+    entry: tuple | None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class Step:
+    kind: str
+    path: str
+    backup: str | None = None
+    place: str = ""
+    harnesses: tuple = ()
+    add_claims: tuple = ()
+    add_links: tuple = ()
+    add_backups: tuple = ()
+    remove_claims: tuple = ()
+    remove_links: tuple = ()
+    remove_backups: tuple = ()
+    adopted: bool = False
+    held: Held | None = None
+
+
+@dataclass(frozen=True)
+class Plan:
+    steps: tuple = ()
+    conflicts: tuple = ()
+    refusals: tuple = ()
+    untracked: int = 0
+    adopted: int = 0
+    occupied: tuple = ()
+    shared: tuple = ()
+    kept: int = 0
+
+
+def harnesses_for(path, entry, scope, user):
+    if isinstance(entry, dict) and isinstance(entry.get("harnesses"), list):
+        return ordered(entry["harnesses"])
+    if isinstance(entry, dict) and isinstance(entry.get("harness"), str) and entry["harness"] in HARNESSES:
+        return (entry["harness"],)
+    parent = os.path.realpath(os.path.dirname(path))
+    found = [harness for harness, directory in skill_dirs(scope, user).items() if os.path.realpath(directory) == parent]
+    return ordered(found) if found else HARNESSES
+
+
+def parse_link(entry, scope, user):
+    if isinstance(entry, str):
+        return LinkRec(entry, entry, harnesses_for(entry, None, scope, user), None)
+    if not isinstance(entry, dict):
+        return None
+    path = entry.get("path")
+    if not isinstance(path, str):
+        return None
+    checkout = entry.get("checkout") if isinstance(entry.get("checkout"), str) else None
+    return LinkRec(entry, path, harnesses_for(path, entry, scope, user), checkout)
+
+
+def parse_backup(entry, scope, user):
+    if not isinstance(entry, dict):
+        return None
+    original, backup = entry.get("original"), entry.get("backup")
+    if not isinstance(original, str) or not isinstance(backup, str):
+        return None
+    return BackupRec(entry, original, backup, harnesses_for(original, entry, scope, user))
+
+
+def read_object(path):
+    try:
+        data = json.loads(path.read_text())
+    except ValueError:
+        sys.exit(f"{path} is not valid JSON; fix or move it and rerun")
+    if not isinstance(data, dict):
+        sys.exit(f"{path} is not a JSON object; fix or move it and rerun")
+    return data
+
+
+def legacy_lists(path):
+    data = read_object(path)
+    found = []
+    for key in ("links", "backups"):
+        value = data.get(key, [])
+        if not isinstance(value, list):
+            sys.exit(f"{path} has a {key} entry that is not a list; fix or move it and rerun")
+        found.append(value)
+    return data, found[0], found[1]
+
+
+def read_legacy(state, scope, user):
+    path = Path(state) / LEGACY_NAME
+    if not path.exists():
+        return (), ()
+    _data, raw_links, raw_backups = legacy_lists(path)
+    links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
+    backups = tuple(item for item in (parse_backup(entry, scope, user) for entry in raw_backups) if item)
+    return links, backups
+
+
+def load(scope, user):
+    state = state_dir(scope, user)
+    root = str(ROOT)
+    links, backups = read_legacy(state, scope, user)
+    return View(current_claims(state, root), links, backups)
+
+
+def records(view, root):
+    parts = {}
+
+    def bucket(path):
+        return parts.setdefault(slot_of(path), {"claims": [], "tagged": [], "untagged": []})
+
+    for path, harnesses in view.claims.items():
+        bucket(path)["claims"].append((path, harnesses))
+    for link in view.links:
+        if link.checkout == root:
+            bucket(link.path)["tagged"].append(link)
+        elif link.checkout is None:
+            bucket(link.path)["untagged"].append(link)
+    present = stacks(view)
+    found = {}
+    for slot, group in parts.items():
+        live = None
+        for path, _harnesses in group["claims"]:
+            if proves(root, path, path):
+                live = path
+                break
+        if live is None:
+            for link in group["tagged"] + group["untagged"]:
+                if proves(root, link.path, link.path):
+                    live = link.path
+                    break
+        proving_live = live is not None
+        proving = proving_live or any(proves(root, row.backup, row.original) for row in present.get(slot, ()))
+        claims = group["claims"]
+        tagged = group["tagged"]
+        untagged = group["untagged"]
+        if not (claims or tagged or (untagged and proving)):
             continue
-        seen[real] = [harness]
+        if live is None:
+            if claims:
+                live = claims[0][0]
+            elif tagged:
+                live = tagged[0].path
+            else:
+                live = untagged[0].path
+        harnesses = ordered(
+            [harness for _path, owned in claims for harness in owned]
+            + [harness for link in tagged + untagged for harness in link.harnesses]
+        )
+        voucher = untagged[-1].raw if untagged and proving_live and not tagged else None
+        found[slot] = Mine(live, harnesses, tuple(path for path, _owned in claims), tuple(tagged), voucher)
+    return found
+
+
+def stacks(view):
+    found = {}
+    for row in view.backups:
+        if os.path.lexists(row.backup):
+            found.setdefault(slot_of(row.original), []).append(row)
+    return found
+
+
+def layout(scope, user, selected):
+    directories = skill_dirs(scope, user)
+    user_dirs = {}
+    if not user:
+        for directory in skill_dirs(None, True).values():
+            user_dirs.setdefault(os.path.realpath(directory), directory)
+    grouped = {}
+    for harness in HARNESSES:
+        directory = directories[harness]
+        grouped.setdefault(os.path.realpath(directory), []).append((harness, directory))
+    chosen = set(selected)
+    groups, refusals = [], []
+    for real, members in grouped.items():
+        harnesses = tuple(harness for harness, _directory in members)
+        if not chosen.intersection(harnesses):
+            continue
+        directory = members[0][1]
+        label = next(harness for harness, _directory in members if harness in chosen)
+        shown = directories[label]
+        if real in user_dirs:
+            refusals.append(f"{label}: {shown} already resolves to {user_dirs[real]}; nothing to link")
+            continue
         if inside_checkout(directory):
-            print(f"{harness}: {directory} already resolves to {SKILLS}; nothing to link")
+            refusals.append(f"{label}: {shown} already resolves to {SKILLS}; nothing to link")
             continue
+        groups.append((str(directory), harnesses))
+    return groups, refusals
+
+
+def tagged_exists(view, path, root):
+    return any(link.checkout == root and link.path == path for link in view.links)
+
+
+def plan_install(view, scope, user, selected, names, root, replace):
+    groups, refusals = layout(scope, user, selected)
+    owned = records(view, root)
+    steps, conflicts = [], []
+    untracked = adopted = 0
+    for directory, harnesses in groups:
         for name in names:
-            link = directory / name
-            if ours(link):
+            path = os.path.join(directory, name)
+            if proves(root, path, path):
+                record = owned.get(slot_of(path))
+                if record is None:
+                    untracked += 1
+                else:
+                    union = ordered(record.harnesses + harnesses)
+                    if not record.claim_paths or set(union) != set(record.harnesses):
+                        if not record.claim_paths:
+                            adopted += 1
+                        steps.append(Step("record", path, harnesses=union, add_claims=((path, union),), adopted=not record.claim_paths))
                 continue
-            if inside_checkout(link):
-                # Moving this aside would move pstack-t3's own skill directory.
+            # Moving a path that is this checkout's own skill directory would relocate the checkout.
+            if inside_checkout(path):
                 continue
-            if link.exists() or link.is_symlink():
-                conflicts.append((seen[real], link))
-            actions.append((seen[real], link))
-    return actions, conflicts
+            if os.path.lexists(path):
+                conflicts.append((harnesses, path))
+                if replace:
+                    steps.append(Step("move", path, place=f"{harnesses[0]}/{name}", harnesses=harnesses))
+            if not os.path.lexists(path) or replace:
+                row = {"harnesses": list(harnesses), "path": path, "checkout": root}
+                add_links = () if tagged_exists(view, path, root) else (row,)
+                steps.append(Step("create", path, harnesses=harnesses, add_claims=((path, harnesses),), add_links=add_links))
+    return Plan(tuple(steps), tuple(conflicts), tuple(refusals), untracked, adopted)
+
+
+def occupied_note(row):
+    path, backup = row.original, row.backup
+    if os.path.islink(path):
+        spelled = os.path.normpath(os.path.join(os.path.dirname(path), os.readlink(path)))
+        parent = os.path.dirname(spelled)
+        if os.path.basename(spelled) == os.path.basename(path) and os.path.basename(parent) == "skills":
+            checkout = os.path.dirname(parent)
+            if not os.path.exists(checkout):
+                return (f"kept backup {backup}: {path} is occupied by a link into deleted checkout {checkout}; "
+                        "remove it and rerun uninstall")
+    return f"kept backup {backup}: {path} is occupied; clear it and rerun uninstall"
+
+
+def plan_uninstall(view, root, selected, holds):
+    chosen = set(selected)
+    shared = set()
+    owned = records(view, root)
+    present = stacks(view)
+
+    def selected_row(harnesses):
+        have = set(harnesses)
+        if have <= chosen:
+            return True
+        if have & chosen:
+            shared.add(", ".join(sorted(have - chosen)))
+        return False
+
+    steps = []
+    occupied = []
+    withdrawn = set()
+    uncovered = set()
+    kept = 0
+    for slot, record in owned.items():
+        if not selected_row(record.harnesses):
+            continue
+        rows = present.get(slot, ())
+        consumers = []
+        for row in rows:
+            if proves(root, row.backup, row.original):
+                consumers.append(Step("withdraw", record.path, backup=row.backup, remove_backups=(row.backup,)))
+                withdrawn.add(row.backup)
+        unlinks = proves(root, record.path, record.path)
+        if unlinks:
+            consumers.append(Step("unlink", record.path))
+            uncovered.add(slot)
+        steps.extend(consumers)
+        # A live entry over a withdrawn top backup covered this link; any other live entry is a repoint.
+        consumed = unlinks or not os.path.lexists(record.path) or bool(rows and rows[-1].backup in withdrawn)
+        if not consumers or not consumed:
+            kept += len(record.claim_paths)
+            continue
+        links = tuple(link.raw for link in record.tagged)
+        if record.voucher is not None:
+            links = links + (record.voucher,)
+        if record.claim_paths or links:
+            steps.append(Step("forget", record.path, remove_claims=record.claim_paths, remove_links=links))
+    for slot, rows in present.items():
+        remaining = [row for row in rows if row.backup not in withdrawn]
+        if not remaining:
+            continue
+        top = remaining[-1]
+        free = slot in uncovered or not os.path.lexists(top.original)
+        if free and (slot in uncovered or selected_row(top.harnesses)):
+            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), held=hold(top.backup, holds)))
+        elif not free and selected_row(top.harnesses):
+            occupied.append(occupied_note(top))
+    return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
+
+
+def atomic_write(directory, name, text):
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=directory)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.replace(temporary, directory / name)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+        raise
+
+
+def write_claims(state, root, claims):
+    path = owner_path(state, root)
+    if not claims:
+        if path.exists():
+            path.unlink()
+        return
+    body = {"checkout": root, "links": {key: {"harnesses": list(claims[key])} for key in claims}}
+    atomic_write(path.parent, path.name, json.dumps(body, indent=2) + "\n")
+
+
+def current_claims(state, root):
+    path = owner_path(state, root)
+    if not path.exists():
+        return {}
+    data = read_object(path)
+    recorded = data.get("checkout")
+    if recorded != root:
+        sys.exit(f"{path} records {recorded}, not this checkout")
+    links = data.get("links")
+    if not isinstance(links, dict):
+        return {}
+    claims = {}
+    for key, value in links.items():
+        harnesses = value.get("harnesses") if isinstance(value, dict) else None
+        if isinstance(key, str) and isinstance(harnesses, list):
+            claims[key] = ordered(harnesses)
+    return claims
+
+
+def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, adding):
+    """Return the link and backup rows this call appended."""
+    if not add_links and not add_backups and not remove_links and not remove_backups:
+        return (), ()
+    path = Path(state) / LEGACY_NAME
+    # Older installers still read this file, so a cleanup leaves empty lists in place.
+    if path.exists():
+        data, links, backups = legacy_lists(path)
+    elif adding:
+        data, links, backups = {}, [], []
+    else:
+        return (), ()
+    added_links, added_backups = [], []
+    changed = False
+    if adding:
+        for row in add_links:
+            if isinstance(row, dict) and any(
+                isinstance(have, dict) and have.get("path") == row.get("path") and have.get("checkout") == row.get("checkout")
+                for have in links
+            ):
+                continue
+            links.append(row)
+            added_links.append(row)
+            changed = True
+        for row in add_backups:
+            backups.append(row)
+            added_backups.append(row["backup"])
+            changed = True
+    else:
+        for raw in remove_links:
+            for index in range(len(links) - 1, -1, -1):
+                if links[index] == raw:
+                    del links[index]
+                    changed = True
+                    break
+        for backup in remove_backups:
+            for index in range(len(backups) - 1, -1, -1):
+                have = backups[index]
+                if isinstance(have, dict) and have.get("backup") == backup:
+                    del backups[index]
+                    changed = True
+                    break
+    if changed:
+        data["links"] = links
+        data["backups"] = backups
+        atomic_write(Path(state), LEGACY_NAME, json.dumps(data, indent=2) + "\n")
+    return tuple(added_links), tuple(added_backups)
+
+
+def add_records(step, state, root):
+    """Save a step's adds before its act. Return a function that takes back exactly the records that were new."""
+    previous = {}
+    if step.add_claims:
+        claims = current_claims(state, root)
+        for path, harnesses in step.add_claims:
+            previous[path] = claims.get(path)
+            claims[path] = ordered(harnesses)
+        write_claims(state, root, claims)
+    links, backups = patch_legacy(state, step.add_links, step.add_backups, (), (), True)
+
+    def undo():
+        patch_legacy(state, (), (), links, backups, False)
+        if previous:
+            claims = current_claims(state, root)
+            for path, harnesses in previous.items():
+                if harnesses is None:
+                    claims.pop(path, None)
+                else:
+                    claims[path] = harnesses
+            write_claims(state, root, claims)
+
+    return undo
+
+
+def remove_records(step, state, root):
+    # Owner file first on add and last on remove, so a crash keeps an extra claim.
+    patch_legacy(state, (), (), step.remove_links, step.remove_backups, False)
+    if step.remove_claims:
+        claims = current_claims(state, root)
+        for path in step.remove_claims:
+            claims.pop(path, None)
+        write_claims(state, root, claims)
+
+
+def ready(step, root):
+    if step.kind == "create":
+        return not os.path.lexists(step.path)
+    if step.kind == "move":
+        return bool(step.backup) and os.path.lexists(step.path) and not os.path.lexists(step.backup)
+    if step.kind in ("record", "forget"):
+        return True
+    if step.kind == "unlink":
+        return proves(root, step.path, step.path)
+    if step.kind == "withdraw":
+        return proves(root, step.backup, step.path)
+    if step.kind == "restore":
+        return os.path.lexists(step.backup) and not os.path.lexists(step.path)
+    return False
+
+
+def subject(step):
+    return {
+        "unlink": f"unlink {step.path}",
+        "withdraw": f"withdraw {step.backup}",
+        "restore": f"restore {step.backup}",
+        "create": f"link {step.path}",
+        "move": f"move {step.path}",
+    }.get(step.kind)
+
+
+def skip_note(step):
+    reason = {
+        "unlink": "the link no longer matches the recorded checkout",
+        "withdraw": "the backup no longer matches the recorded checkout",
+        "restore": f"{step.path} changed before uninstall",
+        "create": "it changed before install",
+        "move": "it changed before install",
+    }.get(step.kind)
+    return f"skipped {subject(step)}: {reason}" if reason else None
+
+
+RENAME_NOREPLACE = 1
+AT_FDCWD = -100
+
+
+def rename_noreplace(source, target):
+    """Rename `source` to `target` only while `target` is empty. Return 0, or the errno that stopped it."""
+    if not sys.platform.startswith("linux"):
+        return errno.ENOSYS
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except (OSError, AttributeError):
+        return errno.ENOSYS
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    if renameat2(AT_FDCWD, os.fsencode(source), AT_FDCWD, os.fsencode(target), RENAME_NOREPLACE) == 0:
+        return 0
+    return ctypes.get_errno()
+
+
+def place(source, path):
+    """Move the entry at `source` to `path` only while `path` is still empty. Return 0, or the errno that stopped it.
+
+    `source` is a name only the caller uses, because the link and the unlink each look it up again.
+    """
+    try:
+        # A hard link of the link itself fails on a taken path, where a rename would replace it.
+        os.link(source, path, follow_symlinks=False)
+    except FileExistsError:
+        return errno.EEXIST
+    except (OSError, NotImplementedError) as error:
+        # A rename cannot cross a filesystem that a hard link cannot.
+        if getattr(error, "errno", None) == errno.EXDEV:
+            return errno.EXDEV
+        # A directory cannot be hard linked. A plain rename would replace whatever took the path since.
+        return rename_noreplace(source, path)
+    os.unlink(source)
+    return 0
+
+
+def refusal(path, code):
+    """Why `place` left its entry where it was, or None when it moved it."""
+    if code == 0:
+        return None
+    if code in (errno.EEXIST, errno.ENOTEMPTY):
+        return f"{path} was taken again"
+    return f"{path} cannot be refilled without risking an overwrite ({os.strerror(code)})"
+
+
+def put_back(aside, path):
+    """Return the entry at `aside` to `path` only while `path` is still empty. Return why it stayed aside."""
+    return refusal(path, place(aside, path))
+
+
+def discard(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.unlink(path)
+
+
+def place_copy(source, path):
+    """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
+    parent, name = os.path.split(path)
+    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    copy = os.path.join(holder, name)
+    try:
+        if os.path.isdir(source) and not os.path.islink(source):
+            shutil.copytree(source, copy, symlinks=True)
+        else:
+            shutil.copy2(source, copy, follow_symlinks=False)
+        return place(copy, path)
+    finally:
+        # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
+        if os.path.lexists(copy):
+            discard(copy)
+        # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
+        with suppress(OSError):
+            os.rmdir(holder)
+
+
+def remove_link(path, root, original, noun):
+    """Move the link at `path` aside, then delete it only if it is this checkout's link for `original`. Return why it was kept."""
+    parent, name = os.path.split(path)
+    # A directory this call just created holds nothing yet, so the move cannot land on an existing entry.
+    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    aside = os.path.join(holder, name)
+    try:
+        # Another installer can replace the link after the plan proved it; the rename takes whatever is there now.
+        os.rename(path, aside)
+    except OSError:
+        with suppress(OSError):
+            os.rmdir(holder)
+        raise
+    if proves(root, aside, original):
+        os.unlink(aside)
+        reason = None
+    else:
+        reason = put_back(aside, path)
+        if reason is not None:
+            return f"the {noun} no longer matches the recorded checkout and {reason}; it is kept at {aside}"
+        reason = f"the {noun} no longer matches the recorded checkout"
+    # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
+    with suppress(OSError):
+        os.rmdir(holder)
+    return reason
+
+
+CHANGED = "the backup is no longer the entry uninstall read"
+
+
+def same_entry(path, fd):
+    """Whether `path` names the entry `fd` holds open. An inode in use keeps its number, so no other entry can show it."""
+    return identity(os.lstat(path))[:2] == identity(os.fstat(fd))[:2]
+
+
+def link_held(fd, path):
+    """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it."""
+    if not sys.platform.startswith("linux"):
+        return errno.ENOSYS
+    try:
+        # The descriptor is the entry itself, whatever its old path names now.
+        # `src_dir_fd` makes Python call linkat, which follows the /proc link to that entry. Plain link would link the /proc entry itself and fail as a crossing.
+        # The source is an absolute path, so the descriptor passed there is never used as a directory.
+        os.link(f"/proc/self/fd/{fd}", path, src_dir_fd=fd, follow_symlinks=True)
+    except (OSError, NotImplementedError) as error:
+        return getattr(error, "errno", None) or errno.ENOSYS
+    return 0
+
+
+def drop_backup(backup, aside, path, fd):
+    """Delete the backup that is now at `path`, only if `backup` still names the entry `fd` holds. Any other entry stays and is reported."""
+    try:
+        # The rename takes whatever the path names now into a directory only this call uses, so the check and the delete see one entry.
+        os.rename(backup, aside)
+    except FileNotFoundError:
+        return
+    if same_entry(aside, fd):
+        os.unlink(aside)
+        return
+    reason = put_back(aside, backup)
+    if reason is None:
+        print(f"kept {backup}: it is not the backup uninstall restored to {path}")
+    else:
+        print(f"kept {aside}: it took the place of the backup uninstall restored to {path} and {reason}")
+
+
+def place_proven(aside, path):
+    """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return why it stayed."""
+    try:
+        code = place(aside, path)
+        if code != errno.EXDEV:
+            return refusal(path, code)
+        # The backup is on another filesystem. A copy beside the path takes the same put-back, and the proven entry goes once the copy is in place.
+        code = place_copy(aside, path)
+    except OSError as error:
+        # A copy that failed left nothing at the path, so the entry goes back like one that was refused.
+        return str(error)
+    if code == 0:
+        discard(aside)
+    return refusal(path, code)
+
+
+def restore_aside(backup, aside, path, fd):
+    """Restore through the private name `aside` where the descriptor cannot be linked. Return why the backup was kept."""
+    try:
+        # A second name leaves the backup where it is until the entry is proven.
+        os.link(backup, aside, follow_symlinks=False)
+        named = True
+    except (OSError, NotImplementedError):
+        # A directory cannot be hard linked. The no-replace rename that moves it here is the one that can put it back.
+        code = rename_noreplace(backup, aside)
+        if code != 0:
+            return CHANGED if code == errno.ENOENT else refusal(path, code)
+        named = False
+    reason = place_proven(aside, path) if same_entry(aside, fd) else CHANGED
+    if named:
+        # Only the second name is left here. The backup still has its own.
+        if os.path.lexists(aside):
+            os.unlink(aside)
+        if reason is None:
+            drop_backup(backup, aside, path, fd)
+        return reason
+    if reason is None:
+        return None
+    stuck = put_back(aside, backup)
+    return reason if stuck is None else f"{reason} and {stuck}; it is kept at {aside}"
+
+
+def restore_backup(backup, path, held):
+    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept."""
+    if held.fd is None:
+        return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
+    try:
+        now = identity(os.lstat(backup))
+    except OSError:
+        now = None
+    # ext4 hands a freed inode number, and with small inodes its whole-second change time, to the next new entry, so equal numbers alone prove nothing.
+    # The held descriptor keeps the planned inode in use, so an entry made since has other numbers. The change time also catches one changed in place.
+    if now is None or now[:2] != identity(os.fstat(held.fd))[:2] or now != held.entry:
+        return CHANGED
+    # The backup's path can name another entry from here on, so every later step acts on the held entry or on one first moved where only this call looks.
+    # Another installer can take `path` after the plan saw it empty; each step refuses it instead of replacing it.
+    code = link_held(held.fd, path)
+    if code == errno.EEXIST:
+        return refusal(path, code)
+    parent, name = os.path.split(backup)
+    try:
+        holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    except FileNotFoundError:
+        # The backup left with its directory, so no name is left to clean up or to restore from.
+        return None if code == 0 else CHANGED
+    aside = os.path.join(holder, name)
+    try:
+        if code == 0:
+            drop_backup(backup, aside, path, held.fd)
+            return None
+        return restore_aside(backup, aside, path, held.fd)
+    finally:
+        # rmdir refuses a directory that is not empty, so an entry kept in it stays.
+        with suppress(OSError):
+            os.rmdir(holder)
+
+
+def buried(state, root, path):
+    """Whether a backup row now holds this checkout's entry for the slot of `path`."""
+    file = Path(state) / LEGACY_NAME
+    if not file.exists():
+        return False
+    _data, _links, backups = legacy_lists(file)
+    return any(
+        isinstance(row, dict) and isinstance(row.get("original"), str) and isinstance(row.get("backup"), str)
+        and slot_of(row["original"]) == slot_of(path) and proves(root, row["backup"], row["original"])
+        for row in backups
+    )
+
+
+def act(step, root):
+    """Do the step's change. Return why it was not done when it declined without an error."""
+    if step.kind == "create":
+        os.makedirs(os.path.dirname(step.path), exist_ok=True)
+        os.symlink(link_target(root, step.path), step.path, target_is_directory=True)
+    elif step.kind == "move":
+        os.makedirs(os.path.dirname(step.backup), exist_ok=True)
+        shutil.move(step.path, step.backup)
+    elif step.kind == "unlink":
+        return remove_link(step.path, root, step.path, "link")
+    elif step.kind == "withdraw":
+        return remove_link(step.backup, root, step.path, "backup")
+    elif step.kind == "restore":
+        os.makedirs(os.path.dirname(step.path), exist_ok=True)
+        return restore_backup(step.backup, step.path, step.held)
+
+
+def execute(plan, state, root):
+    counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0}
+    failed = set()
+    stamp = None
+    for step in plan.steps:
+        if step.kind == "move":
+            if stamp is None:
+                backups = Path(state) / "backups"
+                backups.mkdir(parents=True, exist_ok=True)
+                stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
+            backup = os.path.join(stamp, step.place)
+            step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
+        # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
+        if step.kind == "forget" and (step.path in failed or buried(state, root, step.path)):
+            counts["kept_extra"] += len(step.remove_claims)
+            continue
+        if not ready(step, root):
+            note = skip_note(step)
+            if note:
+                print(note)
+            failed.add(step.path)
+            continue
+        undo = add_records(step, state, root)
+        try:
+            declined = act(step, root)
+        except OSError as error:
+            # A move can fail after copying part of the entry, and then the row is the only record of that copy.
+            if not (step.kind == "move" and os.path.lexists(step.backup)):
+                undo()
+            print(f"skipped {subject(step)}: {error}")
+            failed.add(step.path)
+            continue
+        if declined:
+            undo()
+            print(f"skipped {subject(step)}: {declined}")
+            failed.add(step.path)
+            continue
+        remove_records(step, state, root)
+        if step.kind == "create":
+            counts["linked"] += 1
+        elif step.kind == "unlink":
+            counts["removed"] += 1
+        elif step.kind == "withdraw":
+            counts["removed"] += 1
+            counts["withdrawn"] += 1
+        elif step.kind == "restore":
+            counts["restored"] += 1
+    return counts
+
+
+@contextmanager
+def locked(state):
+    state = Path(state)
+    state.mkdir(parents=True, exist_ok=True)
+    fd = os.open(state, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def count_steps(plan, kind):
+    kinds = {kind} if isinstance(kind, str) else set(kind)
+    return sum(1 for step in plan.steps if step.kind in kinds)
+
+
+def report_install(plan, state, root, executed, dry_run):
+    for line in plan.refusals:
+        print(line)
+    if dry_run:
+        moved = {step.path for step in plan.steps if step.kind == "move"}
+        for step in plan.steps:
+            if step.kind != "create":
+                continue
+            suffix = f" (replacing {describe(step.path)})" if step.path in moved else ""
+            print(f"would link {step.path} -> {link_target(root, step.path)}{suffix}")
+        if plan.untracked:
+            print(f"{plan.untracked} links already point at this checkout but are not tracked; uninstall leaves them")
+        if plan.adopted:
+            print(f"adopted {plan.adopted} links an older installer recorded")
+        print(f"{count_steps(plan, 'create')} links planned")
+        return
+    linked = 0 if executed is None else executed["linked"]
+    joined = ", ".join(sorted({harness for step in plan.steps if step.kind == "create" for harness in step.harnesses}))
+    print(f"linked {linked} skills into {joined or 'nothing (already installed)'}")
+    if plan.untracked:
+        print(f"{plan.untracked} links already point at this checkout but are not tracked; uninstall leaves them")
+    if plan.adopted:
+        print(f"adopted {plan.adopted} links an older installer recorded")
+    print(f"manifest: {Path(state) / LEGACY_NAME}")
+
+
+def report_uninstall(plan, executed, dry_run):
+    for line in plan.occupied:
+        print(line)
+    if dry_run:
+        removed = count_steps(plan, ("unlink", "withdraw"))
+        restored = count_steps(plan, "restore")
+        withdrawn = count_steps(plan, "withdraw")
+        print(f"would remove {removed} links, would restore {restored} entries")
+    else:
+        removed = 0 if executed is None else executed["removed"]
+        restored = 0 if executed is None else executed["restored"]
+        withdrawn = 0 if executed is None else executed["withdrawn"]
+        print(f"removed {removed} links, restored {restored} entries")
+    if withdrawn:
+        print(f"{withdrawn} of them had been moved aside by another checkout's --replace")
+    for others in plan.shared:
+        print(f"kept entries whose directory is shared with {others}; select those harnesses too to remove them")
+    kept = plan.kept + (0 if executed is None else executed["kept_extra"])
+    if kept:
+        print(f"kept {kept} records whose links no longer point at this checkout; they apply again if the links come back")
+
+
+def skill_names():
+    return sorted(path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file())
 
 
 def install(args):
@@ -117,111 +990,66 @@ def install(args):
         sys.exit("skills/ is missing; run python3 scripts/build.py first")
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
-    targets = {h: d for h, d in skill_dirs(scope, user).items() if h in args.harness}
-    names = sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file())
-    actions, conflicts = plan(targets, names)
-    if conflicts and not args.replace:
-        lines = [f"  {'/'.join(harnesses)}: {link} ({describe(link)})" for harnesses, link in conflicts]
-        sys.exit("these skills already exist; rerun with --replace to move them aside (uninstall restores them):\n" + "\n".join(lines))
-    if args.dry_run:
-        for harnesses, link in actions:
-            print(f"would link {link} -> {SKILLS / link.name}" + (f" (replacing {describe(link)})" if (harnesses, link) in conflicts else ""))
-        print(f"{len(actions)} links planned")
-        return
+    root = str(ROOT)
     state = state_dir(scope, user)
-    manifest_file = state / "install-manifest.json"
-    manifest = load_manifest(manifest_file)
-    # Create the stamp directory on the first skill that has to be moved aside.
-    backup_root = None
-    for harnesses, link in actions:
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if link.exists() or link.is_symlink():
-            if backup_root is None:
-                (state / "backups").mkdir(parents=True, exist_ok=True)
-                backup_root = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=state / "backups"))
-            backup = backup_root / harnesses[0] / link.name
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            # Record before moving, so a crash mid-move still leaves a restorable entry.
-            manifest["backups"].append({"harnesses": harnesses, "original": str(link), "backup": str(backup)})
-            save_manifest(manifest_file, manifest)
-            shutil.move(str(link), str(backup))
-        link.symlink_to(SKILLS / link.name, target_is_directory=True)
-        manifest["links"].append({"harnesses": harnesses, "path": str(link)})
-        save_manifest(manifest_file, manifest)
-    print(f"linked {len(actions)} skills into {', '.join(sorted(set(h for hs, _ in actions for h in hs))) or 'nothing (already installed)'}")
-    print(f"manifest: {manifest_file}")
+    names = skill_names()
 
+    def make_plan(view):
+        return plan_install(view, scope, user, args.harness, names, root, args.replace)
 
-def entry_harnesses(entry):
-    """Harnesses that share an entry's directory. Unknown means all of them."""
-    if not isinstance(entry, dict):
-        return list(HARNESSES)
-    if "harnesses" in entry:
-        return entry["harnesses"]
-    return [entry["harness"]] if "harness" in entry else list(HARNESSES)
+    def reject(plan):
+        if plan.conflicts and not args.replace:
+            for line in plan.refusals:
+                print(line)
+            lines = [f"  {'/'.join(harnesses)}: {path} ({describe(path)})" for harnesses, path in plan.conflicts]
+            sys.exit("these skills already exist; rerun with --replace to move them aside (uninstall restores them):\n" + "\n".join(lines))
 
-
-def entry_path(entry):
-    return Path(entry["path"] if isinstance(entry, dict) else entry)
+    plan = make_plan(load(scope, user))
+    reject(plan)
+    if args.dry_run or not plan.steps:
+        report_install(plan, state, root, None, args.dry_run)
+        return 0
+    with locked(state):
+        plan = make_plan(load(scope, user))
+        reject(plan)
+        if not plan.steps:
+            report_install(plan, state, root, None, False)
+            return 0
+        report_install(plan, state, root, execute(plan, state, root), False)
+    return 0
 
 
 def uninstall(args):
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
-    manifest_file = state_dir(scope, user) / "install-manifest.json"
-    manifest = load_manifest(manifest_file)
-    shared = set()
+    root = str(ROOT)
+    state = state_dir(scope, user)
 
-    def selected(entry):
-        # A directory shared by several harnesses goes only when all of them are selected.
-        harnesses = entry_harnesses(entry)
-        if set(harnesses) <= set(args.harness):
-            return True
-        if set(harnesses) & set(args.harness):
-            shared.add(", ".join(sorted(set(harnesses) - set(args.harness))))
-        return False
-    removed, kept_links = 0, []
-    for entry in manifest["links"]:
-        link = entry_path(entry)
-        if not selected(entry):
-            kept_links.append(entry)
-        elif ours(link):
-            if not args.dry_run:
-                link.unlink()
-            removed += 1
-    restored, kept_backups = 0, []
-    for entry in reversed(manifest["backups"]):
-        original, backup = Path(entry["original"]), Path(entry["backup"])
-        present = backup.exists() or backup.is_symlink()
-        if not selected(entry) or not present:
-            if present:
-                kept_backups.append(entry)
-            continue
-        occupied = original.exists() or original.is_symlink()
-        # In a dry run our own links are still in place but would be removed first.
-        if occupied and not (args.dry_run and ours(original)):
-            print(f"kept backup {backup}: {original} is occupied; clear it and rerun uninstall")
-            kept_backups.append(entry)
-            continue
-        if not args.dry_run:
-            shutil.move(str(backup), str(original))
-        restored += 1
-    print(f"would remove {removed} links, would restore {restored} entries" if args.dry_run else f"removed {removed} links, restored {restored} entries")
-    for others in sorted(shared):
-        print(f"kept entries whose directory is shared with {others}; select those harnesses too to remove them")
-    if args.dry_run:
+    def make_plan(view, holds):
+        return plan_uninstall(view, root, args.harness, holds)
+
+    with ExitStack() as holds:
+        plan = make_plan(load(scope, user), holds)
+    if args.dry_run or not plan.steps:
+        report_uninstall(plan, None, args.dry_run)
         return 0
-    if kept_links or kept_backups:
-        save_manifest(manifest_file, {"links": kept_links, "backups": list(reversed(kept_backups))})
-    elif manifest_file.exists():
-        manifest_file.unlink()
+    with locked(state), ExitStack() as holds:
+        plan = make_plan(load(scope, user), holds)
+        if not plan.steps:
+            report_uninstall(plan, None, False)
+            return 0
+        report_uninstall(plan, execute(plan, state, root), False)
     return 0
+
+
+def points_here(path):
+    return proves(str(ROOT), os.fspath(path), os.fspath(path))
 
 
 def doctor(args):
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
-    names = sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file()) if SKILLS.is_dir() else []
+    names = skill_names() if SKILLS.is_dir() else []
     healthy = True
     for harness, directory in skill_dirs(scope, user).items():
         if harness not in args.harness:
@@ -233,15 +1061,15 @@ def doctor(args):
             print(f"{harness:7} {directory}: points inside one pstack-t3 skill, so the other skills are invisible")
             healthy = False
             continue
-        installed = [n for n in names if ours(directory / n)]
-        foreign = [n for n in names if (directory / n).exists() and not ours(directory / n)]
-        missing = [n for n in names if not (directory / n).exists()]
+        installed = [name for name in names if points_here(directory / name)]
+        foreign = [name for name in names if (directory / name).exists() and not points_here(directory / name)]
+        missing = [name for name in names if not (directory / name).exists()]
         healthy &= not foreign and not missing
         print(f"{harness:7} {directory}: {len(installed)}/{len(names)} pstack-t3" +
               (f", {len(foreign)} taken by other copies ({', '.join(foreign[:5])}{'...' if len(foreign) > 5 else ''})" if foreign else "") +
               (f", {len(missing)} missing" if missing else ""))
         for extra in extra_dirs(scope, user)[harness]:
-            stale = [n for n in names if (extra / n).exists() and not ours(extra / n)]
+            stale = [name for name in names if (extra / name).exists() and not points_here(extra / name)]
             if stale:
                 healthy = False
                 print(f"        {extra} also holds other copies of {len(stale)} of these "
@@ -249,7 +1077,7 @@ def doctor(args):
         if not user:
             # Claude and Grok load the user copy when both scopes define a name.
             user_directory = skill_dirs(None, True)[harness]
-            shadowing = [n for n in installed if (user_directory / n).exists() and not ours(user_directory / n)]
+            shadowing = [name for name in installed if (user_directory / name).exists() and not points_here(user_directory / name)]
             if shadowing:
                 healthy = False
                 print(f"        user scope {user_directory} has other copies of {len(shadowing)} of these "
@@ -265,7 +1093,7 @@ def main(argv=None):
     parser.add_argument("--replace", action="store_true", help="move conflicting skills aside; uninstall restores them")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    args.harness = HARNESSES if args.harness == "all" else tuple(h.strip() for h in args.harness.split(","))
+    args.harness = HARNESSES if args.harness == "all" else tuple(item.strip() for item in args.harness.split(","))
     unknown = set(args.harness) - set(HARNESSES)
     if unknown:
         parser.error(f"unknown harness {', '.join(sorted(unknown))}")
