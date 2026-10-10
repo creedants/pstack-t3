@@ -735,9 +735,9 @@ def follow_ups(text):
     The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
     line without leading colons and surrounding whitespace.
 
-    A heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too, whatever it
-    says. Its text is the line without its `#` marks and surrounding whitespace. A paragraph with only such headings
-    between it and a list item is directly above that item.
+    The text of a heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too,
+    whatever it says. It is the line after its opening `#` marks, without surrounding whitespace. A paragraph with only
+    such headings between it and a list item is directly above that item.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -1144,8 +1144,8 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
 def unrecorded_reviews(restaurant):
     """(name, kind) for each entry under reports/ named like a review report that no pass.tsv row accounts for.
 
-    The kind is report_entry's. A row that names a report accounts for the entry of that name, and nothing is read from
-    that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
+    The kind is report_entry's. A row of the entry's dish that names it in `report` accounts for it, and nothing is read
+    from that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
     dish written before it, and for no entry of another kind.
     """
     rows = restaurant.rows("pass.tsv")

@@ -1334,6 +1334,15 @@ class BrigadeTest(unittest.TestCase):
         self.record("abc", "send-back")
         self.assertEqual(self.close_run("--dry-run")[::2], (0, self.not_a_file("D1-review-1.md", "is a symbolic link")))
 
+    def test_close_warns_about_a_review_report_under_a_linked_reports(self):
+        self.fired_bug_fix()
+        outside = Path(self.temporary.name) / "outside" / "reports"
+        outside.mkdir(parents=True)
+        (outside / "D1-review-5.md").write_text("findings\n")
+        (self.at / "reports").symlink_to(outside)
+        self.assertEqual(self.close_run("--dry-run")[::2],
+                         (0, self.not_a_file("D1-review-5.md", "resolves outside this store's reports/")))
+
     def test_close_ignores_a_file_that_is_not_a_review_report(self):
         self.fired_bug_fix()
         for name in ("D1.md", "notes.md", "D1-review.txt", "D1-reviewed.md", "xD1-review.md"):
