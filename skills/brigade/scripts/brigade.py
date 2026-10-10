@@ -43,19 +43,27 @@ ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
-PRIORITIES = ("urgent", "normal", "low")
-AUTOFIRE = ("off", *PRIORITIES)
+PRIORITIES_BY_RANK = ("urgent", "normal", "low")
+AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
+
+
+@dataclass(frozen=True)
+class StandingText:
+    count_label: str
+    line_words: str
+
+
 STANDINGS = {
-    "start": ("startable", "startable"),
-    "rides": ("riding", "rides with {why}"),
-    "blocked": ("blocked", "blocked, {why}"),
-    "unknown": ("unknown", "unknown, no paths recorded"),
-    "decision": ("decisions", "decision for the owner"),
-    "below": ("below auto-start", "below auto-start"),
-    "reserve": ("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
+    "start": StandingText("startable", "startable"),
+    "rides": StandingText("riding", "rides with {why}"),
+    "blocked": StandingText("blocked", "blocked, {why}"),
+    "unknown": StandingText("unknown", "unknown, no paths recorded"),
+    "decision": StandingText("decisions", "decision for the owner"),
+    "below": StandingText("below auto-start", "below auto-start"),
+    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
 }
 NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
@@ -600,6 +608,11 @@ def tracked_paths(project_root):
     return Tracked(files, directories)
 
 
+def pattern_directory(parts):
+    marked = next(index for index, part in enumerate(parts) if re.search(r"[*?\[]", part))
+    return "/".join(parts[:marked])
+
+
 def quoted_paths(text, tracked):
     if tracked is None:
         return ()
@@ -608,14 +621,14 @@ def quoted_paths(text, tracked):
         span = re.sub(r":\d+(?:-\d+)?$", "", span.strip())
         if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
             continue
-        parts = posixpath.normpath(span).split("/")
-        marked = next((index for index, part in enumerate(parts) if re.search(r"[*?\[]", part)), None)
-        span = "/".join(parts)
-        if marked is None:
+        span = posixpath.normpath(span)
+        if not re.search(r"[*?\[]", span):
             if span != "." and (span in tracked.files or span in tracked.directories):
                 found.add(span)
-        elif marked and fnmatch.filter(tracked.files, span):
-            found.add("/".join(parts[:marked]))
+            continue
+        directory = pattern_directory(span.split("/"))
+        if directory and fnmatch.filter(tracked.files, span):
+            found.add(directory)
     return tuple(sorted(found))
 
 
@@ -1523,17 +1536,17 @@ def fire_command(ident, note):
     return " ".join(shlex.quote(str(word)) for word in words)
 
 
-def lease_block(project_root, holder_name, paths, kind="lease"):
+def lease_block(project_root, holder_name, paths, fallback_kind="lease"):
     code, out, err = lease_check(project_root, holder_name, paths)
     if code == 0:
         return None
     held = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
     if held:
-        return "lease", "waiting on " + ", ".join(f"{lease} ({holder_name})" for lease, holder_name in held)
+        return "lease", "waiting on " + ", ".join(f"{lease} ({held_by})" for lease, held_by in held)
     room = re.search(r"(\d+ of \d+ changes in flight)", out)
     if room:
         return "repository", f"waiting for room in the repository ({room.group(1)})"
-    return kind, f"waiting on the landing queue ({out or err or 'lease check failed'})"
+    return fallback_kind, f"waiting on the landing queue ({out or err or 'lease check failed'})"
 
 
 def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
@@ -1566,7 +1579,7 @@ def holding_blocks(restaurant):
     return {ident: held for ident, _, held in recheck_blocks(restaurant, inputs) if held}
 
 
-def overlap(first, second):
+def paths_overlap(first, second):
     return any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in first for b in second)
 
 
@@ -1599,23 +1612,23 @@ def waiting_ticket(row):
     return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"])
 
 
-def plan(tickets, running, cap, level, answers, now):
-    allowed = () if level == "off" else PRIORITIES[:PRIORITIES.index(level) + 1]
+def plan(tickets, running, cap, level, refusals, now):
+    allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
     started = {}
     standings = []
-    for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES.index(ticket.priority), ticket.filed,
+    for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
                                                      int(ticket.id[1:]) if ticket.id[1:].isdigit() else 0)):
         low = ticket.priority == "low"
-        shared = [ident for ident, paths in started.items() if overlap(ticket.paths, paths)]
+        shared = [ident for ident, paths in started.items() if paths_overlap(ticket.paths, paths)]
         kind, why = "start", ""
         if ticket.decision:
             kind = "decision"
         elif not ticket.paths:
             kind = "unknown"
-        elif ticket.id in answers:
-            kind, why = "blocked", answers[ticket.id]
+        elif ticket.id in refusals:
+            kind, why = "blocked", refusals[ticket.id]
         elif low and len(shared) == 1 and priorities[shared[0]] != "low" and paths_inside(ticket.paths, started[shared[0]]):
             kind, why = "rides", shared[0]
         elif shared:
@@ -1633,9 +1646,9 @@ def plan(tickets, running, cap, level, answers, now):
     return standings
 
 
-def lease_answers(meta, tickets, next_dish):
+def lease_refusals(meta, tickets, next_dish):
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
-    asked, answers = {}, {}
+    asked, refusals = {}, {}
     for ticket in tickets:
         if ticket.decision or not ticket.paths:
             continue
@@ -1643,8 +1656,8 @@ def lease_answers(meta, tickets, next_dish):
             asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
                                               with_fragment(",".join(ticket.paths), f"{prefix}/{next_dish.lower()}"))
         if asked[ticket.paths]:
-            answers[ticket.id] = asked[ticket.paths][1]
-    return answers
+            refusals[ticket.id] = asked[ticket.paths][1]
+    return refusals
 
 
 def age(delta):
@@ -1662,12 +1675,12 @@ def startable_lines(standings, meta, running, now):
         return "\n".join([*lines, "no waiting tickets"])
     kinds = [standing.kind for standing in standings]
     lines.append(", ".join([f"waiting tickets: {len(standings)}",
-                            *(f"{label}: {kinds.count(kind)}" for kind, (label, _) in STANDINGS.items() if kind in kinds)]))
+                            *(f"{text.count_label}: {kinds.count(kind)}" for kind, text in STANDINGS.items() if kind in kinds)]))
     for standing in standings:
         ticket = standing.ticket
         flag = " (over a week)" if standing.overdue else ""
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
-        words = STANDINGS[standing.kind][1].format(why=standing.why)
+        words = STANDINGS[standing.kind].line_words.format(why=standing.why)
         lines.append(f"{ticket.id} {ticket.priority}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
             lines.append(f"  {ticket.summary}")
@@ -1679,9 +1692,9 @@ def startable(restaurant):
         meta = restaurant.meta
         tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
-    answers = lease_answers(meta, tickets, next_dish)
+    refusals = lease_refusals(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
-    return startable_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), answers, moment), meta, running, moment)
+    return startable_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), refusals, moment), meta, running, moment)
 
 
 def ticket_lines(restaurant, state, held):
@@ -2599,7 +2612,7 @@ def parser():
                    help="with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store "
                         "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
                         "do not count")
-    a.add_argument("--priority", choices=PRIORITIES,
+    a.add_argument("--priority", choices=PRIORITIES_BY_RANK,
                    help="missing reads by source: upstream is urgent, report is low, every other source is normal")
     a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
     a.add_argument("--decision", action="store_true",
@@ -2609,7 +2622,7 @@ def parser():
     a = t.add_parser("set")
     a.add_argument("id")
     a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"])
-    a.add_argument("--priority", choices=PRIORITIES)
+    a.add_argument("--priority", choices=PRIORITIES_BY_RANK)
     a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
     a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
                    help="mark or unmark the ticket as one that asks the owner to decide")
