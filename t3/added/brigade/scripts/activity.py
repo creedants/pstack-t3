@@ -39,11 +39,11 @@ Any other path, and a path with no mark that closes it, is private text to the e
 The filter removes a word for no other reason.
 The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
 It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.
-The name of the request that started a delegated task reaches a page only as separate words in a label.
+A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
 The filter looks for that name in other text only when it is a work item's task value and does not read as ordinary words.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
-Work items that print the same id, summary, state, and link count once.
+Different work items can print the same id, summary, state, and link.
 """
 
 import argparse
@@ -963,7 +963,7 @@ def assign(store, t3):
 
 def words_of(name, store=None, units=()):
     """The parts of a request name between its hyphens, joined by spaces, with `verify` read as `review` and without each part HASH matches.
-    With a store, also without a leading `brigade`, the store's leading slug parts, and each part that is a work item's id in lower case, alone or before a letter and digits.
+    With a store, also without a leading `brigade`, the store's leading slug parts, and each part that is a work item's id in lower case, alone or before a letter from a to z and optional digits.
     """
     parts = name.split("-")
     if store and parts[0] == "brigade":
@@ -976,7 +976,7 @@ def words_of(name, store=None, units=()):
 def label_of(agent, store, unit, privacy):
     """`worker` or `earlier worker` for a thread the store records as one. For any other thread, the first of these that is not empty, and `sub-agent` or `agent` when all are:
     the written title, the request name's words without the parts the store explains, the role an `Act as` title names, and all the request name's words.
-    A request name of two or more parts reaches a label only through words_of. A title that holds its own row's request name of two or more parts is used only when it is a slug, which words_of reads, and its role is not used.
+    A row's own request name of two or more parts reaches its label only through words_of. A title that holds its own row's request name of two or more parts is used only when it is a slug, which words_of reads, and its role is not used.
     A written title that clean() would change is not used. The last name of a `/root/.../name` title and the role of an `Act as` title are read before that check, and each passes field().
     """
     if any(agent.thread == other.worker for other in store.units):

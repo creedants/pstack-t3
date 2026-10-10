@@ -1660,7 +1660,7 @@ class EmitTest(OutputCase):
             yield build.__name__ + " capped", MOD["cap_everything"](unfolded)
             yield build.__name__ + " shortened", MOD["shortened"](unfolded)
 
-    def test_every_string_of_the_data_element_is_one_clean_returned_and_the_rest_of_the_document_is_the_same_for_every_page(self):
+    def test_every_string_of_the_data_element_is_one_clean_returned_and_the_document_outside_it_and_the_checksum_is_the_same_for_every_page(self):
         shells = set()
         for name, drawn_page in self.pages():
             with self.subTest(name):
@@ -2170,7 +2170,7 @@ class PrivacyTest(OutputCase):
         self.assertEqual([value for value in self.planted(fixture) if privacy.clean(f"a {value} b") != "a b"], [])
         self.assertEqual([value for value in self.planted(fixture) if not self.found(value)], [])
 
-    def test_request_name_reaches_a_page_only_as_separate_words_whatever_the_title_is(self):
+    def test_request_name_of_two_or_more_parts_is_split_into_words_in_its_own_label_for_each_fixture_title(self):
         titles = ("", "Act as the audit sub-agent for this task.", "You are the auditor.", "x" * 61, REQUEST, f"see {REQUEST}", f"{REQUEST.upper()}: part 2", f"Read /pathmarker/{REQUEST}.md", "auditor")
         labels = ("audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "auditor")
         for number, (title, label) in enumerate(zip(titles, labels)):
@@ -2291,8 +2291,8 @@ class OrdinaryWordsTest(OutputCase):
 
 
 class SlashCommandTest(OutputCase):
-    """A one-segment word that starts with a slash is a slash command and stays in both forms. A path of two or more segments, a home path, a drive path, and a file: address go.
-    A one-segment path the run read goes too.
+    """The slash commands in these fixtures stay in both forms. The planted paths and file: addresses go.
+    The one-segment project root and store directory in these fixtures go too.
     """
 
     COMMANDS = ("/review", "/loop", "/code-review")
@@ -2713,7 +2713,7 @@ class BudgetTest(OutputCase):
         self.assertLessEqual(len(fixture.stdout_bytes(clock=fixture.now)), 16000)
 
     def long_values(self):
-        """A store name, a summary, a work item id, a pull request number, and a model that are each valid and thousands of characters long, and a title of 60 characters, the longest a label is read from."""
+        """A store name, a summary, a work item id, a pull request number, and a model that are each valid and thousands of characters long, and a written title of 60 characters."""
         fixture = one_running(self.fixture)
         fixture.meta["restaurant"] = "name " * 10000
         fixture.units[0].update(summary="word " * 10000, pr="https://git.example/o/r/pull/" + "7" * 20000)
