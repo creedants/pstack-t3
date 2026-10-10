@@ -1137,6 +1137,24 @@ os.execv(real, [real, *args])
         lease = self.land("lease", "claim", "--holder", holder, "--paths", path)
         return self.land("submit", "--holder", holder, "--branch", name, "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
 
+    def queue_entries(self, count):
+        """Queue E1 to E<count>, one file each: a.txt gets one, b.txt gets two, lib/x.py gets three."""
+        edits = [("a.txt", "one\n"), ("b.txt", "two\n"), ("lib/x.py", "three\n")]
+        for number, (path, text) in enumerate(edits[:count], 1):
+            self.assertEqual(self.queue_one(path=path, text=text, name=f"w{number}", holder=f"r/D{number}"), f"E{number}")
+
+    def on_origin(self, *args):
+        return sh("git", *args, cwd=self.base / "origin.git")
+
+    def origin_files(self, ref):
+        """What a.txt, b.txt, and lib/x.py hold at this ref on origin."""
+        return [self.on_origin("show", f"{ref}:{path}") for path in ("a.txt", "b.txt", "lib/x.py")]
+
+    def gh(self, *args):
+        """Run the fake gh the way a person at GitHub would."""
+        result = subprocess.run([os.environ["LAND_GH"], *args], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def base_land_script(self):
         """Pre-rename land.py. The fixture replaces git show, which fails in a shallow clone."""
         path = self.base / "land-3678d11.py"
@@ -2170,6 +2188,38 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused: https://github.com/o/r/pull/9 needs an approving review", out)
             calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
             self.assertNotIn("--auto", calls.split())
+
+    def test_merge_mode_builds_each_queued_entry_on_the_candidate_of_the_entry_ahead(self):
+        with self.fake_gh():
+            self.init(mode="merge", merge_method="squash")
+            self.queue_entries(3)
+            self.assertEqual(
+                self.land("land"),
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9, "
+                "E2 (r/D2) https://github.com/o/r/pull/10, E3 (r/D3) https://github.com/o/r/pull/11")
+            self.assertEqual(self.origin_files("landing/e1"), ["one", "b.txt", "lib/x.py"])
+            self.assertEqual(self.origin_files("landing/e2"), ["one", "two", "lib/x.py"])
+            self.assertEqual(self.origin_files("landing/e3"), ["one", "two", "three"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e1^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "landing/e1"))
+            self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "landing/e2"))
+            self.assertEqual(self.origin_log(), ["init"])
+            self.assertFalse((self.base / "merge-calls").exists())
+
+    def test_human_mode_builds_each_candidate_alone_on_trunk_and_lands_the_second_entry_before_the_first(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.queue_entries(2)
+            self.assertEqual(
+                self.land("land"),
+                "opened PRs for E1 (r/D1) https://github.com/o/r/pull/9, E2 (r/D2) https://github.com/o/r/pull/10")
+            self.assertEqual(self.origin_files("landing/e1"), ["one", "b.txt", "lib/x.py"])
+            self.assertEqual(self.origin_files("landing/e2"), ["a.txt", "two", "lib/x.py"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "main"))
+            self.gh("pr", "merge", "https://github.com/o/r/pull/10", "--squash")
+            self.assertEqual(self.land("land"), "landed E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "init"])
+            self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9")
 
     def test_init_in_merge_mode_picks_an_allowed_method(self):
         with self.fake_gh():

@@ -1153,31 +1153,49 @@ def gh(*args, cwd):
     return subprocess.run([os.environ.get("LAND_GH", "gh"), *args], cwd=cwd, capture_output=True, text=True)
 
 
-def land_human(store, integration, entry):
-    """Human mode: rebase onto trunk, check, push to a queue-owned branch, open its PR. Returns True when opened."""
-    contract = store.contract
-    git("fetch", contract["remote"], contract["trunk"], cwd=store.repo)
-    base = git("rev-parse", trunk_ref(contract), cwd=store.repo).stdout.strip()
-    integration.reset(base)
+Outcome = namedtuple("Outcome", "landed bounced opened adopted")
+
+
+def build(store, integration, entry, onto, trunk, out):
+    """Replay one entry on onto, check it, push landing/e<n>, store the row, and open its PR.
+
+    Returns the commit the next entry is built on. That is this entry's candidate, or onto when it has none.
+    The push comes before the row. A run killed between them leaves the entry queued, and the next run
+    builds it again. An empty replay settles as already in trunk only when onto holds trunk's tree. On any
+    other onto the entry is left as it is, because an entry that has not merged holds the change."""
+    contract, ident = store.contract, entry["id"]
+    integration.reset(onto)
     reason = integration.apply(entry)
     if not reason:
         reason = integration.check()
         reason = f"checks failed: {reason}" if reason else None
-    if reason == "already-in-trunk":
-        with store.tx() as db:
-            settle_landed(store, db, entry["id"], base, "already in trunk")
-        return False
+    if reason == "already-in-trunk" and not same_tree(store.repo, onto, trunk):
+        return onto
     if reason:
         with store.tx() as db:
-            settle_bounced(store, db, entry["id"], reason)
-        return False
+            if reason == "already-in-trunk":
+                settle_landed(store, db, ident, trunk, "already in trunk")
+            else:
+                settle_bounced(store, db, ident, reason)
+        out.bounced.append(ident)
+        return onto
     head = integration.head()
     push = git_push("--force", contract["remote"], f"{head}:refs/heads/{human_branch(entry)}", cwd=store.repo, check=False)
     if push.returncode != 0:
         raise Infrastructure("push failed: " + git_reason(push.stderr))
     with store.tx() as db:
-        store.set_entry(db, entry["id"], "awaiting-merge", candidate=head, pr="", note="")
-    return ensure_pr(store, {**dict(entry), "candidate": head})
+        store.set_entry(db, ident, "awaiting-merge", candidate=head, onto=onto, pr="", note="")
+    ensure_pr(store, {**dict(entry), "candidate": head})
+    out.opened.append(ident)
+    return onto if entry_row(store, ident)["state"] == "bounced" else head
+
+
+def build_line(store, integration, out):
+    """Merge mode: build the unheld queued entries in id order, each on the tip of the line."""
+    trunk = fetch_trunk(store)
+    tip = line_of(store, trunk).tip
+    for entry in unheld_queued(store):
+        tip = build(store, integration, entry, tip, trunk, out)
 
 
 def human_branch(entry):
@@ -1636,8 +1654,8 @@ def take_pr(store, entry, landed, bounced):
     return False
 
 
-def poll_human(store):
-    landed, bounced, adopted, opened = [], [], [], []
+def poll_human(store, out):
+    landed, bounced, adopted, opened = out.landed, out.bounced, out.adopted, out.opened
     for entry in store.entries("awaiting-merge"):
         if not entry["pr"]:
             outcome = ensure_pr(store, entry)
@@ -1676,7 +1694,6 @@ def poll_human(store):
             if entry["state"] != "awaiting-merge" or attempt + 1 == reads:
                 break
             time.sleep(0.5)
-    return landed, bounced, adopted, opened
 
 
 def second_of(row):
@@ -1810,41 +1827,34 @@ def land(store):
             return f"queue paused: {store.contract['paused']}"
         reconcile(store)
         integration = Integration(store)
-        landed, bounced, opened, adopted = [], [], [], []
-        if store.contract["mode"] in ("human", "merge"):
-            git("fetch", store.contract["remote"], store.contract["trunk"], cwd=store.repo)
-            if rewound(store, git("rev-parse", trunk_ref(store.contract), cwd=store.repo).stdout.strip()):
-                return report(store, [], [], [])
-            if store.contract["mode"] == "merge":
+        out = Outcome([], [], [], [])
+        mode = store.contract["mode"]
+        if mode in ("human", "merge"):
+            if rewound(store, fetch_trunk(store)):
+                return report(store, out)
+            if mode == "merge":
                 advance_drain(store)
-            polled_landed, polled_bounced, polled_adopted, polled_opened = poll_human(store)
-            landed.extend(polled_landed)
-            bounced.extend(polled_bounced)
-            adopted.extend(polled_adopted)
-            opened.extend(polled_opened)
-            for entry in unheld_queued(store):
-                (opened if land_human(store, integration, entry) else bounced).append(entry["id"])
-            if store.contract["mode"] == "merge" and opened:
-                more_landed, more_bounced, more_adopted, more_opened = poll_human(store)
-                landed.extend(more_landed)
-                bounced.extend(more_bounced)
-                adopted.extend(more_adopted)
-                opened.extend(more_opened)
-            states = {row["id"]: row["state"] for row in store.db.execute("SELECT id, state FROM entry")}
-            bounced += [ident for ident in opened if states[ident] == "bounced" and ident not in bounced]
-            opened = [ident for ident in opened if states[ident] == "awaiting-merge"]
-            return report(store, landed, bounced, opened, adopted)
+            poll_human(store, out)
+            if mode == "merge":
+                build_line(store, integration, out)
+                if out.opened:
+                    poll_human(store, out)
+            else:
+                for entry in unheld_queued(store):
+                    trunk = fetch_trunk(store)
+                    build(store, integration, entry, trunk, trunk, out)
+            return report(store, out)
         single, rounds = False, 0
         while (queued := unheld_queued(store)) and not store.contract.get("paused"):
             rounds += 1
             if rounds > 4 * len(queued) + 4:
                 break
             size = 1 if single else max(1, int(store.contract.get("batch") or 1))
-            done, out, requeued, _ = attempt(store, integration, queued[:size])
-            landed += done
-            bounced += out
+            done, bounced, requeued, _ = attempt(store, integration, queued[:size])
+            out.landed.extend(done)
+            out.bounced.extend(bounced)
             single = bool(requeued)
-        return report(store, landed, bounced, opened)
+        return report(store, out)
     except Infrastructure as problem:
         with store.tx() as db:
             for entry in db.execute("SELECT id FROM entry WHERE state = 'landing'").fetchall():
@@ -1857,13 +1867,17 @@ def land(store):
                 pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
             else:
                 pause(store, f"{problem}. Fix it, then run land.py resume")
-        return report(store, [], [], [])
+        return report(store, Outcome([], [], [], []))
     finally:
         handle.close()
 
 
-def report(store, landed, bounced, opened, adopted=()):
+def report(store, out):
+    """The lines of one land run. An entry this run opened prints as opened only while it still awaits its merge."""
     rows = {row["id"]: row for row in store.db.execute("SELECT * FROM entry")}
+    landed, adopted = out.landed, out.adopted
+    bounced = out.bounced + [i for i in out.opened if rows[i]["state"] == "bounced" and i not in out.bounced]
+    opened = [i for i in out.opened if rows[i]["state"] == "awaiting-merge"]
     lines = []
     if landed:
         parts = []
