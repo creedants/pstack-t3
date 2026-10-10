@@ -482,15 +482,32 @@ def plan_uninstall(view, root, selected, holds):
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
 
+def new_file(directory):
+    """Create a file in `directory` under a name no entry has. Return its descriptor, open for writing, and its path.
+
+    The path is os.path.join(directory, name) with `directory` as given. The name is "tmp" and eight hexadecimal digits.
+    tempfile.mkstemp is not used because it passes its directory through os.path.abspath. Like mkstemp, this passes
+    mode 0o600 to os.open. After 100 names that are taken it raises FileExistsError.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    for _attempt in range(100):
+        temporary = os.path.join(directory, f"tmp{os.urandom(4).hex()}")
+        try:
+            return os.open(temporary, flags, 0o600), temporary
+        except FileExistsError:
+            continue
+    raise FileExistsError(errno.EEXIST, "no unused temporary name", os.fspath(directory))
+
+
 def atomic_write(directory, name, text):
     directory.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=directory)
+    fd, temporary = new_file(directory)
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(text)
         os.replace(temporary, directory / name)
     except BaseException:
-        if os.path.exists(temporary):
+        with suppress(OSError):
             os.unlink(temporary)
         raise
 
@@ -730,6 +747,15 @@ def holders(parent):
             yield name, directory
 
 
+def made_directory(parent, prefix):
+    """Make a new directory in `parent` and return os.path.join(parent, <its name>), with `parent` as given.
+
+    tempfile.mkdtemp makes it under `parent` as given on Python 3.10 and 3.12, and from 3.12 on returns the
+    os.path.abspath spelling. Only the last name of what it returns is used.
+    """
+    return os.path.join(parent, os.path.basename(tempfile.mkdtemp(prefix=prefix, dir=parent)))
+
+
 class Stranded(OSError):
     """An OSError that left entries in a holder. Its text is the original error plus where they are kept."""
 
@@ -755,7 +781,7 @@ class Holder:
         parent, name = os.path.split(home)
         # A directory this call just created holds nothing yet, so a move into it cannot land on an existing entry.
         # mkdtemp ends the name with characters from [a-z0-9_], so no HOLDER name starts with SCRAP.
-        self.directory = tempfile.mkdtemp(prefix=prefix, dir=parent)
+        self.directory = made_directory(parent, prefix)
         self.home = home
         self.aside = os.path.join(self.directory, name)
 
@@ -1201,7 +1227,7 @@ def execute(plan, state, root):
                 if stamp is None:
                     backups = Path(state) / "backups"
                     backups.mkdir(parents=True, exist_ok=True)
-                    stamp = tempfile.mkdtemp(prefix=f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-", dir=backups)
+                    stamp = made_directory(backups, f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-")
                 backup = os.path.join(stamp, step.place)
                 step = replace(step, backup=backup, add_backups=({"harnesses": list(step.harnesses), "original": step.path, "backup": backup},))
             # A backup row that holds this checkout's entry needs the claim to stay owned after it is restored.
