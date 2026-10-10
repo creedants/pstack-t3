@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `next`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -58,7 +58,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
-| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority next lists as startable without asking, or off; missing reads as normal |
+| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 
 ## brigade.py ticket
 
@@ -87,7 +87,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads by source: upstream is urgent, report is low, every other source is normal |
 | `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
-| `--decision` |  |  |  | the ticket asks the owner to decide; next never lists it as startable |
+| `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -197,10 +197,10 @@ brigade.py [flags] watch
 
 liveness: which dishes have reports, are running, or are over their timebox
 
-## brigade.py next
+## brigade.py startable
 
 ```text
-brigade.py [flags] next
+brigade.py [flags] startable
 ```
 
 waiting tickets in the order they should start, each with why it can or cannot start now; it starts nothing

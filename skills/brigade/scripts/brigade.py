@@ -73,7 +73,7 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "next")
+WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "startable")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -1653,7 +1653,7 @@ def age(delta):
     return f"{seconds // 60}m"
 
 
-def next_lines(standings, meta, running, now):
+def startable_lines(standings, meta, running, now):
     lines = [workers_line(meta, running)]
     if not standings:
         return "\n".join([*lines, "no waiting tickets"])
@@ -1671,14 +1671,14 @@ def next_lines(standings, meta, running, now):
     return "\n".join(lines)
 
 
-def next_up(restaurant):
+def startable(restaurant):
     with restaurant.checked():
         meta = restaurant.meta
         tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
     answers = lease_answers(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
-    return next_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), answers, moment), meta, running, moment)
+    return startable_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), answers, moment), meta, running, moment)
 
 
 def ticket_lines(restaurant, state, held):
@@ -2578,7 +2578,7 @@ def parser():
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
     p.add_argument("--autofire", choices=AUTOFIRE,
-                   help="the lowest ticket priority next lists as startable without asking, or off; missing reads as normal")
+                   help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
     p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -2599,7 +2599,8 @@ def parser():
     a.add_argument("--priority", choices=PRIORITIES,
                    help="missing reads by source: upstream is urgent, report is low, every other source is normal")
     a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
-    a.add_argument("--decision", action="store_true", help="the ticket asks the owner to decide; next never lists it as startable")
+    a.add_argument("--decision", action="store_true",
+                   help="the ticket asks the owner to decide; the startable command never lists it as startable")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -2639,8 +2640,8 @@ def parser():
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
-    sub.add_parser("next", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
-                                "it starts nothing")
+    sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
+                                     "it starts nothing")
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
     p.add_argument("id")
@@ -2879,8 +2880,8 @@ def run(argv):
                     args.paths, args.reason)
     if args.command == "watch":
         return watch(restaurant)
-    if args.command == "next":
-        return next_up(restaurant)
+    if args.command == "startable":
+        return startable(restaurant)
     if args.command == "ticket" and args.action == "list":
         held = holding_blocks(restaurant)
         with restaurant.checked():
