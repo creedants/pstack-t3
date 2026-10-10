@@ -632,7 +632,10 @@ def rename_noreplace(source, target):
 
 
 def place(source, path):
-    """Move the entry at `source` to `path` only while `path` is still empty. Return 0, or the errno that stopped it."""
+    """Move the entry at `source` to `path` only while `path` is still empty. Return 0, or the errno that stopped it.
+
+    `source` is a name only the caller uses, because the link and the unlink each look it up again.
+    """
     try:
         # A hard link of the link itself fails on a taken path, where a rename would replace it.
         os.link(source, path, follow_symlinks=False)
@@ -689,8 +692,8 @@ def place_copy(source, path):
             os.rmdir(holder)
 
 
-def remove_link(path, root):
-    """Move the link aside, then delete it only if it is this checkout's. Return why it was kept."""
+def remove_link(path, root, original, noun):
+    """Move the link at `path` aside, then delete it only if it is this checkout's link for `original`. Return why it was kept."""
     parent, name = os.path.split(path)
     # A directory this call just created holds nothing yet, so the move cannot land on an existing entry.
     holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
@@ -702,18 +705,99 @@ def remove_link(path, root):
         with suppress(OSError):
             os.rmdir(holder)
         raise
-    if proves(root, aside, path):
+    if proves(root, aside, original):
         os.unlink(aside)
         reason = None
     else:
         reason = put_back(aside, path)
         if reason is not None:
-            return f"the link no longer matches the recorded checkout and {reason}; it is kept at {aside}"
-        reason = "the link no longer matches the recorded checkout"
+            return f"the {noun} no longer matches the recorded checkout and {reason}; it is kept at {aside}"
+        reason = f"the {noun} no longer matches the recorded checkout"
     # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
     with suppress(OSError):
         os.rmdir(holder)
     return reason
+
+
+CHANGED = "the backup is no longer the entry uninstall read"
+
+
+def same_entry(path, fd):
+    """Whether `path` names the entry `fd` holds open. An inode in use keeps its number, so no other entry can show it."""
+    return identity(os.lstat(path))[:2] == identity(os.fstat(fd))[:2]
+
+
+def link_held(fd, path):
+    """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it."""
+    if not sys.platform.startswith("linux"):
+        return errno.ENOSYS
+    try:
+        # The descriptor is the entry itself, whatever its old path names now.
+        # `src_dir_fd` makes Python call linkat, which follows the /proc link to that entry. Plain link would link the /proc entry itself and fail as a crossing.
+        # The source is an absolute path, so the descriptor passed there is never used as a directory.
+        os.link(f"/proc/self/fd/{fd}", path, src_dir_fd=fd, follow_symlinks=True)
+    except (OSError, NotImplementedError) as error:
+        return getattr(error, "errno", None) or errno.ENOSYS
+    return 0
+
+
+def drop_backup(backup, aside, path, fd):
+    """Delete the backup that is now at `path`, only if `backup` still names the entry `fd` holds. Any other entry stays and is reported."""
+    try:
+        # The rename takes whatever the path names now into a directory only this call uses, so the check and the delete see one entry.
+        os.rename(backup, aside)
+    except FileNotFoundError:
+        return
+    if same_entry(aside, fd):
+        os.unlink(aside)
+        return
+    reason = put_back(aside, backup)
+    if reason is None:
+        print(f"kept {backup}: it is not the backup uninstall restored to {path}")
+    else:
+        print(f"kept {aside}: it took the place of the backup uninstall restored to {path} and {reason}")
+
+
+def place_proven(aside, path):
+    """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return why it stayed."""
+    try:
+        code = place(aside, path)
+        if code != errno.EXDEV:
+            return refusal(path, code)
+        # The backup is on another filesystem. A copy beside the path takes the same put-back, and the proven entry goes once the copy is in place.
+        code = place_copy(aside, path)
+    except OSError as error:
+        # A copy that failed left nothing at the path, so the entry goes back like one that was refused.
+        return str(error)
+    if code == 0:
+        discard(aside)
+    return refusal(path, code)
+
+
+def restore_aside(backup, aside, path, fd):
+    """Restore through the private name `aside` where the descriptor cannot be linked. Return why the backup was kept."""
+    try:
+        # A second name leaves the backup where it is until the entry is proven.
+        os.link(backup, aside, follow_symlinks=False)
+        named = True
+    except (OSError, NotImplementedError):
+        # A directory cannot be hard linked. The no-replace rename that moves it here is the one that can put it back.
+        code = rename_noreplace(backup, aside)
+        if code != 0:
+            return CHANGED if code == errno.ENOENT else refusal(path, code)
+        named = False
+    reason = place_proven(aside, path) if same_entry(aside, fd) else CHANGED
+    if named:
+        # Only the second name is left here. The backup still has its own.
+        if os.path.lexists(aside):
+            os.unlink(aside)
+        if reason is None:
+            drop_backup(backup, aside, path, fd)
+        return reason
+    if reason is None:
+        return None
+    stuck = put_back(aside, backup)
+    return reason if stuck is None else f"{reason} and {stuck}; it is kept at {aside}"
 
 
 def restore_backup(backup, path, held):
@@ -727,15 +811,28 @@ def restore_backup(backup, path, held):
     # ext4 hands a freed inode number, and with small inodes its whole-second change time, to the next new entry, so equal numbers alone prove nothing.
     # The held descriptor keeps the planned inode in use, so an entry made since has other numbers. The change time also catches one changed in place.
     if now is None or now[:2] != identity(os.fstat(held.fd))[:2] or now != held.entry:
-        return "the backup is no longer the entry uninstall read"
-    # Another installer can take the path after the plan saw it empty; place refuses it instead of replacing it.
-    code = place(backup, path)
-    if code == errno.EXDEV:
-        # The backup is on another filesystem. A copy beside the path takes the same put-back, and the backup goes once the copy is in place.
-        code = place_copy(backup, path)
+        return CHANGED
+    # The backup's path can name another entry from here on, so every later step acts on the held entry or on one first moved where only this call looks.
+    # Another installer can take `path` after the plan saw it empty; each step refuses it instead of replacing it.
+    code = link_held(held.fd, path)
+    if code == errno.EEXIST:
+        return refusal(path, code)
+    parent, name = os.path.split(backup)
+    try:
+        holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+    except FileNotFoundError:
+        # The backup left with its directory, so no name is left to clean up or to restore from.
+        return None if code == 0 else CHANGED
+    aside = os.path.join(holder, name)
+    try:
         if code == 0:
-            discard(backup)
-    return refusal(path, code)
+            drop_backup(backup, aside, path, held.fd)
+            return None
+        return restore_aside(backup, aside, path, held.fd)
+    finally:
+        # rmdir refuses a directory that is not empty, so an entry kept in it stays.
+        with suppress(OSError):
+            os.rmdir(holder)
 
 
 def buried(state, root, path):
@@ -760,9 +857,9 @@ def act(step, root):
         os.makedirs(os.path.dirname(step.backup), exist_ok=True)
         shutil.move(step.path, step.backup)
     elif step.kind == "unlink":
-        return remove_link(step.path, root)
+        return remove_link(step.path, root, step.path, "link")
     elif step.kind == "withdraw":
-        os.unlink(step.backup)
+        return remove_link(step.backup, root, step.path, "backup")
     elif step.kind == "restore":
         os.makedirs(os.path.dirname(step.path), exist_ok=True)
         return restore_backup(step.backup, step.path, step.held)

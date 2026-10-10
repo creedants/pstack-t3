@@ -670,7 +670,10 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
 
 
 def without_noreplace(hooked, link_error, rename):
-    """Hook code that wraps the no-replace rename in `hooked` and takes it or hard links away, as `put_back_race` describes."""
+    """Hook code that wraps the no-replace rename in `hooked` and takes it or hard links away, as `put_back_race` describes.
+
+    A platform without that rename has no /proc either, so a hard link from a held descriptor finds nothing there.
+    """
     return (
         "noreplace = getattr(module, 'rename_noreplace', None)\n"
         "def record():\n"
@@ -687,6 +690,13 @@ def without_noreplace(hooked, link_error, rename):
         "    def denied(*args, **kwargs):\n"
         "        raise OSError(errno.EPERM, 'hard links prohibited')\n"
         "    os.link = denied\n"
+        f"if {rename is not None}:\n"
+        "    linking = os.link\n"
+        "    def no_proc(source, *args, **kwargs):\n"
+        "        if str(source).startswith('/proc/'):\n"
+        "            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), source)\n"
+        "        return linking(source, *args, **kwargs)\n"
+        "    os.link = no_proc\n"
         f"if {rename!r} == 'platform':\n"
         "    sys.platform = 'darwin'\n"
         f"elif {rename!r} == 'symbol':\n"
@@ -712,8 +722,9 @@ def restore_race(path, occupy, link_error=False, rename=None):
         "def filling(original, hard_link=False):\n"
         "    def call(source, destination, *args, **kwargs):\n"
         "        global filled\n"
-        "        # A directory cannot be hard linked, so its occupant arrives at the rename that follows.\n"
-        "        directory = hard_link and os.path.isdir(source) and not os.path.islink(source)\n"
+        "        entry = os.readlink(source) if str(source).startswith('/proc/self/fd/') else source\n"
+        "        # A directory cannot be hard linked, so its occupant arrives at the rename that follows, when there is one.\n"
+        f"        directory = hard_link and {rename is None} and os.path.isdir(entry) and not os.path.islink(entry)\n"
         "        if not filled and str(destination) == target and not directory:\n"
         "            filled = True\n"
         "            if occupy == 'file':\n"
@@ -729,15 +740,18 @@ def restore_race(path, occupy, link_error=False, rename=None):
         "        return original(source, destination, *args, **kwargs)\n"
         "    return call\n"
         "shutil.move = filling(shutil.move)\n"
-        "os.link = filling(os.link, hard_link=True)\n"
         "os.rename = filling(os.rename)\n"
         + without_noreplace(hooked="filling", link_error=link_error, rename=rename)
+        # The occupant also arrives at a hard link that is then refused.
+        + "os.link = filling(os.link, hard_link=True)\n"
         + "atexit.register(lambda: Path(os.getcwd(), 'filled').write_text(str(filled)))\n"
     )
 
 
 def cross_device(backups, path, occupy=None, rename=None):
     """Hook code that fails every move out of `backups` the way a move onto another filesystem fails.
+
+    A move that stays inside `backups` works. A hard link from a held descriptor counts as a move of the entry it holds.
 
     `occupy` is a "file" or a "directory" that fills `path` just before the first call that would write
     anything else onto it. `rename` takes the no-replace rename away as in `put_back_race`. At exit the
@@ -753,7 +767,8 @@ def cross_device(backups, path, occupy=None, rename=None):
         "def crossing(original, raises=False):\n"
         "    def call(source, destination, *args, **kwargs):\n"
         "        global crossed, filled\n"
-        "        if str(source).startswith(backups):\n"
+        "        entry = os.readlink(source) if str(source).startswith('/proc/self/fd/') else str(source)\n"
+        "        if entry.startswith(backups) and not str(destination).startswith(backups):\n"
         "            crossed += 1\n"
         "            if raises:\n"
         "                raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))\n"
@@ -783,6 +798,77 @@ def crossings(home):
 def noreplace_result(home):
     """What the installer's no-replace rename returned in a `put_back_race` run: 0 when it renames, else the errno."""
     return int((home / "noreplace-result").read_text())
+
+
+def backup_race(backup, path, events, foreign="file", proc=True, links=True):
+    """Hook code that changes what the backup's path names in the middle of a restore.
+
+    Each event is `(call, role, when, action)`. `call` is "link", "rename", or "noreplace". `role` is "from" for
+    the first such call that reads the backup's path, or "onto" for the first that writes `path`. `when` is
+    "before" the call, or "after" it once it worked. The "swap" action renames the backup to a `.saved` name
+    beside it and puts a `foreign` "file" or "directory" at its path. "squat" puts another file at the backup's
+    path. "vanish" deletes the backup's directory. "occupy" puts a file at `path`. Without `proc` a hard link from
+    a held descriptor finds nothing, and without `links` every hard link is refused. At exit the run records how
+    many events fired, read back with `fired`.
+    """
+    return (
+        "import atexit, errno, shutil\n"
+        f"backup, target, saved = {str(backup)!r}, {str(path)!r}, {str(backup) + '.saved'!r}\n"
+        f"events = {list(events)!r}\n"
+        "fired = []\n"
+        "renaming = os.rename\n"
+        "def change(action):\n"
+        "    if action == 'swap':\n"
+        "        if os.path.lexists(backup):\n"
+        "            renaming(backup, saved)\n"
+        f"        if {foreign!r} == 'directory':\n"
+        "            os.mkdir(backup)\n"
+        "            Path(backup, 'precious').write_bytes(b'foreign directory\\x00')\n"
+        "        else:\n"
+        "            Path(backup).write_bytes(b'foreign\\x00\\xff')\n"
+        "    elif action == 'squat':\n"
+        "        Path(backup).write_bytes(b'squatter\\x00')\n"
+        "    elif action == 'vanish':\n"
+        "        shutil.rmtree(os.path.dirname(backup))\n"
+        "    else:\n"
+        "        Path(target).write_bytes(b'occupant\\x00\\xff')\n"
+        "def racing(name, original):\n"
+        "    def call(source, destination, *args, **kwargs):\n"
+        "        due = [\n"
+        "            event for event in events\n"
+        "            if event not in fired and event[0] == name\n"
+        "            and (str(source) == backup if event[1] == 'from' else str(destination) == target)\n"
+        "        ]\n"
+        "        for event in due:\n"
+        "            if event[2] == 'before':\n"
+        "                fired.append(event)\n"
+        "                change(event[3])\n"
+        "        result = original(source, destination, *args, **kwargs)\n"
+        "        # A hard link and a rename return nothing. The no-replace rename returns 0 when it worked.\n"
+        "        if not result:\n"
+        "            for event in due:\n"
+        "                if event not in fired:\n"
+        "                    fired.append(event)\n"
+        "                    change(event[3])\n"
+        "        return result\n"
+        "    return call\n"
+        "linking = os.link\n"
+        "def limited(source, *args, **kwargs):\n"
+        f"    if not {links!r}:\n"
+        "        raise OSError(errno.EPERM, 'hard links prohibited')\n"
+        f"    if not {proc!r} and str(source).startswith('/proc/'):\n"
+        "        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), source)\n"
+        "    return linking(source, *args, **kwargs)\n"
+        "os.link = racing('link', limited)\n"
+        "os.rename = racing('rename', renaming)\n"
+        "module.rename_noreplace = racing('noreplace', module.rename_noreplace)\n"
+        "atexit.register(lambda: Path(os.getcwd(), 'fired').write_text(str(len(fired))))\n"
+    )
+
+
+def fired(home):
+    """How many events of a `backup_race` run fired."""
+    return int((home / "fired").read_text())
 
 
 class OwnershipTest(unittest.TestCase):
@@ -2146,9 +2232,9 @@ class OwnershipTest(unittest.TestCase):
             self.assertFalse(path.is_symlink())
             self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
 
-    def assert_restore_kept(self, raced, swarm, rows, kind, reason):
+    def assert_restore_kept(self, raced, swarm, rows, kind, reason, tried=True):
         """The raced restore wrote nothing at swarm and kept the backup and its row where they were."""
-        self.assertEqual((self.home / "filled").read_text(), "True")
+        self.assertEqual((self.home / "filled").read_text(), str(tried))
         backup = Path(rows[0]["backup"])
         self.ok(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
         self.assert_displaced(backup, kind)
@@ -2162,6 +2248,14 @@ class OwnershipTest(unittest.TestCase):
         if (kind != "directory" and not link_error) or code == 0:
             return f"{swarm} was taken again"
         return f"{swarm} cannot be refilled without risking an overwrite ({os.strerror(code)})"
+
+    def restore_tried(self, kind, link_error, rename):
+        """Whether the restore reached a call that writes swarm, which is when the occupant arrives.
+
+        A platform with no safe rename has no held descriptor to link either. It gives up on a directory, and on a
+        file it cannot hard link, before any such call.
+        """
+        return not (rename == "platform" and (kind == "directory" or link_error))
 
     def test_a_restore_never_replaces_an_entry_that_took_the_path(self):
         cases = (
@@ -2179,8 +2273,11 @@ class OwnershipTest(unittest.TestCase):
                     a, swarm, rows = self.displaced_by(kind)
                     raced = uninstall_hooked(self.home, a, restore_race(swarm, occupy, link_error=link_error, rename=rename))
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
-                    if occupy == "file":
+                    tried = self.restore_tried(kind, link_error, rename)
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
+                    if not tried:
+                        self.assertFalse(os.path.lexists(swarm))
+                    elif occupy == "file":
                         self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
                         swarm.unlink()
                     elif occupy == "link":
@@ -2207,7 +2304,11 @@ class OwnershipTest(unittest.TestCase):
                     hook = restore_race(swarm, install_b, link_error=link_error, rename=rename)
                     raced = uninstall_hooked(self.home, a, hook)
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
+                    tried = self.restore_tried(kind, link_error, rename)
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
+                    if not tried:
+                        self.assertFalse(os.path.lexists(swarm))
+                        continue
                     self.assertEqual(snapshot(b / "skills"), tree)
                     self.assert_grok_text(b)
                     self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
@@ -2323,10 +2424,11 @@ class OwnershipTest(unittest.TestCase):
         self.assert_displaced(swarm, "file")
         self.assert_empty_records()
 
-    def cross_device_uninstall(self, swarm, a, occupy=None, rename=None):
+    def cross_device_uninstall(self, swarm, a, occupy=None, rename=None, crossed=True):
         hook = cross_device(state_dir(self.home) / "backups", swarm, occupy=occupy, rename=rename)
         raced = uninstall_hooked(self.home, a, hook)
-        self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+        if crossed:
+            self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
         return raced
 
     def assert_no_copy_left(self, swarm):
@@ -2399,7 +2501,9 @@ class OwnershipTest(unittest.TestCase):
                 self.use_fresh()
                 a, swarm, rows = self.displaced_by("directory")
                 backup = Path(rows[0]["backup"])
-                raced = self.cross_device_uninstall(swarm, a, rename=rename)
+                # With no safe rename the directory never leaves its place, so no move is tried.
+                raced = self.cross_device_uninstall(swarm, a, rename=rename, crossed=False)
+                self.assertEqual(crossings(self.home), 0)
                 code = self.noreplace(rename)
                 self.ok(
                     raced,
@@ -2410,3 +2514,217 @@ class OwnershipTest(unittest.TestCase):
                 self.assert_displaced(backup, "directory")
                 self.assertEqual(read_legacy(self.home)["backups"], rows)
                 self.assert_no_copy_left(swarm)
+
+    def backup_race_uninstall(self, a, swarm, backup, *events, crossing=False, **options):
+        """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem."""
+        hook = backup_race(backup, swarm, events, **options)
+        if crossing:
+            hook = cross_device(state_dir(self.home) / "backups", swarm) + hook
+        raced = uninstall_hooked(self.home, a, hook)
+        self.assertEqual(fired(self.home), len(events), raced.stdout + raced.stderr)
+        if crossing:
+            self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+            self.assert_no_copy_left(swarm)
+        return raced
+
+    def assert_foreign(self, path, foreign="file"):
+        if foreign == "directory":
+            self.assertEqual(os.listdir(path), ["precious"])
+            self.assertEqual((path / "precious").read_bytes(), b"foreign directory\x00")
+        else:
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.read_bytes(), b"foreign\x00\xff")
+
+    def assert_swap_refused(self, raced, swarm, rows, kind, foreign="file"):
+        """The restore moved nothing. The foreign entry is at the backup's path, the backup is where the swap saved it, and the row stays."""
+        backup = Path(rows[0]["backup"])
+        self.ok(
+            raced,
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: the backup is no longer the entry uninstall read",
+        )
+        self.assertFalse(os.path.lexists(swarm))
+        self.assert_foreign(backup, foreign)
+        self.assert_displaced(Path(f"{backup}.saved"), kind)
+        self.assertEqual(sorted(os.listdir(backup.parent)), [backup.name, f"{backup.name}.saved"])
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+
+    def assert_swap_survived(self, raced, a, swarm, rows, kind, foreign="file", saved=True, noted=True):
+        """The restore put the backup uninstall read at swarm. The foreign entry is still at the backup's path, and the row is gone."""
+        backup = Path(rows[0]["backup"])
+        self.ok(raced, "removed 3 links, restored 1 entries")
+        note = f"kept {backup}: it is not the backup uninstall restored to {swarm}"
+        self.assertEqual(note in raced.stdout.splitlines(), noted, raced.stdout)
+        self.assert_displaced(swarm, kind)
+        self.assert_foreign(backup, foreign)
+        names = [backup.name]
+        if saved:
+            self.assert_displaced(Path(f"{backup}.saved"), kind)
+            names.append(f"{backup.name}.saved")
+        self.assertEqual(sorted(os.listdir(backup.parent)), names)
+        self.assert_empty_records()
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.assert_displaced(swarm, kind)
+        self.assert_foreign(backup, foreign)
+
+    def test_an_entry_that_takes_the_backups_path_around_the_hard_link_is_never_moved_or_deleted(self):
+        for kind in ("file", "link"):
+            for when in ("before", "after"):
+                with self.subTest(kind=kind, when=when):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], ("link", "onto", when, "swap"))
+                    self.assert_swap_survived(raced, a, swarm, rows, kind)
+
+    def test_an_entry_that_takes_the_backups_path_is_never_restored_without_proc(self):
+        for kind in ("file", "link"):
+            with self.subTest(kind=kind, when="before the private name"):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], ("link", "from", "before", "swap"), proc=False)
+                self.assert_swap_refused(raced, swarm, rows, kind)
+            for event in (("link", "from", "after", "swap"), ("link", "onto", "after", "swap")):
+                with self.subTest(kind=kind, event=event):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, proc=False)
+                    self.assert_swap_survived(raced, a, swarm, rows, kind)
+
+    def test_an_entry_that_takes_a_directory_backups_path_is_put_back(self):
+        for foreign in ("directory", "file"):
+            with self.subTest(foreign=foreign):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by("directory")
+                event = ("noreplace", "from", "before", "swap")
+                raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, foreign=foreign)
+                self.assert_swap_refused(raced, swarm, rows, "directory", foreign)
+
+    def test_an_entry_that_takes_a_backups_path_is_put_back_without_hard_links(self):
+        a, swarm, rows = self.displaced_by("file")
+        event = ("noreplace", "from", "before", "swap")
+        raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, links=False)
+        self.assert_swap_refused(raced, swarm, rows, "file")
+
+    def test_an_entry_that_arrives_after_a_directory_backup_left_is_never_touched(self):
+        a, swarm, rows = self.displaced_by("directory")
+        event = ("noreplace", "from", "after", "swap")
+        raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, foreign="directory")
+        # The backup's path was empty when the entry arrived, so the restore never looks at it again.
+        self.assert_swap_survived(raced, a, swarm, rows, "directory", "directory", saved=False, noted=False)
+
+    def test_a_directory_backup_that_can_go_neither_way_is_kept_aside(self):
+        a, swarm, rows = self.displaced_by("directory")
+        backup = Path(rows[0]["backup"])
+        events = (("noreplace", "onto", "before", "swap"), ("noreplace", "onto", "before", "occupy"))
+        raced = self.backup_race_uninstall(a, swarm, backup, *events)
+        aside = set_aside(backup)
+        self.assertEqual(len(aside), 1, aside)
+        self.ok(
+            raced,
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: {swarm} was taken again and {backup} was taken again; it is kept at {aside[0]}",
+        )
+        self.assert_displaced(aside[0], "directory")
+        self.assert_foreign(backup)
+        self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+
+    def test_an_entry_that_cannot_go_back_to_the_backups_path_is_kept_aside(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = Path(rows[0]["backup"])
+        events = (("link", "onto", "after", "swap"), ("rename", "from", "after", "squat"))
+        raced = self.backup_race_uninstall(a, swarm, backup, *events)
+        aside = set_aside(backup)
+        self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
+        self.ok(
+            raced,
+            "removed 3 links, restored 1 entries",
+            f"kept {aside[0]}: it took the place of the backup uninstall restored to {swarm} and {backup} was taken again",
+        )
+        self.assert_displaced(swarm, "file")
+        self.assert_displaced(Path(f"{backup}.saved"), "file")
+        self.assert_foreign(aside[0])
+        self.assertEqual(backup.read_bytes(), b"squatter\x00")
+        self.assert_empty_records()
+
+    def test_a_backup_whose_directory_vanishes_after_the_hard_link_is_restored(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = Path(rows[0]["backup"])
+        raced = self.backup_race_uninstall(a, swarm, backup, ("link", "onto", "after", "vanish"))
+        self.ok(raced, "removed 3 links, restored 1 entries")
+        self.assert_displaced(swarm, "file")
+        self.assertFalse(os.path.lexists(backup.parent))
+        self.assert_empty_records()
+
+    def test_a_copy_across_filesystems_that_fails_keeps_the_backup_at_its_path(self):
+        for kind in ("file", "link", "directory"):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                backup = Path(rows[0]["backup"])
+                full = (
+                    "def full(*args, **kwargs):\n"
+                    "    raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
+                    "shutil.copytree = shutil.copy2 = full\n"
+                )
+                hook = cross_device(state_dir(self.home) / "backups", swarm) + full
+                raced = uninstall_hooked(self.home, a, hook)
+                self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+                self.ok(
+                    raced,
+                    "removed 3 links, restored 0 entries",
+                    f"skipped restore {backup}: [Errno {errno.ENOSPC}] {os.strerror(errno.ENOSPC)}",
+                )
+                self.assertFalse(os.path.lexists(swarm))
+                self.assert_displaced(backup, kind)
+                self.assertEqual(os.listdir(backup.parent), [backup.name])
+                self.assertEqual(read_legacy(self.home)["backups"], rows)
+                self.assert_no_copy_left(swarm)
+                self.ok(self.cross_device_uninstall(swarm, a), "removed 0 links, restored 1 entries")
+                self.assert_displaced(swarm, kind)
+                self.assert_empty_records()
+
+    def test_an_entry_that_takes_the_backups_path_before_a_copy_across_filesystems_is_never_copied(self):
+        for kind, event, foreign in (
+            ("file", ("link", "from", "before", "swap"), "file"),
+            ("link", ("link", "from", "before", "swap"), "file"),
+            ("directory", ("noreplace", "from", "before", "swap"), "directory"),
+        ):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, crossing=True, foreign=foreign)
+                self.assert_swap_refused(raced, swarm, rows, kind, foreign)
+
+    def test_an_entry_that_takes_the_backups_path_after_a_copy_across_filesystems_is_never_discarded(self):
+        for kind in ("file", "link"):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                event = ("link", "onto", "after", "swap")
+                raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, crossing=True)
+                self.assert_swap_survived(raced, a, swarm, rows, kind)
+        with self.subTest(kind="directory"):
+            self.use_fresh()
+            a, swarm, rows = self.displaced_by("directory")
+            event = ("noreplace", "onto", "after", "swap")
+            raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, crossing=True, foreign="directory")
+            # The directory was already out of its path when the entry arrived, so only the proven directory is discarded.
+            self.assert_swap_survived(raced, a, swarm, rows, "directory", "directory", saved=False, noted=False)
+
+    def test_an_entry_that_takes_a_withdrawn_backups_path_is_never_deleted(self):
+        a, b = self.base()
+        rows = read_legacy(self.home)["backups"]
+        swarm = provider_link(self.home, "grok", "swarm")
+        backup = Path(next(row["backup"] for row in rows if row["original"] == str(swarm)))
+        raced = uninstall_hooked(self.home, a, put_back_race(backup, "link"))
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped withdraw {backup}: the backup no longer matches the recorded checkout",
+        )
+        self.assertEqual(os.readlink(backup), "/foreign/swarm")
+        self.assertEqual(os.listdir(backup.parent), [backup.name])
+        self.assertEqual(read_legacy(self.home)["backups"], [row for row in rows if row["backup"] == str(backup)])
+        self.assert_claims(a, [str(swarm)])
+        self.assert_grok_text(b)
