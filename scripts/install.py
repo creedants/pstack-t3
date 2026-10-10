@@ -986,6 +986,44 @@ def survey(view, scope, user, state, root, selected):
     return tuple(found)
 
 
+def backup_place(state, backup):
+    """Return (stamp, harness) when `backup` is spelled <state>/backups/<stamp>/<harness>/<name>, else None.
+
+    The inverse of the path `execute` builds for a move. It compares text only and resolves nothing.
+    """
+    top = os.path.join(str(state), "backups") + os.sep
+    if not backup.startswith(top):
+        return None
+    parts = backup[len(top):].split(os.sep)
+    if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
+        return None
+    return parts[0], parts[1]
+
+
+def prune(state, backup):
+    """Remove the <stamp>/<harness> directory `backup` was in if it is empty, then <stamp> if that is empty.
+
+    Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
+    """
+    place = backup_place(state, backup)
+    if place is None or os.rmdir not in os.supports_dir_fd:
+        return
+    stamp, harness = place
+    # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with suppress(OSError):
+        top = os.open(os.path.join(str(state), "backups"), flags)
+        try:
+            inner = os.open(stamp, flags, dir_fd=top)
+            try:
+                os.rmdir(harness, dir_fd=inner)
+            finally:
+                os.close(inner)
+            os.rmdir(stamp, dir_fd=top)
+        finally:
+            os.close(top)
+
+
 def settle(strays, state, root, dry_run):
     """Act on each Stray and print one line for each that held an entry. Without `dry_run`, call it only inside `locked`.
 
@@ -993,6 +1031,7 @@ def settle(strays, state, root, dry_run):
     and a holder is removed only once it is empty. With `dry_run` it prints what it would do and changes nothing.
     """
     recovered, removed = ("would recover", "would remove") if dry_run else ("recovered", "removed")
+    dropped = []
     for stray in strays:
         try:
             if stray.kind == "empty":
@@ -1015,6 +1054,7 @@ def settle(strays, state, root, dry_run):
                     os.unlink(stray.path)
                     if stray.drop:
                         patch_legacy(state, (), (), (), (stray.drop,), False)
+                        dropped.append(stray.drop)
                 print(f"{removed} {stray.path}: it was a second name for {stray.twin}")
             elif stray.kind == "own":
                 if not dry_run:
@@ -1030,6 +1070,8 @@ def settle(strays, state, root, dry_run):
             # rmdir refuses a directory that is not empty, so an entry that was left stays.
             with suppress(OSError):
                 os.rmdir(holder)
+        for backup in dropped:
+            prune(state, backup)
 
 
 def buried(state, root, path):
@@ -1103,6 +1145,8 @@ def execute(plan, state, root):
             failed.add(step.path)
             continue
         remove_records(step, state, root)
+        for backup in step.remove_backups:
+            prune(state, backup)
         if step.kind == "create":
             counts["linked"] += 1
         elif step.kind == "unlink":
