@@ -5231,13 +5231,14 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(stopped.stdout, f"skipped link {provider_link(self.home, 'grok', 'alpha')}: the step declined\n")
         self.assertEqual(stopped.stderr, f"{manifest} is not valid JSON; fix or move it and rerun\n")
 
-    def from_removed_directory(self, checkout, *args):
+    def from_removed_directory(self, checkout, *args, env=None):
         """Run this checkout's installer with `args` from a working directory that is removed before the installer starts.
 
         A subprocess cannot start in a removed directory, so the hook makes one, enters it, and removes it.
+        The hook first sets each variable of `env`.
         """
         gone = str(self.home / "gone")
-        code = f"os.mkdir({gone!r})\nos.chdir({gone!r})\nos.rmdir({gone!r})\n"
+        code = f"os.environ.update({env or {}!r})\nos.mkdir({gone!r})\nos.chdir({gone!r})\nos.rmdir({gone!r})\n"
         return install_hooked(self.home, checkout, code, *args)
 
     ADRIFT = (
@@ -5309,6 +5310,25 @@ class OwnershipTest(unittest.TestCase):
                 self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
                 self.assertEqual(stopped.stderr, line)
                 self.assertEqual(stopped.stdout, "")
+
+    def test_a_relative_or_empty_home_or_a_relative_claude_config_dir_from_a_removed_working_directory_stops_install_uninstall_and_doctor_with_one_line_on_stderr(self):
+        a = make_checkout(self.home, "a")
+        line = "{name}={value!r} is not an absolute path, and the system could not name this run's working directory (No such file or directory); change to another directory and rerun\n"
+        for name, value in (("HOME", "."), ("HOME", ""), ("CLAUDE_CONFIG_DIR", "cc")):
+            for command in (("install",), ("uninstall",), ("uninstall", "--dry-run"), ("doctor",)):
+                with self.subTest(name=name, value=value, command=command):
+                    stopped = self.from_removed_directory(a, *command, "--harness", "grok", env={name: value})
+                    self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+                    self.assertEqual(stopped.stderr, line.format(name=name, value=value))
+                    self.assertEqual(stopped.stdout, "")
+        self.assertFalse(os.path.lexists(state_dir(self.home)))
+
+    def test_doctor_under_a_relative_home_from_a_working_directory_that_exists_prints_nothing_on_stderr(self):
+        a = make_checkout(self.home, "a")
+        checked = run(self.home, a, "doctor", "--harness", "grok", env=self.RELATIVE_HOME)
+        self.assertEqual(checked.returncode, 1, checked.stdout + checked.stderr)
+        self.assertEqual(checked.stdout, "grok    .grok/skills: 0/3 pstack-t3, 3 missing\n")
+        self.assertEqual(checked.stderr, "")
 
     def test_a_link_row_that_is_a_relative_string_read_from_a_working_directory_that_exists_leaves_the_dry_run_and_doctor_output_as_it_was(self):
         a, swarm = self.installed_for_grok()

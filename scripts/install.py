@@ -250,6 +250,30 @@ NO_PROJECT = ("the --project path {project} is relative, and the system could no
               "({reason}); change to another directory and rerun, or give --project a full path")
 
 
+UNANCHORED = ("{name}={value!r} is not an absolute path, and the system could not name this run's working directory "
+              "({reason}); change to another directory and rerun")
+
+
+def unanchored(environ):
+    """Return the UNANCHORED line for a variable of `environ` when os.getcwd() raises OSError, else None.
+
+    The variable is HOME when it is set and not absolute. Otherwise it is CLAUDE_CONFIG_DIR when that is not empty and
+    not absolute. With neither, os.getcwd() is not called.
+    """
+    home, claude = environ.get("HOME"), environ.get("CLAUDE_CONFIG_DIR")
+    if home is not None and not os.path.isabs(home):
+        name, value = "HOME", home
+    elif claude and not os.path.isabs(claude):
+        name, value = "CLAUDE_CONFIG_DIR", claude
+    else:
+        return None
+    try:
+        os.getcwd()
+    except OSError as error:
+        return UNANCHORED.format(name=name, value=value, reason=error.strerror)
+    return None
+
+
 def anchored(file, path):
     """Return `path`, which a record in `file` holds. Raise Unreadable with ADRIFT when it is relative and os.getcwd() raises OSError."""
     if not os.path.isabs(path):
@@ -1783,6 +1807,9 @@ def main(argv=None):
     unknown = set(args.harness) - set(HARNESSES)
     if unknown:
         parser.error(f"unknown harness {', '.join(sorted(unknown))}")
+    stop = unanchored(os.environ)
+    if stop:
+        sys.exit(stop)
     try:
         return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
     except Unreadable as error:
