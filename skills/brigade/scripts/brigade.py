@@ -32,17 +32,23 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 MODES = ("full", "light")
+ROUND_BUDGET = 3
+OWING_STATES = ("in-progress", "in-review", "sent-back", "blocked")
+ROUND_DECISIONS = ("known limits", "redesign", "drop")
+ROUND_PARKED = "keep parked"
+ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
 
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
-    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note"),
-    "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer"),
+    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
+    "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
+ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
@@ -54,6 +60,7 @@ RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 NOTHING_HANDED = "nothing handed to you"
 SNAPSHOT_CHUNK = 1 << 16
+REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -162,12 +169,16 @@ def is_timestamp(value):
 
 
 def parse_row(table, line):
-    """One complete line of a table as a row, or None when its field count or timestamp is wrong."""
+    """One complete line of a table as a row, or None when its field count or timestamp is wrong.
+
+    A row written before a table gained its `ADDED_COLUMNS` is read padded and never rewritten.
+    """
     header = TABLES[table]
     fields = line.split("\t")
-    if len(fields) != len(header) or not is_timestamp(fields[header.index("at")]):
+    missing = len(header) - len(fields)
+    if not 0 <= missing <= ADDED_COLUMNS.get(table, 0) or not is_timestamp(fields[header.index("at")]):
         return None
-    return dict(zip(header, fields))
+    return dict(zip(header, fields + [""] * missing))
 
 
 def read_chunk(fd):
@@ -800,9 +811,68 @@ def cross_family(row):
     return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
 
 
+def item_verdicts(rows, dish_id):
+    """The rows that carry the item's verdict. A panel member's row is on record and decides nothing."""
+    return [row for row in rows if row["dish"] == dish_id and not row["member"]]
+
+
+def send_backs(rows, dish_id):
+    return [row for row in item_verdicts(rows, dish_id) if row["verdict"] == "send-back"]
+
+
+def round_count(restaurant, dish_id):
+    """The item's send-backs written after the later of its last passing verdict and its last answered round decision.
+
+    Only a row `86 add --round-budget` wrote is a round decision. Another decision's answer never settles the count.
+    """
+    verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+    settled = [row["at"] for row in verdicts if row["verdict"] == "pass"]
+    settled += [row["answered"] for row in restaurant.rows("86.tsv")
+                if row["dish"] == dish_id and row["kind"] == ROUND_KIND and row["state"] == "answered"]
+    since = max(settled, default="")
+    return sum(row["verdict"] == "send-back" and row["at"] > since for row in verdicts)
+
+
+def round_debt(restaurant, dish):
+    """The item's round count when it owes its round decision, else 0.
+
+    The budget stops another fix round, so only an item that could get one owes.
+    """
+    if dish["state"] not in OWING_STATES:
+        return 0
+    count = round_count(restaurant, dish["id"])
+    return count if count >= ROUND_BUDGET else 0
+
+
+def fix_round_refusal(restaurant, dish):
+    """Why the item gets no fix round now, or None."""
+    debt = round_debt(restaurant, dish)
+    if not debt:
+        return None
+    return (f"{dish['id']} has {debt} send-backs; no fix round until its decision is answered; "
+            f"run 86 add --dish {dish['id']} --round-budget")
+
+
+def round_decision(restaurant, dish_id):
+    """The question, options, and default of the decision an item owes at ROUND_BUDGET send-backs."""
+    _, dish = restaurant.find("dishes.tsv", dish_id)
+    if dish["state"] not in OWING_STATES:
+        raise BrigadeError(f"{dish_id} is {dish['state']}; it owes no round decision")
+    count = round_count(restaurant, dish_id)
+    if count < ROUND_BUDGET:
+        raise BrigadeError(f"{dish_id} has {count} send-back{'' if count == 1 else 's'} since its last pass or round decision; "
+                           f"the decision opens at {ROUND_BUDGET}")
+    question = (f"{dish_id} was sent back {count} times. Accept the remaining findings as known limits and land it, "
+                "send it through architect for a redesign, or drop it?")
+    report = send_backs(restaurant.rows("pass.tsv"), dish_id)[-1]["report"]
+    if report:
+        question += f" Findings: reports/{report}."
+    return question, ", ".join((*ROUND_DECISIONS, ROUND_PARKED)), ROUND_PARKED
+
+
 def latest_verdict(restaurant, dish_id, sha):
     restaurant.find("dishes.tsv", dish_id)
-    verdicts = [row for row in restaurant.rows("pass.tsv") if row["dish"] == dish_id and row["sha"] == sha]
+    verdicts = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id) if row["sha"] == sha]
     return verdicts[-1] if verdicts else None
 
 
@@ -820,7 +890,19 @@ def pass_check(restaurant, dish_id, sha):
     return True, f"{dish_id} at {sha} passed review by {latest['verifier']}"
 
 
-def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False):
+def review_report(restaurant, dish_id, report):
+    name = Path(report).name
+    match = REVIEW_FILE.fullmatch(name)
+    if not match or match.group(1) != dish_id:
+        raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
+    if not (restaurant.dir / "reports" / name).exists():
+        raise BrigadeError(f"reports/{name} does not exist; write the review report first")
+    return name
+
+
+def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
+                member=False, late=False):
+    _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
     if model_family(author) == model_family(verifier) and not same_family:
@@ -828,9 +910,42 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
         note = clean(f"same model family; {note}")
+    if report:
+        report = review_report(restaurant, dish_id, report)
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
-                                   "author": author, "verifier": verifier, "note": note})
-    return restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+                                   "author": author, "verifier": verifier, "note": note, "report": report,
+                                   "member": "yes" if member else ""})
+    if member:
+        return f"{dish_id}: member {verdict} on record; {dish_id} stays {dish['state']}"
+    if late:
+        printed = f"{dish_id}: late {verdict} on record; {dish_id} stays {dish['state']}"
+    else:
+        dish = restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+        printed = f"{dish_id} {dish['state']}"
+    debt = round_debt(restaurant, dish) if verdict == "send-back" else 0
+    if debt:
+        return f"{printed}; {debt} send-backs, decision pending"
+    return printed
+
+
+def unrecorded_reviews(restaurant):
+    """The review reports under reports/ that no pass.tsv row accounts for, by file name.
+
+    A row that names no report cannot say which file it reviewed, so it accounts for every report of its dish written before it.
+    """
+    rows = restaurant.rows("pass.tsv")
+    reports = restaurant.dir / "reports"
+    missing = []
+    for path in sorted(reports.iterdir()) if reports.is_dir() else []:
+        match = REVIEW_FILE.fullmatch(path.name)
+        if not match:
+            continue
+        written = path.stat().st_mtime
+        if not any(row["report"] == path.name if row["report"]
+                   else datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= written
+                   for row in rows if row["dish"] == match.group(1)):
+            missing.append(path.name)
+    return missing
 
 
 def report(restaurant, write=True):
@@ -1114,6 +1229,12 @@ def ticket_lines(restaurant, state, held):
 
 
 def unfireable(restaurant, ids):
+    # A ticket fired again is the same work, so an item that owes its round decision holds its tickets.
+    for dish in restaurant.rows("dishes.tsv"):
+        held = [ident for ident in ids if ident in dish["tickets"].split(",")]
+        refusal = fix_round_refusal(restaurant, dish) if held else None
+        if refusal:
+            return f"{held[0]} is {dish['id']}'s ticket; {refusal}"
     for ident in ids:
         _, ticket = restaurant.find("rail.tsv", ident)
         if ticket["state"] != "waiting":
@@ -1244,6 +1365,9 @@ class ModeLines:
 
 def brief_dish(restaurant, ident, paths, lease, acceptance):
     _, dish = restaurant.find("dishes.tsv", ident)
+    refusal = fix_round_refusal(restaurant, dish)
+    if refusal:
+        raise BrigadeError(refusal)
     paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
     if not paths or not lease:
         raise BrigadeError(f"{ident} has no lease; fire with --paths, or pass --paths and --lease")
@@ -1261,8 +1385,8 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
 def mode_inputs(restaurant, dish, paths, thread):
     meta = restaurant.meta
     events = restaurant.rows("log.tsv")
-    send_backs = sum(row["dish"] == dish["id"] and row["verdict"] == "send-back" for row in restaurant.rows("pass.tsv"))
-    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, send_backs,
+    sent_back = len(send_backs(restaurant.rows("pass.tsv"), dish["id"]))
+    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, sent_back,
                       meta.get("mode") if meta.get("mode") in MODES else None, latest_mode_note(events, dish["id"]),
                       dish, thread, meta.get("generation"))
 
@@ -1321,7 +1445,8 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     land = LAND
     report = restaurant.dir / "reports" / f"{ident}.md"
-    findings = restaurant.dir / "reports" / f"{ident}-review.md"
+    sent_back = send_backs(restaurant.rows("pass.tsv"), ident)
+    findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
@@ -1448,6 +1573,7 @@ def watch(restaurant):
         moment = datetime.now(timezone.utc)
         dishes = [dish for dish in restaurant.rows("dishes.tsv") if dish["state"] not in ("merged", "dropped")]
         decisions = open_item_decisions(restaurant.rows("86.tsv"))
+        debts = {dish["id"]: round_debt(restaurant, dish) for dish in dishes}
         for dish in dishes:
             if dish["state"] != "in-progress":
                 continue
@@ -1497,7 +1623,8 @@ def watch(restaurant):
     item_lines, answered = [], True
     for dish in dishes:
         decision = decisions.get(dish["id"])
-        found = [] if decision else progress.get(dish["id"], [])
+        pending = debts[dish["id"]]
+        found = [] if decision or pending else progress.get(dish["id"], [])
         entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
         if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
@@ -1505,9 +1632,12 @@ def watch(restaurant):
             answered = answered and ok
             found += [line] if line else []
         found += [entry] if entry else []
+        if pending:
+            item_lines.append(f"{dish['id']}: {debts[dish['id']]} send-backs, decision pending")
         if decision:
             item_lines.append(f"{dish['id']}: open decision {decision['id']}: {decision['question']}; "
                               f"launch no worker or verifier until 86 answer {decision['id']}")
+        if decision or pending:
             item_lines += found
         else:
             item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
@@ -2044,6 +2174,12 @@ def parser():
     a.add_argument("--verifier", required=True, help="provider/model of the reviewer")
     a.add_argument("--note", default="")
     a.add_argument("--same-family", action="store_true", help="allow it when no other family is runnable")
+    a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
+    kind = a.add_mutually_exclusive_group()
+    kind.add_argument("--member", action="store_true",
+                      help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
+    kind.add_argument("--late", action="store_true",
+                      help="a round found unrecorded after the dish moved on; the dish is left as it is")
     a = t.add_parser("check")
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
@@ -2052,10 +2188,12 @@ def parser():
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
     a = t.add_parser("add")
-    a.add_argument("--question", required=True)
-    a.add_argument("--options", required=True)
-    a.add_argument("--default", required=True)
+    a.add_argument("--question")
+    a.add_argument("--options")
+    a.add_argument("--default")
     a.add_argument("--dish", default="")
+    a.add_argument("--round-budget", action="store_true",
+                   help=f"with --dish: write the decision a dish owes at {ROUND_BUDGET} send-backs; takes no question, options, or default")
     a = t.add_parser("answer")
     a.add_argument("id")
     a.add_argument("--answer", required=True)
@@ -2344,6 +2482,11 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
+        worker = any(value and value != current.get(field, "") for field, value in (("thread", args.thread), ("task", args.task)))
+        if args.state == "in-progress" or worker:
+            refusal = fix_round_refusal(restaurant, current)
+            if refusal:
+                raise BrigadeError(refusal)
         if args.state in COUNTED_STATES and current["state"] not in COUNTED_STATES:
             full = workers_full(restaurant)
             if full:
@@ -2387,9 +2530,8 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "pass":
         if args.action == "record":
-            row = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                              args.note, args.same_family)
-            return f"{args.dish} {row['state']}"
+            return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
+                               args.note, args.same_family, args.report, args.member, args.late)
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:
@@ -2402,9 +2544,21 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "86":
         if args.action == "add":
+            given = [value for value in (args.question, args.options, args.default) if value is not None]
+            if args.round_budget:
+                if given or not args.dish:
+                    raise BrigadeError("86 add --round-budget takes --dish and no --question, --options, or --default")
+                restaurant.find("dishes.tsv", args.dish)
+            elif len(given) < 3:
+                raise BrigadeError("86 add needs --question, --options, and --default")
             open_row = open_item_decisions(restaurant.rows("86.tsv")).get(args.dish)
             if open_row:
+                if args.round_budget and open_row["kind"] != ROUND_KIND:
+                    raise BrigadeError(f"{args.dish} is held by {open_row['id']}; answer it, "
+                                       f"then run 86 add --dish {args.dish} --round-budget")
                 return open_row["id"]
+            if args.round_budget:
+                args.question, args.options, args.default = round_decision(restaurant, args.dish)
             # Validate the text the row will store, since the append turns tabs and newlines into spaces.
             question, options, default = clean(args.question), clean(args.options), clean(args.default)
             if args.dish:
@@ -2414,25 +2568,26 @@ def command(restaurant, args, contract=None, rails=None):
                                        "with at least one other option that closes it")
             ident = restaurant.next_id("86.tsv")
             restaurant.append("86.tsv", {"id": ident, "at": now(), "state": "open", "dish": args.dish,
-                                         "question": question, "options": options, "default": default})
+                                         "question": question, "options": options, "default": default,
+                                         "kind": ROUND_KIND if args.round_budget else ""})
             restaurant.log("decision", ident, "open", question)
             return ident
         if args.action == "answer":
             _, row = restaurant.find("86.tsv", args.id)
             if not row["dish"].strip():
-                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
+                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer, answered=now())
                 return f"{args.id} answered"
             if row["state"] == "answered":
                 return f"{args.id} answered"
             closes = closing_options(row)
             if not closes:
-                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer)
+                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer, answered=now())
                 return f"{args.id} answered"
             match = next((option for option in closes if option_key(option) == option_key(args.answer)), None)
             if match is None:
                 quoted = " or ".join(shlex.quote(option) for option in closes)
                 return f"{args.id} still open; {row['dish']} stays held until 86 answer {args.id} --answer {quoted}"
-            restaurant.update("86.tsv", args.id, "decision", state="answered", answer=match)
+            restaurant.update("86.tsv", args.id, "decision", state="answered", answer=match, answered=now())
             return f"{args.id} answered"
         lines = []
         for row in restaurant.rows("86.tsv"):
@@ -2463,6 +2618,10 @@ def command(restaurant, args, contract=None, rails=None):
         if not args.dry_run and is_admin(restaurant.meta):
             log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
+        for name in unrecorded_reviews(restaurant):
+            dish = name.split("-")[0]
+            print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
+                  f"and --late when {dish} has moved past that round", file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text
