@@ -37,7 +37,8 @@
 - **Runs work in parallel without collisions.** `$swarm` splits work across workers or races them. `$arena` runs several attempts and grafts the best parts into one. Workers that write get their own git worktree.
 - **Proves the change works.** It reproduces bugs on the real surface, including driving a web UI through T3's preview tools, and verifies against the real artifact rather than "it compiles".
 - **Keeps going while you're away.** Overnight runs use child agents, separate worktree threads, and an hourly scheduled check. It still stops for anything irreversible you didn't authorize.
-- **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so.
+- **Uses only models you have.** Every role resolves against T3's live model list. Signed-out providers and retired models fall back, and the report says so. No role runs Claude Haiku 4.5 or a fast Grok model.
+- **Keeps working at a usage limit.** When a provider hits its limit, `roles.py backup` relaunches the failed seat when a backup is free. A worker moves to Claude, and a reviewer moves to Grok, then Claude, never onto the family that wrote the diff. The work parks until the reset when no backup is free. A parked worker keeps its branch and lease.
 - **Writes like a senior engineer.** Short, direct replies, every claim labeled measured, inferred, or guess, and the engineering principles behind each decision named.
 
 ## A standing coordinator for each project
@@ -156,7 +157,7 @@ python3 scripts/install.py doctor    # confirm each provider sees them
 
 Keep the checkout on disk, because the install links to it. Then open a new T3 thread.
 
-1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional. Unset roles use Claude Opus at xhigh for judgment and Grok at xhigh for code. `unlimited` raises those default seats to max. The Opus seat moves from xhigh to max.
+1. Run `$setup-pstack` to pick models per role and a reasoning budget. This is optional. Unset roles use Claude Opus at xhigh for judgment and Grok at xhigh for code. Skill tests, and the read-only explorers in `$how` and `$why`, use Claude Haiku 5.5. `unlimited` leaves the Haiku seats alone. It raises the Opus and Grok seats to each model's highest level at or below max, so Opus moves from xhigh to max and Grok stays at xhigh.
 2. Start any real task with `$poteto-mode`.
 
 The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which skill fits? Ask `$poteto-help`. It answers and hands you a prompt. It does not start the work.
@@ -195,7 +196,7 @@ flowchart LR
 
 The default panel is Claude Opus and Grok. A roles file can name Codex or another model. `verifiers` is this thread's model plus one seat per other model family you can run.
 
-T3 Code gives every provider the same orchestration tools. They are `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history, browser preview, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. pstack-t3 adds three of its own, `brigade`, `landing`, and `pstack-author-skill`. Details are in [How it works](docs/how-it-works.md).
+T3 Code gives every provider the same orchestration tools. They are `delegate_task` for child agents, `t3_thread_launch` for worktree threads, `schedule_task` for a cadence, `watch_pull_request` for a pull request's checks, reviews, or conflicts, thread history and forks, browser preview, rendered report pages, and PR linking. The [`pstack-runtime`](t3/runtime.md) skill teaches each model to use them the pstack way. The other skills are Lauren's workflows, with the Cursor-specific mechanics replaced. pstack-t3 adds three of its own, `brigade`, `landing`, and `pstack-author-skill`. Details are in [How it works](docs/how-it-works.md).
 
 **Why skills, not an MCP server or a plugin?** T3 already gives every provider its orchestration server, so pstack-t3 needs no server of its own. T3's `$` picker lists each provider's native skills, which is why `$poteto-mode` appears whichever model you pick. A Claude Code plugin would namespace the skills and hide them from that picker, and the other providers have no plugin format.
 
@@ -216,7 +217,7 @@ The playbooks, principles, rubrics, and their wording are the same. The plumbing
 <details>
 <summary><b>Does it cost more?</b></summary>
 
-The default `$interrogate` panel is two seats, Claude Opus and Grok, so that review costs about two reviews. A roles file can add seats. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work.
+The default `$interrogate` panel is two seats, Claude Opus and Grok, so that review costs about two reviews. A roles file can add seats. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work, or [light mode](docs/light-mode.md) to cut the fan-out around the checks that catch real bugs. Skill tests and the read-only explorers in `$how` and `$why` run on Claude Haiku 5.5 by default.
 </details>
 
 <details>
@@ -255,7 +256,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | --- | --- |
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
-| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog |
+| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role resolves to a fast Grok model or Claude Haiku 4.5, and a usage limit relaunches on Claude or Grok when a backup is free and parks otherwise. |
 | A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` is this thread's model plus one seat per other model family you can run. |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
