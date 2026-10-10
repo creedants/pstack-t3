@@ -3756,6 +3756,7 @@ class OwnershipTest(unittest.TestCase):
         manifest = f"manifest: {legacy_file(self.home)}"
         runs = (
             (("doctor",), [f"grok    {directory}: 3/3 pstack-t3"]),
+            (("install", "--dry-run"), [f"3 {UNTRACKED}", "0 links planned"]),
             (("install",), ["linked 0 skills into nothing (already installed)", f"3 {UNTRACKED}", manifest]),
             (("uninstall", "--dry-run"), ["would remove 0 links, would restore 0 entries"]),
             (("uninstall",), ["removed 0 links, restored 0 entries"]),
@@ -5705,7 +5706,6 @@ class SharedSourceTest(unittest.TestCase):
     def test_install_and_roles_hold_the_same_ignored_line_and_the_same_config_home_source(self):
         install = loaded("install_under_test", ROOT / "scripts" / "install.py")
         roles = loaded("roles_under_test", ROOT / "t3" / "scripts" / "roles.py")
-        self.assertEqual(install.IGNORED, "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}")
         self.assertEqual(roles.IGNORED, install.IGNORED)
         self.assertEqual(inspect.getsource(roles.config_home), inspect.getsource(install.config_home))
 

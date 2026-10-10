@@ -257,10 +257,10 @@ UNANCHORED = ("{name}={value!r} is not an absolute path, and the system could no
 
 
 def unanchored(environ):
-    """Return the UNANCHORED line for a variable of `environ` when os.getcwd() raises OSError, else None.
+    """Return the UNANCHORED line for HOME or CLAUDE_CONFIG_DIR when one of them qualifies and os.getcwd() raises OSError, else None.
 
-    The variable is HOME when it is set and not absolute. Otherwise it is CLAUDE_CONFIG_DIR when that is not empty and
-    not absolute. With neither, os.getcwd() is not called.
+    HOME qualifies when it is set and not absolute. CLAUDE_CONFIG_DIR qualifies when it is not empty and not absolute.
+    The line names HOME when both qualify. When neither qualifies, os.getcwd() is not called.
     """
     home, claude = environ.get("HOME"), environ.get("CLAUDE_CONFIG_DIR")
     if home is not None and not os.path.isabs(home):
