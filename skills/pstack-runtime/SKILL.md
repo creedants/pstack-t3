@@ -163,7 +163,7 @@ Code roles (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `swarm
 
 `verifiers` starts with `"inherit"` when this thread's provider can run children, then adds one seat per other runnable provider (`canRunChildTask: true`), using that provider's first pickable model and skipping a family already seated. A thread on an excluded model gets no `"inherit"` seat, and its own provider joins with its first pickable model instead. With only one runnable provider, `verifiers` is three `"inherit"` seats, or three copies of the one runnable provider's first pickable model when this thread cannot be inherited, and the report must say the models did not differ. The other panel roles do not use that three-seat rule.
 
-A model family is the leading word of the model ID: `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, `grok-4.7` is `grok`. The normalizer in [Excluded seats](#excluded-seats) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
+A model family is the leading word of the model ID. `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, and `grok-4.7` is `grok`. The normalizer in [Excluded seats](#excluded-seats) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
 
 A preferred seat that matches this thread stays an explicit target. It does not become `"inherit"`.
 
@@ -171,7 +171,7 @@ When the preferred model is missing, the seat stays and a numbered note names th
 
 Without a catalog, a preferred role reports `"seats": "catalog-required"`. `skill tests` reports `"seats": "catalog-required"` like the other preferred roles. `verifiers` reports `"seats": "default-panel"`.
 
-`review backups` has no built-in seats, so `show` reports `"seats": "unset"` until the user sets it. Once it is set, `show` needs a catalog and reports `"seats": "catalog-required"` without one. With a catalog it prints the seats `backup` keeps when no provider is out and no author is named, and a `dropped <provider>/<model>: <reason>` note for each other seat that [Excluded seats](#excluded-seats) does not skip first. `validate` lists each dropped seat and exits 1, and `write` refuses a config with a dropped seat unless `--force` is passed.
+`review backups` has no built-in seats, so `show` reports `"seats": "unset"` until the user sets it. Once it is set, `show` needs a catalog and reports `"seats": "catalog-required"` without one. With a catalog it prints the seats `backup` keeps when no provider is out and no author is named, and a `dropped <provider>/<model>: <reason>` note for each other seat that [Excluded seats](#excluded-seats) does not skip first. When a seat is dropped, `validate` lists it and exits 1, and `write` refuses the config unless `--force` is passed.
 
 Agreement between seats on the same model is weak evidence. It shows the prompt is stable, not that the finding is right. Weigh consensus only across seats on different models, and say which kind you have.
 
@@ -183,7 +183,7 @@ pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker. A
 - Every seat on a Grok model that declares a boolean `fastMode` option comes back with `"fastMode": false`. No mode and no budget sets it to `true`. pstack never adds `fastMode` to a model of another family.
 - An `inherit` seat on an excluded id becomes that provider's first pickable model, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no pickable model, `show` refuses the role.
 - An `inherit` seat on a Grok model that declares `fastMode` becomes an explicit seat on that model with `"fastMode": false`, and the info `inherit made explicit as <provider>/<model> so fastMode stays false`. When that provider cannot run children, `fastMode` cannot be pinned, so `show` refuses the role.
-- `show` skips a configured excluded seat with the note `skipped configured seat <provider>/<model>`. When no configured seat is left, the role uses its built-in default. `validate` lists each one and exits 1. `write` refuses it with `refusing to write, even with --force`. A `review backups` role with no configured seat left reports `"seats": []`, or `"seats": "catalog-required"` without a catalog.
+- `show` skips a configured excluded seat with the note `skipped configured seat <provider>/<model>`. When no configured seat is left, the role uses its built-in default. `validate` lists each one and exits 1. `write` refuses it with `refusing to write, even with --force`. A `review backups` role with no configured seat left reports `"seats": []`.
 - `verifiers` gets no `inherit` seat for an excluded parent, with the note `skipped inherit of <provider>/<model>`, per [Built-in defaults](#built-in-defaults).
 - Without a catalog, a role whose seats include `inherit`, and the `verifiers` default panel, report `"seats": "catalog-required"` when `--parent` names an excluded id. Call `orchestrator_capabilities` and rerun `show` with `--catalog`.
 
