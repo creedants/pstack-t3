@@ -663,8 +663,9 @@ def model_of(payload):
 
 
 UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
-# A UUID, 7 or more hex digits that include a digit, 6 or more digits, or one of T3's id prefixes.
-ID_LIKE = re.compile(rf"{UUID}|(?<![0-9A-Za-z])(?=[0-9a-fA-F]*[0-9])[0-9a-fA-F]{{7,}}(?![0-9A-Za-z])|[0-9]{{6,}}|^(?:mcp|thread|node|run):\S")
+# A UUID, 7 or more hex digits that include a digit, 6 or more digits, one of T3's id prefixes,
+# or an @ with a character before it and a . after it, as in an email address.
+ID_LIKE = re.compile(rf"{UUID}|(?<![0-9A-Za-z])(?=[0-9a-fA-F]*[0-9])[0-9a-fA-F]{{7,}}(?![0-9A-Za-z])|[0-9]{{6,}}|^(?:mcp|thread|node|run):\S|.@.*\.")
 OPENERS = "\"'`([<{"
 PATH_TAIL = re.compile(r"\S*/([A-Za-z0-9_-]+)")
 SLUG = re.compile(r"[a-z0-9.]+(?:-[a-z0-9.]+)+")
@@ -740,7 +741,7 @@ def scrub(text):
 
     A part is the text between spaces, read after any opening quote or bracket.
     It is path-like when it starts with / or ~, holds two or more / or two or more backslashes, or holds :// and does not start with http:// or https://.
-    It is id-like when ID_LIKE matches in it.
+    It is id-like when ID_LIKE matches in it. So a part that holds an @ with a character before it and a . after it, as an email address does, is id-like.
     """
     lines = text.encode("utf-8", "ignore").decode().strip().splitlines()
     parts = [(part, part.lstrip(OPENERS)) for part in (lines[0].split() if lines else ())]

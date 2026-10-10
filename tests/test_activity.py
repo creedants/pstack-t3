@@ -730,6 +730,14 @@ class PageTest(ActivityCase):
         self.assertEqual(page.groups[0].item, MOD["Item"]("D7", "Queue fix", "merged", "", "", False))
         self.assertEqual(page.items, ())
 
+    def test_email_address_in_a_title_and_in_a_work_item_summary_is_not_on_the_page(self):
+        fixture = self.fixture
+        fixture.unit("D7", "in-progress", "Fix sign-in for acct-homemarker@example.test today", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(delegated(worker(1), "helper"), title="acct-homemarker@example.test notes", parent=worker(1), turns=(("completed", 70, 60),))
+        page = page_of(fixture)
+        self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "notes")]}))
+
     def test_provider_names_come_from_the_table_and_any_other_driver_reads_other(self):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
@@ -807,6 +815,11 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(scrub("at 0a1b2c3 and 123e4567-e89b-12d3-a456-426614174000 and 123456 and mcp:x and node:y"), "at and and and and")
         self.assertEqual(scrub("defaced facade 12345 https://example.test/o/r/pull/7 thread: one"), "defaced facade 12345 https://example.test/o/r/pull/7 thread: one")
         self.assertEqual(scrub(""), "")
+
+    def test_scrub_drops_a_part_that_holds_an_at_sign_with_a_character_before_it_and_a_dot_after_it(self):
+        scrub = MOD["scrub"]
+        self.assertEqual(scrub("mail acct-homemarker@example.test and <acct-homemarker@example.test> now"), "mail and now")
+        self.assertEqual(scrub("@handle a@b user@host @example.test stay"), "@handle a@b user@host @example.test stay")
 
     def test_model_name_is_the_text_after_the_last_slash(self):
         self.assertEqual(MOD["model_name"]("vendor/sub/model-b-20260101"), "model-b-20260101")
