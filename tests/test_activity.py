@@ -12,10 +12,10 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/activity.py"
@@ -24,6 +24,7 @@ MOD = runpy.run_path(str(SCRIPT))
 MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "0a1b2c3")
 COORDINATOR = "mcp:threadmarker-coordinator"
 CHANGED = "this T3 build stores threads differently, so update pstack-t3"
+FROZEN = "import runpy, sys, time\nclock = float(sys.argv[1])\ntime.time = lambda: clock\ndel sys.argv[:2]\nrunpy.run_path(sys.argv[0], run_name='__main__')"
 SCHEMA = {
     "orchestration_v2_projection_metadata": ("projection_name", "schema_version"),
     "orchestration_v2_projection_threads": ("thread_id", "title", "default_provider", "payload_json"),
@@ -80,8 +81,9 @@ class Fixture:
     def retired(self, ident, thread):
         self.log.append({"at": self.stamp(500), "kind": "worker", "id": ident, "state": "retired", "note": thread})
 
-    def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None):
-        self.threads.append((ident, title, provider, json.dumps({"modelSelection": {"model": model}}) if payload is None else payload))
+    def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None, instance=None):
+        selection = {"instanceId": provider if instance is None else instance, "model": model}
+        self.threads.append((ident, title, provider, json.dumps({"modelSelection": selection}) if payload is None else payload))
         self.turns += [(ident, status, self.stamp(start), self.stamp(end)) for status, start, end in turns]
         if parent is None:
             return None
@@ -132,8 +134,9 @@ class Fixture:
         if self.writer is not None:
             self.writer.close()
 
-    def command(self, *args, at=True, t3_home=True, env=None):
-        words = [sys.executable, str(SCRIPT)]
+    def command(self, *args, at=True, t3_home=True, env=None, clock=None):
+        """With clock, the script runs as the main program of a process whose time.time() returns that instant."""
+        words = [sys.executable, str(SCRIPT)] if clock is None else [sys.executable, "-c", FROZEN, repr(clock), str(SCRIPT)]
         words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
         words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
         environment = {"HOME": str(self.home), "PATH": os.environ.get("PATH", ""), **(env or {})}
@@ -142,6 +145,15 @@ class Fixture:
     def run(self, *args, **how):
         words, options = self.command(*args, **how)
         return subprocess.run(words, capture_output=True, **options)
+
+    def stdout_bytes(self, *args, **how):
+        words, options = self.command(*args, **how)
+        result = subprocess.run(words, capture_output=True, **dict(options, text=False))
+        assert (result.returncode, result.stderr) == (0, b""), result.stderr
+        return result.stdout
+
+    def stamp_at_offset(self, minutes, hours):
+        return datetime.fromtimestamp(self.now - minutes * 60, timezone(timedelta(hours=hours))).isoformat(timespec="milliseconds")
 
     def start(self, *args, **how):
         words, options = self.command(*args, **how)
@@ -165,6 +177,8 @@ class ActivityCase(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.fixture = Fixture(directory.name)
+        self.root = Path(directory.name)
+        self.temporary = Path(directory.name).name
         self.addCleanup(self.fixture.close)
 
     def fails(self, status, *args, **how):
@@ -189,7 +203,7 @@ class StoreTest(ActivityCase):
         self.assertEqual(store, MOD["Store"](
             "kit", frozenset({"kit", "proj"}), (COORDINATOR, "mcp:threadmarker-previous"),
             (unit("D7", "in-review", "Activity page", "https://example.test/o/r/pull/7", worker(2), (worker(1),), "node:delegated-task:nodemarker-9"),
-             unit("D8", "merged", "Queue fix", "", "", (), ""))))
+             unit("D8", "merged", "Queue fix", "", "", (), "")), fixture.meta["projectRoot"]))
 
     def test_read_store_drops_the_text_after_the_last_newline(self):
         fixture = self.fixture
@@ -246,9 +260,9 @@ class StoreTest(ActivityCase):
 
 class ArgumentTest(ActivityCase):
     def test_hours_outside_the_range_exits_1(self):
-        for hours in ("0", "-1", "168.5", "nan"):
+        for hours in ("0", "-1", "168.5", "nan", "inf", "1e-100", "0.0099"):
             with self.subTest(hours):
-                self.assertEqual(self.fails(1, f"--hours={hours}"), "activity: --hours must be more than 0 and at most 168; pass a number in that range")
+                self.assertEqual(self.fails(1, f"--hours={hours}"), "activity: --hours must be from 0.01 to 168; pass a number in that range")
 
     def test_max_bytes_outside_the_range_exits_1(self):
         for size in ("15999", "500001"):
@@ -363,7 +377,7 @@ class ShapeTest(ActivityCase):
     def test_bad_timestamp_exits_3_and_names_the_column(self):
         cases = (
             ("orchestration_v2_projection_runs.requested_at", lambda f: f.turns.append((COORDINATOR, "completed", "yesterday pathmarker", None))),
-            ("orchestration_v2_projection_subagents.started_at", lambda f: f.delegations.append(("node:nodemarker", COORDINATOR, worker(1), "completed", None, None))),
+            ("orchestration_v2_projection_subagents.started_at", lambda f: f.delegations.append(("node:nodemarker", COORDINATOR, worker(1), "completed", "yesterday pathmarker", None))),
         )
         for where, spoil in cases:
             with self.subTest(where):
@@ -425,11 +439,16 @@ class ReadTest(ActivityCase):
         self.assertIsNone(name(worker(1)))
         self.assertIsNone(name(native(1)))
 
-    def test_parse_time_reads_a_z_suffix_and_reads_no_zone_as_utc(self):
+    def test_parse_time_reads_a_z_suffix_or_an_offset_with_or_without_milliseconds_and_refuses_a_text_with_no_zone(self):
         parse = MOD["parse_time"]
         self.assertEqual(parse("2026-10-03T01:49:21.841Z", "t.c"), 1790992161.841)
-        self.assertEqual(parse("2026-10-03T01:49:21", "t.c"), 1790992161.0)
+        self.assertEqual(parse("2026-10-03T01:49:21Z", "t.c"), 1790992161.0)
         self.assertEqual(parse("2026-10-03T03:49:21+02:00", "t.c"), 1790992161.0)
+        self.assertEqual(parse("2026-10-02T18:49:21.841-07:00", "t.c"), 1790992161.841)
+        for text in ("2026-10-03T01:49:21", "2026-10-03T01:49:21.841", "2026-10-03", "2026-10-03T01:49:21.8Z", "2026-10-03T01:49:21+0200", "2026-10-03T01:49:21Z\n", "٢٠٢٦-10-03T01:49:21Z",
+                     "2026-02-30T01:49:21Z", "2026-10-03T25:49:21Z", None, 1790992161):
+            with self.subTest(text), self.assertRaises(MOD["SourceError"]):
+                parse(text, "t.c")
 
     def test_in_scope_keeps_ancestors_up_to_the_root_and_counts_the_rest(self):
         parent_of = {"child": "worker", "grandchild": "child", "stray": "elsewhere", "loop-a": "loop-b", "loop-b": "loop-a", "above": None}
@@ -525,7 +544,7 @@ class ReadTest(ActivityCase):
 
 def page_of(fixture, hours=3.0):
     store, t3, window = fixture.write().read(hours)
-    return MOD["build_page"](store, t3, window)
+    return MOD["build_page"](store, t3, window, MOD["privacy_of"](store, t3))
 
 
 def labels(page):
@@ -591,7 +610,7 @@ class GroupingTest(ActivityCase):
         self.assertEqual({MOD["request_name"](thread): (found.unit, found.evidence.value) for thread, found in placed.items()}, {
             "brigade-kit-d7-verify-0a1b2c3": ("D7", "request"), "d7r2-fix": ("D7", "request"), "x-d7c": ("D7", "request"),
             "brigade-kit-d9-verify": (None, "none"), "d77-fix": (None, "none"), "D7-fix": (None, "none")})
-        self.assertEqual(MOD["build_page"](store, t3, MOD["Window"](fixture.now - 10800, fixture.now)).hidden.by_request_name, 3)
+        self.assertEqual(MOD["build_page"](store, t3, MOD["Window"](fixture.now - 10800, fixture.now), MOD["privacy_of"](store, t3)).hidden.by_request_name, 3)
 
     def test_title_that_holds_a_unit_id_is_not_grouping_evidence(self):
         fixture = self.fixture
@@ -622,12 +641,12 @@ class GroupingTest(ActivityCase):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), turns=(("completed", 90, 80),))
-        late, early = delegated(worker(1), "late"), delegated(worker(1), "early")
+        late, early = delegated(worker(1), "late-part"), delegated(worker(1), "early-part")
         fixture.thread(late, title="late", parent=worker(1), turns=(("completed", 40, 35),))
         fixture.thread(early, title="early", parent=worker(1), turns=(("completed", 70, 60),))
-        deep = delegated(early, "deep")
+        deep = delegated(early, "deep-part")
         fixture.thread(deep, title="deep", parent=early, turns=(("completed", 65, 64),))
-        fixture.thread(delegated(deep, "deeper"), title="deeper", parent=deep, turns=(("completed", 64.5, 64.2),))
+        fixture.thread(delegated(deep, "deeper-part"), title="deeper", parent=deep, turns=(("completed", 64.5, 64.2),))
         self.assertEqual(labels(page_of(fixture)), {"D7": [(0, "worker"), (1, "early"), (2, "deep"), (2, "deeper"), (1, "late")]})
 
 
@@ -659,7 +678,7 @@ class StatusTest(ActivityCase):
     def test_coordinators_open_turn_is_in_no_count_and_its_row_has_no_running_bar(self):
         fixture = self.fixture
         fixture.meta["previousThread"] = "mcp:threadmarker-previous"
-        fixture.coordinator(turns=(("completed", 60, 50), ("running", 5, None)), model="vendor/model-c")
+        fixture.coordinator(turns=(("completed", 60, 50), ("running", 5, None)), model="claudeAgent/model-c")
         fixture.thread("mcp:threadmarker-previous", turns=(("failed", 120, 110),))
         page = page_of(fixture)
         own = page.coordinator
@@ -684,14 +703,14 @@ class StatusTest(ActivityCase):
         self.assertEqual(MOD["status_of"](agent(delegated(worker(1), "x"), parent=worker(1), turns=(turn,), delegation=closed)).value, "stopped")
         self.assertEqual(MOD["status_of"](agent(worker(1))).value, "done")
 
-    def test_bars_join_when_the_same_status_is_under_5_thousandths_apart_and_an_open_turn_starts_its_own(self):
+    def test_bars_join_when_the_same_status_is_under_5_thousandths_apart_an_open_turn_starts_its_own_and_a_queued_turn_adds_no_seconds(self):
         status, turn, window = MOD["Status"], MOD["Turn"], MOD["Window"](0.0, 1000.0)
         turns = (turn(status.DONE, -50.0, 100.0), turn(status.DONE, 104.0, 200.0), turn(status.DONE, 205.0, 300.0),
                  turn(status.STOPPED, 301.0, 310.0), turn(status.RUNNING, 400.0, 500.0), turn(status.QUEUED, 501.0, None))
         spans = MOD["spans_of"](agent(worker(1), turns=turns), window)
         self.assertEqual([(span.x, span.w, span.status.value) for span in spans],
-                         [(0, 200, "done"), (205, 95, "done"), (301, 9, "stopped"), (400, 100, "running"), (501, 499, "running")])
-        self.assertEqual(MOD["seconds_of"](agent(worker(1), turns=turns), window), 100 + 96 + 95 + 9 + 100 + 499)
+                         [(0, 200, "done"), (205, 95, "done"), (301, 9, "stopped"), (400, 100, "running"), (501, 499, "queued")])
+        self.assertEqual(MOD["seconds_of"](agent(worker(1), turns=turns), window), 100 + 96 + 95 + 9 + 100)
 
     def test_bar_at_the_windows_end_keeps_a_width_of_1_inside_the_window(self):
         turn = MOD["Turn"](MOD["Status"].RUNNING, 999.9, None)
@@ -722,15 +741,15 @@ class PageTest(ActivityCase):
         fixture = self.fixture
         fixture.unit("D7", "in-progress", "Fix sign-in for acct-homemarker@example.test today", thread=worker(1))
         fixture.thread(worker(1), turns=(("completed", 90, 80),))
-        fixture.thread(delegated(worker(1), "helper"), title="acct-homemarker@example.test notes", parent=worker(1), turns=(("completed", 70, 60),))
+        fixture.thread(delegated(worker(1), "mail-helper"), title="acct-homemarker@example.test notes", parent=worker(1), turns=(("completed", 70, 60),))
         page = page_of(fixture)
-        self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "helper")]}))
+        self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "mail helper")]}))
 
     def test_provider_names_come_from_the_table_and_any_other_driver_reads_other(self):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), provider="codex", turns=(("completed", 90, 80),))
-        for number, provider in enumerate(("acct-homemarker-instance", "acct-homemarker-instance", "grok", "cursor", "opencode", "claudeAgent", "")):
+        for number, provider in enumerate(("acct-homemarker-instance", "acct-homemarker-instance", "grok", "cursor", "opencode", "claudeAgent", "Codex")):
             fixture.thread(native(number), provider=provider, parent=worker(1), delegation=("completed", 70, 60))
         page = page_of(fixture)
         self.assertEqual(page.legend, (("Other", 3), ("Claude", 1), ("Codex", 1), ("Cursor", 1), ("Grok", 1), ("OpenCode", 1)))
@@ -740,7 +759,7 @@ class PageTest(ActivityCase):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), provider="codex", turns=(("completed", 900, 890),))
-        fixture.thread(delegated(worker(1), "helper"), title="helper", parent=worker(1), turns=(("failed", 20, 10),))
+        fixture.thread(delegated(worker(1), "helper-task"), title="helper", parent=worker(1), turns=(("failed", 20, 10),))
         page = page_of(fixture)
         parent, child = page.groups[0].rows
         self.assertEqual((parent.depth, parent.label, parent.status.value, parent.seconds, parent.spans, parent.stands_for), (0, "worker", "done", 0, (), 0))
@@ -752,10 +771,11 @@ class PageTest(ActivityCase):
 
     def test_parent_with_no_turn_in_the_window_is_not_counted_as_grouped_by_request_name(self):
         fixture = self.fixture
+        fixture.coordinator(turns=(("completed", 900, 890),))
         fixture.unit("D7")
         review = delegated(COORDINATOR, "brigade-kit-d7-verify")
         fixture.thread(review, parent=COORDINATOR, turns=(("completed", 900, 890),))
-        fixture.thread(delegated(review, "reader"), title="reader", parent=review, turns=(("completed", 20, 10),))
+        fixture.thread(delegated(review, "d7-reader"), title="reader", parent=review, turns=(("completed", 20, 10),))
         page = page_of(fixture)
         self.assertEqual((drawn(page), page.hidden.by_request_name), ({"D7": [(0, "review", 0), (1, "reader", 1)]}, 0))
 
@@ -764,7 +784,7 @@ class PageTest(ActivityCase):
         fixture.coordinator()
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), turns=(("completed", 900, 890),))
-        node = fixture.thread(delegated(worker(1), "helper"), title="helper", parent=worker(1), turns=(("completed", 20, 10),))
+        node = fixture.thread(delegated(worker(1), "helper-task"), title="helper", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.unit("D8", task=node)
         page = page_of(fixture)
         self.assertEqual((labels(page), page.totals), ({"D8": [(0, "helper")]}, MOD["Totals"](running=0, agents=0, subagents=1, failed=0)))
@@ -774,10 +794,10 @@ class PageTest(ActivityCase):
         fixture.meta.pop("thread")
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), turns=(("completed", 90, 80),))
-        fixture.thread(delegated(worker(1), "explorer"), parent=worker(1), turns=(("completed", 70, 60),))
+        fixture.thread(delegated(worker(1), "how-explorer"), parent=worker(1), turns=(("completed", 70, 60),))
         fixture.thread(delegated(COORDINATOR, "brigade-kit-d7-verify"), parent=COORDINATOR, turns=(("completed", 50, 40),))
         page = page_of(fixture)
-        self.assertEqual((labels(page), page.coordinator, page.hidden.other_threads), ({"D7": [(0, "worker"), (1, "explorer")]}, None, 1))
+        self.assertEqual((labels(page), page.coordinator, page.hidden.other_threads), ({"D7": [(0, "worker"), (1, "how explorer")]}, None, 1))
 
 
 class LabelTest(unittest.TestCase):
@@ -785,11 +805,11 @@ class LabelTest(unittest.TestCase):
 
     def label(self, title="", request="", parent=COORDINATOR, unit="D7"):
         thread = delegated(parent, request) if request else native(1) if parent else worker(9)
-        return MOD["label_of"](agent(thread, title=title, parent=parent), self.STORE, unit)
+        return MOD["label_of"](agent(thread, title=title, parent=parent), self.STORE, unit, MOD["Privacy"]({thread, request, COORDINATOR, worker(1), worker(2)}))
 
     def test_current_worker_and_earlier_worker(self):
-        self.assertEqual(MOD["label_of"](agent(worker(2), title="D7 anything"), self.STORE, "D7"), "worker")
-        self.assertEqual(MOD["label_of"](agent(worker(1), title="D7 anything"), self.STORE, "D7"), "earlier worker")
+        self.assertEqual(MOD["label_of"](agent(worker(2), title="D7 anything"), self.STORE, "D7", MOD["Privacy"](())), "worker")
+        self.assertEqual(MOD["label_of"](agent(worker(1), title="D7 anything"), self.STORE, "D7", MOD["Privacy"](())), "earlier worker")
 
     def test_written_title_wins_over_the_request_name(self):
         self.assertEqual(self.label("how explorer: store and CLI", "brigade-kit-d7-verify-0a1b2c3"), "how explorer: store and CLI")
@@ -809,15 +829,26 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(self.label("D8: rehearsal"), "D8: rehearsal")
         self.assertEqual(self.label("D7: rehearsal", unit=None), "D7: rehearsal")
 
-    def test_title_that_is_one_path_gives_its_last_segment_only_when_that_holds_no_dot(self):
+    def test_title_that_is_one_path_under_root_gives_its_last_segment_when_that_is_letters_digits_hyphens_and_underscores(self):
         self.assertEqual(self.label("/root/spec_review", parent=worker(2)), "spec_review")
-        self.assertEqual(self.label("/pathmarker/notes.md", parent=worker(2)), "sub-agent")
+        self.assertEqual(self.label("/root/a/b/spec-review_2", parent=worker(2)), "spec-review_2")
+        for title in ("/root/notes.md", "/pathmarker/notes", "/root", "root/spec_review", "/root/spec_review now", "/root/acct_secretXYZ"):
+            with self.subTest(title):
+                self.assertEqual(self.label(title, parent=worker(2)), "sub-agent")
 
-    def test_title_that_scrub_drops_a_part_from_loses_to_the_request_name(self):
+    def test_title_that_the_filter_changes_loses_to_the_request_name(self):
         self.assertEqual(self.label("Read the brief at /pathmarker/brief.md", "why-investigator"), "why investigator")
         self.assertEqual(self.label("Fix 0a1b2c3 now", "brigade-kit-d7r2-fix"), "fix")
         self.assertEqual(self.label("Read /pathmarker/brief.md first", parent=worker(2)), "sub-agent")
         self.assertEqual(self.label("Read the brief first", "why-investigator"), "Read the brief first")
+        self.assertEqual(self.label(f"Ask {worker(1)} first", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("see why-investigator", "why-investigator"), "why investigator")
+
+    def test_request_name_of_one_word_is_removed_from_its_own_label(self):
+        self.assertEqual(self.label(request="explorer"), "sub-agent")
+        self.assertEqual(self.label("explorer", "explorer"), "sub-agent")
+        self.assertEqual(self.label("Act as the review sub-agent for this task.", "explorer"), "review")
+        self.assertEqual(self.label(request="how-explorer"), "how explorer")
 
     def test_title_that_is_one_lower_case_word_with_a_hyphen_is_read_as_a_request_name(self):
         self.assertEqual(self.label("brigade-kit-d7-verify-2", "brigade-kit-d7-verify-0a1b2c3"), "review 2")
@@ -835,22 +866,60 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(self.label("123e4567-e89b-12d3-a456-426614174000", parent=worker(2)), "sub-agent")
         self.assertEqual(self.label("You are the helper.", parent=None), "agent")
 
-    def test_scrub_keeps_the_first_line_and_drops_paths_and_ids(self):
-        scrub = MOD["scrub"]
-        self.assertEqual(scrub("Fix the queue\nsecond line"), "Fix the queue")
-        self.assertEqual(scrub("see `/pathmarker/a b` ~/pathmarker (a/b/c) C:\\pathmarker\\x file:///pathmarker src/a.py"), "see b` src/a.py")
-        self.assertEqual(scrub("at 0a1b2c3 and 123e4567-e89b-12d3-a456-426614174000 and 123456 and mcp:x and node:y"), "at and and and and")
-        self.assertEqual(scrub("defaced facade 12345 https://example.test/o/r/pull/7 thread: one"), "defaced facade 12345 https://example.test/o/r/pull/7 thread: one")
-        self.assertEqual(scrub(""), "")
+    def test_text_keeps_the_first_line_and_drops_each_word_that_holds_a_slash_a_backslash_a_leading_tilde_a_percent_escape_or_an_id_shape(self):
+        text = MOD["Privacy"](()).text
+        self.assertEqual(text("Fix the queue\nsecond line"), "Fix the queue")
+        self.assertEqual(text("see `/pathmarker/a b` ~/pathmarker (a/b/c) C:\\pathmarker\\x file:///pathmarker src/a.py private/file.txt ~pathmarker and/or"), "see b`")
+        self.assertEqual(text("at 0a1b2c3 and 123e4567-e89b-12d3-a456-426614174000 and 123456 and id=mcp%3Ax and 50%2f and acct_secretXYZ and ses_edd6ae1"), "at and and and and and and")
+        self.assertEqual(text("defaced facade 12345 thread: one 100% spec_review MAX_BYTES t3_thread_send ~ a_b2c3d4 a_b2c3 a_bcdefg"), "defaced facade 12345 thread: one 100% spec_review MAX_BYTES t3_thread_send a_b2c3 a_bcdefg")
+        self.assertEqual(text("link https://example.test/o/r/pull/7 gone"), "link gone")
+        self.assertEqual(text(""), "")
 
-    def test_scrub_drops_a_part_that_holds_an_at_sign_with_a_character_before_it_and_a_dot_after_it(self):
-        scrub = MOD["scrub"]
-        self.assertEqual(scrub("mail acct-homemarker@example.test and <acct-homemarker@example.test> now"), "mail and now")
-        self.assertEqual(scrub("@handle a@b user@host @example.test stay"), "@handle a@b user@host @example.test stay")
+    def test_text_drops_a_word_that_holds_a_colon_or_an_at_sign_between_two_characters(self):
+        text = MOD["Privacy"](()).text
+        self.assertEqual(text("mail acct-homemarker@example.test and <acct-homemarker@example.test> a@b user@host now"), "mail and now")
+        self.assertEqual(text("mcp:x node:y task:alpha-secret prefix=mcp:alpha-secret 12:30 D7:fix"), "")
+        self.assertEqual(text("@handle @example.test D7: fix: :x x: stay"), "@handle @example.test D7: fix: :x x: stay")
 
-    def test_model_name_is_the_text_after_the_last_slash(self):
-        self.assertEqual(MOD["model_name"]("vendor/sub/model-b-20260101"), "model-b-20260101")
-        self.assertEqual(MOD["model_name"]("model-a"), "model-a")
+    def test_text_removes_each_value_of_4_or_more_characters_it_was_given_wherever_it_is_and_in_its_percent_decoded_forms(self):
+        child = delegated(COORDINATOR, "kit-d7-audit")
+        text = MOD["Privacy"]({child, "kit-d7-audit", "abc", "two words", "acct"}).text
+        self.assertEqual(text(f"x{child}y and pre{unquote(child)}post"), "x y and pre post")
+        self.assertEqual(text("the kit-d7-audit-2 and xkit-d7-auditx and two words and abc acct1 KIT-D7-AUDIT"), "the -2 and x x and and abc 1 KIT-D7-AUDIT")
+        self.assertEqual(text(quote(child, safe="") + " " + child.replace("%3A", "%3a") + " end"), "end")
+
+    def test_text_removes_a_value_that_dropping_a_word_or_joining_spaces_would_leave(self):
+        text = MOD["Privacy"]({"two words", "kit-d7-audit"}).text
+        self.assertEqual(text("say two   words and two a/b words and kit-d7-kit-d7-audit-audit"), "say and and kit-d7- -audit")
+
+    def test_text_removes_the_longest_value_that_starts_at_a_place(self):
+        text = MOD["Privacy"]({worker(1), worker(10)}).text
+        self.assertEqual(text(f"a {worker(10)} b {worker(1)} c {worker(1)}7"), "a b c 7")
+
+    def test_model_is_the_name_after_one_provider_prefix_when_it_is_lower_case_letters_digits_dots_and_hyphens_and_any_other_reads_other_model(self):
+        model = MOD["Privacy"]({"model-secret", worker(1)}).model
+        kept = ("model-a", "gpt-6.1-sol", "claude-sonnet-4-5-20250929", "default", "k3", "a" * 48)
+        self.assertEqual([model(name) for name in kept], list(kept))
+        self.assertEqual((model("opencode/muse-spark-1.3-free"), model("claudeAgent/model-b")), ("muse-spark-1.3-free", "model-b"))
+        other = (*REVIEW_MODELS, *REVIEW_TEXTS, "file:/home/private/secret", "vendor/model-b", "opencode/sub/model-b", "Model-A", "model_a", "model a", "model-a\n", " model-a", "",
+                 "3-model", "model-", "model..a", "a" * 49, "model-0a1b2c3", "model-123456", "model-deadbeef01", "model-secret", "opencode/model-secret", "x-model-secret-y", worker(1),
+                 "model-20250929-1234567", "модель", "model-é")
+        self.assertEqual([name for name in other if model(name) != "other model"], [])
+
+    def test_link_is_the_https_pull_request_address_without_userinfo_query_or_fragment_and_any_other_value_is_refused(self):
+        link = MOD["Privacy"]({"kit-d7-audit", worker(1)}).link
+        address = "https://git.example/Owner.x/re_po-1/pull/123456"
+        for value in (address, "https://user:pw@git.example/Owner.x/re_po-1/pull/123456", address + "?x=mcp:alpha-secret", address + "#task:alpha-secret",
+                      "HTTPS://GIT.EXAMPLE/Owner.x/re_po-1/pull/123456", "https://git.example/Owner.x/re_po-1/pull/123456?"):
+            with self.subTest(value):
+                self.assertEqual(link(value), (address, ""))
+        self.assertEqual((link(""), link("  ")), (("", ""), ("", "")))
+        refused = ("http://git.example/o/r/pull/7", "https://git.example:8443/o/r/pull/7", "https://git.example/o/r/pull/7/files", "https://git.example/o/r/pull/7/", "https://git.example/o/r/pull/",
+                   "https://git.example/o/pull/7", "https://git.example/a/o/r/pull/7", "https://git.example/o/r/pulls/7", "https://git.example/o/r/pull/7 x", "https://git.example/o/r/pull/x7",
+                   "https:///o/r/pull/7", "https://git_example/o/r/pull/7", "https://[::1]/o/r/pull/7", "https://[x/o/r/pull/7", "https://git.example:port/o/r/pull/7", "git.example/o/r/pull/7",
+                   "file:/home/private/secret", "private/file.txt", "https://git.example/kit-d7-audit/r/pull/7", "https://git.example/o/0a1b2c3/pull/7", "https://123456.example/o/r/pull/7",
+                   "https://git.example/o/acct_secretXYZ/pull/7", "https://git.example/o%2Fr/r/pull/7", "https://git.example/../r/pull/7", "https://git.example/o/./pull/7", "https://git.example/o/r/pull/7\\x", f"https://git.example/{worker(1)}/r/pull/7")
+        self.assertEqual([value for value in refused if link(value) != ("", "refused")], [])
 
 
 def populate(fixture, units, agents, running=0, failed=0, heavy=False, in_flight=None, failed_every=0):
@@ -894,8 +963,8 @@ def row(label, depth=0, status="done", spans=((0, 10, "done"),), open_seconds=No
     return MOD["Row"](depth, label, model, "Claude", MOD["Status"](status), 60, bars, open_seconds, stands_for)
 
 
-def item(ident, in_flight=True, summary="summary", pr=""):
-    return MOD["Item"](ident, summary, "working" if in_flight else "merged", "go" if in_flight else "", pr, in_flight)
+def item(ident, in_flight=True, summary="summary", pr="", no_link=""):
+    return MOD["Item"](ident, summary, "working" if in_flight else "merged", "go" if in_flight else "", pr, in_flight, no_link)
 
 
 def group(of, *rows):
@@ -1052,6 +1121,8 @@ class FoldTest(ActivityCase):
         self.assertEqual((fourth.item.summary, fourth.item.pr), ("s" * 33 + "…", "https://example.test/?" + "&" * 13))
         self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 27 + "…", "𝔸" * 8 + "…"))
         self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
+        self.assertEqual([each.no_link for each in folded.items], ["cut", "", "cut", ""])
+        self.assertEqual(MOD["notes"](folded), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
 
     def test_every_fold_on_the_busy_fixture_and_on_one_with_failed_agents_in_merged_units_keeps_the_agent_count_the_totals_and_the_legend(self):
         for build, totals, in_flight in ((busy, MOD["Totals"](5, 36, 364, 3), 8), (day, MOD["Totals"](8, 36, 364, 32), 6)):
@@ -1065,17 +1136,38 @@ class FoldTest(ActivityCase):
                 shown.append(len(rows))
                 with self.subTest(build.__name__, fold=index):
                     self.assertEqual(sum(each.stands_for for each in rows) + folded.hidden.dropped_agents + folded.hidden.cut_agents, 400)
+                    self.assertEqual([each.id for each in MOD["items_of"](folded) if not each.pr and not each.no_link], [])
                     self.assertEqual((folded.totals, folded.legend, folded.fold), (unfolded.totals, unfolded.legend, index + 1))
             self.assertEqual(shown, sorted(shown, reverse=True))
             self.assertEqual((len(folded.groups), len(folded.items), shown[-1] < shown[0]), (6, in_flight, True))
 
+    def test_every_fold_of_a_page_whose_items_all_have_a_link_leaves_each_item_on_the_page_with_its_link_or_counted_in_a_note(self):
+        fixture = busy(self.fixture)
+        for number, unit in enumerate(fixture.units, start=1):
+            unit["pr"] = ("https://example.test/" + "o" * 60 + f"/r/pull/{number}", f"https://example.test/o/r/pull/{number}", f"http://example.test/o/r/pull/{number}")[number % 3]
+        folded = page_of(fixture)
+        for index, fold in enumerate(MOD["FOLDS"]):
+            folded = fold(folded)
+            on_page = MOD["items_of"](folded)
+            data = data_of(MOD["render_html"](folded))
+            counted = sum(int(note.split()[0]) for note in data["N"] if "pull request link" in note)
+            with self.subTest(fold=index):
+                self.assertEqual((len(data["I"]), sum(bool(each[4]) for each in data["I"]) + counted), (len(on_page), len(on_page)))
+        self.assertEqual([note for note in MOD["notes"](folded) if "pull request link" in note], [
+            "3 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "3 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."])
+
     def test_notes_say_no_agent_ran_for_an_empty_window_and_count_unknown_statuses_requests_and_other_threads(self):
         self.assertEqual(MOD["notes"](page()), ["No agent or sub-agent of this coordinator ran in this window."])
-        hidden = MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1, other_threads=1, unknown_status=1, by_request_name=1)
-        self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=hidden)), [
+        hidden = MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1, other_threads=1, unknown_status=1, by_request_name=1, unstarted=1)
+        linked = page(group(item("D1", no_link="cut"), row("worker")), items=[item("D2", no_link="refused"), item("D3", pr=PR7)], hidden=hidden)
+        self.assertEqual(MOD["notes"](linked), [
             "1 merged or dropped work item with 1 agent is not shown. Use a larger --max-bytes to see more.",
             "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "1 more work item in flight is not listed.",
+            "1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "1 pull request link is not shown. It is not an https://host/owner/repository/pull/number address, or it holds text this page removes.",
+            "T3 lists 1 sub-agent of a thread on this page with no thread or no start time. It is not shown.",
             "T3 gave 1 status this tool reads as unknown.",
             "1 agent is grouped by the name of the request that started it.",
             "1 other thread ran in T3 outside this coordinator."])
@@ -1148,7 +1240,7 @@ def failed_child(fixture):
     fixture.thread(runner, title="architect runner 2", provider="codex", model="model-b", parent=worker(1), turns=(("running", 6.5, None),))
     fixture.thread(native(1), title="/root/spec_review", provider="codex", model="model-b", parent=runner, delegation=("completed", 5, 4))
     fixture.thread(delegated(COORDINATOR, "brigade-kit-d7-verify-0a1b2c3"), title="Act as the review sub-agent for this task.",
-                   provider="grok", model="vendor/model-c", parent=COORDINATOR, turns=(("failed", 30.5, 27),))
+                   provider="grok", model="grok/model-c", parent=COORDINATOR, turns=(("failed", 30.5, 27),))
     fixture.thread(worker(5), title="D5 worker", turns=(("completed", 170, 165),))
     fixture.thread(delegated(COORDINATOR, "why-investigator"), title="Read the brief at /pathmarker/brief.md", parent=COORDINATOR, turns=(("interrupted", 90, 88),))
     fixture.thread("mcp:threadmarker-other-project", turns=(("completed", 20, 10),))
@@ -1245,18 +1337,18 @@ class DocumentTest(OutputCase):
         self.assertEqual(int(PROGRAM.search(document).group(2)), value)
         self.assertEqual((MOD["checksum"]("a"), MOD["checksum"]("foobar")), (0xE40C292C, 0xBF9CF968))
 
-    def test_markup_a_quote_a_backslash_and_an_escape_character_in_the_store_name_a_summary_a_title_and_a_model_leave_no_backslash_or_angle_bracket_in_the_data_element(self):
+    def test_markup_a_quote_and_an_escape_character_in_the_store_name_a_summary_and_a_title_leave_no_backslash_or_angle_bracket_in_the_data_element(self):
         fixture = one_running(self.fixture)
-        text, written = "x</script><img onerror=a(1)> \"q\" \\ & p\x1b", "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; p "
+        text, written = "x<script><img onerror=a(1)> \"q\" & p\x1b", "x&lt;script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &amp; p "
         fixture.meta["restaurant"] = text
         fixture.units[0]["summary"] = text
-        fixture.thread(delegated(worker(1), "helper"), title=text, model="<b>\\\"model\x1b", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.thread(delegated(worker(1), "helper-task"), title=text, model="<b>\\\"model\x1b", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.write()
         raw = DATA.search(self.document()).group(1)
         self.assertEqual([character for character in "\\<>" if character in raw], [])
         data = json.loads(raw)
         self.assertEqual((data["c"], data["I"][1][1], data["G"][0][1][1][1], data["M"]),
-                         (written, written, written, ["model-a", "&lt;b&gt;&#92;&quot;model "]))
+                         (written, written, written, ["model-a", "other model"]))
 
     def test_data_element_of_a_page_whose_strings_hold_markup_a_quote_a_backslash_a_tab_and_u2028_holds_no_backslash_or_angle_bracket(self):
         raw = DATA.search(MOD["render_html"](hostile())).group(1)
@@ -1315,6 +1407,16 @@ class DocumentTest(OutputCase):
         self.assertEqual([(name, value) for selector, name, value in declared if selector == "#o"], [("font", "13px/1.4 var(--font-sans)"), ("color", "var(--foreground)")])
         self.assertEqual([selector for selector, _, value in declared if "var(--background)" in value], [".grp"])
 
+    def test_narrow_rule_puts_each_rows_model_on_a_second_line_of_a_30_pixel_row_and_hides_only_every_other_axis_label(self):
+        narrow = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", re.search(r"@media\(max-width:520px\)\{(.*)\}$", MOD["STYLE"]).group(1)))
+        self.assertEqual([selector for selector, body in narrow.items() if "display:none" in body], [".axis i:nth-child(odd)"])
+        self.assertEqual(narrow[".row"], "position:relative;height:30px;align-items:start")
+        self.assertEqual(narrow[".l small"], "position:absolute;left:0;right:0;bottom:0;overflow:hidden;text-overflow:ellipsis;line-height:13px")
+        self.assertEqual((narrow[".d1 small"], narrow[".d2 small"]), ("left:14px", "left:28px"))
+        wide = MOD["STYLE"].split("@media")[0]
+        self.assertEqual(re.findall(r"[^{}]*small[^{}]*\{[^{}]*\}", wide), ["h2,small,.stat span,.legend,.axis,.sum,.foot,.co,.chip{color:var(--muted-foreground)}", "small{font-size:10.5px}"])
+        self.assertEqual(re.findall(r"height:[^;}]*", MOD["STYLE"]), ["height:1.1", "height:8px", "height:9px", "height:16px", "height:19px", "height:100%", "height:11px", "height:30px", "height:13px"])
+
     def test_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
         style = MOD["STYLE"]
         declared = declarations(style)
@@ -1349,7 +1451,7 @@ class SizeTest(OutputCase):
         typical(self.fixture).write()
         document = self.document()
         data = data_of(document)
-        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertLess(len(document.encode()), 16000)
         self.assertEqual((data["n"], agents_shown(data), sum(len(lines) for _, lines in data["G"])), ([3, 9, 41, 1], 50, 50))
         self.assertEqual(data["N"], ["14 agents are grouped by the name of the request that started them."])
 
@@ -1357,10 +1459,10 @@ class SizeTest(OutputCase):
         busy(self.fixture).write()
         document = self.document()
         data = data_of(document)
-        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertLess(len(document.encode()), 16000)
         self.assertEqual(data["n"], [5, 36, 364, 3])
         self.assertLess(sum(len(lines) for _, lines in data["G"]), 400)
-        self.assertEqual(data["N"][0], "27 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.")
+        self.assertIn("27 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.", data["N"])
         whole = data_of(self.document("--max-bytes", "500000"))
         self.assertEqual((whole["n"], agents_shown(whole), sum(len(lines) for _, lines in whole["G"])), ([5, 36, 364, 3], 400, 400))
         self.assertEqual(whole["N"], ["112 agents are grouped by the name of the request that started them."])
@@ -1368,54 +1470,57 @@ class SizeTest(OutputCase):
     def test_window_shaped_like_a_measured_day_is_over_12000_and_at_most_16000_bytes_and_the_last_fold_is_not_applied(self):
         unfolded = page_of(day(self.fixture))
         self.assertEqual((unfolded.totals, len(unfolded.items), sum(each.depth == 0 for one in unfolded.groups for each in one.rows)), (MOD["Totals"](8, 36, 364, 32), 6, 148))
-        fitted, document = MOD["fit"](unfolded, 16000)
+        fitted, document = MOD["fit"](unfolded, 15999)
         self.assertGreater(len(document.encode()), 12000)
-        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertLess(len(document.encode()), 16000)
         self.assertLess(fitted.fold, len(MOD["FOLDS"]))
         self.assertEqual(agents_shown(data_of(document)) + fitted.hidden.dropped_agents, 400)
         printed = self.document()
         self.assertGreater(len(printed.encode()), 12000)
-        self.assertLessEqual(len(printed.encode()), 16000)
+        self.assertLess(len(printed.encode()), 16000)
         self.assertEqual(sum(len(lines) for _, lines in data_of(printed)["G"]), sum(len(one.rows) for one in fitted.groups))
 
     def test_extreme_window_with_four_byte_characters_and_long_links_is_at_most_16000_bytes(self):
         extreme(self.fixture).write()
         document = self.document()
         data = data_of(document)
-        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertLess(len(document.encode()), 16000)
         self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 6, 8))
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
-    def test_page_of_a_168_hour_window_with_six_providers_the_most_rows_and_every_clipped_string_over_its_byte_limit_fits_16000_bytes_after_the_last_fold_step(self):
+    def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_providers_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
-        hidden = MOD["Hidden"](**dict.fromkeys(("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name"), 9999999))
+        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
+        hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
         legend = tuple((name, 9999999) for name in ("Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"))
         sizes = {}
-        for character in ("s", "<", '"', "𝕏"):
-            wide = character * 400
+        for status in ("running", "queued"):
+            for character in ("s", "<", '"', "𝕏"):
+                wide = character * 400
 
-            def big(number):
-                return item(str(number) + wide, summary=str(number) + wide, pr="https://example.test/" + "x" * 69)
+                def big(number, no_link=""):
+                    return item(str(number) + wide, summary=str(number) + wide, pr="https://example.test/" + "x" * 69, no_link=no_link)
 
-            def rows(prefix):
-                return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status="running", spans=spans, open_seconds=604800, stands_for=99999, model=str(n) + wide),
-                                seconds=604800) for n in range(40)]
+                def rows(prefix):
+                    return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status=status, spans=spans, open_seconds=604800, stands_for=99999, model=str(n) + wide),
+                                    seconds=604800) for n in range(40)]
 
-            groups = [group(big(number), *rows(str(number))) for number in range(40)]
-            unfolded = page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide)
-            totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
-            largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604800.0), totals=totals, legend=legend))
-            self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items)), (6, [6] * 6, 8))
-            sizes[character] = len(MOD["render_html"](largest).encode())
-        self.assertEqual([character for character, size in sizes.items() if size > 16000], [])
+                groups = [group(big(number, "refused" if number % 2 else "cut"), *rows(str(number))) for number in range(40)]
+                unfolded = page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide)
+                totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
+                largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604799.0), totals=totals, legend=legend))
+                self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest))), (6, [6] * 6, 8, 11))
+                self.assertEqual(MOD["wire"](largest)["w"][2], "167h 59m 59s")
+                sizes[status, character] = len(MOD["render_html"](largest).encode())
+        self.assertEqual([case for case, size in sizes.items() if size >= 16000], [])
 
 
 class TextTest(OutputCase):
     def test_text_lists_running_agents_work_items_failed_agents_and_notes(self):
         failed_child(self.fixture).write()
         self.assertEqual(self.out("--text"), "\n".join([
-            "Agent activity for kit, last 3 hours",
+            "Agent activity for kit, last 3h",
             "2 running now, 2 agents, 4 sub-agents, 1 failed",
             "Running now",
             "  D7 worker   model-a   running for 42m",
@@ -1451,10 +1556,6 @@ class TextTest(OutputCase):
         build(self.fixture).write()
         return self.out("--text")
 
-    def test_one_hour_window_reads_last_1_hour(self):
-        one_running(self.fixture).write()
-        self.assertEqual(self.out("--text", "--hours", "1").split("\n")[0], "Agent activity for kit, last 1 hour")
-
 
 class RunTest(OutputCase):
     def test_out_writes_the_document_and_prints_one_line_with_the_file_and_its_size(self):
@@ -1466,7 +1567,7 @@ class RunTest(OutputCase):
         self.assertTrue(document.startswith(b"<!doctype html>") and document.endswith(b"</script>"))
         printed = self.out("--text", "--out", str(target))
         self.assertEqual(printed, f"wrote {target} ({len(target.read_bytes())} bytes)\n")
-        self.assertTrue(target.read_text().startswith("Agent activity for kit, last 3 hours\n"))
+        self.assertTrue(target.read_text().startswith("Agent activity for kit, last 3h\n"))
 
     def test_out_in_a_directory_that_does_not_exist_exits_1(self):
         one_running(self.fixture).write()
@@ -1550,22 +1651,34 @@ class RendererTest(OutputCase):
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
             self.assertIn(text, texts)
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
-        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Bars show turn intervals and may join across gaps\. Striped bars include running or queued turns\. Faded bars include stopped turns\.$")
+        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Bars show turn or delegation intervals and may join across gaps\. Striped bars include running turns\. Outlined bars include queued turns\. Faded bars include stopped turns\.$")
         self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
         classes = built["classes"]
-        self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
+        self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
         self.assertEqual([bar for bar in built["bars"] if not all(re.fullmatch(r"[0-9]+(\.[0-9])?%", side) for side in bar)], [])
-        self.assertIn("review · failed · 3m", built["titles"])
+        self.assertEqual(built["titles"], ["coordinator · model-c · running · 15m", "worker · model-a · running · 63m", "architect runner 2 · model-b · running · 6m",
+                                           "spec_review · model-b · done · 60s", "review · model-c · failed · 3m", "worker · model-a · done · 5m", "why investigator · model-a · stopped · 2m"])
 
     def test_page_that_render_html_writes_is_drawn_with_markup_a_quote_a_backslash_and_text_that_reads_as_an_entity_as_that_text_and_a_tab_and_u2028_as_one_space(self):
         built = self.render(MOD["render_html"](hostile()))
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
         self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],
                          ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN + " ", "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
-                          + ". Bars show turn intervals and may join across gaps. Striped bars include running or queued turns. Faded bars include stopped turns."])
-        self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · done · 60s"])
+                          + ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns."])
+        self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · model " + HOSTILE_DRAWN + " · done · 60s"])
+
+    def test_renderer_lists_a_queued_agent_under_queued_with_a_plain_mark_and_an_outlined_bar_and_draws_no_running_list(self):
+        fixture = queued_only(self.fixture)
+        fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
+        fixture.write()
+        built = self.render(self.document(clock=fixture.now))
+        texts, classes = built["texts"], built["classes"]
+        self.assertEqual([text for text in texts if text in ("Running now", "Queued", "Timeline")], ["Queued", "Timeline"])
+        self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7 worker", "model-a", "5m", "D7 spec_review", "model-a · under worker", "2m"])
+        self.assertEqual([classes.count(name) for name in ("mark", "mark pulse", "b q", "b run", "stat live")], [2, 0, 2, 0, 1])
+        self.assertEqual((texts[0], built["titles"][1:]), ("0", ["worker · model-a · queued · 0s", "spec_review · model-a · queued · 0s"]))
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
         one_running(self.fixture).write()
@@ -1579,6 +1692,350 @@ class RendererTest(OutputCase):
                 fixture = self.fixture = Fixture(self.fixture.root / build.__name__)
                 build(fixture).write()
                 self.assertIn(heading, self.render(self.document())["texts"])
+
+REVIEW_MODELS = ("mcp:alpha-secret", "node:alpha-secret", "run:alpha-secret", "acct_secretXYZ", "user@example.test", "C:\\Users\\private\\file.txt")
+REVIEW_TEXTS = ("task:alpha-secret", "acct_secretXYZ", "private/file.txt", "prefix=mcp:alpha-secret", "id=mcp%3Aalpha-secret")
+REVIEW_VALUES = tuple(dict.fromkeys((*REVIEW_MODELS, *REVIEW_TEXTS, "file:/home/private/secret")))
+NEEDLES = ("secret", "user@", "example.test", "private", "Users", "file.txt")
+REQUEST = "kit-d7-audit-task"
+INSTANCE = "acct-homemarker-instance"
+ADDRESS = "acct-homemarker@example.test"
+PLANTED = ("model", "title", "title in a sentence", "summary", "unit id", "provider", "instance id", "branch", "store name",
+           "pull request", "pull request path", "pull request query", "pull request fragment", "pull request userinfo")
+
+
+def tree(directory):
+    return {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(Path(directory).rglob("*")) if path.is_file()}
+
+
+def put(rows, index, column, value):
+    rows[index] = (*rows[index][:column], value, *rows[index][column + 1:])
+
+
+class PrivacyTest(OutputCase):
+    def staffed(self, name):
+        fixture = self.fixture = Fixture(self.root / name)
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(1), pr="https://git.example/o/r/pull/7")
+        fixture.thread(worker(1), title="D7 worker", instance=INSTANCE, turns=(("running", 30, None),))
+        self.child = delegated(worker(1), REQUEST)
+        self.node = fixture.thread(self.child, title=f"auditor for {ADDRESS}", provider="codex", parent=worker(1), turns=(("completed", 25, 20),))
+        return fixture
+
+    def own_values(self, fixture):
+        child = self.child
+        return (COORDINATOR, worker(1), child, unquote(child), unquote(unquote(child)), quote(child, safe=""), quote(quote(child, safe=""), safe=""),
+                child.replace("%3A", "%3a"), self.node, REQUEST, INSTANCE, ADDRESS, str(fixture.store), str(fixture.base), str(fixture.database), str(fixture.home),
+                fixture.meta["projectRoot"], quote(str(fixture.store), safe=""), quote(quote(str(fixture.home), safe=""), safe=""))
+
+    def plant(self, fixture, field, number, value):
+        part, unit = delegated(worker(1), f"kit-d7-part-{number}"), f"D{100 + number}"
+        link = f"https://git.example/o/r/pull/{100 + number}"
+        if field in ("model", "title", "title in a sentence", "provider", "instance id"):
+            how = {"model": {"model": value}, "title": {"title": value}, "title in a sentence": {"title": f"see {value} now"},
+                   "provider": {"provider": value}, "instance id": {"instance": value}}[field]
+            fixture.thread(part, parent=worker(1), turns=(("completed", 20, 10),), **{"title": f"part {number}", **how})
+        elif field == "store name":
+            fixture.meta["restaurant"] += f" {value}"
+        elif field == "unit id":
+            fixture.unit(value, "in-progress", f"item {number}")
+        elif field == "branch":
+            fixture.unit(unit, "in-progress", f"item {number}")
+            fixture.units[-1]["branch"] = value
+        else:
+            links = {"pull request": value, "pull request path": f"https://git.example/{value}", "pull request query": f"{link}?x={value}",
+                     "pull request fragment": f"{link}#{value}", "pull request userinfo": f"https://{quote(value, safe='')}@git.example/o/r/pull/{100 + number}"}
+            fixture.unit(unit, "in-progress", f"Fix {value} today" if field == "summary" else f"item {number}", pr=links.get(field, ""))
+
+    def test_no_review_value_and_no_id_path_instance_or_address_of_the_fixture_planted_in_any_field_is_in_the_document_or_the_text(self):
+        for field in PLANTED:
+            with self.subTest(field):
+                fixture = self.staffed(field.replace(" ", "-"))
+                for number, value in enumerate((*REVIEW_VALUES, *self.own_values(fixture))):
+                    self.plant(fixture, field, number, value)
+                fixture.write()
+                for form, output in (("document", self.document("--max-bytes", "500000")), ("text", self.out("--text"))):
+                    found = [needle for needle in (*NEEDLES, *MARKERS, self.temporary, REQUEST) if needle in output]
+                    self.assertEqual(found, [], f"{field}, {form}")
+
+
+class PrivateValuesTest(OutputCase):
+    def test_privacy_of_knows_the_ids_request_names_instances_addresses_and_directories_the_run_read_and_no_provider_name_of_the_table(self):
+        fixture = self.fixture
+        fixture.meta["previousThread"] = "mcp:threadmarker-previous"
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", f"Ask {ADDRESS}", thread=worker(2), task="kit-d7-recorded-task")
+        fixture.retired("D7", worker(1))
+        fixture.thread(worker(2), title="D7 worker", instance=INSTANCE, turns=(("running", 30, None),))
+        child = delegated(worker(2), REQUEST)
+        node = fixture.thread(child, title="auditor <second@example.test>", provider="acct-homemarker-driver", instance="codex", parent=worker(2), turns=(("completed", 25, 20),))
+        other = delegated("mcp:threadmarker-other-project", "other-request")
+        fixture.thread(other, parent="mcp:threadmarker-other-project", turns=(("completed", 400, 390),))
+        store, t3, _ = fixture.write().read()
+        known = {value for found in MOD["privacy_of"](store, t3, (fixture.store, "relative")).index.values() for value in found}
+        expected = {COORDINATOR, "mcp:threadmarker-previous", worker(1), worker(2), child, unquote(child), node, REQUEST, "kit-d7-recorded-task", INSTANCE, "acct-homemarker-driver",
+                    ADDRESS, "second@example.test", fixture.meta["projectRoot"], str(fixture.store), os.path.realpath(fixture.store), "relative", os.path.realpath("relative"),
+                    other, unquote(other), "other-request", "mcp:threadmarker-other-project", fixture.delegations[-1][0]}
+        self.assertEqual(known, expected)
+
+    def test_document_and_text_keep_the_plain_model_and_the_pull_request_address_and_count_a_refused_link(self):
+        fixture = one_running(self.fixture)
+        fixture.units[0]["pr"] = "https://user:pw@example.test/o/r/pull/7?x=mcp:alpha-secret#task:alpha-secret"
+        fixture.units[1]["pr"] = "https://example.test/o/r/pull/6/files"
+        fixture.thread(delegated(worker(1), "kit-d7-part-1"), title="part 1", model="acct_secretXYZ", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.thread(delegated(worker(1), "kit-d7-part-2"), title="part 2", provider="opencode", model="opencode/model-b-20260101", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.write()
+        data, text = data_of(self.document()), self.out("--text").split("\n")
+        note = "1 pull request link is not shown. It is not an https://host/owner/repository/pull/number address, or it holds text this page removes."
+        self.assertEqual((data["M"], [item[4] for item in data["I"]], data["N"]), (["model-a", "other model", "model-b-20260101"], ["", PR7], [note]))
+        self.assertEqual([line for line in text if "   working   " in line or "D6" in line], ["  D7   working   Agent activity page   1 agent, 2 sub-agents, 83m at work   " + PR7,
+                                                                                      "  D6   landing   Queue fix   no activity in this window"])
+        self.assertEqual(text[-2:], ["  " + note, ""])
+
+
+T3_REFUSAL = "activity: --out names a file inside T3 Code's directory or one of its database files; pass a path outside it"
+STORE_REFUSAL = "activity: --out names a file inside the coordinator's store; pass a path outside it"
+
+
+class OutTest(OutputCase):
+    def refused(self, target, line=T3_REFUSAL):
+        before = tree(self.fixture.root)
+        self.assertEqual(self.fails(1, "--out", str(target)), line)
+        self.assertEqual(tree(self.fixture.root), before)
+
+    def test_out_inside_t3s_base_directory_is_refused_and_creates_no_file(self):
+        fixture = one_running(self.fixture).write()
+        for target in (fixture.database.parent / "page.html", fixture.base / "page.html", fixture.base / "new" / "page.html",
+                       fixture.root / "absent" / ".." / fixture.base.name / "userdata" / "page.html", fixture.base):
+            with self.subTest(target.name):
+                self.refused(target)
+
+    def test_out_that_is_the_database_or_one_of_its_side_files_is_refused_and_changes_no_byte(self):
+        fixture = one_running(self.fixture).write(live=True)
+        for suffix in ("", "-wal", "-shm"):
+            with self.subTest(suffix):
+                self.refused(f"{fixture.database}{suffix}")
+
+    def test_out_through_a_symbolic_link_or_a_hard_link_to_t3s_files_is_refused(self):
+        fixture = one_running(self.fixture).write()
+        directory, file, hard = fixture.root / "alias", fixture.root / "link.html", fixture.root / "hard.html"
+        directory.symlink_to(fixture.database.parent, target_is_directory=True)
+        file.symlink_to(fixture.database)
+        os.link(fixture.database, hard)
+        for target in (directory / "page.html", file, hard):
+            with self.subTest(target.name):
+                self.refused(target)
+
+    def test_out_beside_a_database_that_the_userdata_link_leads_to_is_refused(self):
+        fixture = one_running(self.fixture)
+        elsewhere = fixture.root / "elsewhere"
+        elsewhere.mkdir(parents=True)
+        fixture.base.mkdir(parents=True)
+        (fixture.base / "userdata").symlink_to(elsewhere, target_is_directory=True)
+        fixture.write()
+        self.refused(elsewhere / "page.html")
+
+    def test_out_inside_the_store_is_refused_and_changes_no_file(self):
+        fixture = one_running(self.fixture).write()
+        for target in (fixture.store / "page.html", fixture.store / "dishes.tsv"):
+            with self.subTest(target.name):
+                self.refused(target, STORE_REFUSAL)
+
+    def test_out_through_a_symbolic_link_to_a_file_outside_t3s_directory_and_the_store_is_written(self):
+        fixture = one_running(self.fixture).write()
+        real, link = fixture.root / "real.html", fixture.root / "link.html"
+        real.write_text("old")
+        link.symlink_to(real)
+        self.out("--out", str(link))
+        self.assertTrue(real.read_bytes().startswith(b"<!doctype html>"))
+        self.assertTrue(link.is_symlink())
+
+
+class RowShapeTest(OutputCase):
+    """Rows are, in order: the coordinator, a worker, and the worker's delegated child."""
+
+    def staffed(self, name, spoil=lambda fixture: None):
+        fixture = self.fixture = Fixture(self.root / name)
+        fixture.now = datetime(2026, 10, 10, 0, 30, tzinfo=timezone.utc).timestamp()
+        fixture.coordinator()
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), title="D7 worker", turns=(("completed", 45, 15),))
+        fixture.thread(delegated(worker(1), "kit-d7-part"), title="part", parent=worker(1), turns=(("completed", 25, 22),))
+        spoil(fixture)
+        return fixture.write()
+
+    def refused(self, name, spoil):
+        self.staffed(name, spoil)
+        return self.fails(3, clock=self.fixture.now)
+
+    def test_timestamp_in_another_shape_exits_3_wherever_its_text_sorts(self):
+        texts = ("", "0000-bad", "bad", "2026-13-45T00:00:00.000Z", "2026-10-09T23:45:00", "2026-10-09 23:45:00.000Z", "2026-10-09T23:45:00.000000Z", 5, b"2026-10-09T23:45:00.000Z")
+        columns = (("turns", "orchestration_v2_projection_runs.requested_at", 2, False), ("turns", "orchestration_v2_projection_runs.completed_at", 3, True),
+                   ("delegations", "orchestration_v2_projection_subagents.started_at", 4, True), ("delegations", "orchestration_v2_projection_subagents.completed_at", 5, True))
+        for rows, where, column, nullable in columns:
+            for number, text in enumerate(texts if nullable else (*texts, None)):
+                with self.subTest(where=where, text=text):
+                    line = self.refused(f"{rows}-{column}-{number}", lambda fixture: put(getattr(fixture, rows), -1, column, text))
+                    self.assertEqual(line, f"activity: T3's {where} is not a timestamp; {CHANGED}")
+
+    def test_turn_written_with_a_utc_offset_across_midnight_is_drawn_like_the_same_instants_written_with_z(self):
+        for hours in (None, 0, -7, 14):
+            with self.subTest(hours):
+                def offset(fixture):
+                    put(fixture.turns, 1, 2, fixture.stamp_at_offset(45, hours))
+                    put(fixture.turns, 1, 3, fixture.stamp_at_offset(15, hours))
+
+                fixture = self.staffed(f"offset-{hours}", offset if hours is not None else lambda fixture: None)
+                self.assertEqual(fixture.turns[1][2:], {None: ("2026-10-09T23:45:00.000Z", "2026-10-10T00:15:00.000Z"), 0: ("2026-10-09T23:45:00.000+00:00", "2026-10-10T00:15:00.000+00:00"),
+                                                        -7: ("2026-10-09T16:45:00.000-07:00", "2026-10-09T17:15:00.000-07:00"),
+                                                        14: ("2026-10-10T13:45:00.000+14:00", "2026-10-10T14:15:00.000+14:00")}[hours])
+                data = data_of(self.document(clock=fixture.now))
+                self.assertEqual((data["n"], data["G"][0][1][0][5:7]), ([0, 1, 1, 0], ["30m", [750, 167, 0]]))
+
+    def test_value_that_is_not_text_or_an_empty_id_or_status_exits_3_and_names_the_column(self):
+        threads, runs, subagents = "orchestration_v2_projection_threads", "orchestration_v2_projection_runs", "orchestration_v2_projection_subagents"
+        cases = (("threads", 2, 1, 42, f"{threads}.title is not text"), ("threads", 2, 1, None, f"{threads}.title is not text"), ("threads", 2, 1, b"part", f"{threads}.title is not text"),
+                 ("threads", 1, 2, 42, f"{threads}.default_provider is not text"), ("threads", 1, 2, None, f"{threads}.default_provider is not text"),
+                 ("threads", 1, 2, "", f"{threads}.default_provider is empty"),
+                 ("turns", 1, 0, None, f"{runs}.thread_id is not text"), ("turns", 1, 0, 42, f"{runs}.thread_id is not text"), ("turns", 1, 0, "", f"{runs}.thread_id is empty"),
+                 ("turns", 1, 1, None, f"{runs}.status is not text"), ("turns", 1, 1, "", f"{runs}.status is empty"),
+                 ("delegations", 0, 0, 42, f"{subagents}.subagent_id is not text"), ("delegations", 0, 0, None, f"{subagents}.subagent_id is not text"),
+                 ("delegations", 0, 1, None, f"{subagents}.thread_id is not text"), ("delegations", 0, 1, "", f"{subagents}.thread_id is empty"),
+                 ("delegations", 0, 2, 42, f"{subagents}.child_thread_id is not text"), ("delegations", 0, 2, "", f"{subagents}.child_thread_id is empty"),
+                 ("delegations", 0, 3, 42, f"{subagents}.status is not text"), ("delegations", 0, 3, None, f"{subagents}.status is not text"))
+        for number, (rows, index, column, value, words) in enumerate(cases):
+            with self.subTest(words=words, value=value):
+                line = self.refused(f"type-{number}", lambda fixture: put(getattr(fixture, rows), index, column, value))
+                self.assertEqual(line, f"activity: T3's {words}; {CHANGED}")
+
+    def test_thread_payload_whose_model_selection_holds_no_model_or_no_instance_id_text_exits_3(self):
+        cases = (('{"modelSelection":{}}', "model"), ('{"modelSelection":{"model":42,"instanceId":"codex"}}', "model"), ('{"modelSelection":[]}', "model"),
+                 ('{"modelSelection":null}', "model"), ('{"modelSelection":{"model":"","instanceId":"codex"}}', "model"),
+                 ('{"modelSelection":{"model":"model-a"}}', "instanceId"), ('{"modelSelection":{"model":"model-a","instanceId":7}}', "instanceId"),
+                 ('{"modelSelection":{"model":"model-a","instanceId":""}}', "instanceId"))
+        for number, (payload, key) in enumerate(cases):
+            with self.subTest(payload):
+                line = self.refused(f"payload-{number}", lambda fixture: put(fixture.threads, 0, 3, payload))
+                self.assertEqual(line, f"activity: T3's thread payload holds no text at modelSelection.{key}; {CHANGED}")
+
+    def test_payload_nested_too_deep_to_parse_exits_3(self):
+        line = self.refused("deep", lambda fixture: put(fixture.threads, 0, 3, "[" * 100000))
+        self.assertEqual(line, f"activity: T3's thread payload has no modelSelection; {CHANGED}")
+
+    def test_thread_with_a_turn_and_no_thread_row_exits_3(self):
+        for rows, index in (("threads", 1), ("threads", 2)):
+            with self.subTest(index):
+                line = self.refused(f"absent-{index}", lambda fixture: put(getattr(fixture, rows), index, 0, None))
+                self.assertEqual(line, "activity: T3's orchestration_v2_projection_threads has no row for a thread that orchestration_v2_projection_runs "
+                                       f"or orchestration_v2_projection_subagents names; {CHANGED}")
+
+    def test_sub_agent_with_no_thread_or_no_start_time_is_counted_in_a_note_and_one_with_a_turn_is_drawn_from_its_turn(self):
+        def pending(fixture):
+            fixture.delegations.append(("node:nodemarker-pending", worker(1), None, "running", None, None))
+            fixture.thread(delegated(worker(1), "kit-d7-late"), title="late", parent=worker(1), delegation=("running", 20, None))
+            put(fixture.delegations, -1, 4, None)
+            put(fixture.delegations, 0, 4, None)
+            fixture.delegations.append(("node:nodemarker-elsewhere", "mcp:threadmarker-other-project", None, "running", None, None))
+
+        fixture = self.staffed("pending", pending)
+        data = data_of(self.document(clock=fixture.now))
+        self.assertEqual((data["n"], [line[:2] for line in data["G"][0][1]]), ([0, 1, 1, 0], [[0, "worker"], [1, "part"]]))
+        self.assertEqual(data["N"], ["T3 lists 2 sub-agents of threads on this page with no thread or no start time. They are not shown."])
+        self.assertIn("  T3 lists 2 sub-agents of threads on this page with no thread or no start time. They are not shown.", self.out("--text", clock=fixture.now).split("\n"))
+
+    def test_sqlite_error_that_quotes_a_value_exits_3_without_the_value(self):
+        fixture = self.staffed("undecodable")
+        connection = sqlite3.connect(fixture.database)
+        connection.execute("update orchestration_v2_projection_threads set title = cast(x'70617468ff6d61726b6572' as text) where title = 'part'")
+        connection.commit()
+        connection.close()
+        line = self.fails(3, clock=fixture.now)
+        self.assertEqual(line, "activity: cannot read T3's database (a text value is not UTF-8); check that T3 Code is running and try again")
+
+
+def queued_only(fixture):
+    fixture.coordinator()
+    fixture.unit("D7", "in-progress", "Activity page", thread=worker(1))
+    fixture.thread(worker(1), title="D7 worker", turns=(("queued", 5, None),))
+    return fixture
+
+
+class QueuedTest(OutputCase):
+    def test_queued_turn_is_listed_under_queued_is_not_counted_running_and_keeps_a_queued_bar(self):
+        for status in ("queued", "preparing"):
+            with self.subTest(status):
+                fixture = self.fixture = queued_only(Fixture(self.root / status))
+                put(fixture.turns, 1, 1, status)
+                fixture.write()
+                self.assertEqual(self.out("--text", clock=fixture.now), "\n".join([
+                    "Agent activity for kit, last 3h",
+                    "0 running now, 1 agent, 0 sub-agents, 0 failed",
+                    "Queued",
+                    "  D7 worker   model-a   queued for 5m",
+                    "Work items",
+                    "  D7   working   Activity page   1 agent, 0s at work",
+                    ""]))
+                data = data_of(self.document(clock=fixture.now))
+                self.assertEqual((data["n"], data["S"][1], data["G"][0][1][0][4:]), ([0, 1, 0, 0], "queued", [1, "0s", [972, 28, 5], 1, "5m"]))
+
+    def test_agent_with_a_running_turn_and_a_queued_turn_is_counted_running_and_keeps_both_bars(self):
+        fixture = queued_only(self.fixture)
+        fixture.turns[1:] = [(worker(1), "running", fixture.stamp(10), None), (worker(1), "queued", fixture.stamp(5), None)]
+        fixture.write()
+        lines = self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual(lines[1:5], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Running now", "  D7 worker   model-a   running for 10m", "Work items"])
+        data = data_of(self.document(clock=fixture.now))
+        self.assertEqual((data["n"], data["G"][0][1][0][4:]), ([1, 1, 0, 0], [0, "10m", [944, 56, 1, 972, 28, 5], 1, "10m"]))
+
+    def test_providers_own_sub_agent_whose_open_delegation_is_queued_is_listed_under_queued(self):
+        fixture = queued_only(self.fixture)
+        put(fixture.turns, 1, 1, "running")
+        fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
+        fixture.write()
+        lines = self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual(lines[1:6], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Running now", "  D7 worker   model-a   running for 5m", "Queued",
+                                      "  D7 spec_review   model-a   queued for 2m   under worker"])
+
+
+class BudgetTest(OutputCase):
+    def test_stdout_of_the_html_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
+        fixture = busy(self.fixture).write()
+        whole = fixture.stdout_bytes("--max-bytes", "500000", clock=fixture.now)
+        self.assertTrue(len(whole) > 16001 and whole.endswith(b"</script>\n"))
+        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole)), clock=fixture.now), whole)
+        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertLess(len(under), len(whole))
+        self.assertLessEqual(len(fixture.stdout_bytes(clock=fixture.now)), 16000)
+
+    def test_stdout_is_utf8_under_a_locale_that_is_not(self):
+        fixture = one_running(self.fixture)
+        fixture.units[0]["summary"] = "Agent activity page 𝔸é"
+        fixture.write()
+        ascii_locale = {"LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+        for form in ((), ("--text",)):
+            with self.subTest(form):
+                self.assertIn("Agent activity page 𝔸é".encode(), fixture.stdout_bytes(*form, env=ascii_locale))
+
+    def test_link_cut_by_the_last_fold_is_counted_in_a_note(self):
+        fixture = extreme(self.fixture)
+        for number, unit in enumerate(fixture.units, start=1):
+            unit["pr"] = "https://example.test/" + "o" * 60 + "/" + "r" * 80 + f"/pull/{number}"
+        fixture.write()
+        data = data_of(self.document())
+        cut = sum(not item[4] for item in data["I"])
+        self.assertEqual((cut, len(data["I"]) >= 8), (len(data["I"]), True))
+        self.assertIn(f"{cut} pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", data["N"])
+        whole = data_of(self.document("--max-bytes", "500000"))
+        self.assertEqual(([item[4] for item in whole["I"] if not item[4]], [note for note in whole["N"] if "pull request" in note]), ([], []))
+
+
+class WindowTest(OutputCase):
+    def test_window_is_labelled_by_its_whole_seconds_as_hours_minutes_and_seconds_in_both_forms(self):
+        fixture = one_running(self.fixture).write()
+        for hours, seconds, words in (("0.01", 36, "36s"), ("0.25", 900, "15m"), ("1", 3600, "1h"), ("1.51", 5436, "1h 30m 36s"), ("3", 10800, "3h"), ("168", 604800, "168h")):
+            with self.subTest(hours):
+                self.assertEqual(self.out("--text", "--hours", hours).split("\n")[0], f"Agent activity for kit, last {words}")
+                self.assertEqual(data_of(self.document("--hours", hours))["w"][1:], [seconds, words])
 
 
 if __name__ == "__main__":

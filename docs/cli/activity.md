@@ -14,11 +14,13 @@ Show what one brigade coordinator's agents and sub-agents are doing, as one HTML
 
 Opens the coordinator's store and T3 Code's state database read-only. Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 
+Every string the page takes from the store or from T3 is made by one filter, the class Privacy. From each string the filter removes the exact text of each value below that is 4 characters or longer, as written and percent-decoded once and twice. The values are the thread ids, sub-agent ids, and request names in the store and in T3's turn and sub-agent rows. They are also the provider names and instance ids of the page's threads that are not one of this tool's provider names. They are also each run of characters around an at sign in a title, a summary, a work item id, a pull request value, a model name, or the store's name. They are also the paths of the store, the project it records, T3 Code's base directory and database, the home directory, and the --out file, each as given and with symbolic links followed. From the first line of a title, a request name's words, a summary, a work item id, and the store's name the filter then drops each word that holds a slash, a backslash, a percent escape, a leading tilde, a colon or an at sign between two characters, a UUID, 6 or more digits, 7 or more hexadecimal characters with a digit and no letter or digit beside them, or an underscore before 6 or more letters and digits that hold a lower-case letter and a digit or an upper-case letter. A model name is printed when it is at most 48 characters of lower-case letters and digits joined by single dots and hyphens, starts with a letter, and holds none of those values and none of those id shapes but a date of 8 digits. One leading provider name and slash is dropped first. Any other model reads `other model`. A pull request link is printed only as https://host/owner/repository/pull/number, when the host, the owner, and the repository hold nothing the filter removes. A work item on the page with any other value has no link and is counted in a note. A label can hold the words of a request name.
+
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--at AT` |  |  |  | the coordinator's store directory (default $BRIGADE_DIR) |
-| `--hours HOURS` |  |  | `3.0` | how many hours back the page looks, more than 0 and at most 168 |
+| `--hours HOURS` |  |  | `3.0` | how many hours back the page looks, from 0.01 to 168, rounded to whole seconds |
 | `--text` |  |  |  | print plain lines instead of the HTML document |
-| `--out OUT` |  |  |  | write the output to this file and print `wrote \<file> (\<n> bytes)` instead |
-| `--max-bytes MAX_BYTES` |  |  | `16000` | the size in bytes the HTML document must fit, from 16000 to 500000 |
+| `--out OUT` |  |  |  | write the output to this file and print `wrote \<file> (\<n> bytes)` instead; a file inside T3 Code's directory or the store is refused |
+| `--max-bytes MAX_BYTES` |  |  | `16000` | the most bytes the HTML document and the newline after it take, from 16000 to 500000 |
 | `--t3-home T3_HOME` |  |  |  | T3 Code's base directory (default $T3CODE_HOME, else ~/.t3) |
