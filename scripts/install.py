@@ -136,7 +136,6 @@ class BackupRec:
     original: str
     backup: str
     harnesses: tuple
-    home: str
 
 
 @dataclass(frozen=True)
@@ -214,13 +213,13 @@ def parse_link(entry, scope, user, file):
     return LinkRec(entry, anchored(file, path), harnesses_for(path, entry, scope, user), checkout)
 
 
-def parse_backup(entry, scope, user, state, file):
+def parse_backup(entry, scope, user, file):
     if not isinstance(entry, dict):
         return None
     original, backup = entry.get("original"), entry.get("backup")
     if not isinstance(original, str) or not isinstance(backup, str):
         return None
-    return BackupRec(entry, anchored(file, original), backup, harnesses_for(original, entry, scope, user), home_of(state, backup))
+    return BackupRec(entry, anchored(file, original), backup, harnesses_for(original, entry, scope, user))
 
 
 class Unreadable(Exception):
@@ -301,7 +300,7 @@ def read_legacy(state, scope, user):
         return (), ()
     _data, raw_links, raw_backups = found
     links = tuple(item for item in (parse_link(entry, scope, user, file) for entry in raw_links) if item)
-    backups = tuple(item for item in (parse_backup(entry, scope, user, state, file) for entry in raw_backups) if item)
+    backups = tuple(item for item in (parse_backup(entry, scope, user, file) for entry in raw_backups) if item)
     return links, backups
 
 
@@ -1050,7 +1049,7 @@ def judge(view, root, side, aside, home):
     """Return the Stray for the entry at `aside`, which a HOLDER directory holds for `home`. Reads only."""
     if one_entry(aside, home):
         return Stray("spare", aside, home, twin=home)
-    rows = [row for row in view.backups if row.home == home] if side == "backups" else []
+    rows = [row for row in view.backups if row.backup == home] if side == "backups" else []
     if rows:
         if os.path.lexists(home):
             return Stray("left", aside, home, why=f"{home} is the recorded backup of {rows[-1].original} and another entry is there now")
@@ -1093,51 +1092,6 @@ def backup_place(state, backup):
     if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
         return None
     return parts[0], parts[1]
-
-
-def chains(state, recorded, stamp, harness, stack):
-    """Open backups/, <stamp>, and <harness> under `state` and under `recorded`, each the way `empty_out_matched` states.
-
-    Return the two triples of descriptors, in that order of levels. Every descriptor it opened closes when `stack` closes.
-    """
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-    def opened(path, dir_fd=None):
-        descriptor = os.open(path, flags, dir_fd=dir_fd)
-        stack.callback(os.close, descriptor)
-        return descriptor
-
-    def levels(root):
-        top = opened(os.path.join(str(root), "backups"))
-        inner = opened(stamp, top)
-        return top, inner, opened(harness, inner)
-
-    return levels(state), levels(recorded)
-
-
-def home_of(state, backup):
-    """Return `backup`, or the path `survey` builds for the place `backup` names, spelled under `state` as given.
-
-    It returns the second only when all of these hold. os.open takes dir_fd. `backup_place(state, backup)` is None.
-    `backup_place` matches `backup` under `os.path.abspath(state)`. And the two <harness> descriptors `chains` opens,
-    one under each of those spellings, have one device and inode, read while all six descriptors are open.
-    It reads only. It never raises and prints nothing.
-    """
-    if os.open not in os.supports_dir_fd or backup_place(state, backup) is not None:
-        return backup
-    try:
-        spelled = os.path.abspath(state)
-    except OSError:
-        return backup
-    place = backup_place(spelled, backup)
-    if place is None:
-        return backup
-    # os.open raises ValueError for a name with a NUL byte, and a JSON record can hold one.
-    with suppress(OSError, ValueError), ExitStack() as stack:
-        given, named = chains(state, spelled, *place, stack)
-        if os.path.samestat(os.fstat(given[2]), os.fstat(named[2])):
-            return os.path.join(str(state), "backups", *place, os.path.basename(backup))
-    return backup
 
 
 def prune(state, backup):
@@ -1201,8 +1155,20 @@ def empty_out_matched(state, recorded, stamp, harness):
     """
     if os.rmdir not in os.supports_dir_fd:
         return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with suppress(OSError), ExitStack() as stack:
-        (top, inner, leaf), (_recorded_top, recorded_inner, recorded_leaf) = chains(state, recorded, stamp, harness, stack)
+        def opened(path, dir_fd=None):
+            descriptor = os.open(path, flags, dir_fd=dir_fd)
+            stack.callback(os.close, descriptor)
+            return descriptor
+
+        def levels(root):
+            top = opened(os.path.join(str(root), "backups"))
+            inner = opened(stamp, top)
+            return top, inner, opened(harness, inner)
+
+        top, inner, leaf = levels(state)
+        _recorded_top, recorded_inner, recorded_leaf = levels(recorded)
         if os.path.samestat(os.fstat(leaf), os.fstat(recorded_leaf)) and os.path.samestat(os.fstat(inner), os.fstat(recorded_inner)):
             os.rmdir(harness, dir_fd=inner)
             os.rmdir(stamp, dir_fd=top)
@@ -1714,7 +1680,7 @@ def audit(args, scope, user, names):
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
-            stale.append(row_finding(args, state, row, held_for.get(row.home)))
+            stale.append(row_finding(args, state, row, held_for.get(row.backup)))
     return Audit(tuple(stale + away), tuple(unread))
 
 

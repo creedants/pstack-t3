@@ -1,4 +1,3 @@
-- `install`, `uninstall`, and `doctor` now match a backup row recorded in the `os.path.abspath` spelling of the state path to an entry held beside that backup path in a `.pstack-t3-*` directory, when the row's `<harness>` directory opens as one directory, by device and inode, under that spelling and under the state path as given.
 - Under a config home whose `..` follows a symlink, `install` now creates its temporary record file under that path as given, where it created the file in the directory `os.path.abspath` names or failed with a traceback when that directory was missing.
 - On Python 3.12, `install --replace` now records a backup under the state path as given, as Python 3.10 does.
 - On Python 3.12, `uninstall` now removes a restored file's backup and its holder directory, and restores a directory backup, when the row's path holds `..` after a symlink.
