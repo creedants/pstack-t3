@@ -246,7 +246,7 @@ class Row:
 
     `depth` is 0 for a row with no parent row in its group, and 1 or 2 below one.
     `seconds` is the time spent in turns inside the window.
-    `open_seconds` is how long the open turn has run, counted from its start. It is None exactly when `status` is not in OPEN.
+    `open_seconds` is how long the open turn has run, counted from its start. It is None when `status` is not in OPEN, and on the coordinator's row.
     `stands_for` is 1 for one agent. A summary row stands for 2 or more.
     """
 
@@ -638,7 +638,7 @@ def read_t3(connection, window, roots):
                 f"select thread_id, title, default_provider, payload_json from {THREADS} where thread_id in ({marks})", batch):
             described[thread] = (title or "", provider or "", model_of(payload))
     agents = {}
-    for thread in kept:
+    for thread in sorted(kept):
         title, provider, model = described.get(thread, ("", "", ""))
         own = tuple(sorted(turns.get(thread, ()), key=lambda turn: turn.start))
         delegation = delegations.get(thread)
@@ -660,6 +660,275 @@ def model_of(payload):
     selection = data[THREAD_PAYLOAD_KEY]
     model = selection.get("model") if isinstance(selection, dict) else None
     return model if isinstance(model, str) else ""
+
+
+UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+# A UUID, 7 or more hex digits that include a digit, 6 or more digits, or one of T3's id prefixes.
+ID_LIKE = re.compile(rf"{UUID}|(?<![0-9A-Za-z])(?=[0-9a-fA-F]*[0-9])[0-9a-fA-F]{{7,}}(?![0-9A-Za-z])|[0-9]{{6,}}|^(?:mcp|thread|node|run):\S")
+OPENERS = "\"'`([<{"
+PATH_TAIL = re.compile(r"\S*/([A-Za-z0-9_-]+)")
+SLUG = re.compile(r"[a-z0-9.]+(?:-[a-z0-9.]+)+")
+ROLE = re.compile(r"Act as the (.+?) sub-agent")
+UNIT_SUFFIX = re.compile(r"(.+?)[a-z][0-9]*")
+# What a bar shows for each status of a turn.
+BAR = {
+    Status.RUNNING: Status.RUNNING, Status.QUEUED: Status.RUNNING,
+    Status.WAITING: Status.DONE, Status.DONE: Status.DONE,
+    Status.FAILED: Status.FAILED, Status.STOPPED: Status.STOPPED, Status.UNKNOWN: Status.UNKNOWN,
+}
+
+
+def unit_named(part, units):
+    """The unit a request-name part names, or None. `units` maps each unit id in lower case to the id.
+
+    A part names a unit when it is that id in lower case, alone or followed by one letter and then digits, as in d7, d7c, and d7r2.
+    """
+    suffixed = UNIT_SUFFIX.fullmatch(part)
+    return units.get(part) or (units.get(suffixed.group(1)) if suffixed else None)
+
+
+def assign(store, t3):
+    """An Assignment for every agent but the coordinators. The first rule that applies to a thread decides. No rule reads a title.
+
+    1. RECORD. The thread is a unit's worker or earlier worker. Or a unit's task names it, as a sub-agent id in
+       t3.node_thread or as the request name of a coordinator's child. When two units name it, the later one in the table wins.
+    2. LINEAGE. The thread's parent is an agent that is not a coordinator, and that parent has a unit. The thread takes it.
+    3. REQUEST. The thread's parent is a coordinator, and unit_named() accepts a `-` separated part of its request name.
+       The first such part names the unit.
+    4. NONE.
+    """
+    coordinators = frozenset(store.coordinators)
+    units = {unit.id.lower(): unit.id for unit in store.units}
+    requested = {agent.request: thread for thread, agent in t3.agents.items() if agent.request and agent.parent in coordinators}
+    recorded = {}
+    for unit in store.units:
+        for thread in (*unit.earlier_workers, unit.worker, t3.node_thread.get(unit.task), requested.get(unit.task)):
+            if thread:
+                recorded[thread] = unit.id
+    found = {}
+    for start in t3.agents:
+        thread, below = start, []
+        while thread not in found:
+            agent = t3.agents[thread]
+            if thread in recorded:
+                found[thread] = Assignment(recorded[thread], Evidence.RECORD)
+            elif agent.parent in coordinators:
+                named = (unit_named(part, units) for part in (agent.request or "").split("-"))
+                unit = next((unit for unit in named if unit), None)
+                found[thread] = Assignment(unit, Evidence.REQUEST if unit else Evidence.NONE)
+            elif agent.parent in t3.agents and agent.parent not in below:
+                below.append(thread)
+                thread = agent.parent
+            else:
+                found[thread] = Assignment(None, Evidence.NONE)
+        unit = found[thread].unit
+        for child in below:
+            found[child] = Assignment(unit, Evidence.LINEAGE if unit else Evidence.NONE)
+    return {thread: assignment for thread, assignment in found.items() if thread not in coordinators}
+
+
+def path_like(part):
+    if "://" in part:
+        return not part.startswith(("http://", "https://"))
+    return part.startswith(("/", "~")) or part.count("/") >= 2 or part.count("\\") >= 2
+
+
+def scrub(text):
+    """The first line of text without its path-like and id-like parts. Every string on a Page but a link and a model name went through it.
+
+    A part is the text between spaces, read after any opening quote or bracket.
+    It is path-like when it starts with / or ~, holds two or more / or two or more backslashes, or holds :// and does not start with http:// or https://.
+    It is id-like when ID_LIKE matches in it.
+    """
+    lines = text.encode("utf-8", "ignore").decode().strip().splitlines()
+    parts = [(part, part.lstrip(OPENERS)) for part in (lines[0].split() if lines else ())]
+    return " ".join(part for part, bare in parts if not path_like(bare) and not ID_LIKE.search(bare))
+
+
+def model_name(text):
+    """A model's name as shown: the text after its last /, with each run of spaces as one space."""
+    return " ".join(text.encode("utf-8", "ignore").decode().rsplit("/", 1)[-1].split())
+
+
+def link_of(text):
+    return text if text.startswith("https://") and not re.search(r"\s", text) else ""
+
+
+def words_of(name, store, units):
+    """The words of a request name.
+
+    Split on `-`. Drop a leading `brigade`. Then drop each leading part that is in store.slug_parts.
+    Then drop every part that names a unit and every id-like part. `verify` reads `review`.
+    """
+    parts = name.split("-")
+    if parts[0] == "brigade":
+        del parts[0]
+    while parts and parts[0] in store.slug_parts:
+        del parts[0]
+    kept = ["review" if part == "verify" else part for part in parts if not unit_named(part, units) and not ID_LIKE.search(part)]
+    return scrub(" ".join(kept))
+
+
+def label_of(agent, store, unit):
+    """A name for one agent, at most LABEL_CHARS characters. `unit` is the id of the agent's work item, or None. The first rule that gives text decides.
+
+    1. A unit's current worker is `worker`. An earlier one is `earlier worker`.
+    2. The title's first line, when it is at most TITLE_CHARS characters and does not start with `Act as` or `You are`.
+       A line that is one path-like part ending in a segment of letters, digits, `_`, and `-` gives that segment.
+       The line is scrubbed, and a leading `unit` with its `:` or space is dropped.
+       What is left is read by words_of() when it is one lower-case word with a `-` in it, which is a request name used as a title.
+    3. words_of() the request name.
+    4. The role in a title that starts `Act as the <role> sub-agent`.
+    5. `sub-agent` for a thread with a parent and `agent` for one without.
+    """
+    if any(agent.thread == other.worker for other in store.units):
+        return "worker"
+    if any(agent.thread in other.earlier_workers for other in store.units):
+        return "earlier worker"
+    units = {other.id.lower(): other.id for other in store.units}
+    line = (agent.title.strip().splitlines() or [""])[0].strip()
+    written = ""
+    if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")):
+        tail = PATH_TAIL.fullmatch(line) if path_like(line) else None
+        written = scrub(tail.group(1) if tail else line)
+        if unit:
+            written = re.sub(rf"^{re.escape(unit)}(?::\s*|\s+)", "", written)
+        if SLUG.fullmatch(written):
+            written = words_of(written, store, units)
+    role = ROLE.match(line)
+    for text in (written, words_of(agent.request or "", store, units), scrub(role.group(1)) if role else ""):
+        if text:
+            return text if len(text) <= LABEL_CHARS else text[:LABEL_CHARS - 1].rstrip() + "…"
+    return "sub-agent" if agent.parent else "agent"
+
+
+def stretches(agent):
+    """The agent's time at work: its turns, or its delegation as one turn when it has no turns. An open delegation reads RUNNING."""
+    delegation = agent.delegation
+    if agent.turns or delegation is None:
+        return agent.turns
+    return (Turn(Status.RUNNING if delegation.end is None else delegation.status, delegation.start, delegation.end),)
+
+
+def open_turn(agent):
+    return next((turn for turn in reversed(stretches(agent)) if turn.end is None and turn.status in OPEN), None)
+
+
+def status_of(agent):
+    """One Status per agent. The first rule that applies decides.
+
+    1. A turn with no end that is running or queued gives its status. So does the open delegation of an agent with no turns, which reads RUNNING.
+    2. An open delegation gives WAITING.
+    3. A closed delegation gives its status.
+    4. The last turn gives its status.
+    5. An agent with no turn and no delegation in the window reads DONE.
+    """
+    turn, delegation = open_turn(agent), agent.delegation
+    if turn:
+        return turn.status
+    if delegation:
+        return Status.WAITING if delegation.end is None else delegation.status
+    return agent.turns[-1].status if agent.turns else Status.DONE
+
+
+def spans_of(agent, window):
+    """The agent's bars: one per stretch, clipped to the window.
+
+    A stretch that has ended joins the bar before it when both show the same status and are less than 5 thousandths apart.
+    """
+    length = window.end - window.start
+
+    def point(moment):
+        return round((min(max(moment, window.start), window.end) - window.start) / length * 1000)
+
+    spans = []
+    for turn in stretches(agent):
+        x = min(point(turn.start), 999)
+        right = max(point(window.end if turn.end is None else turn.end), x + 1)
+        status, last = BAR[turn.status], spans[-1] if spans else None
+        if last and last.status is status and turn.end is not None and x - (last.x + last.w) < 5:
+            spans[-1] = Span(last.x, max(last.x + last.w, right) - last.x, status)
+        else:
+            spans.append(Span(x, right - x, status))
+    return tuple(spans)
+
+
+def seconds_of(agent, window):
+    return int(sum(max(0, min(window.end, window.end if turn.end is None else turn.end) - max(window.start, turn.start)) for turn in stretches(agent)))
+
+
+def tree(agents):
+    """The agents as (agent, depth) in tree order: each agent with no parent among them, then its children, earliest start first. Depth stops at 2."""
+    def began(agent):
+        return (min((turn.start for turn in stretches(agent)), default=0), agent.thread)
+
+    inside = {agent.thread for agent in agents}
+    children, order, stack = {}, [], []
+    for agent in sorted(agents, key=began, reverse=True):
+        if agent.parent in inside:
+            children.setdefault(agent.parent, []).append(agent)
+        else:
+            stack.append((agent, 0))
+    while stack:
+        agent, depth = stack.pop()
+        order.append((agent, min(depth, 2)))
+        stack.extend((child, depth + 1) for child in children.get(agent.thread, ()))
+    return order
+
+
+def item_of(unit):
+    word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
+    return Item(scrub(unit.id), scrub(unit.summary), word, tone, link_of(unit.pr), unit.state not in FINISHED_STATES)
+
+
+def build_page(store, t3, window):
+    """The unfolded Page.
+
+    Groups whose agents have open work come first, then the latest activity first. The group tied to no work item is last.
+    `items` is in order of the number in each id.
+    The coordinators' turns make one row, and that row's RUNNING bars read DONE.
+    """
+    def row(agent, depth, label):
+        turn = open_turn(agent)
+        return Row(depth, label, model_name(agent.model), PROVIDERS.get(agent.provider, OTHER_PROVIDER)[0], status_of(agent),
+                   seconds_of(agent, window), spans_of(agent, window), int(window.end - turn.start) if turn else None)
+
+    def order(entry):
+        unit, agents = entry
+        ends = [window.end if turn.end is None else turn.end for agent in agents for turn in stretches(agent)]
+        return (unit is None, all(open_turn(agent) is None for agent in agents), -max(ends, default=window.start), unit)
+
+    placed = assign(store, t3)
+    units = {unit.id: unit for unit in store.units}
+    members = {}
+    for thread, assignment in placed.items():
+        members.setdefault(assignment.unit, []).append(t3.agents[thread])
+    groups = []
+    for unit, agents in sorted(members.items(), key=order):
+        rows = tuple(row(agent, depth, label_of(agent, store, unit)) for agent, depth in tree(agents))
+        subagents = sum(agent.parent is not None for agent in agents)
+        groups.append(Group(item_of(units[unit]) if unit else None, rows, len(agents) - subagents, subagents))
+    everyone = [row for group in groups for row in group.rows]
+    subagents = sum(group.subagents for group in groups)
+    totals = Totals(sum(row.status in OPEN for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
+    providers = [row.provider for row in everyone]
+    legend = tuple(sorted(((name, providers.count(name)) for name in set(providers)), key=lambda entry: (-entry[1], entry[0])))
+    own = None
+    coordinators = [t3.agents[thread] for thread in store.coordinators if thread in t3.agents]
+    if coordinators:
+        turns = sorted((turn for agent in coordinators for turn in agent.turns), key=lambda turn: turn.start)
+        own = row(replace(coordinators[0], turns=tuple(turns), delegation=None), 0, "coordinator")
+        bars = tuple(replace(span, status=Status.DONE) if span.status is Status.RUNNING else span for span in own.spans)
+        own = replace(own, spans=bars, open_seconds=None)
+
+    def number(unit):
+        digits = re.search(r"[0-9]+", unit.id)
+        return (int(digits.group()) if digits else 0, unit.id)
+
+    items = tuple(item_of(unit) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status,
+                    by_request_name=sum(assignment.evidence is Evidence.REQUEST for assignment in placed.values()))
+    return Page(scrub(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
 
 if __name__ == "__main__":

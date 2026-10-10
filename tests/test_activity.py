@@ -521,5 +521,284 @@ class ReadTest(ActivityCase):
             MOD["check_coordinator"](connection, (COORDINATOR,))
 
 
+def page_of(fixture, hours=3.0):
+    store, t3, window = fixture.write().read(hours)
+    return MOD["build_page"](store, t3, window)
+
+
+def labels(page):
+    """Each group's rows as (depth, label), keyed by the work item's id, or None for the agents tied to no work item."""
+    return {group.item.id if group.item else None: [(row.depth, row.label) for row in group.rows] for group in page.groups}
+
+
+def agent(thread, title="", parent=None, turns=(), delegation=None, provider="claudeAgent", model="model-a"):
+    return MOD["Agent"](thread, parent, MOD["request_name"](thread), provider, model, title, tuple(turns), delegation)
+
+
+def store_of(*units, name="kit", slug=("kit", "proj"), coordinators=(COORDINATOR,)):
+    return MOD["Store"](name, frozenset(slug), coordinators, tuple(MOD["Unit"](ident, "in-progress", "", "", work, tuple(earlier), "") for ident, work, earlier in units))
+
+
+class GroupingTest(ActivityCase):
+    def test_worker_earlier_worker_and_task_by_sub_agent_id_and_by_request_name_group_by_record(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        review = delegated(COORDINATOR, "second-opinion-0a1b2c3")
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        node = fixture.thread(delegated(COORDINATOR, "anything"), parent=COORDINATOR, turns=(("completed", 50, 45),))
+        fixture.thread(review, parent=COORDINATOR, turns=(("completed", 40, 35),))
+        fixture.unit("D7", thread=worker(2), task=node)
+        fixture.unit("D8", task="second-opinion-0a1b2c3")
+        fixture.retired("D7", worker(1))
+        store, t3, _ = fixture.write().read()
+        placed = MOD["assign"](store, t3)
+        self.assertEqual({thread: (found.unit, found.evidence.value) for thread, found in placed.items()}, {
+            worker(1): ("D7", "record"), worker(2): ("D7", "record"),
+            delegated(COORDINATOR, "anything"): ("D7", "record"), review: ("D8", "record")})
+
+    def test_of_two_units_that_name_one_thread_the_later_in_the_table_wins(self):
+        fixture = self.fixture
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.unit("D7", thread=worker(1))
+        fixture.unit("D8")
+        fixture.retired("D8", worker(1))
+        fixture.meta.pop("thread")
+        self.assertEqual(labels(page_of(fixture)), {"D8": [(0, "worker")]})
+
+    def test_workers_child_and_grandchild_take_the_workers_unit_whatever_their_request_names_hold(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", thread=worker(1))
+        fixture.unit("D8")
+        child = delegated(worker(1), "architect-d8-runner-2")
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(child, parent=worker(1), turns=(("completed", 70, 60),))
+        fixture.thread(delegated(child, "d8-helper"), parent=child, turns=(("completed", 65, 62),))
+        store, t3, _ = fixture.write().read()
+        self.assertEqual(sorted((found.unit, found.evidence.value) for found in MOD["assign"](store, t3).values()),
+                         [("D7", "lineage"), ("D7", "lineage"), ("D7", "record")])
+
+    def test_coordinators_child_groups_by_request_name_only_for_a_unit_the_store_has(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7")
+        for request in ("brigade-kit-d7-verify-0a1b2c3", "d7r2-fix", "x-d7c", "brigade-kit-d9-verify", "d77-fix", "D7-fix"):
+            fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("completed", 20, 10),))
+        store, t3, _ = fixture.write().read()
+        placed = MOD["assign"](store, t3)
+        self.assertEqual({MOD["request_name"](thread): (found.unit, found.evidence.value) for thread, found in placed.items()}, {
+            "brigade-kit-d7-verify-0a1b2c3": ("D7", "request"), "d7r2-fix": ("D7", "request"), "x-d7c": ("D7", "request"),
+            "brigade-kit-d9-verify": (None, "none"), "d77-fix": (None, "none"), "D7-fix": (None, "none")})
+        self.assertEqual(MOD["build_page"](store, t3, MOD["Window"](fixture.now - 10800, fixture.now)).hidden.by_request_name, 3)
+
+    def test_title_that_holds_a_unit_id_is_not_grouping_evidence(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7")
+        fixture.thread(delegated(COORDINATOR, "helper"), title="D7 review of the page", parent=COORDINATOR, turns=(("completed", 20, 10),))
+        self.assertEqual(labels(page_of(fixture)), {None: [(0, "D7 review of the page")]})
+
+    def test_agent_tied_to_no_unit_is_in_the_last_group_and_in_the_totals(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(delegated(COORDINATOR, "why-investigator"), parent=COORDINATOR, turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        page = page_of(fixture)
+        self.assertEqual(labels(page), {"D7": [(0, "worker")], None: [(0, "why investigator")]})
+        self.assertEqual([group.item is None for group in page.groups], [False, True])
+        self.assertEqual(page.totals, MOD["Totals"](running=1, agents=1, subagents=1, failed=0))
+
+    def test_groups_with_open_work_come_first_then_the_latest_activity_first(self):
+        fixture = self.fixture
+        for number, turns in ((1, (("completed", 30, 20),)), (2, (("completed", 150, 140), ("running", 100, None))), (3, (("completed", 15, 10),))):
+            fixture.unit(f"D{number}", thread=worker(number))
+            fixture.thread(worker(number), turns=turns)
+        self.assertEqual([group.item.id for group in page_of(fixture).groups], ["D2", "D3", "D1"])
+
+    def test_rows_are_in_tree_order_by_start_with_depth_capped_at_2(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        late, early = delegated(worker(1), "late"), delegated(worker(1), "early")
+        fixture.thread(late, title="late", parent=worker(1), turns=(("completed", 40, 35),))
+        fixture.thread(early, title="early", parent=worker(1), turns=(("completed", 70, 60),))
+        deep = delegated(early, "deep")
+        fixture.thread(deep, title="deep", parent=early, turns=(("completed", 65, 64),))
+        fixture.thread(delegated(deep, "deeper"), title="deeper", parent=deep, turns=(("completed", 64.5, 64.2),))
+        self.assertEqual(labels(page_of(fixture)), {"D7": [(0, "worker"), (1, "early"), (2, "deep"), (2, "deeper"), (1, "late")]})
+
+
+class StatusTest(ActivityCase):
+    def test_providers_own_sub_agent_with_no_turns_has_one_bar_from_its_delegation(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 100, 80),))
+        fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("completed", 90, 45))
+        fixture.thread(native(2), title="/root/standards", parent=worker(1), delegation=("running", 9.5, None))
+        page = page_of(fixture)
+        done, live = page.groups[0].rows[1:]
+        self.assertEqual((done.label, done.status.value, done.seconds, done.open_seconds), ("spec_review", "done", 2700, None))
+        self.assertEqual([(span.x, span.w, span.status.value) for span in done.spans], [(500, 250, "done")])
+        self.assertEqual((live.label, live.status.value, live.open_seconds), ("standards", "running", 570))
+        self.assertEqual([(span.x, span.w, span.status.value) for span in live.spans], [(947, 53, "running")])
+        self.assertEqual(page.totals, MOD["Totals"](running=1, agents=1, subagents=2, failed=0))
+
+    def test_open_delegation_with_no_open_turn_reads_waiting_and_is_not_counted_running(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 100, 80),))
+        fixture.thread(delegated(worker(1), "explorer"), parent=worker(1), turns=(("completed", 70, 60),), delegation=("running", 70, None))
+        page = page_of(fixture)
+        row = page.groups[0].rows[1]
+        self.assertEqual((row.status.value, row.open_seconds, [span.status.value for span in row.spans]), ("waiting", None, ["done"]))
+        self.assertEqual(page.totals.running, 0)
+
+    def test_coordinators_open_turn_is_in_no_count_and_its_row_has_no_running_bar(self):
+        fixture = self.fixture
+        fixture.meta["previousThread"] = "mcp:threadmarker-previous"
+        fixture.coordinator(turns=(("completed", 60, 50), ("running", 5, None)), model="vendor/model-c")
+        fixture.thread("mcp:threadmarker-previous", turns=(("failed", 120, 110),))
+        page = page_of(fixture)
+        own = page.coordinator
+        self.assertEqual((own.label, own.model, own.provider, own.open_seconds, own.seconds), ("coordinator", "model-c", "Claude", None, 1500))
+        self.assertEqual([(span.x, span.w, span.status.value) for span in own.spans], [(333, 56, "failed"), (667, 55, "done"), (972, 28, "done")])
+        self.assertEqual((page.totals, page.groups, page.legend), (MOD["Totals"](0, 0, 0, 0), (), ()))
+
+    def test_agent_whose_last_turn_failed_is_counted_failed_and_one_that_then_completed_a_turn_is_not(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.unit("D8", thread=worker(2))
+        fixture.thread(worker(1), turns=(("completed", 100, 90), ("failed", 60, 50)))
+        fixture.thread(worker(2), turns=(("failed", 100, 90), ("completed", 89.9, 80)))
+        page = page_of(fixture)
+        rows = {group.item.id: group.rows[0] for group in page.groups}
+        self.assertEqual((rows["D7"].status.value, rows["D8"].status.value, page.totals.failed), ("failed", "done", 1))
+        self.assertEqual([span.status.value for span in rows["D8"].spans], ["failed", "done"])
+
+    def test_closed_delegation_decides_the_status_over_the_last_turn(self):
+        closed = MOD["Delegation"](MOD["Status"].STOPPED, 10.0, 20.0)
+        turn = MOD["Turn"](MOD["Status"].DONE, 10.0, 20.0)
+        self.assertEqual(MOD["status_of"](agent(delegated(worker(1), "x"), parent=worker(1), turns=(turn,), delegation=closed)).value, "stopped")
+        self.assertEqual(MOD["status_of"](agent(worker(1))).value, "done")
+
+    def test_bars_join_when_the_same_status_is_under_5_thousandths_apart_and_an_open_turn_starts_its_own(self):
+        status, turn, window = MOD["Status"], MOD["Turn"], MOD["Window"](0.0, 1000.0)
+        turns = (turn(status.DONE, -50.0, 100.0), turn(status.DONE, 104.0, 200.0), turn(status.DONE, 205.0, 300.0),
+                 turn(status.STOPPED, 301.0, 310.0), turn(status.RUNNING, 400.0, 500.0), turn(status.QUEUED, 501.0, None))
+        spans = MOD["spans_of"](agent(worker(1), turns=turns), window)
+        self.assertEqual([(span.x, span.w, span.status.value) for span in spans],
+                         [(0, 200, "done"), (205, 95, "done"), (301, 9, "stopped"), (400, 100, "running"), (501, 499, "running")])
+        self.assertEqual(MOD["seconds_of"](agent(worker(1), turns=turns), window), 100 + 96 + 95 + 9 + 100 + 499)
+
+    def test_bar_at_the_windows_end_keeps_a_width_of_1_inside_the_window(self):
+        turn = MOD["Turn"](MOD["Status"].RUNNING, 999.9, None)
+        spans = MOD["spans_of"](agent(worker(1), turns=(turn,)), MOD["Window"](0.0, 1000.0))
+        self.assertEqual([(span.x, span.w) for span in spans], [(999, 1)])
+
+
+class PageTest(ActivityCase):
+    def test_in_flight_items_are_in_number_order_with_their_plain_state_words(self):
+        fixture = self.fixture
+        states = ("in-progress", "in-review", "passed", "queued", "sent-back", "blocked", "merged", "dropped", "plated")
+        for number, state in zip((10, 9, 8, 7, 6, 5, 4, 3, 2), states):
+            fixture.unit(f"D{number}", state, f"summary {number}", pr="https://example.test/o/r/pull/7" if number == 9 else "http://example.test/plain" if number == 8 else "")
+        page = page_of(fixture)
+        self.assertEqual([(item.id, item.state, item.tone, item.pr) for item in page.items], [
+            ("D2", "other", "", ""), ("D5", "blocked", "bad", ""), ("D6", "sent back", "warn", ""), ("D7", "landing", "warn", ""),
+            ("D8", "passed review", "info", ""), ("D9", "in review", "info", "https://example.test/o/r/pull/7"), ("D10", "working", "go", "")])
+
+    def test_finished_unit_with_activity_has_a_group_and_is_not_in_flight(self):
+        fixture = self.fixture
+        fixture.unit("D7", "merged", "Queue fix /pathmarker/notes.md", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        page = page_of(fixture)
+        self.assertEqual(page.groups[0].item, MOD["Item"]("D7", "Queue fix", "merged", "", "", False))
+        self.assertEqual(page.items, ())
+
+    def test_provider_names_come_from_the_table_and_any_other_driver_reads_other(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), provider="codex", turns=(("completed", 90, 80),))
+        for number, provider in enumerate(("acct-homemarker-instance", "acct-homemarker-instance", "grok", "cursor", "opencode", "claudeAgent", "")):
+            fixture.thread(native(number), provider=provider, parent=worker(1), delegation=("completed", 70, 60))
+        page = page_of(fixture)
+        self.assertEqual(page.legend, (("Other", 3), ("Claude", 1), ("Codex", 1), ("Cursor", 1), ("Grok", 1), ("OpenCode", 1)))
+        self.assertEqual(sorted({row.provider for row in page.groups[0].rows}), ["Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"])
+
+    def test_store_with_no_recorded_thread_shows_workers_and_their_children_and_no_coordinator_row(self):
+        fixture = self.fixture
+        fixture.meta.pop("thread")
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(delegated(worker(1), "explorer"), parent=worker(1), turns=(("completed", 70, 60),))
+        fixture.thread(delegated(COORDINATOR, "brigade-kit-d7-verify"), parent=COORDINATOR, turns=(("completed", 50, 40),))
+        page = page_of(fixture)
+        self.assertEqual((labels(page), page.coordinator, page.hidden.other_threads), ({"D7": [(0, "worker"), (1, "explorer")]}, None, 1))
+
+
+class LabelTest(unittest.TestCase):
+    STORE = store_of(("D7", worker(2), (worker(1),)), ("D8", "", ()))
+
+    def label(self, title="", request="", parent=COORDINATOR, unit="D7"):
+        thread = delegated(parent, request) if request else native(1) if parent else worker(9)
+        return MOD["label_of"](agent(thread, title=title, parent=parent), self.STORE, unit)
+
+    def test_current_worker_and_earlier_worker(self):
+        self.assertEqual(MOD["label_of"](agent(worker(2), title="D7 anything"), self.STORE, "D7"), "worker")
+        self.assertEqual(MOD["label_of"](agent(worker(1), title="D7 anything"), self.STORE, "D7"), "earlier worker")
+
+    def test_written_title_wins_over_the_request_name(self):
+        self.assertEqual(self.label("how explorer: store and CLI", "brigade-kit-d7-verify-0a1b2c3"), "how explorer: store and CLI")
+
+    def test_title_that_starts_with_act_as_or_you_are_loses_to_the_request_name(self):
+        self.assertEqual(self.label("Act as the review sub-agent for this task.", "brigade-kit-d7-verify-0a1b2c3"), "review")
+        self.assertEqual(self.label("You are a code delegate for item D7.", "architect-d7-runner-2"), "architect runner 2")
+
+    def test_title_over_48_characters_loses_to_the_request_name(self):
+        self.assertEqual(self.label("Read-only review. Do not edit, commit, push, or merge.", "brigade-kit-d7r2-fix"), "fix")
+        self.assertEqual(self.label("x" * 48, "brigade-kit-d7r2-fix"), "x" * 39 + "…")
+
+    def test_leading_id_of_the_rows_own_unit_is_dropped_from_a_title(self):
+        self.assertEqual(self.label("D7: rehearsal of the wake"), "rehearsal of the wake")
+        self.assertEqual(self.label("D7 fresh-child test"), "fresh-child test")
+        self.assertEqual(self.label("D8: rehearsal"), "D8: rehearsal")
+        self.assertEqual(self.label("D7: rehearsal", unit=None), "D7: rehearsal")
+
+    def test_title_that_is_one_path_gives_its_last_segment_and_any_other_path_is_dropped(self):
+        self.assertEqual(self.label("/root/spec_review", parent=worker(2)), "spec_review")
+        self.assertEqual(self.label("/pathmarker/notes.md", parent=worker(2)), "sub-agent")
+        self.assertEqual(self.label("Read /pathmarker/brief.md first", parent=worker(2)), "Read first")
+
+    def test_title_that_is_one_lower_case_word_with_a_hyphen_is_read_as_a_request_name(self):
+        self.assertEqual(self.label("brigade-kit-d7-verify-2", "brigade-kit-d7-verify-0a1b2c3"), "review 2")
+
+    def test_request_name_words_drop_brigade_the_stores_leading_slug_parts_unit_ids_and_ids(self):
+        self.assertEqual(self.label(request="brigade-kit-d7-verify-0a1b2c3"), "review")
+        self.assertEqual(self.label(request="proj-kit-nightly-audit-kit-1234567"), "nightly audit kit")
+        self.assertEqual(self.label(request="trial-d8-kimi"), "trial kimi")
+        self.assertEqual(self.label(request="trial-d9-kimi"), "trial d9 kimi")
+
+    def test_role_from_an_act_as_title_when_the_request_name_leaves_nothing(self):
+        self.assertEqual(self.label("Act as the review sub-agent for this task.", "brigade-kit-d7-0a1b2c3"), "review")
+
+    def test_thread_with_no_usable_title_or_request_reads_sub_agent_or_agent(self):
+        self.assertEqual(self.label("123e4567-e89b-12d3-a456-426614174000", parent=worker(2)), "sub-agent")
+        self.assertEqual(self.label("You are the helper.", parent=None), "agent")
+
+    def test_scrub_keeps_the_first_line_and_drops_paths_and_ids(self):
+        scrub = MOD["scrub"]
+        self.assertEqual(scrub("Fix the queue\nsecond line"), "Fix the queue")
+        self.assertEqual(scrub("see `/pathmarker/a b` ~/pathmarker (a/b/c) C:\\pathmarker\\x file:///pathmarker src/a.py"), "see b` src/a.py")
+        self.assertEqual(scrub("at 0a1b2c3 and 123e4567-e89b-12d3-a456-426614174000 and 123456 and mcp:x and node:y"), "at and and and and")
+        self.assertEqual(scrub("defaced facade 12345 https://example.test/o/r/pull/7 thread: one"), "defaced facade 12345 https://example.test/o/r/pull/7 thread: one")
+        self.assertEqual(scrub(""), "")
+
+    def test_model_name_is_the_text_after_the_last_slash(self):
+        self.assertEqual(MOD["model_name"]("vendor/sub/model-b-20260101"), "model-b-20260101")
+        self.assertEqual(MOD["model_name"]("model-a"), "model-a")
+
+
 if __name__ == "__main__":
     unittest.main()
