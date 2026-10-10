@@ -45,7 +45,7 @@ Follow upstream's: short declarative sentences, no long dashes, no mid-sentence 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 scripts/run_tests.py
 python3 scripts/build.py
 ```
 
