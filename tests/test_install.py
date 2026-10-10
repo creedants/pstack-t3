@@ -3657,6 +3657,28 @@ class OwnershipTest(unittest.TestCase):
         self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
+    def test_a_restore_under_a_relative_config_home_whose_working_directory_is_removed_before_the_prune_restores_the_file_with_no_traceback(self):
+        a = make_checkout(self.home, "a")
+        swarm = provider_link(self.home, "grok", "swarm")
+        saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(b"saved\x00\xfe")
+        write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}])
+        gone = self.home / "gone"
+        code = (
+            "os.environ['XDG_CONFIG_HOME'] = '.config'\n"
+            "original = module.remove_records\n"
+            "def removing(*args):\n"
+            "    original(*args)\n"
+            f"    os.mkdir({str(gone)!r})\n"
+            f"    os.chdir({str(gone)!r})\n"
+            f"    os.rmdir({str(gone)!r})\n"
+            "module.remove_records = removing\n"
+        )
+        result = uninstall_hooked(self.home, a, code)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
+
     def test_a_restore_under_a_relative_config_home_from_a_backup_recorded_as_a_relative_path_leaves_backups_empty(self):
         self.restore_recorded_as(".config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])

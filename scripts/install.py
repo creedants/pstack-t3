@@ -226,7 +226,7 @@ class Unreadable(Exception):
     """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
 
 
-# The errors Path.exists() reads as "not there" on Python 3.10 and 3.12.
+# Path.exists() reads each of these as "not there" on Python 3.10 and 3.12.
 ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
 
 
@@ -1026,7 +1026,10 @@ def backup_place(state, backup):
     top = os.path.join(str(state), "backups") + os.sep
     if not backup.startswith(top):
         # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
-        top = os.path.join(os.path.abspath(state), "backups") + os.sep
+        try:
+            top = os.path.join(os.path.abspath(state), "backups") + os.sep
+        except OSError:
+            return None
         if not backup.startswith(top):
             return None
     parts = backup[len(top):].split(os.sep)
@@ -1548,11 +1551,14 @@ def audit(args, scope, user, names):
     view = View(claims, *manifest)
     kept = {}
 
+    def created(plan):
+        return frozenset(slot_of(step.path) for step in plan.steps if step.kind == "create")
+
     def planned(harnesses):
         if harnesses not in kept:
-            plain, forced = (plan_install(view, scope, user, harnesses, names, root, replace) for replace in (False, True))
-            created = (frozenset(slot_of(step.path) for step in plan.steps if step.kind == "create") for plan in (plain, forced))
-            kept[harnesses] = Planned(*created, len(plain.conflicts))
+            plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
+            forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
+            kept[harnesses] = Planned(created(plain), created(forced), len(plain.conflicts))
         return kept[harnesses]
 
     strays = survey(view, scope, user, state, root, HARNESSES)
