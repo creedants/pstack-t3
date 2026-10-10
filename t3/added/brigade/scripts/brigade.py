@@ -33,6 +33,7 @@ OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 MODES = ("full", "light")
 ROUND_BUDGET = 3
+OWING_STATES = ("in-progress", "in-review", "sent-back", "blocked")
 ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
@@ -819,32 +820,49 @@ def send_backs(rows, dish_id):
     return [row for row in item_verdicts(rows, dish_id) if row["verdict"] == "send-back"]
 
 
-def round_debt(restaurant, dish_id):
-    """The item's send-backs recorded since its last round decision was answered. At ROUND_BUDGET it owes the next one.
+def round_count(restaurant, dish_id):
+    """The item's send-backs written after the later of its last passing verdict and its last answered round decision.
 
     Only a row `86 add --round-budget` wrote is a round decision. Another decision's answer never settles the count.
     """
-    decided = max((row["answered"] for row in restaurant.rows("86.tsv")
-                   if row["dish"] == dish_id and row["kind"] == ROUND_KIND and row["state"] == "answered"), default="")
-    return sum(row["at"] > decided for row in send_backs(restaurant.rows("pass.tsv"), dish_id))
+    verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+    settled = [row["at"] for row in verdicts if row["verdict"] == "pass"]
+    settled += [row["answered"] for row in restaurant.rows("86.tsv")
+                if row["dish"] == dish_id and row["kind"] == ROUND_KIND and row["state"] == "answered"]
+    since = max(settled, default="")
+    return sum(row["verdict"] == "send-back" and row["at"] > since for row in verdicts)
 
 
-def fix_round_refusal(restaurant, dish_id):
-    """Why the item gets no fix round now, or None. The debt belongs to the item, so every command that starts or continues a round asks here."""
-    debt = round_debt(restaurant, dish_id)
-    if debt < ROUND_BUDGET:
+def round_debt(restaurant, dish):
+    """The item's round count when it owes its round decision, else 0.
+
+    The budget stops another fix round, so only an item that could get one owes.
+    """
+    if dish["state"] not in OWING_STATES:
+        return 0
+    count = round_count(restaurant, dish["id"])
+    return count if count >= ROUND_BUDGET else 0
+
+
+def fix_round_refusal(restaurant, dish):
+    """Why the item gets no fix round now, or None."""
+    debt = round_debt(restaurant, dish)
+    if not debt:
         return None
-    return (f"{dish_id} has {debt} send-backs; no fix round until its decision is answered; "
-            f"run 86 add --dish {dish_id} --round-budget")
+    return (f"{dish['id']} has {debt} send-backs; no fix round until its decision is answered; "
+            f"run 86 add --dish {dish['id']} --round-budget")
 
 
 def round_decision(restaurant, dish_id):
     """The question, options, and default of the decision an item owes at ROUND_BUDGET send-backs."""
-    debt = round_debt(restaurant, dish_id)
-    if debt < ROUND_BUDGET:
-        raise BrigadeError(f"{dish_id} has {debt} send-back{'' if debt == 1 else 's'} since its last round decision; "
+    _, dish = restaurant.find("dishes.tsv", dish_id)
+    if dish["state"] not in OWING_STATES:
+        raise BrigadeError(f"{dish_id} is {dish['state']}; it owes no round decision")
+    count = round_count(restaurant, dish_id)
+    if count < ROUND_BUDGET:
+        raise BrigadeError(f"{dish_id} has {count} send-back{'' if count == 1 else 's'} since its last pass or round decision; "
                            f"the decision opens at {ROUND_BUDGET}")
-    question = (f"{dish_id} was sent back {debt} times. Accept the remaining findings as known limits and land it, "
+    question = (f"{dish_id} was sent back {count} times. Accept the remaining findings as known limits and land it, "
                 "send it through architect for a redesign, or drop it?")
     report = send_backs(restaurant.rows("pass.tsv"), dish_id)[-1]["report"]
     if report:
@@ -902,10 +920,10 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     if late:
         printed = f"{dish_id}: late {verdict} on record; {dish_id} stays {dish['state']}"
     else:
-        row = restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
-        printed = f"{dish_id} {row['state']}"
-    debt = round_debt(restaurant, dish_id) if verdict == "send-back" else 0
-    if debt >= ROUND_BUDGET:
+        dish = restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+        printed = f"{dish_id} {dish['state']}"
+    debt = round_debt(restaurant, dish) if verdict == "send-back" else 0
+    if debt:
         return f"{printed}; {debt} send-backs, decision pending"
     return printed
 
@@ -1211,16 +1229,16 @@ def ticket_lines(restaurant, state, held):
 
 
 def unfireable(restaurant, ids):
+    # A ticket fired again is the same work, so an item that owes its round decision holds its tickets.
+    for dish in restaurant.rows("dishes.tsv"):
+        held = [ident for ident in ids if ident in dish["tickets"].split(",")]
+        refusal = fix_round_refusal(restaurant, dish) if held else None
+        if refusal:
+            return f"{held[0]} is {dish['id']}'s ticket; {refusal}"
     for ident in ids:
         _, ticket = restaurant.find("rail.tsv", ident)
         if ticket["state"] != "waiting":
             return f"{ident} is {ticket['state']}, not waiting"
-    # A ticket fired again is the same work, so it carries the debt of every item that held it and did not land.
-    for dish in restaurant.rows("dishes.tsv"):
-        held = [ident for ident in ids if ident in dish["tickets"].split(",")]
-        refusal = fix_round_refusal(restaurant, dish["id"]) if held and dish["state"] != "merged" else None
-        if refusal:
-            return f"{held[0]} is {dish['id']}'s ticket; {refusal}"
     return None
 
 
@@ -1347,6 +1365,9 @@ class ModeLines:
 
 def brief_dish(restaurant, ident, paths, lease, acceptance):
     _, dish = restaurant.find("dishes.tsv", ident)
+    refusal = fix_round_refusal(restaurant, dish)
+    if refusal:
+        raise BrigadeError(refusal)
     paths, lease = paths or dish.get("paths", ""), lease or dish.get("lease", "")
     if not paths or not lease:
         raise BrigadeError(f"{ident} has no lease; fire with --paths, or pass --paths and --lease")
@@ -1354,9 +1375,6 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
         raise BrigadeError("a brief needs at least one --acceptance criterion")
     if dish["state"] not in ("in-progress", "sent-back"):
         raise BrigadeError(f"{ident} is {dish['state']}; brief a dish that is in progress or sent back")
-    refusal = fix_round_refusal(restaurant, ident)
-    if refusal:
-        raise BrigadeError(refusal)
     thread = (restaurant.meta.get("thread") or "").strip()
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
@@ -1555,7 +1573,7 @@ def watch(restaurant):
         moment = datetime.now(timezone.utc)
         dishes = [dish for dish in restaurant.rows("dishes.tsv") if dish["state"] not in ("merged", "dropped")]
         decisions = open_item_decisions(restaurant.rows("86.tsv"))
-        debts = {dish["id"]: round_debt(restaurant, dish["id"]) for dish in dishes}
+        debts = {dish["id"]: round_debt(restaurant, dish) for dish in dishes}
         for dish in dishes:
             if dish["state"] != "in-progress":
                 continue
@@ -1605,7 +1623,7 @@ def watch(restaurant):
     item_lines, answered = [], True
     for dish in dishes:
         decision = decisions.get(dish["id"])
-        pending = debts[dish["id"]] >= ROUND_BUDGET
+        pending = debts[dish["id"]]
         found = [] if decision or pending else progress.get(dish["id"], [])
         entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
@@ -2466,7 +2484,7 @@ def command(restaurant, args, contract=None, rails=None):
         _, current = restaurant.find("dishes.tsv", args.id)
         worker = any(value and value != current.get(field, "") for field, value in (("thread", args.thread), ("task", args.task)))
         if args.state == "in-progress" or worker:
-            refusal = fix_round_refusal(restaurant, args.id)
+            refusal = fix_round_refusal(restaurant, current)
             if refusal:
                 raise BrigadeError(refusal)
         if args.state in COUNTED_STATES and current["state"] not in COUNTED_STATES:

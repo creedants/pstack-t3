@@ -2169,10 +2169,10 @@ class BrigadeTest(unittest.TestCase):
         self.started()
         table = (self.at / "86.tsv").read_bytes()
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
-                         "brigade: D1 has 0 send-backs since its last round decision; the decision opens at 3")
+                         "brigade: D1 has 0 send-backs since its last pass or round decision; the decision opens at 3")
         self.sent_back(1)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
-                         "brigade: D1 has 1 send-back since its last round decision; the decision opens at 3")
+                         "brigade: D1 has 1 send-back since its last pass or round decision; the decision opens at 3")
         self.assertEqual(self.brigade("86", "add", "--dish", "D9", "--round-budget", ok=False), "brigade: no D9 in dishes.tsv")
         self.assertEqual((self.at / "86.tsv").read_bytes(), table)
 
@@ -2209,7 +2209,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q1")["answer"], stored)
         self.assertEqual(self.brigade("watch"), "D1: sent back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
-                         "brigade: D1 has 0 send-backs since its last round decision; the decision opens at 3")
+                         "brigade: D1 has 0 send-backs since its last pass or round decision; the decision opens at 3")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
 
     def test_known_limits_closes_the_round_decision_and_lifts_the_refusal(self):
@@ -2235,21 +2235,95 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["question"], self.ROUND_QUESTION)
 
-    def test_a_queue_bounce_is_refused_only_while_the_decision_is_owed(self):
+    PASS = ("pass", "record", "D1", "--verdict", "pass", "--author", CODEX, "--verifier", CLAUDE, "--sha")
+    NO_DECISION = "brigade: D1 is {}; it owes no round decision"
+
+    def test_a_pass_at_three_send_backs_settles_the_count(self):
+        self.started()
+        self.assertEqual(self.sent_back(3), "D1 sent-back; 3 send-backs, decision pending")
+        self.assertEqual(self.brigade(*self.PASS, "a3"), "D1 passed")
+        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False),
+                         "brigade: D1 is passed; brief a dish that is in progress or sent back")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("passed"))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("queued"))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "bounce-worker"), "D1 in-progress")
+        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread bounce-worker)")
+        self.assertEqual(self.send_back("a4"), "D1 sent-back")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
+                         "brigade: D1 has 1 send-back since its last pass or round decision; the decision opens at 3")
+        self.assertEqual(self.brigade("86", "list"), "no open decisions")
+
+    def test_a_merged_item_owes_nothing_and_its_ticket_starts_a_new_count(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade(*self.PASS, "a4"), "D1 passed")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a4", "--verdict", "send-back", "--author", CODEX,
+                                      "--verifier", CLAUDE, "--member"),
+                         "D1: member send-back on record; D1 stays passed")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
+        for sha in ("m1", "m2", "m3"):
+            self.assertEqual(self.send_back(sha, "--late"), "D1: late send-back on record; D1 stays merged")
+        self.assertEqual(self.brigade("watch"), "no work in progress")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("merged"))
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "waiting"), "T1 waiting")
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
+        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
+                                      "--verifier", CLAUDE), "D2 sent-back")
+        self.assertEqual(self.brigade("watch"), "D2: sent back")
+        self.assertEqual(self.brigade("86", "list"), "no open decisions")
+
+    def test_a_dropped_item_owes_nothing_and_its_ticket_starts_a_new_count(self):
+        self.started()
+        self.sent_back(3)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+        self.assertEqual(self.brigade("watch"), "no work in progress")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("dropped"))
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
+        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
+                                      "--verifier", CLAUDE), "D2 sent-back")
+        self.assertEqual(self.brigade("watch"), "D2: sent back")
+        self.assertEqual(self.brigade("86", "list"), "no open decisions")
+
+    def test_a_dropped_item_put_back_in_progress_owes_its_decision_again(self):
+        self.started()
+        self.sent_back(3)
+        self.brigade("dish", "D1", "--state", "dropped")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.brigade("watch").splitlines()[0], self.PENDING)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
+
+    def test_a_late_send_back_written_before_a_pass_stops_counting_at_the_pass(self):
         self.started()
         self.sent_back(2)
         self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.send_back("a0", "--late"),
+                         "D1: late send-back on record; D1 stays in-progress; 3 send-backs, decision pending")
         self.passed("a3")
+        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
-        self.passed("a4")
+        self.assertEqual(self.send_back("a4"), "D1 sent-back")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
+                         "brigade: D1 has 1 send-back since its last pass or round decision; the decision opens at 3")
+
+    def test_late_send_backs_written_after_a_pass_count_once_the_item_is_back_in_progress(self):
+        self.started()
+        self.passed("a1")
+        for sha in ("m1", "m2", "m3"):
+            self.assertEqual(self.send_back(sha, "--late"), "D1: late send-back on record; D1 stays passed")
+        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("passed"))
         self.brigade("dish", "D1", "--state", "queued")
-        self.assertEqual(self.send_back("a0", "--late"),
-                         "D1: late send-back on record; D1 stays queued; 3 send-backs, decision pending")
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "bounce-worker", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "known limits"), "Q1 answered")
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", "bounce-worker"), "D1 in-progress")
 
     def unchanged(self, before=None):
         now = tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "rail.tsv", "log.tsv", "86.tsv"))
@@ -2271,14 +2345,14 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("watch"), self.PENDING)
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
 
-    def test_watch_names_the_pending_decision_in_every_open_state(self):
+    def test_watch_names_the_pending_decision_in_review_and_parked(self):
         self.started()
         self.sent_back(3)
-        verdict = ("pass", "record", "D1", "--sha", "a3", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
-        for command in (("dish", "D1", "--state", "in-review"), (*verdict, "blocked"), (*verdict, "pass")):
-            self.brigade(*command)
-            self.assertEqual(self.brigade("watch"), self.PENDING, command)
-        self.assertEqual(self.dish_fields("state"), ("passed",))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a3", "--verdict", "blocked", "--author", CODEX,
+                                      "--verifier", CLAUDE), "D1 blocked")
+        self.assertEqual(self.brigade("watch"), self.PENDING)
 
     def test_a_late_third_send_back_holds_an_item_in_progress(self):
         self.started()
@@ -2312,6 +2386,7 @@ class BrigadeTest(unittest.TestCase):
     def test_fire_refuses_a_ticket_of_an_item_that_owes_its_decision(self):
         self.started()
         self.sent_back(3)
+        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
         self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "waiting"), "T1 waiting")
         before = self.unchanged()
         self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
@@ -2320,15 +2395,6 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
-        self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
-
-    def test_fire_refuses_the_ticket_of_an_item_dropped_without_its_decision(self):
-        self.started()
-        self.sent_back(3)
-        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
-        self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
-        self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
-        self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "drop"), "Q1 answered")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
 
     def test_fire_takes_the_ticket_of_an_item_under_its_budget(self):
@@ -2349,10 +2415,15 @@ class BrigadeTest(unittest.TestCase):
         written = (self.at / "briefs" / "D1.md").read_bytes()
         before = self.unchanged()
         self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
+        self.assertEqual(self.brigade("brief", "D1", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
+                         self.NO_FIX_ROUND)
         self.unchanged(before)
+        self.brigade("dish", "D1", "--state", "in-review")
+        self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
         self.assertEqual((self.at / "briefs" / "D1.md").read_bytes(), written)
         self.brigade(*self.ROUND_BUDGET)
         self.brigade("86", "answer", "Q1", "--answer", "redesign")
+        self.brigade("dish", "D1", "--state", "in-progress")
         self.assertIn("GOAL: g\n", self.brigade(*self.FIX_BRIEF))
 
     def test_an_ordinary_decision_answered_with_a_round_option_lifts_no_refusal(self):
@@ -2388,7 +2459,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.send_back("missed7", "--late"), "D1: late send-back on record; D1 stays in-progress")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
-                         "brigade: D1 has 1 send-back since its last round decision; the decision opens at 3")
+                         "brigade: D1 has 1 send-back since its last pass or round decision; the decision opens at 3")
 
     def test_a_decision_table_written_before_the_kind_and_answered_columns_still_reads(self):
         self.started()
@@ -2435,7 +2506,7 @@ class BrigadeTest(unittest.TestCase):
                              "D1: member send-back on record; D1 stays sent-back")
         self.assertEqual(self.brigade("watch"), "D1: sent back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
-                         "brigade: D1 has 2 send-backs since its last round decision; the decision opens at 3")
+                         "brigade: D1 has 2 send-backs since its last pass or round decision; the decision opens at 3")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
 
     def test_an_open_item_decision_replaces_an_over_timebox_line_and_renews_the_lease(self):
@@ -4568,13 +4639,19 @@ class RoundBudgetDocTest(unittest.TestCase):
 
     def test_the_script_section_names_the_closing_answers_and_the_budget(self):
         script = self.text.split("## The script", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("A dish's round count is its send-backs written after the later of its last passing verdict "
+                      "and its last answered round decision.", script)
+        self.assertIn("A dish owes a round decision while that count is three or more and its state is "
+                      "`in-progress`, `in-review`, `sent-back`, or `blocked`.", script)
         self.assertIn("Only `known limits`, `redesign`, or `drop` closes it.", script)
-        self.assertIn("Only that answer lifts the refusal, and no other decision does, whatever its answer.", script)
-        self.assertIn("The count starts again at the time of the answer", script)
-        self.assertIn("whatever state it is in", script)
-        for command in ("`dish --state in-progress`", "`dish --thread` or `--task`", "`brief`", "`fire` refuses each ticket"):
+        self.assertIn("No other decision's answer restarts the count.", script)
+        self.assertIn("The budget refuses nothing else.", script)
+        for command in ("`dish --state in-progress`", "`dish --thread` or `--task`", "a `brief` whose fields parse",
+                        "`fire` exits 1 on a ticket of that dish"):
             self.assertIn(command, script)
         self.assertIn("`ROUND_BUDGET`", script)
+        for old in ("whatever state", "after the dish is dropped", "A queue bounce of that dish is refused"):
+            self.assertNotIn(old, script)
 
     def test_step_6_records_every_round_with_its_report(self):
         review = next(line for line in self.service if line.startswith("6. **Review.**"))
@@ -4596,6 +4673,8 @@ class RoundBudgetDocTest(unittest.TestCase):
         self.assertIn("On `drop`", bullet)
         self.assertIn("Finish with the old worker", bullet)
         self.assertIn("launch no fix worker", bullet)
+        self.assertIn("Follow this bullet in place of the `send-back` bullet below.", bullet)
+        self.assertNotIn("bounce", bullet)
         self.assertNotIn("decision pending", send_back)
 
     def test_the_liveness_check_points_a_pending_decision_at_step_7(self):
