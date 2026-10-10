@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -29,6 +30,7 @@ SKILLS = ROOT / "skills"
 HARNESSES = ("claude", "codex", "grok", "cursor")
 LEGACY_NAME = "install-manifest.json"
 OWNERS_DIR = "install-owners"
+SKIPPED = 3
 
 
 def skill_dirs(scope_root, user):
@@ -220,13 +222,17 @@ def parse_backup(entry, scope, user):
     return BackupRec(entry, original, backup, harnesses_for(original, entry, scope, user))
 
 
+class Unreadable(Exception):
+    """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
+
+
 def read_object(path):
     try:
         data = json.loads(path.read_text())
     except ValueError:
-        sys.exit(f"{path} is not valid JSON; fix or move it and rerun")
+        raise Unreadable(f"{path} is not valid JSON; fix or move it and rerun") from None
     if not isinstance(data, dict):
-        sys.exit(f"{path} is not a JSON object; fix or move it and rerun")
+        raise Unreadable(f"{path} is not a JSON object; fix or move it and rerun")
     return data
 
 
@@ -236,7 +242,7 @@ def legacy_lists(path):
     for key in ("links", "backups"):
         value = data.get(key, [])
         if not isinstance(value, list):
-            sys.exit(f"{path} has a {key} entry that is not a list; fix or move it and rerun")
+            raise Unreadable(f"{path} has a {key} entry that is not a list; fix or move it and rerun")
         found.append(value)
     return data, found[0], found[1]
 
@@ -285,7 +291,7 @@ def records(view, root):
                     live = link.path
                     break
         proving_live = live is not None
-        proving = proving_live or any(proves(root, row.backup, row.original) for row in present.get(slot, ()))
+        proving = proving_live or set_aside(present, root, slot)
         claims = group["claims"]
         tagged = group["tagged"]
         untagged = group["untagged"]
@@ -305,6 +311,11 @@ def records(view, root):
         voucher = untagged[-1].raw if untagged and proving_live and not tagged else None
         found[slot] = Mine(live, harnesses, tuple(path for path, _owned in claims), tuple(tagged), voucher)
     return found
+
+
+def set_aside(present, root, slot):
+    """Whether a present backup row of `slot` holds this checkout's link. `present` is `stacks(view)`."""
+    return any(proves(root, row.backup, row.original) for row in present.get(slot, ()))
 
 
 def stacks(view):
@@ -485,7 +496,11 @@ def current_claims(state, root):
     data = read_object(path)
     recorded = data.get("checkout")
     if recorded != root:
-        sys.exit(f"{path} records {recorded}, not this checkout")
+        raise Unreadable(f"{path} records {recorded}, not this checkout")
+    return claims_in(data)
+
+
+def claims_in(data):
     links = data.get("links")
     if not isinstance(links, dict):
         return {}
@@ -985,6 +1000,47 @@ def survey(view, scope, user, state, root, selected):
     return tuple(found)
 
 
+def backup_place(state, backup):
+    """Return (stamp, harness) when `backup` is spelled <state>/backups/<stamp>/<harness>/<name>, else None.
+
+    The inverse of the path `execute` builds for a move. It compares text only and resolves nothing.
+    """
+    top = os.path.join(str(state), "backups") + os.sep
+    if not backup.startswith(top):
+        return None
+    parts = backup[len(top):].split(os.sep)
+    if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
+        return None
+    return parts[0], parts[1]
+
+
+def prune(state, backup):
+    """Remove the <harness> directory `backup` was in if it is empty, then its <stamp> directory if that is empty.
+
+    It removes only empty directories at those two levels, under `state`/backups. It never follows a symlink at
+    backups/, <stamp>, or <harness>. A symlink at `state` or above it is followed like any other path to the state
+    directory, so a state directory kept behind a symlink is pruned too.
+    Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
+    """
+    place = backup_place(state, backup)
+    if place is None or os.rmdir not in os.supports_dir_fd:
+        return
+    stamp, harness = place
+    # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with suppress(OSError):
+        top = os.open(os.path.join(str(state), "backups"), flags)
+        try:
+            inner = os.open(stamp, flags, dir_fd=top)
+            try:
+                os.rmdir(harness, dir_fd=inner)
+            finally:
+                os.close(inner)
+            os.rmdir(stamp, dir_fd=top)
+        finally:
+            os.close(top)
+
+
 def settle(strays, state, root, dry_run):
     """Act on each Stray and print one line for each that held an entry. Without `dry_run`, call it only inside `locked`.
 
@@ -992,6 +1048,7 @@ def settle(strays, state, root, dry_run):
     and a holder is removed only once it is empty. With `dry_run` it prints what it would do and changes nothing.
     """
     recovered, removed = ("would recover", "would remove") if dry_run else ("recovered", "removed")
+    dropped = []
     for stray in strays:
         try:
             if stray.kind == "empty":
@@ -1014,6 +1071,7 @@ def settle(strays, state, root, dry_run):
                     os.unlink(stray.path)
                     if stray.drop:
                         patch_legacy(state, (), (), (), (stray.drop,), False)
+                        dropped.append(stray.drop)
                 print(f"{removed} {stray.path}: it was a second name for {stray.twin}")
             elif stray.kind == "own":
                 if not dry_run:
@@ -1029,6 +1087,8 @@ def settle(strays, state, root, dry_run):
             # rmdir refuses a directory that is not empty, so an entry that was left stays.
             with suppress(OSError):
                 os.rmdir(holder)
+        for backup in dropped:
+            prune(state, backup)
 
 
 def buried(state, root, path):
@@ -1062,7 +1122,7 @@ def act(step, root):
 
 
 def execute(plan, state, root):
-    counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0}
+    counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0, "skipped": 0}
     failed = set()
     stamp = None
     for step in plan.steps:
@@ -1081,6 +1141,7 @@ def execute(plan, state, root):
             note = skip_note(step)
             if note:
                 print(note)
+                counts["skipped"] += 1
             failed.add(step.path)
             continue
         undo = add_records(step, state, root)
@@ -1091,14 +1152,18 @@ def execute(plan, state, root):
             if not (step.kind == "move" and os.path.lexists(step.backup)):
                 undo()
             print(f"skipped {subject(step)}: {error}")
+            counts["skipped"] += 1
             failed.add(step.path)
             continue
         if declined:
             undo()
             print(f"skipped {subject(step)}: {declined}")
+            counts["skipped"] += 1
             failed.add(step.path)
             continue
         remove_records(step, state, root)
+        for backup in step.remove_backups:
+            prune(state, backup)
         if step.kind == "create":
             counts["linked"] += 1
         elif step.kind == "unlink":
@@ -1225,11 +1290,9 @@ def install(args):
         settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user))
         reject(plan)
-        if not plan.steps:
-            report_install(plan, state, root, None, False)
-            return 0
-        report_install(plan, state, root, execute(plan, state, root), False)
-    return 0
+        executed = execute(plan, state, root) if plan.steps else None
+        report_install(plan, state, root, executed, False)
+    return SKIPPED if executed and executed["skipped"] else 0
 
 
 def uninstall(args):
@@ -1255,53 +1318,174 @@ def uninstall(args):
     with locked(state), ExitStack() as holds:
         settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user), holds)
-        if not plan.steps:
-            report_uninstall(plan, None, False)
-            return 0
-        report_uninstall(plan, execute(plan, state, root), False)
-    return 0
+        executed = execute(plan, state, root) if plan.steps else None
+        report_uninstall(plan, executed, False)
+    return SKIPPED if executed and executed["skipped"] else 0
 
 
 def points_here(path):
     return proves(str(ROOT), os.fspath(path), os.fspath(path))
 
 
+@dataclass(frozen=True)
+class Finding:
+    """One record that no longer matches the disk. `line` is the whole sentence doctor prints, advice included.
+
+    `harnesses` are the harnesses it prints under. A finding with none prints once, after the last harness.
+    """
+    harnesses: tuple
+    line: str
+
+
+RELINK = ('claim {path}: nothing is there; run "{install}" to link it again, '
+          'then "{uninstall}" removes the link and this claim')
+REPLACE = ('claim {path}: {there}; "{install}" stops on {n} taken paths; with --replace it moves them aside '
+           'and links this path (uninstall restores them and removes this claim)')
+EDIT = ('claim {path}: {there}; install plans no link at that path, so no command clears this claim; '
+        'to drop it, delete the "{path}" entry from {owner_file}')
+UNBUILT = ('claim {path}: {there}; skills/ is missing, so install stops before it plans a link; '
+           'run python3 scripts/build.py first and rerun doctor')
+HELD_CLAIM = ('claim {path}: {there}, and {aside} holds this checkout\'s link for it; '
+              '"{dry_run}" prints what the next run does with it')
+INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {original}); uninstall skips the row '
+             'while that path is empty; to drop it, delete the row from "backups" in {manifest}')
+HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
+            '"{dry_run}" prints what the next run does with it')
+AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory is at {checkout}; '
+        'delete this file unless that checkout will be back at that path')
+
+
+def command(args, *words):
+    """One shell command for a person to copy and run from this checkout. Every argument is quoted for a POSIX shell."""
+    project = (f"--project={args.project}",) if args.project else ()
+    return shlex.join(("python3", "scripts/install.py", *words, *project))
+
+
+def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
+    """The sentence for one stale claim. The advice comes from what `plan_install` plans for the path right now."""
+    there = f"a {describe(path)} is there" if os.path.lexists(path) else "nothing is there"
+    if aside:
+        return HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
+    if not SKILLS.is_dir():
+        return UNBUILT.format(path=path, there=there)
+    plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
+    forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
+
+    def links(plan):
+        return any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps)
+
+    install = command(args, "install", "--harness", ",".join(harnesses))
+    if links(plain) and not plain.conflicts:
+        return RELINK.format(path=path, install=install, uninstall=command(args, "uninstall", "--harness", ",".join(harnesses)))
+    if links(forced):
+        return REPLACE.format(path=path, there=there, install=install, n=len(plain.conflicts))
+    return EDIT.format(path=path, there=there, owner_file=owner_path(state_dir(scope, user), root))
+
+
+def row_line(args, state, row, aside):
+    if aside:
+        return HELD_ROW.format(backup=row.backup, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
+    return INERT_ROW.format(backup=row.backup, original=row.original, manifest=Path(state) / LEGACY_NAME)
+
+
+def audit(args, scope, user, names):
+    """Read the records and return every Finding. Reads only: no lock, no directory made, no file written."""
+    state, root = state_dir(scope, user), str(ROOT)
+    stale, away, unread = [], [], []
+    mine = owner_path(state, root)
+    for name in listing(state / OWNERS_DIR):
+        file = state / OWNERS_DIR / name
+        if not name.endswith(".json") or file == mine:
+            continue
+        try:
+            data = read_object(file)
+        except (Unreadable, OSError) as error:
+            unread.append(Finding((), f"{error} (doctor read no checkout from it)"))
+            continue
+        checkout = data.get("checkout")
+        if not isinstance(checkout, str):
+            unread.append(Finding((), f"{file} names no checkout (doctor read no checkout from it)"))
+            continue
+        if os.path.isdir(checkout):
+            continue
+        claimed = claims_in(data)
+        for harness in HARNESSES:
+            count = sum(1 for harnesses in claimed.values() if harness in harnesses)
+            if count:
+                away.append(Finding((harness,), AWAY.format(file=file, n=count, checkout=checkout)))
+    try:
+        links, backups = read_legacy(state, scope, user)
+    except (Unreadable, OSError) as error:
+        return tuple(away + unread) + (Finding((), f"{error} (doctor checked no claims and no backup rows)"),)
+    try:
+        claims = current_claims(state, root)
+    except (Unreadable, OSError) as error:
+        claims = {}
+        unread.append(Finding((), f"{error} (doctor checked no claims of this checkout)"))
+    view = View(claims, links, backups)
+    strays = survey(view, scope, user, state, root, HARNESSES)
+    present = stacks(view)
+    for path, harnesses in claims.items():
+        if proves(root, path, path) or set_aside(present, root, slot_of(path)):
+            continue
+        aside = next((stray.path for stray in strays
+                      if stray.kind in ("home", "own") and slot_of(stray.home) == slot_of(path)), None)
+        stale.append(Finding(harnesses, claim_line(args, view, scope, user, names, root, path, harnesses, aside)))
+    held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
+    for row in view.backups:
+        if not os.path.lexists(row.backup):
+            stale.append(Finding(row.harnesses, row_line(args, state, row, held_for.get(row.backup))))
+    return tuple(stale + away + unread)
+
+
+def link_health(harness, directory, names, scope, user):
+    """Print what `harness` loads from `directory`. Return whether it loads every skill of this checkout."""
+    if Path(os.path.realpath(directory)) == Path(os.path.realpath(SKILLS)):
+        print(f"{harness:7} {directory}: resolves to the pstack-t3 skills tree itself")
+        return True
+    if inside_checkout(directory):
+        print(f"{harness:7} {directory}: points inside one pstack-t3 skill, so the other skills are invisible")
+        return False
+    installed = [name for name in names if points_here(directory / name)]
+    foreign = [name for name in names if (directory / name).exists() and not points_here(directory / name)]
+    missing = [name for name in names if not (directory / name).exists()]
+    healthy = not foreign and not missing
+    print(f"{harness:7} {directory}: {len(installed)}/{len(names)} pstack-t3" +
+          (f", {len(foreign)} taken by other copies ({', '.join(foreign[:5])}{'...' if len(foreign) > 5 else ''})" if foreign else "") +
+          (f", {len(missing)} missing" if missing else ""))
+    for extra in extra_dirs(scope, user)[harness]:
+        stale = [name for name in names if (extra / name).exists() and not points_here(extra / name)]
+        if stale:
+            healthy = False
+            print(f"        {extra} also holds other copies of {len(stale)} of these "
+                  f"({', '.join(stale[:5])}{'...' if len(stale) > 5 else ''}); {harness} may load those instead")
+    if not user:
+        # Claude and Grok load the user copy when both scopes define a name.
+        user_directory = skill_dirs(None, True)[harness]
+        shadowing = [name for name in installed if (user_directory / name).exists() and not points_here(user_directory / name)]
+        if shadowing:
+            healthy = False
+            print(f"        user scope {user_directory} has other copies of {len(shadowing)} of these "
+                  f"({', '.join(shadowing[:5])}{'...' if len(shadowing) > 5 else ''}); providers that prefer user scope will load those instead")
+    return healthy
+
+
 def doctor(args):
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
     names = skill_names() if SKILLS.is_dir() else []
+    found = audit(args, scope, user, names)
     healthy = True
     for harness, directory in skill_dirs(scope, user).items():
         if harness not in args.harness:
             continue
-        if Path(os.path.realpath(directory)) == Path(os.path.realpath(SKILLS)):
-            print(f"{harness:7} {directory}: resolves to the pstack-t3 skills tree itself")
-            continue
-        if inside_checkout(directory):
-            print(f"{harness:7} {directory}: points inside one pstack-t3 skill, so the other skills are invisible")
-            healthy = False
-            continue
-        installed = [name for name in names if points_here(directory / name)]
-        foreign = [name for name in names if (directory / name).exists() and not points_here(directory / name)]
-        missing = [name for name in names if not (directory / name).exists()]
-        healthy &= not foreign and not missing
-        print(f"{harness:7} {directory}: {len(installed)}/{len(names)} pstack-t3" +
-              (f", {len(foreign)} taken by other copies ({', '.join(foreign[:5])}{'...' if len(foreign) > 5 else ''})" if foreign else "") +
-              (f", {len(missing)} missing" if missing else ""))
-        for extra in extra_dirs(scope, user)[harness]:
-            stale = [name for name in names if (extra / name).exists() and not points_here(extra / name)]
-            if stale:
-                healthy = False
-                print(f"        {extra} also holds other copies of {len(stale)} of these "
-                      f"({', '.join(stale[:5])}{'...' if len(stale) > 5 else ''}); {harness} may load those instead")
-        if not user:
-            # Claude and Grok load the user copy when both scopes define a name.
-            user_directory = skill_dirs(None, True)[harness]
-            shadowing = [name for name in installed if (user_directory / name).exists() and not points_here(user_directory / name)]
-            if shadowing:
-                healthy = False
-                print(f"        user scope {user_directory} has other copies of {len(shadowing)} of these "
-                      f"({', '.join(shadowing[:5])}{'...' if len(shadowing) > 5 else ''}); providers that prefer user scope will load those instead")
+        healthy &= link_health(harness, directory, names, scope, user)
+        for finding in found:
+            if harness in finding.harnesses:
+                print(f"        {finding.line}")
+    for finding in found:
+        if not finding.harnesses:
+            print(finding.line)
     return 0 if healthy else 1
 
 
@@ -1317,7 +1501,10 @@ def main(argv=None):
     unknown = set(args.harness) - set(HARNESSES)
     if unknown:
         parser.error(f"unknown harness {', '.join(sorted(unknown))}")
-    return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
+    try:
+        return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
+    except Unreadable as error:
+        sys.exit(str(error))
 
 
 if __name__ == "__main__":
