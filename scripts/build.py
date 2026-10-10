@@ -132,8 +132,10 @@ def build(destination, update_lock=False, skip_lock=False):
         replace_tree(staged, destination)
     if destination == ROOT / "skills":
         from catalog import write
+        import cli_reference
 
         write(destination)
+        cli_reference.write()
     return destination
 
 
