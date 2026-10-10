@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -1061,15 +1062,20 @@ class FoldTest(ActivityCase):
         self.assertEqual(folded.hidden.cut_in_flight, 4)
         self.assertEqual(MOD["notes"](folded), ["4 more work items in flight are not listed."])
 
-    def test_cap_everything_clips_strings_by_their_encoded_bytes_and_drops_a_link_over_90_bytes(self):
+    def test_cap_everything_clips_strings_by_the_bytes_of_their_entity_form_and_drops_a_link_whose_entity_form_is_over_90_bytes(self):
         long = item("D" + "1" * 20, summary="<" * 30, pr="https://example.test/" + "x" * 70)
         short = item("D2", summary="𝔸" * 30, pr="https://example.test/" + "x" * 69)
-        folded = MOD["cap_everything"](page(group(long, row("é" * 30, model="m" * 40)), group(short, row("worker")), items=[long, short], name="𝔸" * 20))
-        first, second = folded.groups[0], folded.groups[1]
-        self.assertEqual((first.item.id, first.item.summary, first.item.pr), ("D" + "1" * 8 + "…", "<" * 5 + "…", ""))
-        self.assertEqual((second.item.summary, second.item.pr), ("𝔸" * 8 + "…", "https://example.test/" + "x" * 69))
+        quoted = item("D3", summary='"' * 30, pr="https://example.test/?" + "&" * 14)
+        plain = item("D4", summary="s" * 37, pr="https://example.test/?" + "&" * 13)
+        groups = [group(long, row("é" * 30, model="m" * 40)), group(short, row("\\" * 30)), group(quoted, row("worker")), group(plain, row("worker"))]
+        folded = MOD["cap_everything"](page(*groups, items=[long, short, quoted, plain], name="𝔸" * 20))
+        first, second, third, fourth = folded.groups
+        self.assertEqual((first.item.id, first.item.summary, first.item.pr), ("D" + "1" * 8 + "…", "<" * 8 + "…", ""))
+        self.assertEqual((second.item.summary, second.item.pr, second.rows[0].label), ("𝔸" * 8 + "…", "https://example.test/" + "x" * 69, "\\" * 3 + "…"))
+        self.assertEqual((third.item.summary, third.item.pr), ('"' * 5 + "…", ""))
+        self.assertEqual((fourth.item.summary, fourth.item.pr), ("s" * 33 + "…", "https://example.test/?" + "&" * 13))
         self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 27 + "…", "𝔸" * 8 + "…"))
-        self.assertEqual(folded.items, (first.item, second.item))
+        self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
 
     def test_every_fold_on_the_busy_fixture_and_on_one_with_failed_agents_in_merged_units_keeps_the_agent_count_the_totals_and_the_legend(self):
         for build, totals, in_flight in ((busy, MOD["Totals"](5, 36, 364, 3), 8), (day, MOD["Totals"](8, 36, 364, 32), 6)):
@@ -1132,6 +1138,17 @@ console.log(JSON.stringify({
   bars: nodes.filter(node => node.className.startsWith('b ')).map(node => [node.style.left, node.style.width]),
 }));
 """
+
+
+# Markup, a quote, a backslash, a tab, and U+2028, then the same text as entities() writes it and as the renderer draws it.
+HOSTILE = "x</script><img onerror=a(1)> \"q\" \\ & 'p'\t&lt;\u2028z"
+HOSTILE_WRITTEN = "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; 'p' &amp;lt; z"
+HOSTILE_DRAWN = "x</script><img onerror=a(1)> \"q\" \\ & 'p' &lt; z"
+
+
+def hostile():
+    """A page whose name, work item id and summary, row label, and model name each hold HOSTILE."""
+    return page(group(item("D1 " + HOSTILE, summary=HOSTILE), row(HOSTILE, model="model " + HOSTILE)), name=HOSTILE)
 
 
 def empty(fixture):
@@ -1234,10 +1251,10 @@ class DocumentTest(OutputCase):
         self.assertEqual([index for index, _ in data["G"]], [1, 2, -1])
         self.assertEqual([line[:5] + line[7:8] for line in data["G"][0][1]],
                          [[0, "worker", 1, 0, 0, 1], [1, "architect runner 2", 2, 1, 0, 1], [2, "spec_review", 2, 1, 3], [0, "review", 0, 2, 4]])
-        self.assertEqual([[line[8] // 60 for line in lines if len(line) > 8] for _, lines in data["G"]], [[42, 6], [], []])
+        self.assertEqual([line[5:6] + line[8:] for line in data["G"][0][1][:2]], [["63m", "42m"], ["6m", "6m"]])
         self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "why investigator", 3]])
         self.assertEqual([[bars[2::3] for bars in (line[6] for line in lines)] for _, lines in data["G"]], [[[0, 1], [1], [0], [2]], [[0]], [[3]]])
-        self.assertEqual((data["k"][:2], data["k"][3][2::3]), ([0, 0], [0, 0]))
+        self.assertEqual((data["k"][:3], data["k"][3][2::3]), ([0, 0, "15m"], [0, 0]))
         self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."])
 
     def test_checksum_in_the_document_is_fnv_1a_over_the_data_elements_utf16_units(self):
@@ -1252,17 +1269,31 @@ class DocumentTest(OutputCase):
         self.assertEqual(int(PROGRAM.search(document).group(2)), value)
         self.assertEqual((MOD["checksum"]("a"), MOD["checksum"]("foobar")), (0xE40C292C, 0xBF9CF968))
 
-    def test_markup_in_a_summary_a_title_and_a_model_leaves_no_angle_bracket_or_ampersand_in_the_data_element(self):
+    def test_markup_a_quote_a_backslash_and_an_escape_character_in_the_store_name_a_summary_a_title_and_a_model_leave_no_backslash_or_angle_bracket_in_the_data_element(self):
         fixture = one_running(self.fixture)
-        hostile = "x</script><img onerror=a(1)> \"q\" & 'p'"
-        fixture.units[0]["summary"] = hostile
-        fixture.thread(delegated(worker(1), "helper"), title=hostile, model="<b>&model", parent=worker(1), turns=(("completed", 20, 10),))
+        text, written = "x</script><img onerror=a(1)> \"q\" \\ & 'p'", "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; 'p'"
+        fixture.meta["restaurant"] = text + "\x1b"
+        fixture.units[0]["summary"] = text + "\x1b"
+        fixture.thread(delegated(worker(1), "helper"), title=text, model="<b>\\\"model\x1b", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.write()
         raw = DATA.search(self.document()).group(1)
-        self.assertEqual([character for character in "<>&" if character in raw], [])
+        self.assertEqual([character for character in "\\<>" if character in raw], [])
         data = json.loads(raw)
-        self.assertEqual((data["I"][1][1], data["G"][0][1][1][1], data["M"]), (hostile, hostile, ["model-a", "<b>&model"]))
-        self.assertEqual(MOD["encode"]({"a": "</script>\u2028\u2029&"}), '{"a":"\\u003c/script\\u003e\\u2028\\u2029\\u0026"}')
+        self.assertEqual((data["c"], data["I"][1][1], data["G"][0][1][1][1], data["M"]),
+                         (written + " ", written + " ", written, ["model-a", "&lt;b&gt;&#92;&quot;model "]))
+
+    def test_data_element_of_a_page_whose_strings_hold_markup_a_quote_a_backslash_a_tab_and_u2028_holds_no_backslash_or_angle_bracket(self):
+        raw = DATA.search(MOD["render_html"](hostile())).group(1)
+        self.assertEqual([character for character in "\\<>" if character in raw], [])
+        data = json.loads(raw)
+        self.assertEqual((data["c"], data["I"], data["G"][0][1][0][1], data["M"]),
+                         (HOSTILE_WRITTEN, [["D1 " + HOSTILE_WRITTEN, HOSTILE_WRITTEN, "working", "go", "", 0]], HOSTILE_WRITTEN, ["model " + HOSTILE_WRITTEN]))
+
+    def test_entities_writes_five_characters_as_entities_and_each_control_character_u2028_and_u2029_as_one_space(self):
+        self.assertEqual(MOD["entities"]("&<>\"\\'"), "&amp;&lt;&gt;&quot;&#92;'")
+        self.assertEqual(MOD["entities"]("&amp;&#92;"), "&amp;amp;&amp;#92;")
+        self.assertEqual(MOD["entities"]("a\x00b\tc\nd\x1fe\x7ff\x80g\x9fh\u2028i\u2029j k\xa0l"), "a b c d e f g h i j k\xa0l")
+        self.assertEqual(MOD["encode"]({"a": ["</script>\t", 1, None, {"b": "\"\\"}]}), '{"a":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
 
     def test_no_invented_id_or_path_is_in_the_document_or_the_text(self):
         for build in (failed_child, busy):
@@ -1358,18 +1389,28 @@ class SizeTest(OutputCase):
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
-    def test_page_with_every_field_at_its_largest_fits_16000_bytes_after_the_last_fold_step(self):
-        wide, spans = "𝕏" * 400, tuple((x * 40, 1, "failed") for x in range(25))
-        def big(number):
-            return item("D" + "9" * 30 + str(number), summary="<" * 400, pr="https://example.test/" + "x" * 69)
-        def rows(prefix):
-            return [row(prefix + wide + str(n), depth=min(n, 2), status="running", spans=spans, open_seconds=604800, stands_for=99999, model=wide + str(n)) for n in range(40)]
-        groups = [group(big(number), *rows(str(number))) for number in range(40)]
-        groups.append(group(big(98), row("worker"), row("9 sub-agents", depth=1, stands_for=99999)))
+    def test_page_of_a_168_hour_window_with_six_providers_the_most_rows_and_every_string_cut_at_its_byte_limit_fits_16000_bytes_after_the_last_fold_step(self):
+        spans = tuple((x * 40, 1, "failed") for x in range(25))
         hidden = MOD["Hidden"](**dict.fromkeys(("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name"), 9999999))
-        largest = MOD["cap_everything"](page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide))
-        self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items)), (6, [6] * 6, 8))
-        self.assertLessEqual(len(MOD["render_html"](largest).encode()), 16000)
+        legend = tuple((name, 9999999) for name in ("Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"))
+        sizes = {}
+        for character in ("s", "<", '"', "𝕏"):
+            wide = character * 400
+
+            def big(number):
+                return item(str(number) + wide, summary=str(number) + wide, pr="https://example.test/" + "x" * 69)
+
+            def rows(prefix):
+                return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status="running", spans=spans, open_seconds=604800, stands_for=99999, model=str(n) + wide),
+                                seconds=604800) for n in range(40)]
+
+            groups = [group(big(number), *rows(str(number))) for number in range(40)]
+            unfolded = page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide)
+            totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
+            largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604800.0), totals=totals, legend=legend))
+            self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items)), (6, [6] * 6, 8))
+            sizes[character] = len(MOD["render_html"](largest).encode())
+        self.assertEqual([character for character, size in sizes.items() if size > 16000], [])
 
 
 class TextTest(OutputCase):
@@ -1520,6 +1561,14 @@ class RendererTest(OutputCase):
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
         self.assertEqual([bar for bar in built["bars"] if not all(re.fullmatch(r"[0-9]+(\.[0-9])?%", side) for side in bar)], [])
         self.assertIn("review · failed · 3m", built["titles"])
+
+    def test_renderer_draws_markup_a_quote_a_backslash_and_text_that_reads_as_an_entity_as_that_text_and_a_tab_and_u2028_as_one_space(self):
+        built = self.render(MOD["render_html"](hostile()))
+        self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
+        self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],
+                         ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN + " ", "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
+                          + ". Each bar is time an agent was at work. A striped bar is still running, and a faded bar was stopped."])
+        self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · done · 60s"])
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
         one_running(self.fixture).write()

@@ -978,19 +978,45 @@ LINK_BYTES = 90
 JOINED = (Status.RUNNING, Status.FAILED, Status.UNKNOWN, Status.STOPPED, Status.DONE)
 
 
-def encode(data):
-    """Compact JSON that cannot end a script element: `<`, `>`, `&`, U+2028, and U+2029 are written as \\u escapes."""
-    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-    for character in "<>&  ":
-        text = text.replace(character, f"\\u{ord(character):04x}")
+# `&` is first, so the `&` of an entity written for another character is not written again.
+ENTITIES = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ('"', "&quot;"), ("\\", "&#92;"))
+UNPRINTED = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def entities(text):
+    """text as the data element holds it, which JSON writes with no backslash.
+
+    Each character from U+0000 to U+001F and from U+007F to U+009F, U+2028, and U+2029 becomes one space.
+    Then `&`, `<`, `>`, `"`, and a backslash become the entities in ENTITIES.
+    """
+    text = UNPRINTED.sub(" ", text)
+    for character, entity in ENTITIES:
+        text = text.replace(character, entity)
     return text
 
 
-def clip(text, limit):
-    """text, cut to end in an ellipsis when its encode() form without the quotes is over limit UTF-8 bytes."""
-    def size(value):
-        return len(encode(value).encode()) - 2
+def encode(data):
+    """Compact JSON of data, with every string that is a value in it written by entities().
 
+    The keys are written as they are. The keys of wire() are single letters, so the JSON of a page holds no backslash, `<`, or `>`.
+    """
+    def written(value):
+        if isinstance(value, str):
+            return entities(value)
+        if isinstance(value, dict):
+            return {key: written(each) for key, each in value.items()}
+        return [written(each) for each in value] if isinstance(value, list) else value
+
+    return json.dumps(written(data), separators=(",", ":"), ensure_ascii=False)
+
+
+def size(text):
+    """The UTF-8 bytes of entities(text)."""
+    return len(entities(text).encode())
+
+
+def clip(text, limit):
+    """text, cut to end in an ellipsis when its size() is over limit."""
     if size(text) <= limit:
         return text
     kept = min(len(text), limit)
@@ -1128,10 +1154,10 @@ def cap_everything(page):
     At most MAX_GROUPS groups stay, those with a running row first. At most MAX_ROWS rows a group stay, running and failed rows first.
     A row's depth becomes the number of its ancestor rows that stay. At most MAX_SPANS bars a row and COORDINATOR_SPANS on the coordinator's row stay.
     At most MAX_STRIP in-flight items stay, those of a group still on the page first.
-    The coordinator's name, ids, labels, summaries, and model names are clipped, and a link over LINK_BYTES bytes is dropped.
+    The coordinator's name, ids, labels, summaries, and model names are clipped, and a link whose size() is over LINK_BYTES is dropped.
     """
     def shown(item):
-        link = item.pr if len(item.pr.encode()) <= LINK_BYTES else ""
+        link = item.pr if size(item.pr) <= LINK_BYTES else ""
         return replace(item, id=clip(item.id, ID_BYTES), summary=clip(item.summary, SUMMARY_BYTES), pr=link)
 
     def narrow(row, limit):
@@ -1242,16 +1268,15 @@ STYLE = joined_lines("""
     #o a{color:inherit;text-decoration:none}
     h2{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;margin:18px 0 6px}
     h2,small,.stat span,.legend,.axis,.sum,.foot,.co,.chip{color:var(--muted-foreground)}
-    .diff{color:var(--destructive);font-weight:600}
+    .diff{font-weight:600}
     .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .stat,.now div,.strip>*{border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px}
     .stat b{display:block;font-size:22px;line-height:1.1}
-    .live b{color:var(--success)}
-    .alarm b{color:var(--destructive)}
     .now div,.strip>*,.grp{display:flex;gap:8px;align-items:baseline;min-width:0}
     .now div{margin-bottom:4px}
     .pulse{width:8px;height:8px;border-radius:50%;background:var(--success);align-self:center;flex:none}
-    .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400}
+    .sum,.l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sum{flex:1;min-width:0;font-weight:400}
     .strip{display:flex;flex-wrap:wrap;gap:6px}
     .strip>*{max-width:100%;box-sizing:border-box}
     .strip .sum{flex:0 1 auto;max-width:200px}
@@ -1264,12 +1289,12 @@ STYLE = joined_lines("""
     .grid i{position:absolute;top:0;bottom:0;width:1px;background:var(--border)}
     .grp{margin-top:8px;padding:3px 0;border-top:1px solid var(--border);font-weight:600}
     .chip{font-size:10.5px;padding:1px 7px;border:1px solid;border-radius:99px;white-space:nowrap}
-    .go{color:var(--success)}
+    .go,.live b{color:var(--success)}
     .info{color:var(--info)}
     .warn{color:var(--warning)}
-    .bad{color:var(--destructive)}
+    .bad,.alarm b,.diff{color:var(--destructive)}
     .row{display:grid;grid-template-columns:var(--lab) 1fr;align-items:center;height:19px}
-    .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;font-size:12px}
+    .l{padding-right:8px;font-size:12px}
     .d1{padding-left:14px}
     .d2{padding-left:28px}
     small{font-size:10.5px}
@@ -1294,22 +1319,25 @@ STYLE = joined_lines("""
 """)
 
 # H is the checksum render_html writes before this text. The renderer builds every node with createElement and textContent,
-# so no string from the data is parsed as HTML. It sorts, groups, and counts nothing.
+# so no string from the data is parsed as HTML. Every count it shows comes from the data object, and it draws the groups and rows in that object's order.
+# `plain` turns the five entities of ENTITIES back into their characters in every string value JSON.parse reads. `&amp;` is last,
+# so text that reads as an entity after that step is not decoded again.
 RENDERER = squeezed("""
     const root = document.getElementById('o'), raw = document.getElementById('d').textContent;
-    const add = (parent, tag, cls, text) => {
+    const add = (parent, tag, cls = '', text = '') => {
       const node = parent.appendChild(document.createElement(tag));
-      node.className = cls || '';
-      node.textContent = text == null ? '' : text;
+      node.className = cls;
+      node.textContent = text;
       return node;
     };
     let sum = 2166136261, D = null;
     for (let i = 0; i < raw.length; i++) sum = Math.imul(sum ^ raw.charCodeAt(i), 16777619) >>> 0;
     if (sum !== H) add(root, 'p', 'diff', 'This copy differs from what the tool wrote. Run the command again.');
-    try { D = JSON.parse(raw); } catch (error) {}
+    const plain = (key, value) => typeof value != 'string' ? value : [['&lt;', 60], ['&gt;', 62], ['&quot;', 34], ['&#92;', 92], ['&amp;', 38]]
+      .reduce((text, [entity, code]) => text.split(entity).join(String.fromCharCode(code)), value);
+    try { D = JSON.parse(raw, plain); } catch (error) {}
     if (D && D.v === 1) {
       const [start, length] = D.w, kinds = ['', 'run', 'f', 'stop', 'p0'];
-      const span = s => s < 90 ? s + 's' : s < 5400 ? Math.floor(s / 60) + 'm' : Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm';
       const clock = (t, day) => new Date(t * 1000).toLocaleString([], day ? {weekday: 'short', hour: 'numeric'} : {hour: 'numeric', minute: '2-digit'});
       const link = (parent, text, url) => {
         const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
@@ -1331,7 +1359,7 @@ RENDERER = squeezed("""
         const above = [];
         for (const r of rows) {
           above[r[0]] = r[1];
-          if (r[8] != null) running.push([(index < 0 ? '' : D.I[index][0] + ' ') + r[1], (D.M[r[2]] || '') + (r[0] ? ' · under ' + above[r[0] - 1] : ''), span(r[8])]);
+          if (r[8] != null) running.push([(index < 0 ? '' : D.I[index][0] + ' ') + r[1], (D.M[r[2]] || '') + (r[0] ? ' · under ' + above[r[0] - 1] : ''), r[8]]);
         }
       }
       if (running.length) {
@@ -1360,17 +1388,17 @@ RENDERER = squeezed("""
         const x = (t - start) / length * 100;
         if (x > 4 && x < 97) for (const node of [add(axis, 'i', '', clock(t, length > 86400)), add(grid, 'i')]) node.style.left = x + '%';
       }
-      const lane = (cls, depth, label, model, tip, spans) => {
+      const lane = (cls, depth, label, model, status, time, spans) => {
         const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth, label + ' '), track = add(row, 'div', 't');
-        add(name, 'small', '', model);
-        row.title = label + ' · ' + tip;
+        add(name, 'small', '', D.M[model]);
+        row.title = label + ' · ' + D.S[status] + ' · ' + time;
         for (let i = 0; i < spans.length; i += 3) {
           const bar = add(track, 'i', 'b ' + kinds[spans[i + 2]]);
           bar.style.left = spans[i] / 10 + '%';
           bar.style.width = spans[i + 1] / 10 + '%';
         }
       };
-      if (D.k) lane('co', 0, 'coordinator', D.M[D.k[0]] || '', D.S[D.k[1]] + ' · ' + span(D.k[2]), D.k[3]);
+      if (D.k) lane('co', 0, 'coordinator', ...D.k);
       for (const [index, rows] of D.G) {
         const head = add(lanes, 'div', 'grp'), item = D.I[index];
         if (item) {
@@ -1378,7 +1406,7 @@ RENDERER = squeezed("""
           add(head, 'span', 'sum', item[1]);
           add(head, 'b', 'chip ' + item[3], item[2]);
         } else add(head, 'span', '', 'Not tied to a work item');
-        for (const r of rows) lane('p' + (r[3] < 0 ? 0 : D.P[r[3]][1]), r[0], r[1], D.M[r[2]] || '', D.S[r[4]] + ' · ' + span(r[5]), r[6]);
+        for (const r of rows) lane('p' + (r[3] < 0 ? 0 : D.P[r[3]][1]), r[0], r[1], r[2], r[4], r[5], r[6]);
       }
       const strip = D.I.filter(item => item[5]);
       if (strip.length) {
@@ -1407,15 +1435,16 @@ def wire(page):
     S  the status words that a row's status indexes
     P  the legend, as [provider name, chart color, agents] each
     M  the model names
-    k  the coordinator's row as [model, status, seconds, bars], or null
+    k  the coordinator's row as [model, status, time, bars], or null
     I  the work items, as [id, summary, state word, tone, link, 1 in the strip or 0] each
     G  the groups, as [index into I or -1 for the agents tied to no work item, rows] each
     N  the sentences from notes()
 
-    A row is [depth, label, model, provider, status, seconds, bars, stands_for, open_seconds].
+    A row is [depth, label, model, provider, status, time, bars, stands_for, open time].
     model indexes M and provider indexes P, and either is -1 for none.
+    time is dur() of the row's seconds, and open time is dur() of its open_seconds.
     bars holds x, w, and an index into WIRE_BARS for each bar, flat.
-    A row with no open turn has no open_seconds, and when its stands_for is also 1 it has no stands_for.
+    A row with no open turn has no open time, and when its stands_for is also 1 it has no stands_for.
     """
     models, providers = [], [name for name, _ in page.legend]
     colors = dict([*PROVIDERS.values(), OTHER_PROVIDER])
@@ -1429,9 +1458,9 @@ def wire(page):
         return [number for span in spans for number in (span.x, span.w, WIRE_BARS.index(span.status))]
 
     def line(row):
-        tail = [row.stands_for, row.open_seconds] if row.open_seconds is not None else [row.stands_for] if row.stands_for != 1 else []
+        tail = [row.stands_for, dur(row.open_seconds)] if row.open_seconds is not None else [row.stands_for] if row.stands_for != 1 else []
         provider = providers.index(row.provider) if row.provider in providers else -1
-        return [row.depth, row.label, model(row.model), provider, WIRE_STATUS.index(row.status), row.seconds, bars(row.spans), *tail]
+        return [row.depth, row.label, model(row.model), provider, WIRE_STATUS.index(row.status), dur(row.seconds), bars(row.spans), *tail]
 
     items = list(page.items)
     items += [group.item for group in page.groups if group.item and group.item not in items]
@@ -1443,7 +1472,7 @@ def wire(page):
         "n": [totals.running, totals.agents, totals.subagents, totals.failed],
         "S": [status.value for status in WIRE_STATUS],
         "P": [[name, colors[name], agents] for name, agents in page.legend],
-        "k": own and [model(own.model), WIRE_STATUS.index(own.status), own.seconds, bars(own.spans)],
+        "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
         "I": [[item.id, item.summary, item.state, item.tone, item.pr, int(item in page.items)] for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
         "M": models,
