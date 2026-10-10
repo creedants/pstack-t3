@@ -480,6 +480,55 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "again", ok=False),
                          "brigade: T1 is assigned, not waiting")
 
+    def same_text_refusal(self, ticket, state):
+        return f"brigade: same text as {ticket} ({state}); nothing added; pass --again to file a second ticket"
+
+    def test_ticket_add_refuses_a_user_request_with_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T1")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "fix  the LOGIN page", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "  Fix the\tlogin\npage  ", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the loginpage"), "T2")
+        self.assertEqual(self.brigade("ticket", "list"),
+                         "T1 waiting [user] Fix the login page\nT2 waiting [user] Fix the loginpage")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "fix  the LOGIN page", "--again"), "T3")
+
+    def test_ticket_add_refuses_a_user_request_with_the_summary_of_an_assigned_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix login")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False),
+                         self.same_text_refusal("T1", "assigned"))
+
+    def test_ticket_add_takes_a_user_request_with_the_summary_of_a_done_or_dropped_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T2")
+        self.brigade("ticket", "set", "T2", "--state", "dropped")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T3")
+
+    def test_ticket_add_names_a_waiting_ticket_of_another_source_with_the_same_summary(self):
+        self.open()
+        self.brigade("set", "--intake", "github")
+        self.brigade("ticket", "add", "--summary", "Fix the login page", "--source", "github", "--ref", "#12")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+
+    def test_ticket_add_with_a_request_id_still_refuses_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--request", "A2", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+
+    def test_ticket_add_with_a_ref_takes_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12"), "T2")
+
     def test_pass_refuses_a_verifier_from_the_author_family(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")
@@ -1012,9 +1061,9 @@ class BrigadeTest(unittest.TestCase):
         self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
         before = (self.at / "rail.tsv").read_bytes()
         add = ("ticket", "add", "--from-report", "reports/D1.md")
-        for extra in (("--source", "github"), ("--ref", "x"), ("--request", "A1")):
+        for extra in (("--source", "github"), ("--ref", "x"), ("--request", "A1"), ("--again",)):
             self.assertEqual(self.brigade(*add, *extra, ok=False),
-                             "brigade: --from-report takes no --source, --ref, or --request")
+                             "brigade: --from-report takes no --source, --ref, --request, or --again")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--dry-run", ok=False),
                          "brigade: --dry-run needs --from-report")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--source", "report", ok=False),
@@ -4025,6 +4074,13 @@ class StoresTest(unittest.TestCase):
 
 
 class HandoffTest(StoresTest):
+    def test_ticket_add_takes_a_user_request_with_the_summary_of_a_moved_ticket(self):
+        self.open("core")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "Fix the cache"), "T2")
+
     def test_from_report_files_the_same_report_name_in_two_siblings(self):
         body = "## Follow-ups\n\n- Shared text.\n"
         for name in ("core", "engine"):

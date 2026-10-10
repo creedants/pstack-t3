@@ -609,7 +609,7 @@ def refuse_live_ref(restaurant, ref, rails):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -624,6 +624,11 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None):
         if source not in (meta.get("intake") or []):
             raise BrigadeError(f"no coordinator owns intake from {source}; the one that reads it runs set --intake {source}")
     refuse_live_ref(restaurant, ref, rails or {})
+    if source == "user" and not ref and not again:
+        for row in restaurant.rows("rail.tsv"):
+            if row["state"] in LIVE_TICKET_STATES and same_text(row["summary"]) == same_text(summary):
+                raise BrigadeError(f"same text as {row['id']} ({row['state']}); nothing added; "
+                                   "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
     return append_ticket(restaurant, summary, source, ref)
@@ -2267,6 +2272,10 @@ def parser():
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
+    a.add_argument("--again", action="store_true",
+                   help="with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store "
+                        "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
+                        "do not count")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -2544,8 +2553,8 @@ def run(argv):
         lines = fragment_lines(restaurant, args.id, args.branch)
         return f"{result}\n{lines}" if lines else result
     if args.command == "ticket" and args.action == "add" and args.from_report is not None:
-        if args.source != "user" or args.ref or args.request:
-            raise BrigadeError("--from-report takes no --source, --ref, or --request")
+        if args.source != "user" or args.ref or args.request or args.again:
+            raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -2638,7 +2647,7 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {})
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":

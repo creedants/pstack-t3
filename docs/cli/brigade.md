@@ -72,7 +72,7 @@ add, list, update, move, or take tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -83,6 +83,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
+| `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
 
 Give exactly one of `--summary`, `--from-report`.
 
