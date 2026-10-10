@@ -1237,6 +1237,35 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("landed as abc123", self.land("status", "E1"))
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
+    def hide_a_landing_e1_the_older_queue_never_made(self, candidate):
+        remote = self.base / "origin.git"
+        sh("git", "update-ref", "refs/heads/landing/e1", candidate, cwd=remote)
+        sh("git", "config", "receive.hideRefs", "refs/heads/landing/e1", cwd=remote)
+        (self.base / "pr-state").write_text(f"MERGED {candidate} abc123")
+        return remote
+
+    def test_a_merged_pr_stored_on_landing_q_waits_when_the_forge_says_a_hidden_landing_e_exists(self):
+        with self.fake_gh():
+            candidate = self.open_pr_on_landing_q_with_the_url_stored(remote_is_github=True)
+            remote = self.hide_a_landing_e1_the_older_queue_never_made(candidate)
+            deletion = self.git_raw("push", "--no-follow-tags", "origin", "--delete", "landing/e1", cwd=self.work)
+            self.assertIn("remote ref does not exist", deletion.stderr)
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote))
+            self.assertIn("awaiting-merge", self.land("status", "E1"))
+            self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
+            self.assertIn("branch-status 200", (self.base / "gh-calls").read_text())
+
+    def test_accepted_limit_a_hidden_landing_e_is_left_in_place_and_the_entry_settles_when_the_remote_is_not_github(self):
+        """Intended. With no forge to ask, a hidden branch looks missing, and waiting would never end."""
+        with self.fake_gh():
+            candidate = self.open_pr_on_landing_q_with_the_url_stored(remote_is_github=False)
+            remote = self.hide_a_landing_e1_the_older_queue_never_made(candidate)
+            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+            self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote))
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertNotIn("branch-status", (self.base / "gh-calls").read_text())
+
     def test_a_pr_stored_on_landing_q_that_merged_at_another_head_bounces_when_the_remote_is_not_github(self):
         with self.fake_gh():
             candidate = self.open_pr_on_landing_q_with_the_url_stored(remote_is_github=False)

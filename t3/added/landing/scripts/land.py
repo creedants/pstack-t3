@@ -1467,19 +1467,24 @@ def forge_is_only_push_target(store):
     return pushed.lower() == resolved.lower()
 
 
-def remote_branch_is_gone(store, branch, stderr):
+def remote_branch_is_gone(store, entry, branch, stderr):
     """Whether a failed delete left the queue branch absent.
 
-    Merge and human mode ask the forge only when the contract remote has
-    exactly one push URL and that URL names the same owner/repo gh resolves.
-    Any other push setup, or a repo read that fails, leaves the entry.
-    Only HTTP 404 counts as gone. Push and local mode have no forge read.
-    They accept only that exact client line, and any other failure waits
-    for the next run."""
+    Merge and human mode ask the forge when the contract remote has exactly
+    one push URL and that URL names the same owner/repo gh resolves. The
+    forge's answer is final. Only HTTP 404 counts as gone, and any other
+    status or no status line leaves the entry.
+    With no forge to ask, the queue cannot tell a branch hidden from git
+    from a missing one. It then accepts git's absent line only when the
+    entry's PR was opened from another branch, which an older queue did.
+    That settles an entry whose hidden landing/e<n> still exists. The
+    alternative is an entry that can never land.
+    Push and local mode accept only git's absent line, and any other
+    failure waits for the next run."""
     if store.contract["mode"] in ("merge", "human"):
-        if not forge_is_only_push_target(store):
-            return False
-        return forge_branch_status(store.repo, branch) == 404
+        if forge_is_only_push_target(store):
+            return forge_branch_status(store.repo, branch) == 404
+        return opened_on_another_branch(store, entry, branch, stderr)
     return _CLIENT_ABSENT_REF.search(stderr or "") is not None
 
 
@@ -1500,9 +1505,8 @@ def opened_on_another_branch(store, entry, branch, stderr):
 
     An older queue opened the PR on landing/q<n> and never created
     landing/e<n>. The merged PR then settles without deleting that name.
-    Git's absent line alone is not proof in merge and human mode, because a
-    hidden ref can raise it for a branch that exists. The PR head must also
-    be another branch. A failed read leaves the entry."""
+    Only remote_branch_is_gone calls this, and only when no forge answers.
+    A failed read leaves the entry."""
     if _CLIENT_ABSENT_REF.search(stderr or "") is None:
         return False
     view = gh("pr", "view", entry["pr"], "--json", "headRefName", "-q", ".headRefName", cwd=store.repo)
@@ -1514,15 +1518,14 @@ def delete_queue_branch(store, entry):
     """Drop landing/e<n> after the PR has merged.
 
     Returns (deleted, warning). The branch is done when the server accepts
-    the delete, when remote_branch_is_gone says it is gone, or when git says
-    it does not exist and the PR was opened from another branch. A local
+    the delete or when remote_branch_is_gone says it is gone. A local
     branch that exists and cannot be deleted is named in warning. The entry
     still lands when the remote ref is gone."""
     branch = human_branch(entry)
     pushed = git_push(store.contract["remote"], "--delete", branch, cwd=store.repo, check=False)
     if pushed.returncode != 0:
         stderr = pushed.stderr or ""
-        if not remote_branch_is_gone(store, branch, stderr) and not opened_on_another_branch(store, entry, branch, stderr):
+        if not remote_branch_is_gone(store, entry, branch, stderr):
             return False, ""
     return True, forget_local_branch(store, branch)
 
