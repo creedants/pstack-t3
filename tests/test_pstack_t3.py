@@ -2690,7 +2690,11 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
             ("Direct a coordinator's own work", "brigade-admin"),
             ("An item the other depends on, as a `contest` line stated, lands first", "brigade-admin"),
             ("when no contest covers the two holders", "brigade-admin"),
-            ("`from-user <coordinator>: <the user's words>`", "brigade-admin"),
+            ("`ticket <restaurant>: run ticket take`", "brigade"),
+            ("`from-user <restaurant>: <the user's words>`", "brigade"),
+            ("`answer <restaurant> Q<n>: <answer>`", "brigade"),
+            ("`reports-to <restaurant> <thread>`", "brigade"),
+            ("`ruling <restaurant> R<n>: <decision>`", "brigade"),
             ("`$B status` prints `thread <id>` first and `owner <thread>@<generation>` last", "brigade"),
             ("End the message with one line that names that path", "brigade"),
         ):
@@ -2725,6 +2729,33 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, self.admin)
+
+    def test_admin_names_each_request_line_and_links_brigade_for_its_text(self):
+        # Any placeholder counts, so a line written with `<coordinator>` is still a second copy of the format.
+        self.assertEqual(re.findall(r"`(?:ticket|from-user|answer|reports-to|ruling) <[^`]*`", self.admin), [])
+        messages = self.admin.split("\n## Admin messages\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "The exact text of each line is in [Reporting to an executive admin]"
+            "(../brigade/SKILL.md#reporting-to-an-executive-admin), under Requests.",
+            messages,
+        )
+        self.assertIn(
+            "This skill's `<coordinator>`, the directory name of the coordinator the line goes to, "
+            "fills the `<restaurant>` field.",
+            messages,
+        )
+        rows = [line.split(" | ", 1)[0] for line in messages.splitlines() if line.startswith("| `")]
+        self.assertEqual(rows, ["| `ticket`", "| `from-user`", "| `answer`", "| `reports-to`", "| `ruling`"])
+        requests = self.brigade.split("\n**Requests.**", 1)[1].split("\n**A ruling's side.**", 1)[0]
+        for line in (
+            "ticket <restaurant>: run ticket take",
+            "from-user <restaurant>: <the user's words>",
+            "answer <restaurant> Q<n>: <answer>",
+            "reports-to <restaurant> <thread>",
+            "ruling <restaurant> R<n>: <decision>",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(requests.count(f"`{line}`"), 1)
 
     def test_admin_links_brigades_script_and_ships_none(self):
         self.assertIn("(../brigade/scripts/brigade.py)", self.admin)
