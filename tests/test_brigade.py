@@ -971,6 +971,24 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- One thing.\n", "--dry-run"),
                          "would add from perf/reports/D1.md#1: One thing.")
 
+    def test_from_report_prints_a_deeper_heading_inside_the_section_and_does_not_file_it(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        body = "## Follow-ups\n\nLead in.\n\n### Parser\n\n- fix a\n- fix b\n\n### Docs\n\nClosing note.\n"
+        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: fix a",
+            "would add from perf/reports/D1.md#2: fix b",
+            "not filed, prose that introduces a list: Lead in.",
+            "not filed, heading inside the section: Parser",
+            "not filed, heading inside the section: Docs",
+            "not filed, prose after the last list item: Closing note.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n### None of these block the merge\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, heading inside the section: None of these block the merge",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
     def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in(LEAD_IN, "--dry-run").splitlines(), [

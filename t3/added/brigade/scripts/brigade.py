@@ -734,6 +734,10 @@ def follow_ups(text):
 
     The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
     line without leading colons and surrounding whitespace.
+
+    A heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too, whatever it
+    says. Its text is the line without its `#` marks and surrounding whitespace. A paragraph with only such headings
+    between it and a list item is directly above that item.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -749,6 +753,8 @@ def follow_ups(text):
                 sections.append([("heading", [re.sub(r"^[\s:]+", "", line[named.end():])])])
             elif depth <= level:
                 level = 0
+            elif level:
+                sections[-1].append(("subheading", [line[depth:]]))
             block, blank = None, True
         elif not level:
             continue
@@ -772,9 +778,11 @@ def follow_ups(text):
         for index, (kind, text) in enumerate(blocks):
             if kind == "heading":
                 asides.append(("text on the heading line", text))
+            elif kind == "subheading":
+                asides.append(("heading inside the section", text))
             elif says_no_work(text):
                 asides.append(("says no work is needed", text))
-            elif kind == "para" and kinds[index + 1] == "item":
+            elif kind == "para" and next(below for below in kinds[index + 1:] if below != "subheading") == "item":
                 asides.append(("prose that introduces a list", text))
             elif kind == "para" and index > last:
                 asides.append(("prose after the last list item", text))
