@@ -867,10 +867,10 @@ def entry_label(ident):
 
 
 def entry_id(text):
-    """E<n> names an entry. Q<n> is that same entry for one release. A bare number is the id."""
-    if not re.fullmatch(r"[EQ]?\d+", text or ""):
+    """E<n> names an entry. A bare number is the id."""
+    if not re.fullmatch(r"E?\d+", text or ""):
         raise LandError(f"{text!r} is not an entry id such as E3")
-    return int(text.lstrip("EQ"))
+    return int(text.lstrip("E"))
 
 
 def submit(store, holder, branch, sha, lease, reviewer, title="", body="", owner=None):
@@ -1175,10 +1175,10 @@ def human_branch(entry):
 def publish_absent_branch(store, entry, branch):
     """Push the checked candidate when the entry's branch is not on the remote.
 
-    An older queue pushed landing/q<n> and stored that commit as the candidate.
-    landing/e<n> was never created, so gh pr create refuses the new name.
-    The push sends the commit the queue already checked. A branch that is
-    already on the remote is left where it is."""
+    An entry queued by an older queue stores a candidate whose branch was
+    never pushed as landing/e<n>, so gh pr create refuses the name. The push
+    sends the commit the queue already checked. A branch that is already on
+    the remote is left where it is."""
     candidate = (entry["candidate"] or "").strip()
     if not candidate:
         return
@@ -1214,18 +1214,15 @@ def pr_adoptable_url(store, entry, branch):
 def ensure_pr(store, entry):
     """Store this entry's PR. Open one on landing/e<n> when that name has none this entry can use.
 
-    Look at landing/e<n> first, then landing/q<n>. Each name is adopted only
-    by pr_adoptable_url. A reused id publishes landing/e<n> and opens the pull
-    request there. A crash after gh pr create and before the URL is stored is
-    safe to rerun. Returns "adopted" when an existing pull request was stored,
-    and "created" when this run opened one."""
+    A pull request on landing/e<n> is adopted only by pr_adoptable_url. A
+    reused id publishes landing/e<n> and opens the pull request there. A crash
+    after gh pr create and before the URL is stored is safe to rerun. Returns
+    "adopted" when an existing pull request was stored, and "created" when
+    this run opened one."""
     contract = store.contract
     branch = human_branch(entry)
     url = pr_adoptable_url(store, entry, branch)
     adopted = bool(url)
-    if not url:
-        url = pr_adoptable_url(store, entry, f"landing/q{entry['id']}")
-        adopted = bool(url)
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
@@ -1498,50 +1495,18 @@ def forget_local_branch(store, branch):
     return ""
 
 
-def delete_named_branch(store, branch, missing_ok):
-    """Drop one queue branch. Returns (deleted, warning, absent, accepted).
-
-    accepted means the server took the delete. absent means git's exact line
-    says the remote ref does not exist. missing_ok treats that line as nothing
-    to delete and does not ask the forge. Any other failure uses
-    remote_branch_is_gone."""
-    remote = store.contract["remote"]
-    pushed = git_push(remote, "--delete", branch, cwd=store.repo, check=False)
-    absent = _CLIENT_ABSENT_REF.search(pushed.stderr or "") is not None
-    accepted = pushed.returncode == 0
-    if not accepted:
-        if not (missing_ok and absent) and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
-            return False, "", absent, False
-    return True, forget_local_branch(store, branch), absent, accepted
-
-
 def delete_queue_branch(store, entry):
-    """Drop landing/e<n> after the PR has merged, and a leftover landing/q<n>.
+    """Drop landing/e<n> after the PR has merged.
 
-    Returns (deleted, warning). The current name is done when the server
-    accepts the delete, or when remote_branch_is_gone says it is gone. An
-    entry pushed before the rename has no landing/e<n>. Git's absent line for
-    that name is done when the server accepts the delete of landing/q<n>, on
-    any remote. A missing landing/q<n> does not block once the current name
-    is gone. A local branch that exists and cannot be deleted is named in
-    warning. The entry still lands when the remote ref is gone."""
-    current = human_branch(entry)
-    legacy = f"landing/q{entry['id']}"
-    deleted, warning, absent, _accepted = delete_named_branch(store, current, missing_ok=False)
-    if not deleted:
-        if not absent:
-            return False, ""
-        _legacy_deleted, legacy_warning, _legacy_absent, legacy_accepted = delete_named_branch(
-            store, legacy, missing_ok=False)
-        if not legacy_accepted:
-            return False, ""
-        local = forget_local_branch(store, current)
-        return True, " ".join(part for part in (local, legacy_warning) if part)
-    legacy_deleted, legacy_warning, _legacy_absent, _legacy_accepted = delete_named_branch(
-        store, legacy, missing_ok=True)
-    if not legacy_deleted:
+    Returns (deleted, warning). The branch is done when the server accepts
+    the delete, or when remote_branch_is_gone says it is gone. A local branch
+    that exists and cannot be deleted is named in warning. The entry still
+    lands when the remote ref is gone."""
+    branch = human_branch(entry)
+    pushed = git_push(store.contract["remote"], "--delete", branch, cwd=store.repo, check=False)
+    if pushed.returncode != 0 and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
         return False, ""
-    return True, " ".join(part for part in (warning, legacy_warning) if part)
+    return True, forget_local_branch(store, branch)
 
 
 def entry_row(store, ident):

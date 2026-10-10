@@ -1,0 +1,1 @@
+- `land.py status` no longer accepts `Q<n>` for an entry, and the queue no longer reads, adopts, pushes, or deletes `landing/q<n>`. Entries and pull request branches are `E<n>` and `landing/e<n>` only. An entry whose candidate an older queue stored still gets its pull request on `landing/e<n>`.
