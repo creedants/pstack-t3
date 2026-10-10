@@ -1,1 +1,0 @@
-- `land.py` caps changes in flight per repository (`init --cap`, `cap N`), refuses to renew an expired lease into an overlap or past the cap, and adds `lease check`, `lease renew --if-live`, and `status --holder`.

@@ -1,1 +1,0 @@
-- The install docs in the README and the guide now describe per-checkout install records under `install-owners/`, what uninstall removes and restores, the never-overwrite rule, what stays after a full cleanup, and the known limits.

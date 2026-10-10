@@ -1,1 +1,0 @@
-- `docs/guide.md` explains the optional executive admin for several coordinators on one repository. It covers how to open it, requests, its four kinds of ruling and how to overrule one, reservations, shares, contests, what you hear, and recovery. `docs/how-it-works.md` gains its row, and the README names it and says `walk` groups coordinators by repository.

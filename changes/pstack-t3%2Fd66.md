@@ -1,1 +1,0 @@
-- `land.py` reads git `HEAD` before it opens a write transaction, both when `attempt` records a landing candidate and when a human-mode entry is already on trunk. A land run that opens a pull request for an awaiting-merge entry left with none reports that pull request as opened. Adopting an existing pull request still reports it as adopted.
