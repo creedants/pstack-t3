@@ -496,6 +496,69 @@ class BrigadeTest(unittest.TestCase):
                              "brigade: no D9 in dishes.tsv")
         self.assertEqual(self.pass_rows(), [])
 
+    def close_run(self, *flags):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), "close", *flags], capture_output=True, text=True)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+    def no_row(self, name, dish="D1"):
+        return (f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
+                f"and --late when {dish} has moved past that round")
+
+    def aged(self, name, year):
+        path = self.review_file(name)
+        stamp = datetime(year, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_close_warns_about_a_review_report_with_no_row_and_still_exits_0(self):
+        self.fired_bug_fix()
+        code, before, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.review_file("D1-review-2.md")
+        self.assertEqual(self.close_run("--dry-run"), (0, before, self.no_row("D1-review-2.md")))
+        code, out, err = self.close_run("--to-file")
+        self.assertEqual((code, err), (0, self.no_row("D1-review-2.md")))
+        self.assertEqual(Path(out).read_text().strip(), before)
+        code, out, err = self.close_run()
+        self.assertEqual((code, err), (0, self.no_row("D1-review-2.md")))
+        self.assertEqual(out.splitlines()[0], "# Perf report")
+        self.assertNotIn("warning", out)
+
+    def test_close_does_not_warn_about_a_report_a_row_names(self):
+        self.fired_bug_fix()
+        self.aged("D1-review-1.md", 2099)
+        self.aged("D1-review-1-panel-2.md", 2099)
+        self.record("abc", "send-back", "--report", "D1-review-1.md")
+        self.record("abc", "pass", "--member", "--report", "D1-review-1-panel-2.md", verifier="grok/grok-4.7")
+        self.assertEqual(self.close_run("--dry-run")[2], "")
+
+    def test_close_matches_a_row_that_names_no_report_to_the_reports_written_before_it(self):
+        self.fired_bug_fix()
+        self.aged("D1-review.md", 2020)
+        self.aged("D1-review-bunny.md", 2020)
+        self.assertEqual(self.close_run("--dry-run")[2],
+                         "\n".join([self.no_row("D1-review-bunny.md"), self.no_row("D1-review.md")]))
+        self.record("abc", "send-back")
+        self.assertEqual(self.close_run("--dry-run")[2], "")
+        self.aged("D1-review-2.md", 2099)
+        self.assertEqual(self.close_run("--dry-run")[2], self.no_row("D1-review-2.md"))
+
+    def test_a_row_that_names_a_report_matches_no_other_report(self):
+        self.fired_bug_fix()
+        self.aged("D1-review-1.md", 2020)
+        self.aged("D1-review-2.md", 2020)
+        self.aged("D7-review.md", 2020)
+        self.record("abc", "send-back", "--report", "D1-review-2.md")
+        self.assertEqual(self.close_run("--dry-run")[2],
+                         "\n".join([self.no_row("D1-review-1.md"), self.no_row("D7-review.md", "D7")]))
+
+    def test_close_ignores_a_file_that_is_not_a_review_report(self):
+        self.fired_bug_fix()
+        for name in ("D1.md", "notes.md", "D1-review.txt", "D1-reviewed.md", "xD1-review.md"):
+            self.aged(name, 2099)
+        self.assertEqual(self.close_run("--dry-run")[2], "")
+
     def test_report_lists_only_what_changed_since_the_last_report(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "Startup is slow")

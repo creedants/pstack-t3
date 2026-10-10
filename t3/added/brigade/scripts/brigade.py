@@ -866,6 +866,26 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     return f"{dish_id} {row['state']}"
 
 
+def unrecorded_reviews(restaurant):
+    """The review reports under reports/ that no pass.tsv row accounts for, by file name.
+
+    A row that names no report cannot say which file it reviewed, so it accounts for every report of its dish written before it.
+    """
+    rows = restaurant.rows("pass.tsv")
+    reports = restaurant.dir / "reports"
+    missing = []
+    for path in sorted(reports.iterdir()) if reports.is_dir() else []:
+        match = REVIEW_FILE.fullmatch(path.name)
+        if not match:
+            continue
+        written = path.stat().st_mtime
+        if not any(row["report"] == path.name if row["report"]
+                   else datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= written
+                   for row in rows if row["dish"] == match.group(1)):
+            missing.append(path.name)
+    return missing
+
+
 def report(restaurant, write=True):
     meta = restaurant.meta
     since = meta.get("lastReportAt") or ""
@@ -2502,6 +2522,10 @@ def command(restaurant, args, contract=None, rails=None):
         if not args.dry_run and is_admin(restaurant.meta):
             log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
+        for name in unrecorded_reviews(restaurant):
+            dish = name.split("-")[0]
+            print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
+                  f"and --late when {dish} has moved past that round", file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text
