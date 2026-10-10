@@ -1224,11 +1224,11 @@ STYLE = joined_lines("""
     .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .stat,.now div,.strip>*{border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px}
     .stat b{display:block;font-size:22px;line-height:1.1}
-    .now div,.strip>*,.grp{display:flex;gap:8px;align-items:baseline;min-width:0}
+    .now div,.strip>*,.grp,.l{display:flex;gap:8px;align-items:baseline;min-width:0}
     .now div{margin-bottom:4px}
     .mark{width:8px;height:8px;border-radius:50%;border:1px solid;box-sizing:border-box;align-self:center;flex:none}
     .pulse{border:0;background:var(--success)}
-    .sum,.l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sum,.l span,.l small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .sum{flex:1;min-width:0;font-weight:400}
     .strip{display:flex;flex-wrap:wrap;gap:6px}
     .strip>*{max-width:100%;box-sizing:border-box}
@@ -1248,6 +1248,7 @@ STYLE = joined_lines("""
     .bad,.alarm b,.diff{color:var(--destructive)}
     .row{display:grid;grid-template-columns:var(--lab) 1fr;align-items:center;height:19px}
     .l{padding-right:8px;font-size:12px}
+    .l small{flex:none;max-width:50%}
     .d1{padding-left:14px}
     .d2{padding-left:28px}
     small{font-size:10.5px}
@@ -1270,7 +1271,7 @@ STYLE = joined_lines("""
     .stats{grid-template-columns:repeat(2,1fr)}
     .axis i:nth-child(odd){display:none}
     .row{position:relative;height:30px;align-items:start}
-    .l small{position:absolute;left:0;right:0;bottom:0;overflow:hidden;text-overflow:ellipsis;line-height:13px}
+    .l small{position:absolute;left:0;right:0;bottom:0;max-width:none;line-height:13px}
     .d1 small{left:14px}
     .d2 small{left:28px}
     }
@@ -1348,12 +1349,13 @@ RENDERER = squeezed("""
         }
       }
       const lane = (cls, depth, label, model, status, time, spans) => {
-        const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth, label + ' '), track = add(row, 'div', 't');
+        const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth), track = add(row, 'div', 't');
+        add(name, 'span', '', label);
         add(name, 'small', '', D.M[model]);
         row.title = [label, D.M[model], D.S[status], time].filter(Boolean).join(' · ');
         for (let i = 0; i < spans.length; i += 3) {
           const bar = add(track, 'i', 'b ' + kinds[spans[i + 2]]);
-          bar.style.left = spans[i] / 10 + '%';
+          bar.style.left = 'min(' + spans[i] / 10 + '%,100% - 3px)';
           bar.style.width = spans[i + 1] / 10 + '%';
         }
       };

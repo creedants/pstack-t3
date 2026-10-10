@@ -1460,14 +1460,17 @@ class DocumentTest(OutputCase):
         self.assertEqual([(name, value) for selector, name, value in declared if selector == "#o"], [("font", "13px/1.4 var(--font-sans)"), ("color", "var(--foreground)")])
         self.assertEqual([selector for selector, _, value in declared if "var(--background)" in value], [".grp"])
 
-    def test_narrow_rule_puts_each_rows_model_on_a_second_line_of_a_30_pixel_row_and_hides_only_every_other_axis_label(self):
+    def test_narrow_rule_puts_each_rows_model_on_a_second_line_of_a_30_pixel_row_and_hides_only_every_other_axis_label_and_the_wide_rule_gives_the_model_up_to_half_the_label_column(self):
         narrow = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", re.search(r"@media\(max-width:520px\)\{(.*)\}$", MOD["STYLE"]).group(1)))
         self.assertEqual([selector for selector, body in narrow.items() if "display:none" in body], [".axis i:nth-child(odd)"])
         self.assertEqual(narrow[".row"], "position:relative;height:30px;align-items:start")
-        self.assertEqual(narrow[".l small"], "position:absolute;left:0;right:0;bottom:0;overflow:hidden;text-overflow:ellipsis;line-height:13px")
+        self.assertEqual(narrow[".l small"], "position:absolute;left:0;right:0;bottom:0;max-width:none;line-height:13px")
         self.assertEqual((narrow[".d1 small"], narrow[".d2 small"]), ("left:14px", "left:28px"))
         wide = MOD["STYLE"].split("@media")[0]
-        self.assertEqual(re.findall(r"[^{}]*small[^{}]*\{[^{}]*\}", wide), ["h2,small,.stat span,.legend,.axis,.sum,.foot,.co,.chip{color:var(--muted-foreground)}", "small{font-size:10.5px}"])
+        self.assertEqual(re.findall(r"[^{}]*small[^{}]*\{[^{}]*\}", wide), ["h2,small,.stat span,.legend,.axis,.sum,.foot,.co,.chip{color:var(--muted-foreground)}",
+                                                                              ".sum,.l span,.l small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+                                                                              ".l small{flex:none;max-width:50%}", "small{font-size:10.5px}"])
+        self.assertIn(".now div,.strip>*,.grp,.l{display:flex;gap:8px;align-items:baseline;min-width:0}", wide)
         self.assertEqual(re.findall(r"height:[^;}]*", MOD["STYLE"]), ["height:1.1", "height:8px", "height:9px", "height:16px", "height:19px", "height:100%", "height:11px", "height:30px", "height:13px"])
 
     def test_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
@@ -1716,8 +1719,8 @@ class RendererTest(OutputCase):
         built = self.render(document)
         texts = built["texts"]
         for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "D7 worker", "model-a", "42m",
-                     "D7 architect runner 2", "model-b · under worker", "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator ", "worker ",
-                     "architect runner 2 ", "spec_review ", "review ", "model-c", "why investigator ", "Not tied to a work item", "Work items in flight",
+                     "D7 architect runner 2", "model-b · under worker", "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator", "worker",
+                     "architect runner 2", "spec_review", "review", "model-c", "why investigator", "Not tied to a work item", "Work items in flight",
                      "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
             self.assertIn(text, texts)
@@ -1728,7 +1731,7 @@ class RendererTest(OutputCase):
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
-        self.assertEqual([bar for bar in built["bars"] if not all(re.fullmatch(r"[0-9]+(\.[0-9])?%", side) for side in bar)], [])
+        self.assertEqual([bar for bar in built["bars"] if not re.fullmatch(r"min\([0-9]+(\.[0-9])?%,100% - 3px\) [0-9]+(\.[0-9])?%", " ".join(bar))], [])
         self.assertEqual(built["titles"], ["coordinator · model-c · running · 15m", "worker · model-a · running · 63m", "architect runner 2 · model-b · running · 6m",
                                            "spec_review · model-b · done · 60s", "review · model-c · failed · 3m", "worker · model-a · done · 5m", "why investigator · model-a · stopped · 2m"])
 
@@ -1736,7 +1739,7 @@ class RendererTest(OutputCase):
         built = self.render(MOD["render_html"](hostile()))
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
         self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],
-                         ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN + " ", "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
+                         ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
                           + ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns."])
         self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · model " + HOSTILE_DRAWN + " · done · 60s"])
 
@@ -1750,6 +1753,14 @@ class RendererTest(OutputCase):
         self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7 worker", "model-a", "5m", "D7 spec_review", "model-a · under worker", "2m"])
         self.assertEqual([classes.count(name) for name in ("mark", "mark pulse", "b q", "b run", "stat live")], [2, 0, 2, 0, 1])
         self.assertEqual((texts[0], built["titles"][1:]), ("0", ["worker · model-a · queued · 0s", "spec_review · model-a · queued · 0s"]))
+
+    def test_renderer_puts_a_bar_that_starts_at_the_windows_end_3_pixels_inside_its_track(self):
+        fixture = one_running(self.fixture)
+        fixture.thread(delegated(worker(1), "helper-task"), title="helper", parent=worker(1), turns=(("running", 0.05, None),))
+        fixture.write()
+        built = self.render(self.document(clock=fixture.now))
+        self.assertEqual(built["bars"][-1], ["min(99.9%,100% - 3px)", "0.1%"])
+        self.assertIn(".b{position:absolute;top:4px;height:11px;min-width:3px;", MOD["STYLE"])
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
         one_running(self.fixture).write()
