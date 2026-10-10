@@ -224,7 +224,7 @@ def parse_backup(entry, scope, user, state, file):
 
 
 class Unreadable(Exception):
-    """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
+    """A record file that cannot be used, or that could not be removed. Its text is the line install and uninstall exit 1 with."""
 
 
 # Path.exists() reads each of these as "not there" on Python 3.10 and 3.12.
@@ -547,8 +547,11 @@ def atomic_write(directory, name, text):
 def write_claims(state, root, claims):
     path = owner_path(state, root)
     if not claims:
-        if path.exists():
+        try:
             path.unlink()
+        except OSError as error:
+            if error.errno not in ABSENT:
+                raise Unreadable(f"{path} could not be removed ({error.strerror}); clear that error and rerun") from None
         return
     body = {"checkout": root, "links": {key: {"harnesses": list(claims[key])} for key in claims}}
     atomic_write(path.parent, path.name, json.dumps(body, indent=2) + "\n")
