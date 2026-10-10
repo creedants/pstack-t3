@@ -753,6 +753,19 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
         self.assertEqual(self.dish_fields("state"), ("sent-back",))
 
+    def test_pass_record_refuses_a_report_path_outside_the_reports_directory_of_the_store(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md")
+        elsewhere = Path(self.temporary.name) / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "D1-review-1.md").write_text("another file\n")
+        before = (self.at / "pass.tsv").read_bytes()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        for report in (str(elsewhere / "D1-review-1.md"), "no/such/dir/D1-review-1.md"):
+            self.assertEqual(self.brigade(*record, "--report", report, ok=False),
+                             f"brigade: {report} is outside this store's reports/; name reports/D1-review-1.md")
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+
     def store_files(self):
         """Every file of the store but restaurant.lock, which is empty and is not store data."""
         return {str(path.relative_to(self.at)): path.read_bytes() for path in sorted(self.at.rglob("*"))

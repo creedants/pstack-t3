@@ -642,11 +642,16 @@ def append_ticket(restaurant, summary, source, ref):
     return ident
 
 
+def in_reports(restaurant, report, name):
+    """True when report is the bare name, `reports/<name>`, or a path whose directory resolves to this store's reports/."""
+    return report in (name, f"reports/{name}") or Path(report).parent.resolve() == restaurant.dir.resolve() / "reports"
+
+
 def item_report(restaurant, report):
     """The bare name of an item report under this store's reports/.
 
     Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
-    A path that names a file elsewhere is refused instead of re-anchored as review_report does, and so is a symbolic link.
+    A path that in_reports turns down is refused, and so is a symbolic link.
     A `..` component is refused as written, before anything is resolved.
     """
     if ".." in Path(report).parts:
@@ -656,7 +661,7 @@ def item_report(restaurant, report):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
     path = restaurant.dir / "reports" / name
     home = restaurant.dir.resolve() / "reports" / name
-    if report not in (name, f"reports/{name}") and Path(report).parent.resolve() != home.parent:
+    if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
     if path.is_symlink():
         raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
@@ -1047,10 +1052,17 @@ def pass_check(restaurant, dish_id, sha):
 
 
 def review_report(restaurant, dish_id, report):
+    """The bare name of a review report of this item that exists under this store's reports/.
+
+    A name that is not a review report of the item is refused. So is a path that in_reports turns down, and so is a
+    name with no file under this store's reports/.
+    """
     name = Path(report).name
     match = REVIEW_FILE.fullmatch(name)
     if not match or match.group(1) != dish_id:
         raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
+    if not in_reports(restaurant, report, name):
+        raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
     if not (restaurant.dir / "reports" / name).exists():
         raise BrigadeError(f"reports/{name} does not exist; write the review report first")
     return name
