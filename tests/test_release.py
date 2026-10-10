@@ -2,6 +2,7 @@ import os
 import pathlib
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -122,6 +123,18 @@ def history():
     with repository() as repo:
         add_fragments_out_of_name_and_date_order(repo)
         yield repo
+
+
+@contextmanager
+def recording_handlers():
+    """Stand in for the default handlers, so a signal the script fails to hold cannot kill the test run."""
+    missed = []
+    previous = {number: signal.signal(number, lambda signum, frame: missed.append(signum)) for number in release.HELD}
+    try:
+        yield missed
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 class ReleaseCase(unittest.TestCase):
@@ -332,6 +345,152 @@ class RunTest(ReleaseCase):
                         release.apply(cut)
             self.assertEqual(str(raised.exception), "stopped partway: interrupted" + NOTHING_CHANGED)
             self.assertEqual(state(repo), before)
+
+    def apply_signalled(self, repo, replace=None, unlink=None, fail_unlink=None):
+        """Run release.apply, sending each listed real signal right after the Nth os.replace or Path.unlink returns."""
+        replace, unlink, calls = replace or {}, unlink or {}, {"replace": 0, "unlink": 0}
+        real_replace, real_unlink = os.replace, pathlib.Path.unlink
+
+        def after(kind, signals):
+            calls[kind] += 1
+            for number in signals.get(calls[kind], ()):
+                os.kill(os.getpid(), number)
+
+        def replacing(source, target, *args, **kwargs):
+            real_replace(source, target, *args, **kwargs)
+            after("replace", replace)
+
+        def unlinking(path, *args, **kwargs):
+            if calls["unlink"] + 1 == fail_unlink:
+                calls["unlink"] += 1
+                raise PermissionError(13, "Permission denied", str(path))
+            real_unlink(path, *args, **kwargs)
+            after("unlink", unlink)
+
+        held = {number: signal.getsignal(number) for number in release.HELD}
+        with recording_handlers() as missed, mock.patch.object(release, "ROOT", repo):
+            cut = release.plan("0.3.0", "2026-10-09")
+            with mock.patch.object(os, "replace", replacing), mock.patch.object(pathlib.Path, "unlink", unlinking):
+                with self.assertRaises(SystemExit) as raised:
+                    release.apply(cut)
+            self.assertEqual(missed, [])
+        self.assertEqual(held, {number: signal.getsignal(number) for number in release.HELD})
+        return str(raised.exception)
+
+    def test_signal_right_after_the_changelog_replace_puts_everything_back(self):
+        for number in release.HELD:
+            with self.subTest(signal=number), history() as repo:
+                before = state(repo)
+                message = self.apply_signalled(repo, replace={1: [number]})
+                self.assertEqual(message, "stopped partway: interrupted" + NOTHING_CHANGED)
+                self.assertEqual(state(repo), before)
+                self.assertEqual(list(repo.glob(".*.tmp")) + list((repo / "changes").glob(".*.tmp")), [])
+
+    def test_signal_right_after_each_fragment_delete_puts_everything_back(self):
+        for call in (1, 2, 3, 4):
+            for number in release.HELD:
+                with self.subTest(delete=call, signal=number), history() as repo:
+                    before = state(repo)
+                    message = self.apply_signalled(repo, unlink={call: [number]})
+                    self.assertEqual(message, "stopped partway: interrupted" + NOTHING_CHANGED)
+                    self.assertEqual(state(repo), before)
+
+    def test_repeated_signals_during_the_put_back_do_not_stop_it(self):
+        with history() as repo:
+            before = state(repo)
+            message = self.apply_signalled(
+                repo, fail_unlink=3, replace={2: [signal.SIGINT], 3: [signal.SIGTERM], 4: [signal.SIGHUP]})
+            self.assertEqual(message[:17], "stopped partway: ")
+            self.assertEqual(message[-len(NOTHING_CHANGED):], NOTHING_CHANGED)
+            self.assertEqual(state(repo), before)
+
+    def test_signal_then_more_signals_during_the_put_back_do_not_stop_it(self):
+        with history() as repo:
+            before = state(repo)
+            message = self.apply_signalled(
+                repo, unlink={2: [signal.SIGINT]}, replace={2: [signal.SIGINT, signal.SIGINT], 3: [signal.SIGTERM]})
+            self.assertEqual(message, "stopped partway: interrupted" + NOTHING_CHANGED)
+            self.assertEqual(state(repo), before)
+
+    def test_signal_during_a_put_back_that_fails_still_names_the_files(self):
+        with history() as repo:
+            real_write = release.write_file
+
+            def write_file(path, data, mode):
+                if path.parent.name == "changes":
+                    os.kill(os.getpid(), signal.SIGINT)
+                    raise OSError(28, "No space left on device", str(path))
+                return real_write(path, data, mode)
+
+            with mock.patch.object(release, "write_file", write_file):
+                message = self.apply_signalled(repo, unlink={2: [signal.SIGTERM]})
+            self.assertIn("stopped partway: interrupted; could not put back changes/eta.md ([Errno 28]", message)
+            self.assertIn(", changes/beta.md ([Errno 28]", message)
+            self.assertEqual(message[-len(f"; run {UNDO} to undo, then rerun"):], f"; run {UNDO} to undo, then rerun")
+            self.assertEqual((repo / "CHANGELOG.md").read_text(), CHANGELOG)
+            git(repo, *shlex.split(UNDO)[1:])
+            self.assertEqual(git(repo, "status", "--porcelain"), "")
+
+    def test_a_signal_at_any_line_of_apply_leaves_the_files_as_they_were_or_released(self):
+        for fail in (None, 3):
+            with self.subTest(failing_delete=fail), history() as repo, mock.patch.object(release, "ROOT", repo):
+                before, cut = state(repo), release.plan("0.3.0", "2026-10-09")
+                real_unlink = pathlib.Path.unlink
+
+                def run_traced(fire_at):
+                    seen, deletes = 0, 0
+
+                    def unlink(path, *args, **kwargs):
+                        nonlocal deletes
+                        deletes += 1
+                        if deletes == fail:
+                            raise PermissionError(13, "Permission denied", str(path))
+                        return real_unlink(path, *args, **kwargs)
+
+                    def local(frame, event, arg):
+                        nonlocal seen
+                        if event == "line":
+                            seen += 1
+                            if seen == fire_at:
+                                sys.settrace(None)
+                                os.kill(os.getpid(), signal.SIGINT)
+                        return local
+
+                    def tracer(frame, event, arg):
+                        return local if frame.f_code.co_filename == release.__file__ else None
+
+                    message = None
+                    with mock.patch.object(pathlib.Path, "unlink", unlink):
+                        sys.settrace(tracer)
+                        try:
+                            release.apply(cut)
+                        except SystemExit as error:
+                            message = str(error)
+                        finally:
+                            sys.settrace(None)
+                    return seen, message
+
+                with recording_handlers():
+                    held = {number: signal.getsignal(number) for number in release.HELD}
+                    lines, message = run_traced(0)
+                    released = state(repo)
+                    self.assertEqual(message is None, fail is None)
+                    self.assertGreater(lines, 20)
+                    outcomes = set()
+                    for fire_at in range(1, lines + 1):
+                        git(repo, *shlex.split(UNDO)[1:])
+                        self.assertEqual(state(repo), before)
+                        _, message = run_traced(fire_at)
+                        self.assertEqual({n: signal.getsignal(n) for n in release.HELD}, held)
+                        if message is None:
+                            self.assertEqual(state(repo), released, f"signal at line event {fire_at}")
+                            outcomes.add("released")
+                        else:
+                            self.assertEqual(message[:17], "stopped partway: ", f"signal at line event {fire_at}")
+                            self.assertEqual(message[-len(NOTHING_CHANGED):], NOTHING_CHANGED)
+                            self.assertEqual(state(repo), before, f"signal at line event {fire_at}")
+                            outcomes.add("put back")
+                    self.assertEqual(outcomes, {"released", "put back"} if fail is None else {"put back"})
 
     def test_failed_put_back_names_each_file_and_the_undo(self):
         with history() as repo:

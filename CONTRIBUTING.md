@@ -67,9 +67,9 @@ The script exits 1, names the fix, and changes nothing when one of these holds:
 - A fragment holds a line that is not a bullet or a continuation line.
 - The clone is shallow, or no commit added a fragment that sits in `changes/`.
 
-The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. When a write or a delete fails, or you interrupt it, it puts `CHANGELOG.md` and every deleted fragment back, prints `nothing changed`, and exits 1. When it cannot put a file back, it names that file and prints the command below.
+The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. It holds `SIGINT`, `SIGTERM`, and `SIGHUP` for that whole step. When a write or a delete fails, or one of those signals arrives, it writes `CHANGELOG.md` back and re-creates each deleted fragment from the bytes it read first. It then checks every file against those bytes. It prints `nothing changed` and exits 1 only when the check passes. Otherwise it names each file that differs and prints the command below. A kill that cannot be caught, or power loss, can leave a partial run. The command below restores that too.
 
-To undo a finished run before you commit it, run this. It works whether or not you ran `git add`.
+To undo a finished or partial run before you commit it, run this. It works whether or not you ran `git add`.
 
 ```bash
 git restore --staged --worktree CHANGELOG.md changes/

@@ -5,7 +5,10 @@ Orders the fragments by the commit that added each one, writes their bullets
 under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
 
-A run that fails or is interrupted puts CHANGELOG.md and every fragment back as it read them.
+A failed write or delete, or a SIGINT, SIGTERM, or SIGHUP, puts CHANGELOG.md and every fragment back
+as the script read them. The script then checks them and prints `nothing changed` only when they match.
+When a file differs, it names that file and the undo command. A kill that cannot be caught, or power
+loss, can leave a partial run. The same undo command restores it.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # --staged --worktree undoes a run whether or not `git add` already staged it.
 UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
+HELD = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
 COMMIT = "\x01"
 # --no-renames lists a moved fragment as an add. -z stops git quoting a path.
 # --no-show-signature keeps log.showSignature from printing text ahead of the commit marker.
@@ -226,28 +230,65 @@ def write_file(path: Path, data: bytes, mode: int) -> None:
         raise
 
 
-def apply(cut: Cut) -> None:
-    """Write the changelog, then delete the fragments. A failure puts every file back."""
-    changelog = cut.changelog.encode("utf-8")
-    done: list[Original] = []
+def found(original: Original) -> tuple[bytes, int] | None:
     try:
-        write_file(cut.before.path, changelog, cut.before.mode)
-        done.append(cut.before)
-        for fragment in cut.fragments:
-            fragment.path.unlink()
-            done.append(fragment)
-    except (OSError, KeyboardInterrupt) as error:
-        reason = "interrupted" if isinstance(error, KeyboardInterrupt) else str(error)
-        stuck = []
-        for original in done:
-            try:
-                write_file(original.path, original.data, original.mode)
-            except OSError as failure:
-                stuck.append(f"{original.path.relative_to(ROOT).as_posix()} ({failure})")
-        if stuck:
-            sys.exit(f"stopped partway: {reason}; could not put back {', '.join(stuck)}; "
-                     f"run {UNDO} to undo, then rerun")
+        return original.path.read_bytes(), stat.S_IMODE(original.path.stat().st_mode)
+    except OSError:
+        return None
+
+
+def differing(cut: Cut) -> list[Original]:
+    return [original for original in (cut.before, *cut.fragments)
+            if found(original) != (original.data, original.mode)]
+
+
+def restore(cut: Cut) -> dict[Path, OSError]:
+    """Write back each file that differs from what plan read. A second run does nothing."""
+    failed = {}
+    for original in differing(cut):
+        try:
+            write_file(original.path, original.data, original.mode)
+        except OSError as error:
+            failed[original.path] = error
+    return failed
+
+
+def apply(cut: Cut) -> None:
+    """Write the changelog, then delete the fragments, holding SIGINT, SIGTERM, and SIGHUP throughout.
+
+    A failure or a caught signal puts every file back, whichever step it stopped at.
+    """
+    caught: list[int] = []
+    previous = {}
+    try:
+        for number in HELD:
+            previous[number] = signal.signal(number, lambda signum, frame: caught.append(signum))
+        steps = [lambda: write_file(cut.before.path, cut.changelog.encode("utf-8"), cut.before.mode),
+                 *(fragment.path.unlink for fragment in cut.fragments)]
+        reason = None
+        try:
+            for step in steps:
+                if caught:
+                    break
+                step()
+        except (Exception, KeyboardInterrupt) as error:
+            reason = "interrupted" if isinstance(error, KeyboardInterrupt) else str(error) or type(error).__name__
+        if caught:
+            reason = reason or "interrupted"
+        if reason is None:
+            return
+        failed = restore(cut)
+        left = [original.path for original in differing(cut)]
+        if left:
+            named = ", ".join(
+                f"{path.relative_to(ROOT).as_posix()} ({failed[path]})" if path in failed
+                else path.relative_to(ROOT).as_posix()
+                for path in left)
+            sys.exit(f"stopped partway: {reason}; could not put back {named}; run {UNDO} to undo, then rerun")
         sys.exit(f"stopped partway: {reason}; nothing changed, fix that and rerun")
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def main(argv=None):
@@ -274,7 +315,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    for name in ("SIGTERM", "SIGHUP"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), signal.default_int_handler)
     sys.exit(main())
