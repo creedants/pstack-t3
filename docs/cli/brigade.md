@@ -41,7 +41,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--autofire AUTOFIRE]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -58,6 +58,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
+| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority next lists as startable without asking, or off; missing reads as normal |
 
 ## brigade.py ticket
 
@@ -428,7 +429,7 @@ executive admin: copy each coordinator's new log rows into this log
 brigade.py [flags] status
 ```
 
-the thread line first, then counts, then reports to, mode, and owner when present
+the thread line first, then counts, then workers, then reports to, mode, and owner when present
 
 ## brigade.py close
 

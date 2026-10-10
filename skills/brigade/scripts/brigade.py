@@ -44,6 +44,7 @@ ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
 # Highest first.
 PRIORITIES = ("urgent", "normal", "low")
+AUTOFIRE = ("off", *PRIORITIES)
 # The priority of a ticket whose priority cell is empty, by base_source. Every other source reads as normal.
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 
@@ -1306,6 +1307,15 @@ def worker_cap(meta):
     return int(value)
 
 
+def autofire_of(meta):
+    return meta.get("autofire") or "normal"
+
+
+def workers_line(meta, running):
+    cap = worker_cap(meta)
+    return f"workers: {running} of {cap} running, {max(0, cap - running)} idle, auto-start: {autofire_of(meta)}"
+
+
 def require_workers(workers):
     if workers is not None and workers < 1:
         raise BrigadeError("workers must be 1 or more")
@@ -1888,6 +1898,7 @@ def watch(restaurant):
         if handed:
             lines.append(f"handed to you: {handed}; run ticket take")
         inputs = block_inputs(restaurant)
+        workers = workers_line(restaurant.meta, inputs[1])
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -1915,7 +1926,7 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=now())
-    return "\n".join(item_lines + lines) or "no work in progress"
+    return "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
 
 
 def drop(restaurant, ident, stopped):
@@ -2371,6 +2382,8 @@ def parser():
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
+    p.add_argument("--autofire", choices=AUTOFIRE,
+                   help="the lowest ticket priority next lists as startable without asking, or off; missing reads as normal")
 
     p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -2516,7 +2529,7 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then reports to, mode, and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then workers, then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
@@ -2726,6 +2739,8 @@ def command(restaurant, args, contract=None, rails=None):
                 drop.append("mode")
             else:
                 raise BrigadeError('--mode takes full, light, or ""')
+        if args.autofire:
+            changes["autofire"] = args.autofire
         if args.reports_to is not None:
             if clean(args.reports_to):
                 changes["reportsTo"] = clean(args.reports_to)
@@ -2925,6 +2940,8 @@ def command(restaurant, args, contract=None, rails=None):
         # The thread comes first, so a service's fence step compares it before anything else.
         lines = [f"thread {thread}" if thread else "thread not recorded",
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
+        if not is_admin(meta):
+            lines.append(workers_line(meta, running_workers(restaurant)))
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")
         if meta.get("mode"):
