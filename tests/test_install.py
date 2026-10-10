@@ -3717,6 +3717,26 @@ class OwnershipTest(unittest.TestCase):
             ["20260101T000000-1-abcd", "20260101T000000-1-abcd/grok", "20260202T000000-2-ef01", "20260202T000000-2-ef01/codex"],
         )
 
+    def test_a_restore_under_a_config_home_whose_dot_dot_follows_a_symlink_leaves_the_empty_directories_in_the_state_directory(self):
+        a = make_checkout(self.home, "a")
+        (self.home / "else" / "sub").mkdir(parents=True)
+        os.symlink(self.home / "else" / "sub", self.home / "x")
+        env = {"XDG_CONFIG_HOME": f"{self.home}/x/../.config"}
+        state = self.home / "else" / ".config" / "pstack-t3"
+        swarm = provider_link(self.home, "grok", "swarm")
+        saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(b"user backup\x00\xff")
+        unrelated = state / "backups" / "20260101T000000-1-abcd" / "grok"
+        unrelated.mkdir(parents=True)
+        manifest = state / "install-manifest.json"
+        manifest.write_text(json.dumps({"links": [], "backups": [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}]}))
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall", env=env), "removed 0 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"user backup\x00\xff")
+        self.assertTrue(unrelated.is_dir())
+        self.assertEqual(os.listdir(unrelated.parent), ["grok"])
+        self.assertEqual(os.listdir(saved.parent), [])
+
     def test_an_uninstall_with_the_state_directory_behind_a_symlink_removes_the_emptied_directories_in_the_real_one(self):
         places = (
             ("~/.config/pstack-t3 is the symlink", lambda: state_dir(self.home), lambda real: real),
