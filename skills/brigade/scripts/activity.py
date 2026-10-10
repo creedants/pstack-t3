@@ -111,11 +111,11 @@ QUIET = (Status.DONE, Status.STOPPED)
 
 
 class Evidence(enum.Enum):
-    """Why an agent sits under its work item. assign() tries them in this order."""
+    """Why an agent sits under its work item. assign() tries RECORD, then REQUEST, then LINEAGE, and gives NONE when none of them applies."""
 
     RECORD = "record"
-    LINEAGE = "lineage"
     REQUEST = "request"
+    LINEAGE = "lineage"
     NONE = "none"
 
 
@@ -133,7 +133,7 @@ class SourceError(ActivityError):
 
 @dataclass(frozen=True)
 class Unit:
-    """One row of the store's units table. `worker`, `earlier_workers`, and `task` are T3 ids."""
+    """One row of the store's units table."""
 
     id: str
     state: str
@@ -211,7 +211,7 @@ class T3:
     `agents` holds every thread in scope that is active in the window, and each one's ancestors up to its root.
     `node_thread` maps a sub-agent id to its child thread, for the children in `agents`.
     `other_threads` counts threads active in the window outside the scope.
-    `unknown_status` counts the statuses in `agents` that parse_status could not read.
+    `unknown_status` counts the statuses in `agents` that parse_status gave UNKNOWN.
     """
 
     agents: Mapping[str, Agent]
@@ -249,10 +249,10 @@ class Row:
     """One line of the timeline.
 
     `depth` is 0 for a row with no parent row in its group, and 1 or 2 below one.
-    `seconds` is the time spent in turns inside the window.
+    `seconds` is the agent's time at work inside the window. It is counted from its turns, or from its delegation when it has no turns.
     `open_seconds` is how long the open turn has run, counted from its start. It is None when `status` is not in OPEN, and on the coordinator's row.
     `stands_for` is 1 for an agent that ran in the window. It is 0 for an ancestor that did not, which has a row so that its child has a parent row.
-    On a summary row it is the sum over the rows the summary replaced, which is 2 or more.
+    On a summary row, `seconds` and `stands_for` are each the sum over the rows the summary replaced, and `stands_for` is 2 or more.
     """
 
     depth: int
@@ -307,7 +307,7 @@ class Totals:
 
 @dataclass(frozen=True)
 class Hidden:
-    """Counts of what the page does not draw. notes() puts each field that is not zero in a sentence.
+    """The counts notes() reports. A field that is zero gets no sentence.
 
     The sum of `stands_for` over every row, plus `dropped_agents` and `cut_agents`, equals
     `totals.agents + totals.subagents` on every page.
@@ -499,7 +499,7 @@ def t3_database(flag, environ, home):
 def open_t3(path):
     """A read-only connection in one read transaction. The caller closes it.
 
-    With a write-ahead log and its index beside the database, T3 is live and mode=ro reads the log and creates no file.
+    With a write-ahead log and its index beside the database, mode=ro reads the log and creates no file.
     With no log, mode=ro would create both files, so the database is opened immutable.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
     """
@@ -655,7 +655,11 @@ def read_t3(connection, window, roots):
 
 
 def model_of(payload):
-    """The model name in a thread's payload_json, or "" when the payload names none."""
+    """The model name in a thread's payload_json.
+
+    It is "" when `modelSelection` is not an object or its `model` is not a string.
+    Raises SourceError when the payload is not a JSON object that has a `modelSelection` key.
+    """
     try:
         data = json.loads(payload)
     except (TypeError, ValueError):
@@ -698,9 +702,9 @@ def assign(store, t3):
 
     1. RECORD. The thread is a unit's worker or earlier worker. Or a unit's task names it, as a sub-agent id in
        t3.node_thread or as the request name of a coordinator's child. When two units name it, the later one in the table wins.
-    2. LINEAGE. The thread's parent is an agent that is not a coordinator, and that parent has a unit. The thread takes it.
-    3. REQUEST. The thread's parent is a coordinator, and unit_named() accepts a `-` separated part of its request name.
+    2. REQUEST. The thread's parent is a coordinator, and unit_named() accepts a `-` separated part of its request name.
        The first such part names the unit.
+    3. LINEAGE. The thread's parent is an agent that is not a coordinator, and that parent has a unit. The thread takes it.
     4. NONE.
     """
     coordinators = frozenset(store.coordinators)
@@ -745,7 +749,8 @@ def scrub(text):
     Every string that build_page takes from the store or from T3 goes through it, but a link and a model name.
 
     A part is the text between spaces, read after any opening quote or bracket.
-    It is path-like when it starts with / or ~, holds two or more / or two or more backslashes, or holds :// and does not start with http:// or https://.
+    A part that holds :// is path-like when it does not start with http:// or https://.
+    Any other part is path-like when it starts with / or ~, or holds two or more / or two or more backslashes.
     It is id-like when ID_LIKE matches in it. So a part that holds an @ with a character before it and a . after it, as an email address does, is id-like.
     """
     lines = text.encode("utf-8", "ignore").decode().strip().splitlines()
@@ -1171,7 +1176,10 @@ def say(number, one, several, **values):
 
 
 def notes(page):
-    """One sentence for each thing the page does not draw as its own row, in a fixed order."""
+    """The sentences below the timeline, in a fixed order.
+
+    They are the empty-window sentence, a count of each kind of summary row, and the counts in page.hidden that are not zero.
+    """
     rows = [row for group in page.groups for row in group.rows]
     # A summary row below a row of depth 0 came from fold_quiet_subagents. A summary row of depth 0 came from fold_finished_items.
     below = [row.stands_for for row in rows if row.stands_for > 1 and row.depth]
@@ -1195,7 +1203,7 @@ def notes(page):
     if hidden.cut_in_flight:
         lines.append(say(hidden.cut_in_flight, "1 more work item in flight is not listed.", "{n} more work items in flight are not listed."))
     if hidden.unknown_status:
-        lines.append(say(hidden.unknown_status, "T3 gave 1 status this tool cannot read.", "T3 gave {n} statuses this tool cannot read."))
+        lines.append(say(hidden.unknown_status, "T3 gave 1 status this tool reads as unknown.", "T3 gave {n} statuses this tool reads as unknown."))
     if hidden.by_request_name:
         lines.append(say(hidden.by_request_name, "1 agent is grouped by the name of the request that started it.",
                          "{n} agents are grouped by the name of the request that started them."))
@@ -1471,7 +1479,7 @@ def dur(seconds):
 def render_text(page):
     """The page as at most 40 plain lines.
 
-    Two lines of counts. Then at most TEXT_RUNNING running agents, at most TEXT_ITEMS work items, one line for the agents
+    A heading line, then one line of counts. Then at most TEXT_RUNNING running agents, at most TEXT_ITEMS work items, one line for the agents
     tied to no work item, at most TEXT_FAILED failed agents, and the sentences from notes(), each list under a heading.
     A list that was cut ends with a line that counts the rest. A work item is listed when it has a group or is in flight.
     """
@@ -1495,7 +1503,7 @@ def render_text(page):
         if group.item:
             items.append(line(group.item.id, group.item.state, group.item.summary, work, group.item.pr))
         else:
-            loose.append(f"  {UNGROUPED}: {work}")
+            loose.append(line(UNGROUPED, work))
     drawn = [group.item for group in page.groups]
     items += [line(item.id, item.state, item.summary, "no activity in this window", item.pr) for item in page.items if item not in drawn]
     hours, totals = (page.window.end - page.window.start) / 3600, page.totals

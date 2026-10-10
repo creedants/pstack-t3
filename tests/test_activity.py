@@ -433,6 +433,7 @@ class ReadTest(ActivityCase):
         name = MOD["request_name"]
         self.assertEqual(name(delegated(COORDINATOR, "brigade-kit-d7-verify-0a1b2c3")), "brigade-kit-d7-verify-0a1b2c3")
         self.assertEqual(name(delegated(COORDINATOR, "two words")), "two words")
+        self.assertEqual(name("thread:delegated-task:delegate-task%3Aouter%3Adelegate-task%3Ainner"), "inner")
         self.assertIsNone(name(worker(1)))
         self.assertIsNone(name(native(1)))
 
@@ -871,7 +872,8 @@ def populate(fixture, units, agents, running=0, failed=0, heavy=False, in_flight
     Each item has a worker, children of the worker with written titles, review children of the coordinator, and
     sub-agents of a provider under the worker's children. `running` agents have an open turn and `failed` agents
     failed, all in the in-flight items. Of the agents of the other items, counted in order, every `failed_every`th failed.
-    With heavy, summaries, titles, models, and links are long and hold four-byte characters.
+    With heavy, each summary and each how-explorer title starts with 50 characters that include four-byte ones, each model name
+    ends in 30 four-byte characters, and the link of each odd-numbered item is 120 ASCII characters longer.
     """
     fixture.coordinator(turns=(("completed", 170, 160), ("running", 5, None)))
     states = ("in-progress", "in-review", "passed", "queued", "sent-back", "blocked")
@@ -954,18 +956,21 @@ class FoldTest(ActivityCase):
         self.family(6, "dropped", 1)
         self.family(7, "merged", 0)
         self.fixture.thread(delegated(worker(7), "part-0"), title="part 0", parent=worker(7), turns=(("running", 5, None),))
+        self.family(8, "dropped", 0)
+        self.fixture.thread(delegated(worker(8), "part-0"), title="part 0", parent=worker(8), turns=(("queued", 4, None),))
         unfolded = page_of(self.fixture)
         folded = MOD["fold_finished_items"](unfolded)
         self.assertEqual(drawn(folded), {
             "D7": [(0, "worker", 1), (1, "part 0", 1)],
+            "D8": [(0, "worker", 1), (1, "part 0", 1)],
             "D6": [(0, "1 agent, 1 sub-agent", 2)],
             "D5": [(0, "worker", 1)],
             "D4": [(0, "worker", 1), (1, "part 0", 1), (1, "part 1", 1)],
             "D3": [(0, "worker", 1), (1, "part 0", 1), (1, "part 1", 1)],
             "D2": [(0, "1 agent, 2 sub-agents", 3)],
             "D1": [(0, "1 agent, 3 sub-agents", 4)]})
-        self.assertEqual(folded.groups[6].item, MOD["Item"]("D1", "", "merged", "", "", False))
-        summary = folded.groups[5].rows[0]
+        self.assertEqual(folded.groups[7].item, MOD["Item"]("D1", "", "merged", "", "", False))
+        summary = folded.groups[6].rows[0]
         self.assertEqual((summary.status.value, summary.seconds, summary.open_seconds, summary.model, summary.provider), ("done", 180, None, "model-a", "Claude"))
         self.assertEqual([(span.x, span.w, span.status.value) for span in summary.spans], [(167, 11, "done"), (183, 3, "done"), (189, 3, "failed")])
         self.assertEqual((folded.fold, folded.totals, folded.legend), (1, unfolded.totals, unfolded.legend))
@@ -1000,15 +1005,17 @@ class FoldTest(ActivityCase):
         done = [group(item(f"D{number}", in_flight=False), row("3 agents", stands_for=3)) for number in range(1, 5)]
         failed = group(item("D5", in_flight=False), row("worker", status="failed"), row("helper", depth=1, status="unknown"))
         waiting = group(item("D6", in_flight=False), row("worker"), row("helper", depth=1, status="waiting"))
-        unfolded = page(group(item("D7"), row("worker")), done[0], waiting, done[1], failed, done[2], done[3], group(None, row("stray")))
+        queued = group(item("D8", in_flight=False), row("worker"), row("helper", depth=1, status="queued", open_seconds=1))
+        running = group(item("D9", in_flight=False), row("worker", status="running", open_seconds=1))
+        unfolded = page(group(item("D7"), row("worker")), done[0], waiting, done[1], failed, done[2], done[3], queued, running, group(None, row("stray")))
         folded = MOD["keep_finished_items"](3, unfolded)
-        self.assertEqual(list(drawn(folded)), ["D7", "D1", "D6", "D2", "D5", None])
+        self.assertEqual(list(drawn(folded)), ["D7", "D1", "D6", "D2", "D5", "D8", "D9", None])
         self.assertEqual((folded.hidden.dropped_items, folded.hidden.dropped_agents, folded.fold), (2, 6, 1))
         self.assertEqual(MOD["notes"](folded), [
             "2 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.",
             "2 merged or dropped work items with 6 agents are not shown. Use a larger --max-bytes to see more."])
         again = MOD["keep_finished_items"](1, folded)
-        self.assertEqual(list(drawn(again)), ["D7", "D1", "D6", None])
+        self.assertEqual(list(drawn(again)), ["D7", "D1", "D6", "D8", "D9", None])
         self.assertEqual((again.hidden.dropped_items, again.hidden.dropped_agents, again.fold), (4, 11, 2))
 
     def test_folds_3_to_10_keep_24_16_12_8_6_4_2_and_0_finished_units_and_count_each_dropped_unit_once(self):
@@ -1080,19 +1087,19 @@ class FoldTest(ActivityCase):
             self.assertEqual(shown, sorted(shown, reverse=True))
             self.assertEqual((len(folded.groups), len(folded.items), shown[-1] < shown[0]), (6, in_flight, True))
 
-    def test_notes_say_no_agent_ran_for_an_empty_window_and_count_unread_statuses_requests_and_other_threads(self):
+    def test_notes_say_no_agent_ran_for_an_empty_window_and_count_unknown_statuses_requests_and_other_threads(self):
         self.assertEqual(MOD["notes"](page()), ["No agent or sub-agent of this coordinator ran in this window."])
         hidden = MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1, other_threads=1, unknown_status=1, by_request_name=1)
         self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=hidden)), [
             "1 merged or dropped work item with 1 agent is not shown. Use a larger --max-bytes to see more.",
             "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "1 more work item in flight is not listed.",
-            "T3 gave 1 status this tool cannot read.",
+            "T3 gave 1 status this tool reads as unknown.",
             "1 agent is grouped by the name of the request that started it.",
             "1 other thread ran in T3 outside this coordinator."])
         several = MOD["Hidden"](other_threads=3, unknown_status=2, by_request_name=9)
         self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=several)), [
-            "T3 gave 2 statuses this tool cannot read.",
+            "T3 gave 2 statuses this tool reads as unknown.",
             "9 agents are grouped by the name of the request that started them.",
             "3 other threads ran in T3 outside this coordinator."])
 
@@ -1378,7 +1385,7 @@ class TextTest(OutputCase):
             f"  D7   in review   Agent activity page   1 agent, 3 sub-agents, 74m at work   {PR7}",
             "  D5   merged   Old work   1 agent, 5m at work",
             f"  D6   landing   Queue fix   no activity in this window   {PR6}",
-            "  Not tied to a work item: 1 sub-agent, 2m at work",
+            "  Not tied to a work item   1 sub-agent, 2m at work",
             "Failed",
             "  D7 review   model-c   3m at work",
             "Notes",
