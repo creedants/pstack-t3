@@ -320,6 +320,15 @@ def normalized_bare(model_id):
     return re.sub(r"-\d{8}$", "", text)
 
 
+def family(model_id):
+    """Leading word of normalized_bare(model_id).
+
+    opencode/muse-2-free -> muse, us.anthropic.claude-sonnet-5-5-v1:0 -> claude.
+    """
+    text = normalized_bare(model_id)
+    return re.split(r"[-\d]", text, maxsplit=1)[0] or text
+
+
 def haiku_45(model_id):
     if not isinstance(model_id, str) or not model_id:
         return False
@@ -338,7 +347,7 @@ def fast_grok(model_id):
     """A Grok id whose name marks its fast variant: grok-4.7-build-fast, x-ai/grok-code-fast-1."""
     if not isinstance(model_id, str) or not model_id:
         return False
-    return family(bare_id(model_id)) == "grok" and "fast" in model_tokens(bare_id(model_id))
+    return family(model_id) == "grok" and "fast" in model_tokens(bare_id(model_id))
 
 
 def pickable(model_id):
@@ -348,7 +357,7 @@ def pickable(model_id):
 
 def fast_options(model):
     """Fast boolean options this Grok model declares. Empty for every other family."""
-    if family(bare_id(model["id"])) != "grok":
+    if family(model["id"]) != "grok":
         return []
     return [item["id"] for item in options_of(model) if item.get("id") in FAST_GROK_OPTIONS and item.get("type") == "boolean"]
 
@@ -371,7 +380,7 @@ def excluded_reason(seat):
     if haiku_45(model_id):
         return f"{bare_id(model_id)} is Claude Haiku 4.5"
     on = sorted(key for key, value in (seat.get("options") or {}).items() if key in FAST_GROK_OPTIONS and value is True)
-    if on and family(bare_id(model_id)) == "grok":
+    if on and family(model_id) == "grok":
         return f"{on[0]}=true runs {bare_id(model_id)} fast"
     return None
 
@@ -568,12 +577,6 @@ def find_model(provider, model_id):
 
 def rank(value):
     return LADDER.get(value)
-
-
-def family(model_id):
-    """Model family from the model id's leading word: claude-opus-5-5 -> claude."""
-    head = re.split(r"[-_.\d]", model_id.lower(), maxsplit=1)[0]
-    return head or model_id.lower()
 
 
 DEFAULT_FAMILIES = frozenset(
@@ -1017,16 +1020,8 @@ def seat_level(options):
     return None
 
 
-def model_family(model_id):
-    """Family of a model id in any form: opencode/opencode/muse-2-free -> muse, us.anthropic.claude-sonnet-5-5-v1:0 -> claude.
-
-    Every comparison of a seat with the authors goes through this, so both sides compare normalized_bare ids.
-    """
-    return family(normalized_bare(model_id))
-
-
 def author_families(authors):
-    return {model_family(author) for author in authors or () if author}
+    return {family(author) for author in authors or () if author}
 
 
 def backup_ladder(role, failed_provider, authors, out):
@@ -1039,7 +1034,7 @@ def backup_ladder(role, failed_provider, authors, out):
         return ()
     if role in REVIEW_ROLES:
         skip = author_families(authors)
-        return tuple(model_id for model_id in REVIEW_LADDER if model_family(model_id) not in skip)
+        return tuple(model_id for model_id in REVIEW_LADDER if family(model_id) not in skip)
     if CLAUDE_BACKUP_PROVIDER == failed_provider or CLAUDE_BACKUP_PROVIDER in out:
         return ()
     if role in LIGHT_ROLES:
@@ -1087,7 +1082,7 @@ def panel_seats(configured, catalog, budget, blocked, authors):
             notes.append("dropped inherit: the parent can be the author")
             continue
         provider_id, model_id = seat["providerInstanceId"], seat["model"]
-        seat_family = model_family(model_id)
+        seat_family = family(model_id)
         if provider_id in NEVER_BACKUP_PROVIDERS:
             reason = "backup never selects Codex or Cursor"
         elif provider_id in blocked:
@@ -1140,7 +1135,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
     out = set(out or ())
     blocked = NEVER_BACKUP_PROVIDERS | {provider_id} | out
     if resume:
-        reviews_itself = role in AUTHOR_CHECKED_ROLES and model_family(model_id) in author_families(authors)
+        reviews_itself = role in AUTHOR_CHECKED_ROLES and family(model_id) in author_families(authors)
         if reviews_itself and role == PANEL_BACKUP_ROLE:
             report = f"{role}: {label} is in an author's family, so it does not resume and counts as no pass"
             return Backup("park", report)

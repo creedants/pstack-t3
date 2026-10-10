@@ -3703,3 +3703,98 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(written.stderr, f"error: {user}: {refusal}")
         self.assertEqual(validated.returncode, 2)
         self.assertEqual(validated.stderr, f"error: {user}: {refusal}")
+
+
+def plain_provider(provider_id, *model_ids, runs=True):
+    return {
+        "providerInstanceId": provider_id,
+        "canRunChildTask": runs,
+        "constraints": [],
+        "models": [{"id": model_id, "options": []} for model_id in model_ids],
+    }
+
+
+class FamilyCliTest(unittest.TestCase):
+    def roles_shown(self, providers, role, parent, *extra):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": providers})
+            completed = repo.run("show", "--catalog", str(path), "--parent", parent, "--role", role, *extra)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)["roles"]
+
+    def test_verifiers_seat_one_of_a_namespaced_and_a_bare_muse(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5"),
+                plain_provider("opencode", "opencode/muse-lite-2-free"),
+                plain_provider("openrouter", "muse-lite-2"),
+            ],
+            "verifiers",
+            "claudeAgent/claude-opus-5-5",
+        )
+        self.assertEqual(shown, {"verifiers": {"source": "default", "seats": [
+            "inherit",
+            {"providerInstanceId": "opencode", "model": "opencode/muse-lite-2-free"},
+        ]}})
+
+    def test_verifiers_with_a_namespaced_muse_parent_add_no_bare_muse_seat(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("opencode", "opencode/muse-lite-2-free"),
+                plain_provider("openrouter", "muse-lite-2"),
+            ],
+            "verifiers",
+            "opencode/opencode/muse-lite-2-free",
+        )
+        self.assertEqual(shown, {"verifiers": {"source": "default", "seats": ["inherit", "inherit", "inherit"]}})
+
+    def test_interrogate_picks_a_namespaced_grok_as_a_missing_model(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5"),
+                plain_provider("openrouter", "x-ai/grok-4.8"),
+            ],
+            "interrogate reviewers",
+            "claudeAgent/claude-opus-5-5",
+        )
+        self.assertEqual(shown, {"interrogate reviewers": {
+            "source": "default",
+            "seats": [
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "openrouter", "model": "x-ai/grok-4.8"},
+            ],
+            "notes": [
+                "interrogate reviewers seat 2: wanted grok-4.7, using openrouter/x-ai/grok-4.8 (missing model)",
+            ],
+        }})
+
+    def test_an_exact_model_prefers_the_provider_whose_first_model_is_a_bedrock_claude(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("first", "gpt-9", "claude-opus-5-5"),
+                plain_provider("bedrock", "us.anthropic.claude-sonnet-5-5-v1:0", "claude-opus-5-5"),
+            ],
+            "judgment and prose",
+            "first/gpt-9",
+        )
+        self.assertEqual(shown, {"judgment and prose": {"source": "default", "seats": [
+            {"providerInstanceId": "bedrock", "model": "claude-opus-5-5"},
+        ]}})
+
+    def test_launches_seats_pool_takes_a_provider_serving_only_a_namespaced_grok(self):
+        shown = self.roles_shown(
+            [
+                plain_provider("claudeAgent", "claude-haiku-4-5"),
+                plain_provider("openrouter", "x-ai/grok-4.7"),
+            ],
+            "skill tests",
+            "claudeAgent/claude-haiku-4-5",
+            "--launches-seats",
+        )
+        self.assertEqual(shown, {"skill tests": {
+            "source": "default",
+            "seats": [{"providerInstanceId": "openrouter", "model": "x-ai/grok-4.7"}],
+            "notes": ["skill tests seat 1: wanted claude-haiku-5-5, using openrouter/x-ai/grok-4.7 (missing family)"],
+        }})
