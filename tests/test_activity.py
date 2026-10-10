@@ -1083,6 +1083,20 @@ class FoldTest(ActivityCase):
             "15 sub-agents that are done or stopped are shown as 5 summary rows.",
             "12 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
 
+    def test_cap_everything_counts_a_cut_group_of_a_merged_item_as_an_item_not_shown_and_a_cut_group_of_an_item_in_flight_by_its_agents(self):
+        groups = [group(item(f"D{number}"), row("worker", status="running", open_seconds=5)) for number in range(1, 7)]
+        groups.append(group(item("D7", in_flight=False), row("worker"), row("helper", depth=1, status="waiting", stands_for=2)))
+        groups.append(group(item("D8"), row("worker")))
+        groups.append(group(None, row("stray")))
+        folded = MOD["cap_everything"](page(*groups, items=[one.item for one in groups if one.item and one.item.in_flight]))
+        self.assertEqual(list(drawn(folded)), ["D1", "D2", "D3", "D4", "D5", "D6"])
+        hidden = folded.hidden
+        self.assertEqual((hidden.dropped_items, hidden.dropped_agents, hidden.cut_agents, hidden.cut_in_flight, [each.id for each in folded.items]),
+                         (1, 3, 2, 0, ["D1", "D2", "D3", "D4", "D5", "D6", "D8"]))
+        self.assertEqual(MOD["notes"](folded), [
+            "1 merged or dropped work item with 3 agents is not shown. Use a larger --max-bytes to see more.",
+            "2 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
+
     def test_cap_everything_keeps_6_rows_a_group_with_running_and_failed_rows_first_and_moves_a_row_up_when_its_parent_is_cut(self):
         rows = [row("a"), row("b", depth=1), row("c", depth=2, status="running", open_seconds=9), row("d", depth=2)]
         rows += [row(label, status="failed") for label in "efghi"] + [row("j")]
@@ -1918,9 +1932,11 @@ class RowShapeTest(OutputCase):
                 line = self.refused(f"payload-{number}", lambda fixture: put(fixture.threads, 0, 3, payload))
                 self.assertEqual(line, f"activity: T3's thread payload holds no text at modelSelection.{key}; {CHANGED}")
 
-    def test_payload_nested_too_deep_to_parse_exits_3(self):
-        line = self.refused("deep", lambda fixture: put(fixture.threads, 0, 3, "[" * 100000))
-        self.assertEqual(line, f"activity: T3's thread payload has no modelSelection; {CHANGED}")
+    def test_payload_nested_too_deep_to_parse_or_not_text_exits_3(self):
+        for number, payload in enumerate(("[" * 100000, b'{"modelSelection":{"model":"model-a","instanceId":"codex"}}', 42, None)):
+            with self.subTest(number):
+                line = self.refused(f"deep-{number}", lambda fixture: put(fixture.threads, 0, 3, payload))
+                self.assertEqual(line, f"activity: T3's thread payload has no modelSelection; {CHANGED}")
 
     def test_thread_with_a_turn_and_no_thread_row_exits_3(self):
         for rows, index in (("threads", 1), ("threads", 2)):

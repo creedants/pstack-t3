@@ -11,7 +11,7 @@ They are also the provider names and instance ids of the page's threads that are
 They are also each run of characters around an at sign in a title, a summary, a work item id, a pull request value, a model name, or the store's name.
 They are also the paths of the store, the project it records, T3 Code's base directory and database, the home directory, and the --out file, each as given and with symbolic links followed.
 From the first line of a title, a request name's words, a summary, a work item id, and the store's name the filter then drops each word that holds a slash, a backslash, a percent escape, a leading tilde, a colon or an at sign between two characters, a UUID, 6 or more digits, 7 or more hexadecimal characters with a digit and no letter or digit beside them, or an underscore before 6 or more letters and digits that hold a lower-case letter and a digit or an upper-case letter.
-A model name is printed when it is at most 48 characters of lower-case letters and digits joined by single dots and hyphens, starts with a letter, and holds none of those values and none of those id shapes but a date of 8 digits. One leading provider name and slash is dropped first. Any other model reads `other model`.
+A model name is printed when it is at most 48 characters of lower-case letters and digits joined by single dots and hyphens, starts with a letter, and holds none of those values and none of those id shapes but 8 digits that start with 20. One leading provider name and slash is dropped first. Any other model reads `other model`.
 A pull request link is printed only as https://host/owner/repository/pull/number, when the host, the owner, and the repository hold nothing the filter removes. A work item on the page with any other value has no link and is counted in a note.
 A label can hold the words of a request name.
 """
@@ -55,8 +55,8 @@ T3_SHAPE = {
 }
 THREAD_PAYLOAD_KEY = "modelSelection"
 SELECTION_KEYS = ("model", "instanceId")
-# The forms read_t3 accepts. T3's schema and its row writer declare them, and a live database held no other on 2026-10-10.
-# Every column of T3_SHAPE that read_t3 selects is text. NULL is accepted only in the columns below, which T3 types as NullOr.
+# The forms read_t3 accepts. A live T3 database read on 2026-10-10 held no other form.
+# Every value read_t3 selects is text. NULL is accepted only in the columns below, which T3's tables declare nullable.
 # A thread id, a sub-agent id, a status, and a provider are never empty. A title can be empty.
 # A timestamp is YYYY-MM-DDTHH:MM:SS, then an optional .mmm, then Z or a +HH:MM or -HH:MM offset.
 # A thread's payload is a JSON object whose modelSelection is an object with a model and an instanceId that are not empty.
@@ -612,8 +612,8 @@ def read_t3(connection, window, roots):
 
 def selection_of(payload):
     try:
-        data = json.loads(payload)
-    except (TypeError, ValueError, RecursionError):
+        data = json.loads(payload) if isinstance(payload, str) else None
+    except (ValueError, RecursionError):
         data = None
     if not isinstance(data, dict) or THREAD_PAYLOAD_KEY not in data:
         raise SourceError(f"T3's thread payload has no {THREAD_PAYLOAD_KEY}; {CHANGED}")
@@ -651,7 +651,7 @@ BAR = {
 
 class Privacy:
     """The filter every string from the store or from T3 passes before it is on a page.
-    text() is that filter. model() and link() call it and then accept one fixed shape each.
+    text() is that filter. model() and link() call it and accept one fixed shape each.
     """
 
     def __init__(self, values):
@@ -687,7 +687,7 @@ class Privacy:
             line = kept
 
     def model(self, value):
-        """The name after one leading `<a key of PROVIDERS>/`, when no part of it but a date is shaped like an id."""
+        """value without one leading `<a key of PROVIDERS>/`, or OTHER_MODEL when that is not a model name by the module docstring's rule."""
         driver, slash, rest = value.partition("/")
         name = rest if slash and driver in PROVIDERS else value
         parts = [part for part in re.split("[.-]", name) if not MODEL_DATE.fullmatch(part)]
@@ -695,7 +695,7 @@ class Privacy:
         return name if plain else OTHER_MODEL
 
     def link(self, value):
-        """The pull request address and no reason, or no address and why. Userinfo, a query, and a fragment are not kept. A value with a port is refused."""
+        """The pull request address, or no address and REFUSED. A blank value gives neither. Userinfo, a query, and a fragment are not kept. A value with a port is refused."""
         if not value.strip():
             return "", ""
         try:
@@ -835,7 +835,7 @@ def spans_of(agent, window):
 
 
 def seconds_of(agent, window):
-    """The seconds of the window inside this agent's turns. A queued turn is not work, so it adds none."""
+    """The seconds of the window inside this agent's stretches. A queued stretch is not work, so it adds none."""
     worked = [turn for turn in stretches(agent) if turn.status is not Status.QUEUED]
     return int(sum(max(0, min(window.end, window.end if turn.end is None else turn.end) - max(window.start, turn.start)) for turn in worked))
 
@@ -1087,18 +1087,24 @@ def cap_everything(page):
     def running(row):
         return row.open_seconds is not None
 
-    groups, cut = [], 0
+    groups, cut, gone_items, gone_agents = [], 0, 0, 0
     stays = first(page.groups, MAX_GROUPS, lambda group: any(running(row) for row in group.rows))
     for group, stay in zip(page.groups, stays):
         keeps = first(group.rows, MAX_ROWS if stay else 0, lambda row: running(row) or row.status is Status.FAILED)
         rows = tuple(narrow(row, MAX_SPANS) for row in kept_rows(group.rows, keeps))
-        cut += agents_in(group.rows) - agents_in(rows)
+        lost = agents_in(group.rows) - agents_in(rows)
         if stay:
             groups.append(replace(group, item=shown(group.item) if group.item else None, rows=rows))
+        # A cut group's item in flight is in page.items, so the strip lists it or cut_in_flight counts it. Any other item is counted here.
+        if not stay and group.item and not group.item.in_flight:
+            gone_items, gone_agents = gone_items + 1, gone_agents + lost
+        else:
+            cut += lost
     drawn = [group.item for group in groups]
     listed = first(page.items, MAX_STRIP, lambda item: shown(item) in drawn)
     items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
-    hidden = replace(page.hidden, cut_agents=page.hidden.cut_agents + cut, cut_in_flight=page.hidden.cut_in_flight + len(page.items) - len(items))
+    hidden = replace(page.hidden, cut_agents=page.hidden.cut_agents + cut, cut_in_flight=page.hidden.cut_in_flight + len(page.items) - len(items),
+                     dropped_items=page.hidden.dropped_items + gone_items, dropped_agents=page.hidden.dropped_agents + gone_agents)
     coordinator = narrow(page.coordinator, COORDINATOR_SPANS) if page.coordinator else None
     return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
 
