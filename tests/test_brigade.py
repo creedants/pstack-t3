@@ -4331,9 +4331,8 @@ class BrigadeTest(unittest.TestCase):
         row = self.table_row(self.at, "rail.tsv", ident)
         return row["priority"], row["paths"], row["decision"]
 
-    def old_rail(self):
+    def old_rail(self, stamp="2026-10-01T00:00:00+00:00"):
         """Three waiting tickets as a store wrote them before the priority, paths, and decision cells."""
-        stamp = "2026-10-01T00:00:00+00:00"
         (self.at / "rail.tsv").write_text(
             "id\tat\tstate\tsource\tref\tdish\tsummary\n"
             f"T1\t{stamp}\twaiting\tuser\t\t\tFix login\n"
@@ -4650,6 +4649,277 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade("ticket", "paths", *flags, ok=False),
                              f"brigade: cannot list tracked files in {self.project}")
         self.assertEqual(self.store_files(), before)
+
+    NONE_RUNNING = "workers: 0 of 2 running, 2 idle, auto-start: normal"
+
+    def queue(self, *open_flags):
+        """A local landing contract on a git project, and the Perf coordinator."""
+        self.init_landing()
+        self.landing_env()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *open_flags)
+
+    def filed(self, summary, *flags):
+        return self.brigade("ticket", "add", "--summary", summary, *flags)
+
+    def refile(self, ident, **ago):
+        """Rewrite the ticket's `at` cell to this long before now."""
+        stamp = (datetime.now(timezone.utc) - timedelta(**ago)).isoformat()
+        rail = self.at / "rail.tsv"
+        lines = [line.split("\t") for line in rail.read_text().splitlines()]
+        for fields in lines[1:]:
+            if fields[0] == ident:
+                fields[1] = stamp
+        rail.write_text("".join("\t".join(fields) + "\n" for fields in lines))
+
+    def landing_rows(self):
+        from contextlib import closing
+        with closing(self.landing_db()) as db:
+            return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+                    for table in ("lease", "log", "reservation", "owner", "entry")}
+
+    def test_next_lists_a_ticket_whose_paths_are_free_as_startable_with_its_summary(self):
+        self.queue()
+        self.filed("Fix a", "--paths", "a.txt")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, startable: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+        ]))
+
+    def test_next_names_the_lease_and_holder_that_block_a_ticket(self):
+        self.queue()
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, blocked: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+        ]))
+
+    def test_next_lists_a_ticket_that_records_no_paths_as_unknown(self):
+        self.queue()
+        self.filed("Fix something")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, unknown: 1",
+            "T1 normal, 0m: unknown, no paths recorded",
+        ]))
+
+    def test_next_lists_a_decision_ticket_as_a_decision_with_or_without_paths(self):
+        self.queue()
+        self.filed("Pick a name", "--decision", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Pick a color", "--decision")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, decisions: 2",
+            "T1 urgent, 0m: decision for the owner; a.txt",
+            "T2 normal, 0m: decision for the owner",
+        ]))
+
+    def test_next_lists_free_tickets_below_the_auto_start_level_as_below_it(self):
+        self.queue()
+        self.brigade("set", "--autofire", "urgent")
+        self.filed("Sync", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.filed("Tidy c", "--paths", "c.txt", "--priority", "low")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: urgent",
+            "waiting tickets: 3, startable: 1, below auto-start: 2",
+            "T1 urgent, 0m: startable; a.txt",
+            "  Sync",
+            "T2 normal, 0m: below auto-start; b.txt",
+            "T3 low, 0m: below auto-start; c.txt",
+        ]))
+
+    def test_next_lists_no_ticket_as_startable_at_level_off(self):
+        self.queue()
+        self.brigade("set", "--autofire", "off")
+        self.filed("Sync", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Tidy c", "--paths", "c.txt", "--priority", "low")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: off",
+            "waiting tickets: 2, below auto-start: 2",
+            "T1 urgent, 0m: below auto-start; a.txt",
+            "T2 low, 0m: below auto-start; c.txt",
+        ]))
+
+    def test_next_lists_a_low_ticket_that_shares_a_path_with_one_startable_ticket_as_riding_with_it(self):
+        self.queue()
+        self.filed("Tidy the docs", "--paths", "docs", "--priority", "low")
+        self.filed("Fix the guide", "--paths", "docs/guide.md")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, riding: 1",
+            "T2 normal, 0m: startable; docs/guide.md",
+            "  Fix the guide",
+            "T1 low, 0m: rides with T2; docs",
+            "  Tidy the docs",
+        ]))
+
+    def test_next_blocks_a_second_normal_ticket_that_shares_a_path_with_a_startable_one(self):
+        self.queue()
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix a and b", "--paths", "a.txt,b.txt")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 normal, 0m: blocked, starts after T1; a.txt,b.txt",
+        ]))
+
+    def test_next_blocks_a_low_ticket_that_shares_paths_with_two_startable_tickets_and_names_both(self):
+        self.queue("--workers", "3")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.filed("Tidy both", "--paths", "a.txt,b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 0 of 3 running, 3 idle, auto-start: normal",
+            "waiting tickets: 3, startable: 2, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 normal, 0m: startable; b.txt",
+            "  Fix b",
+            "T3 low, 0m: blocked, starts after T1, T2; a.txt,b.txt",
+        ]))
+
+    def test_next_lists_a_low_ticket_that_shares_a_path_only_with_a_riding_ticket_as_riding_with_the_same_startable_ticket(self):
+        self.queue()
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix the guide", "--paths", "docs/guide.md")
+        self.filed("Tidy the docs", "--paths", "docs/guide.md,docs/cli.md", "--priority", "low")
+        self.filed("Tidy the CLI page", "--paths", "docs/cli.md", "--priority", "low")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: low",
+            "waiting tickets: 3, startable: 1, riding: 2",
+            "T1 normal, 0m: startable; docs/guide.md",
+            "  Fix the guide",
+            "T2 low, 0m: rides with T1; docs/cli.md,docs/guide.md",
+            "  Tidy the docs",
+            "T3 low, 0m: rides with T1; docs/cli.md",
+            "  Tidy the CLI page",
+        ]))
+
+    def test_next_blocks_a_free_ticket_when_the_worker_cap_is_reached(self):
+        self.queue("--workers", "1")
+        self.filed("Running")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Running")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 1 of 1 running, 0 idle, auto-start: normal",
+            "waiting tickets: 1, blocked: 1",
+            "T2 normal, 0m: blocked, waiting for an idle worker; b.txt",
+        ]))
+
+    def test_next_holds_back_a_free_low_ticket_while_one_worker_is_idle(self):
+        self.queue()
+        self.brigade("set", "--autofire", "low")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, held back: 1",
+            "T1 low, 0m: startable; a.txt",
+            "  Tidy a",
+            "T2 low, 0m: held back, low tickets leave 1 worker idle; b.txt",
+        ]))
+
+    def test_next_flags_a_low_ticket_filed_more_than_seven_days_ago_and_no_other(self):
+        self.queue()
+        self.filed("Old and low", "--paths", "a.txt", "--priority", "low")
+        self.filed("Low", "--paths", "b.txt", "--priority", "low")
+        self.filed("Old", "--paths", "c.txt")
+        self.refile("T1", days=7, minutes=1)
+        self.refile("T2", days=6, hours=23)
+        self.refile("T3", days=9)
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, below auto-start: 2",
+            "T3 normal, 9d: startable; c.txt",
+            "  Old",
+            "T1 low, 7d (over a week): below auto-start; a.txt",
+            "T2 low, 6d: below auto-start; b.txt",
+        ]))
+
+    def test_next_with_no_waiting_ticket_prints_the_workers_line_and_says_so(self):
+        self.queue()
+        self.filed("Done already")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("next"), self.NONE_RUNNING + "\nno waiting tickets")
+
+    def test_next_orders_tickets_by_priority_then_oldest_filed_then_the_number_in_the_id(self):
+        self.open()
+        stamp = (datetime.now(timezone.utc) - timedelta(hours=5, minutes=1)).isoformat()
+        rows = [("T10", stamp, "", "ten"), ("T9", stamp, "", "nine"), ("T11", stamp, "low", "eleven"),
+                ("T12", datetime.now(timezone.utc).isoformat(), "urgent", "twelve"),
+                ("T13", (datetime.now(timezone.utc) - timedelta(days=2, minutes=1)).isoformat(), "", "thirteen")]
+        (self.at / "rail.tsv").write_text("id\tat\tstate\tsource\tref\tdish\tsummary\tpriority\tpaths\tdecision\n" + "".join(
+            f"{ident}\t{at}\twaiting\tuser\t\t\t{summary}\t{priority}\t\t\n" for ident, at, priority, summary in rows))
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 5, unknown: 5",
+            "T12 urgent, 0m: unknown, no paths recorded",
+            "T13 normal, 2d: unknown, no paths recorded",
+            "T9 normal, 5h: unknown, no paths recorded",
+            "T10 normal, 5h: unknown, no paths recorded",
+            "T11 low, 5h: unknown, no paths recorded",
+        ]))
+
+    def test_next_lists_rail_rows_written_before_the_paths_cell_as_unknown(self):
+        self.open()
+        self.old_rail((datetime.now(timezone.utc) - timedelta(days=3, minutes=1)).isoformat())
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, unknown: 3",
+            "T3 urgent, 3d: unknown, no paths recorded",
+            "T1 normal, 3d: unknown, no paths recorded",
+            "T2 low, 3d: unknown, no paths recorded",
+        ]))
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_next_without_an_owner_changes_no_store_file_and_no_landing_row(self):
+        self.queue()
+        self.brigade("set", "--thread", "t1")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix something")
+        store, landing = self.store_files(), self.landing_rows()
+        self.assertEqual(self.brigade("next", owner=False), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, blocked: 1, unknown: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+            "T2 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T3 normal, 0m: unknown, no paths recorded",
+        ]))
+        self.assertEqual((self.store_files(), self.landing_rows()), (store, landing))
+        self.assertEqual(len(landing["lease"]), 1)
+
+    def test_next_agrees_with_lease_check_on_a_directory_lease_and_on_a_name_that_shares_its_prefix(self):
+        self.queue()
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix x", "--paths", "src/app/x.py")
+        self.filed("Fix srcx", "--paths", "srcx")
+        checks = [subprocess.run([sys.executable, str(ROOT / "t3/added/landing/scripts/land.py"), "--repo", str(self.project),
+                                  "lease", "check", "--holder", holder, "--paths", paths],
+                                 capture_output=True, text=True, env=self.land_env())
+                  for holder, paths in (("perf/T1", "src/app/x.py"), ("perf/T2", "srcx"))]
+        self.assertEqual([(check.returncode, check.stdout.strip()) for check in checks],
+                         [(1, "L1 held by engine/D1 on src"), (0, "free")])
+        self.assertEqual(self.brigade("next"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app/x.py",
+            "T2 normal, 0m: startable; srcx",
+            "  Fix srcx",
+        ]))
+
+    def test_next_is_refused_in_the_executive_admin_store(self):
+        self.open_admin()
+        self.assertEqual(self.admin("next", ok=False), "brigade: the executive admin routes work and never runs it")
 
     def test_from_report_refuses_priority_paths_and_decision(self):
         self.fired_bug_fix()

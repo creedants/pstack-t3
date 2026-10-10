@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `next`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -196,6 +196,14 @@ brigade.py [flags] watch
 ```
 
 liveness: which dishes have reports, are running, or are over their timebox
+
+## brigade.py next
+
+```text
+brigade.py [flags] next
+```
+
+waiting tickets in the order they should start, each with why it can or cannot start now; it starts nothing
 
 ## brigade.py hang
 
