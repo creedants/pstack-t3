@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -231,7 +232,7 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         columns = {row["name"] for row in self.db.execute("PRAGMA table_info(entry)")}
-        for column in ("title", "body"):
+        for column in ("title", "body", "onto"):
             if column not in columns:
                 self.db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         migrate_entry_ids(self.db)
@@ -314,7 +315,7 @@ def migrate_entry_ids(db):
               state TEXT NOT NULL CHECK (state IN ('queued', 'landing', 'awaiting-merge', 'landed', 'bounced')),
               candidate TEXT NOT NULL DEFAULT '', landed TEXT NOT NULL DEFAULT '', pr TEXT NOT NULL DEFAULT '',
               note TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
-              UNIQUE (sha, holder))
+              onto TEXT NOT NULL DEFAULT '', UNIQUE (sha, holder))
         """)
         names = ", ".join(columns)
         db.execute(f"INSERT INTO entry_id_keep ({names}) SELECT {names} FROM entry")
@@ -1281,6 +1282,58 @@ def classify_rollup(review, pending, failed, posted):
 def unposted_merge_refusal(stderr):
     """The plain merge was refused by base branch policy while no check is posted."""
     return "the base branch policy prohibits the merge" in (stderr or "")
+
+
+Line = namedtuple("Line", "entries stale tip")
+
+
+def trunk_commit(store):
+    return git("rev-parse", trunk_ref(store.contract), cwd=store.repo).stdout.strip()
+
+
+def fetch_trunk(store):
+    contract = store.contract
+    git("fetch", contract["remote"], contract["trunk"], cwd=store.repo)
+    return trunk_commit(store)
+
+
+def same_tree(repo, first, second):
+    """True when both commits resolve and hold the same tree. A squash commit holds its candidate's tree under another id."""
+    found = git("rev-parse", f"{first}^{{tree}}", f"{second}^{{tree}}", cwd=repo, check=False)
+    trees = found.stdout.split()
+    return found.returncode == 0 and len(trees) == 2 and trees[0] == trees[1]
+
+
+def built_on(store, entry, trunk):
+    """The commit this entry's candidate was built on.
+
+    An entry opened before the onto column existed stores none. Its merge base with trunk stands in."""
+    if entry["onto"]:
+        return entry["onto"]
+    base = git("merge-base", entry["candidate"], trunk, cwd=store.repo, check=False)
+    return base.stdout.strip() if base.returncode == 0 else ""
+
+
+def line_of(store, trunk):
+    """Merge mode's line against one trunk commit. Reads the store and git and writes nothing.
+
+    Returns the entries of the line in merge order, the stale entries by id, and the tip.
+    The first entry is the lowest-id awaiting-merge entry with a candidate whose built_on
+    commit holds trunk's tree. Each next entry is the one whose onto is the candidate ahead
+    of it. Under merge method rebase the line stops after its first entry. An awaiting-merge
+    entry with a pull request that is outside the line is stale, unless its note is
+    MERGE_REQUESTED. The tip is the last candidate of the line, or trunk when the line is empty."""
+    waiting = store.entries("awaiting-merge")
+    built = [row for row in waiting if row["candidate"]]
+    first = next((row for row in built if same_tree(store.repo, built_on(store, row, trunk), trunk)), None)
+    entries = [first] if first else []
+    behind = {row["onto"]: row for row in reversed(built)}
+    if (store.contract.get("mergeMethod") or "merge") != "rebase":
+        while entries and entries[-1]["candidate"] in behind:
+            entries.append(behind[entries[-1]["candidate"]])
+    inside = {row["id"] for row in entries}
+    stale = [row for row in waiting if row["id"] not in inside and row["pr"] and row["note"] != MERGE_REQUESTED]
+    return Line(entries, stale, entries[-1]["candidate"] if entries else trunk)
 
 
 def advance_drain(store):

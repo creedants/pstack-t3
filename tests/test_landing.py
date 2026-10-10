@@ -2452,6 +2452,21 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.queue_one(), "E1")
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
 
+    def entry_columns(self):
+        with self.raw_db() as db:
+            return [row[1] for row in db.execute("PRAGMA table_info(entry)")]
+
+    def test_a_store_without_onto_or_autoincrement_opens_with_both_and_keeps_its_entry(self):
+        self.init()
+        self.assertEqual(self.queue_one(), "E1")
+        self.rebuild_entry_without_autoincrement()
+        self.assertNotIn("onto", self.entry_columns())
+        self.assertEqual(self.land("status", "E1"), "E1 queued (r/D1, w1)")
+        self.assertIn("onto", self.entry_columns())
+        with self.raw_db() as db:
+            self.assertIn("AUTOINCREMENT", db.execute("SELECT sql FROM sqlite_master WHERE name = 'entry'").fetchone()[0])
+            self.assertEqual(db.execute("SELECT id, holder, onto FROM entry").fetchall(), [(1, "r/D1", "")])
+
     def test_nested_slots_do_not_deadlock_with_one_slot(self):
         governor = self.base / "state/pstack-t3/governor"
         governor.mkdir(parents=True)
