@@ -872,6 +872,9 @@ def follow_ups(text):
     The text of a heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too,
     whatever it says. It is the line after its opening `#` marks, without surrounding whitespace. Such a heading with no
     text is an aside with no text. A paragraph with only such headings between it and a list item is directly above that item.
+
+    A list item with no text is an aside with no text. It is not the list item a paragraph is directly above, and it is
+    not its section's last list item. A paragraph looks past it as it looks past such a heading.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -906,7 +909,8 @@ def follow_ups(text):
     items, asides = [], []
     for blocks in sections:
         blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
-        blocks = [(kind, text) for kind, text in blocks if text or kind == "subheading"]
+        blocks = [("bare" if kind == "item" and not text else kind, text) for kind, text in blocks]
+        blocks = [(kind, text) for kind, text in blocks if text or kind in ("subheading", "bare")]
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
@@ -914,9 +918,11 @@ def follow_ups(text):
                 asides.append(("text on the heading line", text))
             elif kind == "subheading":
                 asides.append(("heading inside the section" if text else "heading inside the section with no text", text))
+            elif kind == "bare":
+                asides.append(("list item with no text", ""))
             elif says_no_work(text):
                 asides.append(("says no work is needed", text))
-            elif kind == "para" and next(below for below in kinds[index + 1:] if below != "subheading") == "item":
+            elif kind == "para" and next(below for below in kinds[index + 1:] if below not in ("subheading", "bare")) == "item":
                 asides.append(("prose that introduces a list", text))
             elif kind == "para" and index > last:
                 asides.append(("prose after the last list item", text))

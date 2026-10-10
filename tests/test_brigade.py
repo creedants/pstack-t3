@@ -1149,10 +1149,10 @@ class BrigadeTest(unittest.TestCase):
             "T3 added from perf/reports/D1.md#3: Other thing.",
         ])
 
-    def test_from_report_drops_a_list_item_with_no_text(self):
+    def test_from_report_dry_run_prints_a_list_item_with_no_text_as_not_filed(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- One thing.\n", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: One thing.")
+                         "would add from perf/reports/D1.md#1: One thing.\nnot filed, list item with no text")
 
     def test_from_report_takes_the_report_by_name_or_by_a_path_into_this_store(self):
         self.fired_bug_fix()
@@ -4920,6 +4920,50 @@ class BrigadeTest(unittest.TestCase):
     def test_next_is_refused_in_the_executive_admin_store(self):
         self.open_admin()
         self.assertEqual(self.admin("next", ok=False), "brigade: the executive admin routes work and never runs it")
+
+    def test_from_report_prints_a_list_item_with_no_text_as_not_filed_and_gives_it_no_number(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n- \n*   \n1. \n- Fix b.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "T3 added from perf/reports/D1.md#2: Fix b.",
+            "not filed, list item with no text",
+            "not filed, list item with no text",
+            "not filed, list item with no text",
+        ])
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting").splitlines(), [
+            "T2 waiting low [report] Fix a. perf/reports/D1.md#1",
+            "T3 waiting low [report] Fix b. perf/reports/D1.md#2",
+        ])
+
+    def test_from_report_on_a_report_whose_only_follow_up_is_a_list_item_with_no_text_adds_nothing(self):
+        self.fired_bug_fix()
+        before = self.tables()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n"),
+                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
+        self.assertEqual(self.tables(), before)
+
+    def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Reword the guide.",
+            "not filed, list item with no text",
+        ])
+
+    def test_a_paragraph_above_a_list_item_with_no_text_and_then_a_list_item_introduces_the_list(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nTwo things remain.\n\n- \n- Fix a.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "not filed, prose that introduces a list: Two things remain.",
+            "not filed, list item with no text",
+        ])
+
+    def test_a_paragraph_below_a_list_item_with_no_text_that_follows_the_last_list_item_with_text_closes_the_section(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n\n- \n\nThat is all.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "not filed, list item with no text",
+            "not filed, prose after the last list item: That is all.",
+        ])
 
     def test_from_report_refuses_priority_paths_and_decision(self):
         self.fired_bug_fix()
