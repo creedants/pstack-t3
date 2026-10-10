@@ -202,7 +202,7 @@ def is_timestamp(value):
 def parse_row(table, line):
     """One complete line of a table as a row, or None when its field count or timestamp is wrong.
 
-    A row written before a table gained its `ADDED_COLUMNS` is read padded and never rewritten.
+    A row written before a table gained its `ADDED_COLUMNS` is read padded. Reading never rewrites it.
     """
     header = TABLES[table]
     fields = line.split("\t")
@@ -642,7 +642,7 @@ def quoted_paths(text, tracked):
 
 
 def record_paths(restaurant, tracked, write):
-    """One line per waiting ticket that records no paths. With write, each gets the quoted_paths of its summary."""
+    """One line per waiting ticket that records no paths. With write, each records the quoted_paths of its summary when it has any."""
     rows = restaurant.rows("rail.tsv")
     lines, recorded = [], False
     for row in rows:
@@ -1675,7 +1675,7 @@ def lease_answers(meta, tickets, next_dish):
     """The landing queue's refusal of each waiting ticket's recorded paths, by ticket id. land.py runs here.
 
     A decision ticket and a ticket that records no paths are not asked. Each distinct path list is asked once,
-    with the changelog fragment of the branch the next fire would use.
+    with the changelog fragment of the branch the next fire uses when it names none.
     """
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, answers = {}, {}
