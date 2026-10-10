@@ -360,6 +360,10 @@ class AutoMergeStillEnabled(Infrastructure):
     """The message is the whole pause. land() stores it unchanged."""
 
 
+class UncheckedTrunk(Infrastructure):
+    """The message is the whole pause. take_pr stores it in the transaction that lands the entry."""
+
+
 def trunk_ref(contract):
     if contract["mode"] == "local":
         return f"refs/landing/{contract['trunk']}"
@@ -1035,8 +1039,12 @@ def publish(store, base, candidate):
 
 def pause(store, reason):
     with store.tx() as db:
-        db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', ?)", (json.dumps(reason),))
-        store.log(db, "queue", 0, "paused", reason)
+        mark_paused(store, db, reason)
+
+
+def mark_paused(store, db, reason):
+    db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', ?)", (json.dumps(reason),))
+    store.log(db, "queue", 0, "paused", reason)
 
 
 def forget_absent(db, ident):
@@ -1202,10 +1210,13 @@ def build(store, integration, entry, onto, trunk, out):
 def build_line(store, integration, out):
     """Merge mode: build the stale entries by id, then the unheld queued entries, each on the tip of the line.
 
-    Returns the ids it built."""
+    Returns the ids it built. Under merge method rebase GitHub replays every commit of a pull request, so
+    no entry is built on another. At most one entry is built, and only when every awaiting-merge entry is stale."""
     trunk = fetch_trunk(store)
     line = line_of(store, trunk)
     tip, todo = line.tip, line.stale + unheld_queued(store)
+    if merge_method(store) == "rebase":
+        todo = todo[:1] if len(store.entries("awaiting-merge")) == len(line.stale) else []
     for entry in todo:
         tip = build(store, integration, entry, tip, trunk, out)
     return {entry["id"] for entry in todo}
@@ -1284,6 +1295,8 @@ MERGE_REQUESTED = "merge requested by the queue"
 
 
 WAITING_FOR_CHECKS = "waiting for required checks before merging"
+# GitHub's mergePullRequest error names a moved base branch in this sentence.
+BASE_MOVED = "Base branch was modified"
 BLOCKER_QUERY = (
     '[.reviewDecision // "", '
     '([(.statusCheckRollup // [])[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
@@ -1454,7 +1467,9 @@ def request_merge(store, ident, out):
     the queue waits and does not pause only when the plain merge itself is refused because
     the base branch policy prohibits the merge. Any other plain-merge failure pauses and
     names that failure, whatever the --auto attempt said. An approving review, or changes
-    requested, pauses the queue and does not call gh pr merge.
+    requested, pauses the queue and does not call gh pr merge. A plain merge refused with
+    BASE_MOVED is asked again after 2 seconds, at most 3 more times. When it is still
+    refused the entry waits and the queue does not pause.
 
     Only the first entry of the line merges or bounces. It merges when the read shows the
     candidate as the head and, after a fresh fetch, trunk holds the tree the candidate was
@@ -1501,12 +1516,18 @@ def request_merge(store, ident, out):
         with store.tx() as db:
             store.set_entry(db, ident, "awaiting-merge", note=MERGE_REQUESTED)
         return True
-    now_ = gh("pr", "merge", url, method, cwd=store.repo)
+    for asked in range(4):
+        now_ = gh("pr", "merge", url, method, cwd=store.repo)
+        if now_.returncode == 0 or BASE_MOVED not in (now_.stderr or "") or asked == 3:
+            break
+        time.sleep(2)
     if now_.returncode != 0:
         plain = (now_.stderr or "").strip()
         if blocker == "absent" and unposted_merge_refusal(plain):
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+            return False
+        if BASE_MOVED in plain:
             return False
         raise Infrastructure(f"GitHub refused to merge {url}: {plain or 'gh pr merge failed'}")
     with store.tx() as db:
@@ -1663,28 +1684,44 @@ def read_pr_state(store, url):
     return (view.stdout.strip().split(" ") + ["", "", ""])[:3]
 
 
+def unchecked_trunk(store, entry, merged):
+    """The pause for a merge commit that holds another tree than the entry's candidate, or an empty string.
+
+    A merge commit that does not resolve in this repository is not compared."""
+    resolved = git("rev-parse", "--verify", "--quiet", f"{merged}^{{commit}}", cwd=store.repo, check=False)
+    if resolved.returncode != 0 or same_tree(store.repo, merged, entry["candidate"]):
+        return ""
+    return (f"{entry_label(entry['id'])} merged as {merged[:12]}, whose tree is not the checked candidate "
+            f"{entry['candidate'][:12]}. Trunk holds a change no check ran against. Check trunk, then run land.py resume")
+
+
 def take_pr(store, entry, landed, bounced):
     """Settle a merged or closed PR before a failed check can bounce it.
 
-    Returns True when this poll should leave the entry alone."""
+    Returns True when this poll should leave the entry alone. In merge mode a landed entry whose merge
+    commit holds another tree than its candidate stays landed, and the queue pauses in the same transaction."""
     state, head, merged = read_pr_state(store, entry["pr"])
     if state == "MERGED":
         deleted, warning = delete_queue_branch(store, entry)
         if not deleted:
             return True
-        with store.tx() as db:
-            if head == entry["candidate"]:
-                settle_landed(store, db, entry["id"], merged, warning)
-                outcome = "landed"
-            else:
-                settle_bounced(store, db, entry["id"], f"merged at {merged[:12]} with head {head[:12]}, not the checked "
-                                                       f"{entry['candidate'][:12]}; review what reached trunk")
-                outcome = "bounced"
-            db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
-        (landed if outcome == "landed" else bounced).append(entry["id"])
+        checked, unchecked = head == entry["candidate"], ""
         if store.contract["mode"] == "merge":
             # The line is read against trunk as this merge left it.
             fetch_trunk(store)
+            unchecked = unchecked_trunk(store, entry, merged) if checked else ""
+        with store.tx() as db:
+            if checked:
+                settle_landed(store, db, entry["id"], merged, warning)
+            else:
+                settle_bounced(store, db, entry["id"], f"merged at {merged[:12]} with head {head[:12]}, not the checked "
+                                                       f"{entry['candidate'][:12]}; review what reached trunk")
+            db.execute("INSERT OR REPLACE INTO contract VALUES ('tip', ?)", (json.dumps(merged),))
+            if unchecked:
+                mark_paused(store, db, unchecked)
+        (landed if checked else bounced).append(entry["id"])
+        if unchecked:
+            raise UncheckedTrunk(unchecked)
         return True
     if state == "CLOSED":
         with store.tx() as db:
@@ -1878,12 +1915,12 @@ def land(store):
     except BlockingIOError:
         handle.close()
         return "queue busy: another run is landing and will take queued entries. Run land again later if entries stay queued."
+    out = Outcome([], [], [], [], [])
     try:
         if store.contract.get("paused"):
             return f"queue paused: {store.contract['paused']}"
         reconcile(store)
         integration = Integration(store)
-        out = Outcome([], [], [], [], [])
         mode = store.contract["mode"]
         if mode in ("human", "merge"):
             if rewound(store, fetch_trunk(store)):
@@ -1916,13 +1953,14 @@ def land(store):
                 store.set_entry(db, entry["id"], "queued", candidate="", note=str(problem))
         if isinstance(problem, AutoMergeStillEnabled):
             pause(store, str(problem))
-        else:
+        elif not isinstance(problem, UncheckedTrunk):
             suggestion = suggested_merge_method(store.repo, str(problem))
             if suggestion:
                 pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
             else:
                 pause(store, f"{problem}. Fix it, then run land.py resume")
-        return report(store, Outcome([], [], [], [], []))
+        # Merge mode prints what the run did before the pause. The other modes print the pause alone.
+        return report(store, out if store.contract["mode"] == "merge" else Outcome([], [], [], [], []))
     finally:
         handle.close()
 

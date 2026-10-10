@@ -803,9 +803,13 @@ exit 0
         reports the commit its head branch holds on origin.git when asked. pr merge merges
         that head into main on origin.git with real git and reports the new commit.
         pr-<n>-checks holds one pull request's check result and the head it was posted for,
-        so a new head has no posted check. pr-state, checks, pr-checks.json, and pr-url
-        answer for a pull request with no file of its own. crash-on-create kills land
-        after creating, and crash-after-merge kills it after merging."""
+        so a new head has no posted check. checks and pr-checks.json answer the check read
+        of a pull request with no pr-<n>-checks file. pr-state, when present, answers every
+        state read. pr-url answers for a branch that no pull request in prs.json has as its
+        head. pr-<n>-base-moved counts the plain merges of that pull request still to refuse
+        with GitHub's moved base branch error. outside-commit-before-merge adds one commit
+        to main right before the next merge. crash-on-create kills land after creating, and
+        crash-after-merge kills it after merging."""
         fake = self.base / "gh"
         fake.write_text(r"""#!PYTHON
 import json, os, signal, subprocess, sys
@@ -1657,6 +1661,11 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="merge")
             self.queue_one()
             out = self.land("land")
+            self.assertEqual(
+                out,
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9\n"
+                "queue paused: could not read checks for https://github.com/o/r/pull/9: API unavailable. "
+                "Fix it, then run land.py resume")
             self.assertIn("could not read checks", out)
             self.assertIn("queue paused", out)
             self.assertNotIn("landed E1", out)
@@ -2284,7 +2293,7 @@ os.execv({real!r}, [{real!r}, *args])
             ])
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
-    def test_merge_mode_merges_nothing_while_the_first_entry_is_pending_and_notes_the_entry_ahead_on_the_passed_ones(self):
+    def test_merge_mode_merges_nothing_while_the_first_entry_is_pending_notes_the_entry_ahead_on_the_passed_ones_then_lands_all_three(self):
         with self.fake_gh():
             self.open_line(3)
             self.checks(9, "pending")
@@ -2348,7 +2357,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
-    def test_merge_mode_bounces_a_failed_first_entry_alone_and_rebuilds_the_two_behind_it_without_its_change(self):
+    def test_merge_mode_bounces_a_failed_first_entry_alone_rebuilds_the_two_behind_it_without_its_change_then_lands_both(self):
         with self.fake_gh():
             self.open_line(3)
             self.checks(9, "failed")
@@ -2412,7 +2421,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
             self.assertEqual(self.origin_log(), ["outside", "w1", "init"])
 
-    def test_merge_mode_merges_nothing_and_rebuilds_both_passed_entries_when_trunk_gained_an_outside_commit(self):
+    def test_merge_mode_merges_nothing_and_rebuilds_both_passed_entries_when_trunk_gained_an_outside_commit_then_lands_both(self):
         with self.fake_gh():
             self.open_line(2)
             self.checks(9, "passed")
@@ -2451,7 +2460,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("status", "E2"),
                              "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for required checks before merging")
 
-    def test_a_store_from_before_the_onto_column_keeps_its_first_entry_and_rebuilds_the_second_behind_it(self):
+    def test_a_store_from_before_the_onto_column_keeps_its_first_entry_rebuilds_the_second_behind_it_then_lands_both(self):
         with self.fake_gh():
             self.open_line(2)
             self.checks(9, "pending")
@@ -2476,7 +2485,102 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
             self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
 
-    def test_human_mode_builds_each_candidate_alone_on_trunk_and_lands_the_second_entry_before_the_first(self):
+    def test_merge_mode_lands_an_entry_and_pauses_when_its_merge_commit_holds_another_tree_than_its_candidate_and_resume_clears_it(self):
+        with self.fake_gh():
+            self.open_line(1)
+            self.checks(9, "passed")
+            candidate = self.on_origin("rev-parse", "landing/e1")
+            (self.base / "outside-commit-before-merge").write_text("")
+            out = self.land("land")
+            merged = self.on_origin("rev-parse", "main")
+            pause = (f"E1 merged as {merged[:12]}, whose tree is not the checked candidate {candidate[:12]}. "
+                     "Trunk holds a change no check ran against. Check trunk, then run land.py resume")
+            self.assertEqual(out, f"landed E1 (r/D1)\nqueue paused: {pause}")
+            self.assertEqual(self.origin_log(), ["w1", "outside", "init"])
+            self.assertEqual(self.land("status", "E1"), f"E1 landed (r/D1, w1). landed as {merged[:12]}. https://github.com/o/r/pull/9")
+            self.assertEqual(self.land("status"), f"merge mode onto refs/remotes/origin/main. landed: 1. Paused: {pause}")
+            self.assertEqual(self.land("land"), f"queue paused: {pause}")
+            self.assertEqual(self.land("resume"), "queue resumed")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 1.")
+
+    def test_merge_mode_asks_again_after_one_base_branch_was_modified_refusal_and_lands_both_entries_in_that_run(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "passed")
+            self.checks(10, "passed")
+            (self.base / "pr-10-base-moved").write_text("1")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.merge_calls(), [
+                "pr merge https://github.com/o/r/pull/9 --auto --squash",
+                "pr merge https://github.com/o/r/pull/9 --squash",
+                "pr merge https://github.com/o/r/pull/10 --auto --squash",
+                "pr merge https://github.com/o/r/pull/10 --squash",
+                "pr merge https://github.com/o/r/pull/10 --squash",
+            ])
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 2.")
+
+    def test_merge_mode_waits_without_a_pause_after_four_base_branch_was_modified_refusals_in_one_run_and_lands_in_the_next(self):
+        with self.fake_gh():
+            self.open_line(1)
+            self.checks(9, "passed")
+            (self.base / "pr-9-base-moved").write_text("4")
+            self.assertEqual(self.land("land"), "nothing to land")
+            self.assertEqual(self.merge_calls(), ["pr merge https://github.com/o/r/pull/9 --auto --squash"]
+                             + ["pr merge https://github.com/o/r/pull/9 --squash"] * 4)
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1.")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_merge_mode_under_rebase_opens_the_second_entry_in_the_run_that_lands_the_first(self):
+        with self.fake_gh():
+            self.init(mode="merge", merge_method="rebase")
+            self.queue_entries(2)
+            self.assertEqual(
+                self.land("land"),
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9\n"
+                "still queued: E2")
+            self.assertEqual(self.created_heads(), ["landing/e1"])
+            self.assertEqual(
+                self.land("land"),
+                "landed E1 (r/D1)\n"
+                "opened PRs that merge when their checks pass: E2 (r/D2) https://github.com/o/r/pull/10")
+            self.assertEqual(self.created_heads(), ["landing/e1", "landing/e2"])
+            self.assertEqual(self.origin_log(), ["w1", "init"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.origin_files("landing/e2"), ["one", "two", "lib/x.py"])
+
+    def test_merge_mode_keeps_an_entry_queued_while_an_unmerged_entry_ahead_holds_its_change_then_settles_it_as_landed(self):
+        with self.fake_gh():
+            self.init(mode="merge", merge_method="squash")
+            self.assertEqual(self.queue_one(text="same\n", name="w1"), "E1")
+            self.assertEqual(self.queue_one(text="same\n", name="w2"), "E2")
+            self.assertEqual(
+                self.land("land"),
+                "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9\n"
+                "still queued: E2")
+            self.assertEqual(self.land("status", "E2"), "E2 queued (r/D1, w2)")
+            self.assertEqual(self.listed(), ["L1 submitted r/D1: a.txt", "L2 submitted r/D1: a.txt"])
+            self.checks(9, "passed")
+            self.land("land")
+            self.assertEqual(self.origin_log(), ["w1", "init"])
+            merged = self.on_origin("rev-parse", "main")
+            self.assertEqual(self.land("status", "E2"), f"E2 landed (r/D1, w2). landed as {merged[:12]}. already in trunk")
+            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertEqual(self.created_heads(), ["landing/e1"])
+
+    def test_a_merge_mode_land_run_that_lands_bounces_and_rebuilds_runs_no_subprocess_inside_a_write_transaction(self):
+        with self.fake_gh():
+            self.open_line(3)
+            self.checks(9, "passed")
+            self.checks(10, "failed")
+            self.checks(11, "passed")
+            hits = self.subprocesses_during_land()
+            self.assertEqual([self.land("status", entry).split(" (")[0] for entry in ("E1", "E2", "E3")],
+                             ["E1 landed", "E2 bounced", "E3 awaiting-merge"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(hits, [])
+
+    def test_human_mode_builds_each_candidate_alone_on_trunk_and_lands_the_second_entry_while_the_first_awaits_its_merge(self):
         with self.fake_gh():
             self.init(mode="human")
             self.queue_entries(2)
