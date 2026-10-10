@@ -1023,6 +1023,16 @@ class ModeCliTest(unittest.TestCase):
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
 
+    def test_setup_says_write_runs_the_validate_checks_on_the_roles_it_stores(self):
+        text = (ROOT / "t3/setup.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- With no excluded seat, it runs `validate`'s checks on the roles it is about to store. "
+            "When they list a problem, it prints each one and writes nothing unless `--force` is passed. "
+            "Fix each problem and rerun. Do not pass `--force` unless the user asks.\n",
+            text,
+        )
+        self.assertNotIn("a seat that does not match the catalog", text)
+
     def test_coordinator_mode_light_caps_a_configured_verifier(self):
         with self.open_repo() as directory:
             repo = Repo(directory)

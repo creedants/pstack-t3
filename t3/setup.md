@@ -68,7 +68,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
 The provider, model, and option IDs above are examples. Use IDs from step 1. Never write a fast Grok id such as `grok-4.7-build-fast`, or `fastMode=true` on a Grok seat. `write` refuses both, even with `--force`, and `validate` reports both. Leave `fastMode` out. `roles.py` pins a declared Grok `fastMode` to `false`, never picks or inherits a fast Grok seat, and refuses a parent whose `fastMode` it cannot pin, per [the runtime's Excluded seats](../pstack-runtime/SKILL.md#excluded-seats). Write `contextWindow` only for a model whose catalog entry offers it. Cursor's Claude 5 models still offer it. T3's native Claude 5 models do not.
 
 - The command overwrites the whole file, so re-runs are idempotent. Add `--keep` to keep roles you did not pass. A user write without `--mode` stores `full`. A project write without `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
-- It refuses to write a seat that does not match the catalog and prints why. Fix the seat and rerun. Do not pass `--force` unless the user asks.
+- With no excluded seat, it runs `validate`'s checks on the roles it is about to store. When they list a problem, it prints each one and writes nothing unless `--force` is passed. Fix each problem and rerun. Do not pass `--force` unless the user asks.
 - Add `--project` to write `.pstack/t3-roles.json` for this repository instead.
 - A user-level write also saves the catalog snapshot to `~/.config/pstack-t3/catalog.json`, which `roles.py show` uses later to resolve fallbacks.
 
