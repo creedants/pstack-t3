@@ -16,6 +16,7 @@ import os
 import re
 import runpy
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -371,7 +372,7 @@ class Restaurant:
                 text = None
             row = text if header or text is None else parse_row(table, text)
             if row is None:
-                raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
+                raise BrigadeError(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
             if not header:
                 rows.append(row)
         return rows
@@ -653,11 +654,54 @@ def in_reports(restaurant, report, name):
     return report in (name, f"reports/{name}") or Path(report).parent.resolve() == restaurant.dir.resolve() / "reports"
 
 
+# What reports/<name> is when it is not a regular file of this store. Each value finishes the words `reports/<name> `.
+NOT_A_REPORT = {
+    "link": "is a symbolic link",
+    "missing": "does not exist",
+    "other": "is not a regular file",
+    "elsewhere": "resolves outside this store's reports/",
+}
+# What `close` advises for an entry of each kind it warns about. Each value finishes the warning line.
+REPAIR = {
+    "link": "remove the link and leave its target as it is",
+    "other": "move it out of reports/",
+    "elsewhere": "replace the symbolic link at reports/ with a directory and leave the link's target as it is",
+}
+
+
+def report_stat(restaurant, name):
+    """(kind, status) of reports/<name>. The kind is `file` or a key of NOT_A_REPORT, and the status is None for `missing`.
+
+    The entry is read once, with one lstat that follows no link at <name>. Whether it is there, a symbolic link, or a
+    regular file comes from that status alone, and `elsewhere` adds where reports/ itself resolves.
+    The first that holds wins. `missing` is a name with nothing there, which is that lstat finding no entry or finding
+    that reports/ is not a directory. `link` is a symbolic link, whether or not its target exists. `other` is an entry
+    that is not a regular file. `elsewhere` is a regular file under a reports/ that resolves to another place.
+    """
+    reports = restaurant.dir / "reports"
+    try:
+        status = (reports / name).lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing", None
+    if stat.S_ISLNK(status.st_mode):
+        return "link", status
+    if not stat.S_ISREG(status.st_mode):
+        return "other", status
+    if reports.resolve() != restaurant.dir.resolve() / "reports":
+        return "elsewhere", status
+    return "file", status
+
+
+def report_entry(restaurant, name):
+    """The kind report_stat gives reports/<name>."""
+    return report_stat(restaurant, name)[0]
+
+
 def item_report(restaurant, report):
     """The bare name of an item report under this store's reports/.
 
-    Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
-    A path that in_reports turns down is refused, and so is a symbolic link.
+    Its content is read, so report_entry must call reports/<name> a `file`.
+    A path that in_reports turns down is refused.
     A `..` component is refused as written, before anything is resolved.
     """
     if ".." in Path(report).parts:
@@ -665,16 +709,11 @@ def item_report(restaurant, report):
     name = Path(report).name
     if not ITEM_REPORT.fullmatch(name):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
-    path = restaurant.dir / "reports" / name
-    home = restaurant.dir.resolve() / "reports" / name
     if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
-    if path.is_symlink():
-        raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
-    if not path.is_file():
-        raise BrigadeError(f"reports/{name} does not exist; nothing added")
-    if path.resolve() != home:
-        raise BrigadeError(f"reports/{name} resolves outside this store's reports/; nothing added")
+    kind = report_entry(restaurant, name)
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing added")
     return name
 
 
@@ -712,6 +751,10 @@ def follow_ups(text):
 
     The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
     line without leading colons and surrounding whitespace.
+
+    The text of a heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too,
+    whatever it says. It is the line after its opening `#` marks, without surrounding whitespace. Such a heading with no
+    text is an aside with no text. A paragraph with only such headings between it and a list item is directly above that item.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -727,6 +770,8 @@ def follow_ups(text):
                 sections.append([("heading", [re.sub(r"^[\s:]+", "", line[named.end():])])])
             elif depth <= level:
                 level = 0
+            elif level:
+                sections[-1].append(("subheading", [line[depth:]]))
             block, blank = None, True
         elif not level:
             continue
@@ -744,15 +789,17 @@ def follow_ups(text):
     items, asides = [], []
     for blocks in sections:
         blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
-        blocks = [(kind, text) for kind, text in blocks if text]
+        blocks = [(kind, text) for kind, text in blocks if text or kind == "subheading"]
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
             if kind == "heading":
                 asides.append(("text on the heading line", text))
+            elif kind == "subheading":
+                asides.append(("heading inside the section" if text else "heading inside the section with no text", text))
             elif says_no_work(text):
                 asides.append(("says no work is needed", text))
-            elif kind == "para" and kinds[index + 1] == "item":
+            elif kind == "para" and next(below for below in kinds[index + 1:] if below != "subheading") == "item":
                 asides.append(("prose that introduces a list", text))
             elif kind == "para" and index > last:
                 asides.append(("prose after the last list item", text))
@@ -774,7 +821,7 @@ def file_follow_ups(restaurant, name, found, write):
     restaurant.find("dishes.tsv", name[:-3])
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
-    aside = [f"not filed, {reason}: {text}" for reason, text in found.asides]
+    aside = [f"not filed, {reason}: {text}" if text else f"not filed, {reason}" for reason, text in found.asides]
     if not found.items:
         return "\n".join([f"reports/{name} lists no follow-ups; nothing added", *aside])
     holders = {}
@@ -1067,7 +1114,7 @@ def review_report(restaurant, dish_id, report):
     """The bare name of `report`.
 
     A name that is not a review report of the item is refused. So is a path that in_reports turns down, and so is a
-    name for which reports/<name> does not exist in this store.
+    name for which report_entry does not call reports/<name> a `file`.
     """
     name = Path(report).name
     match = REVIEW_FILE.fullmatch(name)
@@ -1075,8 +1122,11 @@ def review_report(restaurant, dish_id, report):
         raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
     if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
-    if not (restaurant.dir / "reports" / name).exists():
+    kind = report_entry(restaurant, name)
+    if kind == "missing":
         raise BrigadeError(f"reports/{name} does not exist; write the review report first")
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing recorded")
     return name
 
 
@@ -1109,23 +1159,30 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
 
 
 def unrecorded_reviews(restaurant):
-    """The review reports under reports/ that no pass.tsv row accounts for, by file name.
+    """(name, kind) for each entry under reports/ named like a review report that no pass.tsv row accounts for.
 
-    A row that names no report cannot say which file it reviewed, so it accounts for every report of its dish written before it.
+    The kind is report_stat's. A row of the entry's dish that names it in `report` accounts for it, and nothing is read
+    from that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
+    dish written at or before it, and for no entry of another kind. The time compared is the one in report_stat's status.
+    An entry that report_stat calls `missing` is left out.
     """
     rows = restaurant.rows("pass.tsv")
     reports = restaurant.dir / "reports"
-    missing = []
+    unrecorded = []
     for path in sorted(reports.iterdir()) if reports.is_dir() else []:
         match = REVIEW_FILE.fullmatch(path.name)
         if not match:
             continue
-        written = path.stat().st_mtime
-        if not any(row["report"] == path.name if row["report"]
-                   else datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= written
-                   for row in rows if row["dish"] == match.group(1)):
-            missing.append(path.name)
-    return missing
+        mine = [row for row in rows if row["dish"] == match.group(1)]
+        if any(row["report"] == path.name for row in mine):
+            continue
+        kind, status = report_stat(restaurant, path.name)
+        if kind == "file" and any(datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= status.st_mtime
+                                  for row in mine if not row["report"]):
+            continue
+        if kind != "missing":
+            unrecorded.append((path.name, kind))
+    return unrecorded
 
 
 def report(restaurant, write=True):
@@ -2820,10 +2877,17 @@ def command(restaurant, args, contract=None, rails=None):
         if not args.dry_run and is_admin(restaurant.meta):
             log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
-        for name in unrecorded_reviews(restaurant):
+        linked = (restaurant.dir / "reports").is_symlink()
+        for name, kind in unrecorded_reviews(restaurant):
             dish = name.split("-")[0]
-            print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
-                  f"and --late when {dish} has moved past that round", file=sys.stderr)
+            if kind == "file":
+                print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
+                      f"and --late when {dish} has moved past that round", file=sys.stderr)
+            else:
+                # Under a reports/ that is a symbolic link, an entry of every kind resolves outside this store's reports/.
+                kind = "elsewhere" if linked else kind
+                print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row of {dish} names it; {REPAIR[kind]}",
+                      file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text

@@ -728,7 +728,7 @@ class BrigadeTest(unittest.TestCase):
         for fields, line in ((old.split("\t")[:7], 5), ([*old.split("\t"), "r.md", "", "extra"], 5)):
             table.write_text(table.read_text() + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
-                             f"brigade: pass.tsv line {line} is malformed; fix or remove it")
+                             f"brigade: bridge-kit/perf/pass.tsv line {line} is malformed; fix or remove it")
             table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
 
     def test_pass_record_stores_the_bare_name_of_an_existing_review_report(self):
@@ -765,6 +765,32 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade(*record, "--report", report, ok=False),
                              f"brigade: {report} is outside this store's reports/; name reports/D1-review-1.md")
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+
+    def test_pass_record_refuses_a_directory_a_live_link_a_dangling_link_and_a_file_under_a_linked_reports(self):
+        self.fired_bug_fix()
+        reports = self.review_file("D1-review-4.md").parent
+        outside = Path(self.temporary.name) / "outside"
+        (outside / "reports").mkdir(parents=True)
+        (outside / "findings.md").write_text("findings\n")
+        (outside / "reports" / "D1-review-5.md").write_text("findings\n")
+        (reports / "D1-review-1.md").mkdir()
+        (reports / "D1-review-2.md").symlink_to(outside / "findings.md")
+        (reports / "D1-review-3.md").symlink_to(outside / "gone.md")
+        self.record("abc", "send-back", "--report", "D1-review-4.md")
+        before = (self.at / "pass.tsv").read_bytes()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md is not a regular file; nothing recorded")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-2.md", ok=False),
+                         "brigade: reports/D1-review-2.md is a symbolic link; nothing recorded")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-3.md", ok=False),
+                         "brigade: reports/D1-review-3.md is a symbolic link; nothing recorded")
+        reports.rename(self.at / "kept")
+        reports.symlink_to(outside / "reports")
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-5.md", ok=False),
+                         "brigade: reports/D1-review-5.md resolves outside this store's reports/; nothing recorded")
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+        self.assertEqual([row[8] for row in self.pass_rows()], ["D1-review-4.md"])
 
     def store_files(self):
         """Every file of the store but restaurant.lock, which is empty and is not store data."""
@@ -945,6 +971,39 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- One thing.\n", "--dry-run"),
                          "would add from perf/reports/D1.md#1: One thing.")
 
+    def test_from_report_prints_a_deeper_heading_inside_the_section_and_does_not_file_it(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        body = "## Follow-ups\n\nLead in.\n\n### Parser\n\n- fix a\n- fix b\n\n### Docs\n\nClosing note.\n"
+        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: fix a",
+            "would add from perf/reports/D1.md#2: fix b",
+            "not filed, prose that introduces a list: Lead in.",
+            "not filed, heading inside the section: Parser",
+            "not filed, heading inside the section: Docs",
+            "not filed, prose after the last list item: Closing note.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n### None of these block the merge\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, heading inside the section: None of these block the merge",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_prints_a_deeper_heading_with_no_text_and_not_the_follow_ups_heading_with_no_text(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.follow_ups_in("## Follow-ups\n\n###\n", *extra).splitlines(), [
+                "reports/D1.md lists no follow-ups; nothing added",
+                "not filed, heading inside the section with no text",
+            ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nLead in.\n\n###   \n\n- fix a\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: fix a",
+            "not filed, prose that introduces a list: Lead in.",
+            "not filed, heading inside the section with no text",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
     def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in(LEAD_IN, "--dry-run").splitlines(), [
@@ -1071,6 +1130,15 @@ class BrigadeTest(unittest.TestCase):
         (self.at / "reports" / "D1.md").write_bytes(b"## Follow-ups\n\n- caf\xe9\n")
         self.assertEqual(self.brigade(*add, "reports/D1.md", ok=False),
                          "brigade: reports/D1.md is not UTF-8 text; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_refuses_a_directory_named_like_an_item_report(self):
+        self.fired_bug_fix()
+        (self.at / "reports" / "D1.md").mkdir(parents=True)
+        before = (self.at / "rail.tsv").read_bytes()
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", *extra, ok=False),
+                             "brigade: reports/D1.md is not a regular file; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
     def test_from_report_refuses_a_symbolic_link_and_a_file_that_resolves_outside_reports(self):
@@ -1232,6 +1300,149 @@ class BrigadeTest(unittest.TestCase):
         self.record("abc", "send-back", "--report", "D1-review-2.md")
         self.assertEqual(self.close_run("--dry-run")[2],
                          "\n".join([self.no_row("D1-review-1.md"), self.no_row("D7-review.md", "D7")]))
+
+    def not_a_file(self, name, words, advice):
+        return f"brigade: warning: reports/{name} {words} and no review row of D1 names it; {advice}"
+
+    def a_link(self, name):
+        return self.not_a_file(name, "is a symbolic link", "remove the link and leave its target as it is")
+
+    def under_a_linked_reports(self, name):
+        return self.not_a_file(name, "resolves outside this store's reports/",
+                               "replace the symbolic link at reports/ with a directory and leave the link's target as it is")
+
+    def linked(self, name, target):
+        link = self.at / "reports" / name
+        link.parent.mkdir(exist_ok=True)
+        link.symlink_to(Path(self.temporary.name) / target)
+        return link
+
+    def test_close_warns_about_a_dangling_link_named_like_a_review_report_and_still_exits_0(self):
+        self.fired_bug_fix()
+        code, before, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.linked("D1-review-7.md", "gone.md")
+        warning = ("brigade: warning: reports/D1-review-7.md is a symbolic link and no review row of D1 names it; "
+                   "remove the link and leave its target as it is")
+        self.assertEqual(self.close_run("--dry-run"), (0, before, warning))
+        self.assertEqual(self.close_run(), (0, before, warning))
+
+    def test_close_warns_about_a_review_report_replaced_by_a_dangling_link_while_close_classifies_it(self):
+        self.fired_bug_fix()
+        entry = self.review_file("D1-review-7.md")
+        pending = self.linked("pending.md", "gone.md")
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        replaced = []
+
+        def replacing(real):
+            def hooked(path):
+                result = real(path)
+                if not replaced and path.name == entry.name and path.parent.name == "reports":
+                    replaced.append(path)
+                    os.replace(pending, entry)
+                return result
+            return hooked
+
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "close", "--dry-run"]
+        with mock.patch.object(Path, "lstat", replacing(Path.lstat)), \
+                mock.patch.object(Path, "is_symlink", replacing(Path.is_symlink)), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            glob["run"](argv)
+        self.assertEqual(len(replaced), 1)
+        self.assertTrue(entry.is_symlink())
+        self.assertFalse(entry.exists())
+        self.assertEqual(stderr.getvalue().strip(), self.no_row("D1-review-7.md"))
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-7.md")))
+
+    def test_report_entry_names_the_kind_of_each_entry_under_reports(self):
+        self.fired_bug_fix()
+        reports = self.review_file("file.md").parent
+        (Path(self.temporary.name) / "findings.md").write_text("findings\n")
+        self.linked("live.md", "findings.md")
+        self.linked("dangling.md", "gone.md")
+        (reports / "directory.md").mkdir()
+        expected = {"file.md": "file", "live.md": "link", "dangling.md": "link", "directory.md": "other", "absent.md": "missing"}
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(reports / "fifo.md")
+            expected["fifo.md"] = "other"
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        restaurant = glob["Restaurant"](self.at)
+        self.assertEqual({name: glob["report_entry"](restaurant, name) for name in expected}, expected)
+        reports.rename(self.at / "kept")
+        reports.symlink_to(self.at / "kept")
+        self.assertEqual({name: glob["report_entry"](restaurant, name) for name in expected},
+                         {**expected, "file.md": "elsewhere"})
+        reports.unlink()
+        reports.write_text("not a directory\n")
+        self.assertEqual({glob["report_entry"](restaurant, name) for name in expected}, {"missing"})
+
+    def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports_and_following_its_advice_ends_each_warning(self):
+        self.fired_bug_fix()
+        target = Path(self.temporary.name) / "findings.md"
+        target.write_text("findings\n")
+        link = self.linked("D1-review-7.md", "findings.md")
+        directory = self.at / "reports" / "D1-review-8.md"
+        directory.mkdir()
+        (directory / "notes.md").write_text("notes\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join([
+            self.a_link("D1-review-7.md"),
+            self.not_a_file("D1-review-8.md", "is not a regular file", "move it out of reports/"),
+        ])))
+        link.unlink()
+        directory.rename(self.at / "D1-review-8.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.assertEqual(target.read_text(), "findings\n")
+        self.assertEqual((self.at / "D1-review-8.md" / "notes.md").read_text(), "notes\n")
+
+    def test_close_warns_about_a_dangling_link_that_only_a_row_of_another_item_names(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--summary", "t")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix t")
+        self.review_file("D2-review-1.md")
+        self.brigade("pass", "record", "D2", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+                     "--report", "D2-review-1.md")
+        table = self.at / "pass.tsv"
+        table.write_text(table.read_text().replace("D2-review-1.md", "D1-review-7.md"))
+        (self.at / "reports" / "D2-review-1.md").unlink()
+        self.assertEqual([(row[1], row[8]) for row in self.pass_rows()], [("D2", "D1-review-7.md")])
+        self.linked("D1-review-7.md", "gone.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-7.md")))
+
+    def test_close_does_not_warn_about_a_dangling_link_a_row_names(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md")
+        self.record("abc", "send-back", "--report", "D1-review-1.md")
+        (self.at / "reports" / "D1-review-1.md").unlink()
+        self.linked("D1-review-1.md", "gone.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_a_row_that_names_no_report_accounts_for_no_link_to_a_file_written_before_it(self):
+        self.fired_bug_fix()
+        target = Path(self.temporary.name) / "findings.md"
+        target.write_text("findings\n")
+        stamp = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(target, (stamp, stamp))
+        self.linked("D1-review-1.md", "findings.md")
+        self.record("abc", "send-back")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-1.md")))
+
+    def test_close_advice_for_every_entry_under_a_linked_reports_leaves_the_files_outside_the_store_in_place(self):
+        self.fired_bug_fix()
+        outside = Path(self.temporary.name) / "outside" / "reports"
+        outside.mkdir(parents=True)
+        (outside / "D1-review-5.md").write_text("findings\n")
+        (outside / "D1-review-6.md").symlink_to(outside / "D1-review-5.md")
+        (outside / "D1-review-7.md").mkdir()
+        before = sorted(path.name for path in outside.iterdir())
+        reports = self.at / "reports"
+        reports.symlink_to(outside)
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join(
+            self.under_a_linked_reports(f"D1-review-{number}.md") for number in (5, 6, 7))))
+        reports.unlink()
+        reports.mkdir()
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.assertEqual(sorted(path.name for path in outside.iterdir()), before)
+        self.assertEqual((outside / "D1-review-5.md").read_text(), "findings\n")
 
     def test_close_ignores_a_file_that_is_not_a_review_report(self):
         self.fired_bug_fix()
@@ -3181,7 +3392,7 @@ class BrigadeTest(unittest.TestCase):
         for fields, line in ((old[1].split("\t")[:7], 5), ([*old[1].split("\t"), "", "", "extra"], 5)):
             table.write_text(table.read_text() + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("86", "list", ok=False),
-                             f"brigade: 86.tsv line {line} is malformed; fix or remove it")
+                             f"brigade: bridge-kit/perf/86.tsv line {line} is malformed; fix or remove it")
             table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
 
     def test_an_unrelated_answered_item_decision_lifts_no_refusal(self):
@@ -4395,15 +4606,15 @@ class HandoffTest(StoresTest):
         log = self.dir("core") / "log.tsv"
         stamp = "2026-10-06T00:00:00.000000+00:00"
         log.write_text(log.read_text() + f"{stamp}\tticket\tT6\twaiting\tfro{stamp}\tticket\tT7\twaiting\tnote\n")
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 3 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 3 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"fro{stamp}\tticket\tT7\twaiting\tnote", "fro"))
         self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
         log.write_text(log.read_text() + f"{stamp[:19]}\tticket")
         self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
         log.write_text(log.read_text() + f"{stamp}\tticket\tT8\twaiting\tnote\n")
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 4 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 4 is malformed; fix or remove it")
 
     def test_a_table_that_is_not_utf8_names_the_line(self):
         self.open("core")
@@ -4411,7 +4622,23 @@ class HandoffTest(StoresTest):
         rail = self.dir("core") / "rail.tsv"
         rail.write_bytes(rail.read_bytes() + b"\xff\n")
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False),
-                         "brigade: rail.tsv line 3 is malformed; fix or remove it")
+                         "brigade: app/core/rail.tsv line 3 is malformed; fix or remove it")
+
+    def test_a_malformed_line_is_named_with_its_store_from_a_sibling_from_walk_and_from_the_store_itself(self):
+        self.open("core")
+        self.open("docs")
+        self.brigade("docs", "ticket", "add", "--summary", "a")
+        rail = self.dir("docs") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        line = "brigade: app/docs/rail.tsv line 3 is malformed; fix or remove it"
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "x", "--source", "user", "--ref", "gh#1", ok=False),
+                         line)
+        self.assertEqual(self.brigade("core", "watch", ok=False), line)
+        self.assertEqual(self.brigade("docs", "ticket", "list", ok=False), line)
+        for words, cwd in ((("walk",), None), (("--at", ".", "ticket", "list"), self.dir("docs"))):
+            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), *words],
+                                    capture_output=True, text=True, cwd=cwd)
+            self.assertEqual((result.returncode, result.stderr.strip()), (1, line), words)
 
     def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
         self.open("core")
