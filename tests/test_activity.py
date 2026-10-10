@@ -20,6 +20,8 @@ from urllib.parse import quote, unquote
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/activity.py"
 MOD = runpy.run_path(str(SCRIPT))
+SKILL = ROOT / "t3/added/brigade/SKILL.md"
+GUIDE = ROOT / "docs/guide.md"
 
 MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "0a1b2c3")
 COORDINATOR = "mcp:threadmarker-coordinator"
@@ -134,13 +136,13 @@ class Fixture:
         if self.writer is not None:
             self.writer.close()
 
-    def command(self, *args, at=True, t3_home=True, env=None, clock=None):
+    def command(self, *args, at=True, t3_home=True, env=None, clock=None, cwd=None):
         """With clock, the script runs as the main program of a process whose time.time() returns that instant."""
         words = [sys.executable, str(SCRIPT)] if clock is None else [sys.executable, "-c", FROZEN, repr(clock), str(SCRIPT)]
         words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
         words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
         environment = {"HOME": str(self.home), "PATH": os.environ.get("PATH", ""), **(env or {})}
-        return [*words, *args], {"text": True, "env": environment, "cwd": self.root}
+        return [*words, *args], {"text": True, "env": environment, "cwd": cwd or self.root}
 
     def run(self, *args, **how):
         words, options = self.command(*args, **how)
@@ -234,6 +236,26 @@ class StoreTest(ActivityCase):
                 (self.fixture.store / "restaurant.json").write_text(text)
                 self.assertEqual(self.fails(1), "activity: the store's coordinator record is not a JSON object; restore it and run this again")
 
+    def test_name_project_root_thread_or_previous_thread_of_the_store_record_that_is_not_null_and_not_a_string_or_holds_a_nul_or_a_lone_surrogate_exits_1_and_names_it(self):
+        cases = (("restaurant", 7, "name"), ("restaurant", "k\x00it", "name"), ("projectRoot", ["proj"], "project root"), ("projectRoot", "/pathmarker/a\x00b", "project root"),
+                 ("projectRoot", "/pathmarker/\ud800", "project root"), ("thread", 5, "thread"), ("thread", "mcp:threadmarker-\ud800", "thread"), ("thread", "mcp:threadmarker\x00", "thread"),
+                 ("previousThread", [COORDINATOR], "previous thread"), ("previousThread", "mcp:threadmarker-\udcff", "previous thread"), ("previousThread", 1e999, "previous thread"))
+        for number, (key, value, words) in enumerate(cases):
+            with self.subTest(key=key, value=value):
+                fixture = self.fixture = one_running(Fixture(self.root / str(number)))
+                fixture.meta[key] = value
+                fixture.write()
+                for form in ((), ("--text",)):
+                    self.assertEqual(self.fails(1, *form), f"activity: the store's coordinator record holds a {words} this tool cannot read; restore it and run this again")
+
+    def test_store_record_with_a_null_or_absent_name_project_root_thread_and_previous_thread_is_read(self):
+        for meta in ({"restaurant": None, "projectRoot": None, "thread": None, "previousThread": None}, {}):
+            with self.subTest(meta):
+                fixture = self.fixture = Fixture(self.root / str(len(meta)))
+                fixture.meta = meta
+                fixture.write_store()
+                self.assertEqual(MOD["read_store"](fixture.store), MOD["Store"]("", frozenset(), (), (), ""))
+
     def test_admin_store_exits_1(self):
         self.fixture.meta["role"] = "admin"
         self.fixture.write()
@@ -313,6 +335,17 @@ class DatabasePathTest(ActivityCase):
         self.assertEqual(self.fails(3, t3_home=empty), "activity: no T3 Code database under the --t3-home directory" + end)
         self.assertEqual(self.fails(3, t3_home=None, env={"T3CODE_HOME": empty}), "activity: no T3 Code database under the T3CODE_HOME directory" + end)
         self.assertEqual(self.fails(3, t3_home=None), "activity: no T3 Code database under the default base directory" + end)
+
+
+    @unittest.skipIf(os.geteuid() == 0, "root can enter every directory")
+    def test_base_directory_this_user_cannot_enter_exits_3(self):
+        self.fixture.write_store()
+        locked = self.fixture.root / "pathmarker locked"
+        (locked / "userdata").mkdir(parents=True)
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o700)
+        self.assertEqual(self.fails(3, t3_home=str(locked)),
+                         "activity: cannot look for T3's database under the --t3-home directory (Permission denied); check its permissions and run this again")
 
 
 class ShapeTest(ActivityCase):
@@ -475,7 +508,7 @@ class ReadTest(ActivityCase):
         child = t3.agents[explorer]
         self.assertEqual((child.parent, child.request, child.delegation.status.value), (worker(1), "how-explorer", "done"))
 
-    def test_read_t3_reads_only_turns_that_touch_the_window(self):
+    def test_read_t3_keeps_only_turns_that_touch_the_window(self):
         fixture = self.fixture
         fixture.coordinator(turns=(("completed", 400, 390), ("completed", 200, 170), ("running", 5, None)))
         _, t3, _ = fixture.write().read(hours=3)
@@ -906,7 +939,7 @@ class LabelTest(unittest.TestCase):
                  "model-20250929-1234567", "модель", "model-é")
         self.assertEqual([name for name in other if model(name) != "other model"], [])
 
-    def test_link_is_the_https_pull_request_address_without_userinfo_query_or_fragment_and_any_other_value_is_refused(self):
+    def test_link_is_the_https_pull_request_address_without_userinfo_query_or_fragment_a_blank_value_gives_neither_and_any_other_value_is_refused(self):
         link = MOD["Privacy"]({"kit-d7-audit", worker(1)}).link
         address = "https://git.example/Owner.x/re_po-1/pull/123456"
         for value in (address, "https://user:pw@git.example/Owner.x/re_po-1/pull/123456", address + "?x=mcp:alpha-secret", address + "#task:alpha-secret",
@@ -1114,6 +1147,12 @@ class FoldTest(ActivityCase):
         self.assertEqual([(span.x, span.w, span.status.value) for span in folded.coordinator.spans],
                          [(0, 10, "done"), (100, 10, "done"), (115, 10, "stopped"), (300, 10, "done"), (500, 10, "running"), (700, 10, "done"), (900, 11, "done"), (12, 10, "failed")])
 
+    def test_joined_makes_one_bar_of_two_across_a_gap_of_99_and_the_footer_says_bars_may_join_across_gaps(self):
+        spans = MOD["joined"]([MOD["Span"](x, 1, MOD["Status"].DONE) for x in (0, 100, 300, 600, 900)], 4)
+        self.assertEqual([(span.x, span.w) for span in spans], [(0, 101), (300, 1), (600, 1), (900, 1)])
+        self.assertIn("'. Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns.'", MOD["RENDERER"])
+        self.assertNotIn("time an agent was at work", MOD["RENDERER"])
+
     def test_cap_everything_lists_8_in_flight_items_with_those_of_a_group_on_the_page_first(self):
         items = [item(f"D{number}") for number in range(1, 13)]
         folded = MOD["cap_everything"](page(group(items[10], row("worker")), items=items))
@@ -1181,7 +1220,7 @@ class FoldTest(ActivityCase):
             "1 more work item in flight is not listed.",
             "1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "1 pull request link is not shown. It is not an https://host/owner/repository/pull/number address, or it holds text this page removes.",
-            "T3 lists 1 sub-agent of a thread on this page with no thread or no start time. It is not shown.",
+            "T3 lists 1 sub-agent with no thread or no start time under a thread this page read. It is not shown.",
             "T3 gave 1 status this tool reads as unknown.",
             "1 agent is grouped by the name of the request that started it.",
             "1 other thread ran in T3 outside this coordinator."])
@@ -1503,6 +1542,24 @@ class SizeTest(OutputCase):
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
+    def test_window_of_250_running_agents_on_250_items_in_flight_has_no_summary_row_and_counts_the_agents_and_items_it_leaves_out_as_the_guide_says(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        for number in range(1, 251):
+            fixture.unit(f"D{number}", "in-progress", f"item {number}", thread=worker(number))
+            fixture.thread(worker(number), title=f"D{number} worker", turns=(("running", 5 + number / 10, None),))
+        fixture.write()
+        document = self.document()
+        data = data_of(document)
+        rows = [line for _, lines in data["G"] for line in lines]
+        self.assertLess(len(document.encode()), 16000)
+        self.assertEqual((data["n"], len(rows), [line[7] for line in rows], len([each for each in data["I"] if each[5]])), ([250, 250, 0, 0], 6, [1] * 6, 8))
+        self.assertEqual(data["N"], ["244 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+                                     "242 more work items in flight are not listed."])
+        guide = GUIDE.read_text()
+        self.assertIn("When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover.", guide)
+        self.assertNotIn("the page folds finished work into summary rows", guide)
+
     def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_providers_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
         counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
@@ -1707,6 +1764,40 @@ class RendererTest(OutputCase):
                 build(fixture).write()
                 self.assertIn(heading, self.render(self.document())["texts"])
 
+def skill_section():
+    return SKILL.read_text().split("\n## Agent activity\n", 1)[1].split("\n## ", 1)[0]
+
+
+class SkillTest(OutputCase):
+    @unittest.skipUnless(shutil.which("bash"), "bash is not on PATH")
+    def test_skills_command_lines_run_in_bash_with_a_space_in_the_skills_path_the_store_path_and_t3s_base_directory(self):
+        fixture = one_running(self.fixture).write()
+        skills, tools = fixture.root / "pathmarker skills", fixture.root / "tools"
+        (skills / "brigade" / "scripts").mkdir(parents=True)
+        shutil.copy(SCRIPT, skills / "brigade" / "scripts" / "activity.py")
+        tools.mkdir()
+        (tools / "python3").symlink_to(sys.executable)
+        block = re.search(r"```bash\n(.*?)```", skill_section(), re.S).group(1)
+        define, *calls = block.replace("<skills>", str(skills)).replace("<restaurant dir>", str(fixture.store)).splitlines()
+        environment = {"HOME": str(fixture.home), "PATH": f"{tools}{os.pathsep}{os.environ.get('PATH', '')}", "T3CODE_HOME": str(fixture.base)}
+        outputs = []
+        for call in calls:
+            result = subprocess.run(["bash", "-c", f"{define}\n{call}"], capture_output=True, text=True, env=environment, cwd=fixture.root)
+            self.assertEqual((result.returncode, result.stderr), (0, ""), call)
+            outputs.append(result.stdout)
+        self.assertEqual([call.split("#")[0].split() for call in calls], [["A"], ["A", "--hours", "12"], ["A", "--text"]])
+        self.assertEqual(([data_of(output)["w"][1] for output in outputs[:2]], outputs[2].split("\n")[0]), ([10800, 43200], "Agent activity for kit, last 3h"))
+
+    def test_skill_sends_the_text_form_when_the_preview_fails_and_tells_the_coordinator_to_skip_no_step_of_visual_reports(self):
+        section = skill_section()
+        steps = dict(re.findall(r"^([0-9])\. (.*)$", section, re.M))
+        self.assertEqual(steps["2"], "Call `html_preview` with that document. When the preview shows a console error or a clipped or overlapping element, "
+                                     "send the stdout of `A --text` and name the fault in the reply. Render only a page whose preview passes. "
+                                     "Call `html_render` with the document unchanged and the title `Agent activity`, "
+                                     "per steps 3 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports).")
+        self.assertEqual([word for word in ("skip", "step 2 of") if word in section], [])
+
+
 REVIEW_MODELS = ("mcp:alpha-secret", "node:alpha-secret", "run:alpha-secret", "acct_secretXYZ", "user@example.test", "C:\\Users\\private\\file.txt")
 REVIEW_TEXTS = ("task:alpha-secret", "acct_secretXYZ", "private/file.txt", "prefix=mcp:alpha-secret", "id=mcp%3Aalpha-secret")
 REVIEW_VALUES = tuple(dict.fromkeys((*REVIEW_MODELS, *REVIEW_TEXTS, "file:/home/private/secret")))
@@ -1761,7 +1852,7 @@ class PrivacyTest(OutputCase):
                      "pull request fragment": f"{link}#{value}", "pull request userinfo": f"https://{quote(value, safe='')}@git.example/o/r/pull/{100 + number}"}
             fixture.unit(unit, "in-progress", f"Fix {value} today" if field == "summary" else f"item {number}", pr=links.get(field, ""))
 
-    def test_no_review_value_and_no_id_path_instance_or_address_of_the_fixture_planted_in_any_field_is_in_the_document_or_the_text(self):
+    def test_no_review_value_and_no_id_path_instance_or_address_of_the_fixture_planted_in_each_field_planted_names_is_in_the_document_or_the_text(self):
         for field in PLANTED:
             with self.subTest(field):
                 fixture = self.staffed(field.replace(" ", "-"))
@@ -1774,7 +1865,7 @@ class PrivacyTest(OutputCase):
 
 
 class PrivateValuesTest(OutputCase):
-    def test_privacy_of_knows_the_ids_request_names_instances_addresses_and_directories_the_run_read_and_no_provider_name_of_the_table(self):
+    def test_privacy_of_knows_the_ids_request_names_instances_addresses_and_absolute_paths_the_run_read_and_no_provider_name_of_the_table_or_relative_path(self):
         fixture = self.fixture
         fixture.meta["previousThread"] = "mcp:threadmarker-previous"
         fixture.coordinator()
@@ -1788,9 +1879,27 @@ class PrivateValuesTest(OutputCase):
         store, t3, _ = fixture.write().read()
         known = {value for found in MOD["privacy_of"](store, t3, (fixture.store, "relative")).index.values() for value in found}
         expected = {COORDINATOR, "mcp:threadmarker-previous", worker(1), worker(2), child, unquote(child), node, REQUEST, "kit-d7-recorded-task", INSTANCE, "acct-homemarker-driver",
-                    ADDRESS, "second@example.test", fixture.meta["projectRoot"], str(fixture.store), os.path.realpath(fixture.store), "relative", os.path.realpath("relative"),
+                    ADDRESS, "second@example.test", fixture.meta["projectRoot"], str(fixture.store), os.path.realpath(fixture.store), os.path.abspath("relative"), os.path.realpath("relative"),
                     other, unquote(other), "other-request", "mcp:threadmarker-other-project", fixture.delegations[-1][0]}
         self.assertEqual(known, expected)
+
+    def test_relative_at_and_out_leave_their_own_words_in_the_text_form_and_the_same_paths_written_in_full_are_removed(self):
+        fixture = self.fixture
+        fixture.store = fixture.store.with_name("queue")
+        fixture.meta["restaurant"] = "queue"
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Fix the queue report", pr="https://example.test/o/queue/pull/7")
+        fixture.unit("D8", "in-progress", f"Read {fixture.store} and {fixture.store.parent / 'report'} first")
+        fixture.write()
+        self.out("--text", "--out", "report", at="queue", cwd=fixture.store.parent)
+        self.assertEqual((fixture.store.parent / "report").read_text().split("\n"), [
+            "Agent activity for queue, last 3h",
+            "0 running now, 0 agents, 0 sub-agents, 0 failed",
+            "Work items",
+            "  D7   working   Fix the queue report   no activity in this window   https://example.test/o/queue/pull/7",
+            "  D8   working   Read and first   no activity in this window",
+            "Notes",
+            "  No agent or sub-agent of this coordinator ran in this window."])
 
     def test_document_and_text_keep_the_plain_model_and_the_pull_request_address_and_count_a_refused_link(self):
         fixture = one_running(self.fixture)
@@ -1866,7 +1975,7 @@ class OutTest(OutputCase):
 
 
 class RowShapeTest(OutputCase):
-    """Rows are, in order: the coordinator, a worker, and the worker's delegated child."""
+    """The fixture's rows are the coordinator, then a worker, then the worker's delegated child."""
 
     def staffed(self, name, spoil=lambda fixture: None):
         fixture = self.fixture = Fixture(self.root / name)
@@ -1906,7 +2015,7 @@ class RowShapeTest(OutputCase):
                 data = data_of(self.document(clock=fixture.now))
                 self.assertEqual((data["n"], data["G"][0][1][0][5:7]), ([0, 1, 1, 0], ["30m", [750, 167, 0]]))
 
-    def test_value_that_is_not_text_or_an_empty_id_or_status_exits_3_and_names_the_column(self):
+    def test_value_that_is_not_text_or_an_empty_id_status_or_provider_exits_3_and_names_the_column(self):
         threads, runs, subagents = "orchestration_v2_projection_threads", "orchestration_v2_projection_runs", "orchestration_v2_projection_subagents"
         cases = (("threads", 2, 1, 42, f"{threads}.title is not text"), ("threads", 2, 1, None, f"{threads}.title is not text"), ("threads", 2, 1, b"part", f"{threads}.title is not text"),
                  ("threads", 1, 2, 42, f"{threads}.default_provider is not text"), ("threads", 1, 2, None, f"{threads}.default_provider is not text"),
@@ -1956,8 +2065,8 @@ class RowShapeTest(OutputCase):
         fixture = self.staffed("pending", pending)
         data = data_of(self.document(clock=fixture.now))
         self.assertEqual((data["n"], [line[:2] for line in data["G"][0][1]]), ([0, 1, 1, 0], [[0, "worker"], [1, "part"]]))
-        self.assertEqual(data["N"], ["T3 lists 2 sub-agents of threads on this page with no thread or no start time. They are not shown."])
-        self.assertIn("  T3 lists 2 sub-agents of threads on this page with no thread or no start time. They are not shown.", self.out("--text", clock=fixture.now).split("\n"))
+        self.assertEqual(data["N"], ["T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown."])
+        self.assertIn("  T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown.", self.out("--text", clock=fixture.now).split("\n"))
 
     def test_sqlite_error_that_quotes_a_value_exits_3_without_the_value(self):
         fixture = self.staffed("undecodable")

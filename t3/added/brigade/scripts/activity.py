@@ -4,15 +4,15 @@
 Opens the coordinator's store and T3 Code's state database read-only.
 Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 
-Every string the page takes from the store or from T3 is made by one filter, the class Privacy.
+Every string the page takes from the store or from T3 passes one filter, the class Privacy.
 From each string the filter removes the exact text of each value below that is 4 characters or longer, as written and percent-decoded once and twice.
 The values are the thread ids, sub-agent ids, and request names in the store and in T3's turn and sub-agent rows.
 They are also the provider names and instance ids of the page's threads that are not one of this tool's provider names.
 They are also each run of characters around an at sign in a title, a summary, a work item id, a pull request value, a model name, or the store's name.
-They are also the paths of the store, the project it records, T3 Code's base directory and database, the home directory, and the --out file, each as given and with symbolic links followed.
+They are also the paths of the store, the project it records, T3 Code's base directory and database, the home directory, and the --out file, each as an absolute path, with symbolic links followed, and as given when that is absolute.
 From the first line of a title, a request name's words, a summary, a work item id, and the store's name the filter then drops each word that holds a slash, a backslash, a percent escape, a leading tilde, a colon or an at sign between two characters, a UUID, 6 or more digits, 7 or more hexadecimal characters with a digit and no letter or digit beside them, or an underscore before 6 or more letters and digits that hold a lower-case letter and a digit or an upper-case letter.
 A model name is printed when it is at most 48 characters of lower-case letters and digits joined by single dots and hyphens, starts with a letter, and holds none of those values and none of those id shapes but 8 digits that start with 20. One leading provider name and slash is dropped first. Any other model reads `other model`.
-A pull request link is printed only as https://host/owner/repository/pull/number, when the host, the owner, and the repository hold nothing the filter removes. A work item on the page with any other value has no link and is counted in a note.
+A pull request link is printed only as https://host/owner/repository/pull/number, when the host, the owner, and the repository hold nothing the filter removes. A work item on the page with any other value that is not blank has no link and is counted in a note.
 A label can hold the words of a request name.
 """
 
@@ -75,6 +75,9 @@ STORE_COLUMNS = {
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
 }
 TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log"}
+# The forms read_store accepts at these keys of the store's record.
+# Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
+RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
 
 STATE_WORDS = {
     "in-progress": ("working", "go"),
@@ -393,6 +396,20 @@ def malformed(table, number):
     return ActivityError(f"line {number} of the store's {TABLE_WORDS[table]} is malformed; fix or remove it")
 
 
+def record_text(meta, key):
+    """The string the store's record holds at key, or an empty string when the key is absent or null."""
+    value = meta.get(key)
+    if value is None:
+        return ""
+    try:
+        if not isinstance(value, str) or "\x00" in value:
+            raise ValueError
+        value.encode()
+    except ValueError:
+        raise ActivityError(f"the store's coordinator record holds a {RECORD_WORDS[key]} this tool cannot read; restore it and run this again") from None
+    return value
+
+
 def read_store(directory):
     try:
         try:
@@ -417,9 +434,8 @@ def read_store(directory):
         row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"])
         for row in units
     }
-    name = meta.get("restaurant") if isinstance(meta.get("restaurant"), str) else ""
-    root = meta["projectRoot"] if isinstance(meta.get("projectRoot"), str) else ""
-    coordinators = tuple(value for value in (meta.get("thread"), meta.get("previousThread")) if isinstance(value, str) and value.strip())
+    name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
+    coordinators = tuple(value for value in (record_text(meta, "thread"), record_text(meta, "previousThread")) if value.strip())
     return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root)
 
 
@@ -437,7 +453,11 @@ def t3_database(flag, environ, home):
     else:
         base = Path(chosen) if chosen else home / ".t3"
     for state in ("userdata",) if chosen else ("userdata", "dev"):
-        if (base / state / T3_DATABASE).is_file():
+        try:
+            found = (base / state / T3_DATABASE).is_file()
+        except OSError as error:
+            raise SourceError(f"cannot look for T3's database under {source} ({error.strerror}); check its permissions and run this again") from None
+        if found:
             return base / state / T3_DATABASE
     raise SourceError(f"no T3 Code database under {source}; pass --t3-home <T3's base directory> or set T3CODE_HOME")
 
@@ -716,7 +736,9 @@ def privacy_of(store, t3, paths=()):
     for unit in store.units:
         ids.update((unit.worker, unit.task, *unit.earlier_workers))
     names = {request_name(value) or "" for value in ids}
-    places = {form for path in (store.project_root, *map(str, paths)) if path for form in (path, os.path.realpath(path))}
+    # A relative path as given can be one ordinary word, which a page may hold for another reason.
+    places = {form for path in (store.project_root, *map(str, paths)) if path
+              for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
     read = [store.name, *(text for unit in store.units for text in (unit.id, unit.summary, unit.pr)),
             *(text for agent in t3.agents.values() for text in (agent.title, agent.model))]
     return Privacy({*ids, *names, *places, *(address for text in read for address in EMAIL.findall(text))})
@@ -876,7 +898,7 @@ def item_of(unit, privacy):
 
 
 def build_page(store, t3, window, privacy):
-    """Each string of the page that comes from the store or from T3 is made by privacy.text, privacy.model, or privacy.link.
+    """Each string of the page that comes from the store or from T3 passes privacy.text, privacy.model, or privacy.link.
     The other strings are the constants of this file and numbers.
     """
     def row(agent, depth, label):
@@ -1160,8 +1182,8 @@ def notes(page):
         lines.append(say(links.count(REFUSED), "1 pull request link is not shown. It is not an https://host/owner/repository/pull/number address, or it holds text this page removes.",
                          "{n} pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."))
     if hidden.unstarted:
-        lines.append(say(hidden.unstarted, "T3 lists 1 sub-agent of a thread on this page with no thread or no start time. It is not shown.",
-                         "T3 lists {n} sub-agents of threads on this page with no thread or no start time. They are not shown."))
+        lines.append(say(hidden.unstarted, "T3 lists 1 sub-agent with no thread or no start time under a thread this page read. It is not shown.",
+                         "T3 lists {n} sub-agents with no thread or no start time under threads this page read. They are not shown."))
     if hidden.unknown_status:
         lines.append(say(hidden.unknown_status, "T3 gave 1 status this tool reads as unknown.", "T3 gave {n} statuses this tool reads as unknown."))
     if hidden.by_request_name:
