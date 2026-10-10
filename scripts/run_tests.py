@@ -21,7 +21,7 @@ returns no test, the report ends as `python3 -m unittest discover` ends on the s
 RAN from Python 3.12 on and OK before it.
 
 The runner kills the process group of a child when the child ends or exceeds the limit. On Linux with /proc
-it asks to become the child subreaper, so that a process orphaned below it becomes its child. Where that
+it tries to become the child subreaper, so that a process orphaned below it becomes its child. Where that
 succeeds, before the run ends, it sends SIGKILL to every process below it in /proc's parent links, and
 repeats until none is left or SWEEP_SECONDS pass. That reaches a process that left its group for a new
 session. The runner names any process still there after SWEEP_SECONDS. It leaves alone the children it had
@@ -260,7 +260,7 @@ class Channel:
         self.offset = 0
         self.lines = 0
         self.events: list[dict] = []
-        self.errors: list[str] = []   # each thing wrong with the file, as text for the report
+        self.errors: list[str] = []   # the report's text for lines that are not events, and for a file that cannot be read
         self.unquoted = 0             # lines that are not events, past the QUOTED_LINES that errors quotes
 
     def read(self, last: bool = False) -> bool:
@@ -405,7 +405,7 @@ def children_by_parent() -> dict[int, list[int]]:
                 # The command name sits in parentheses and may itself hold spaces and parentheses.
                 parent = int(stat[stat.rindex(b")") + 2:].split()[1])
             except (OSError, ValueError, IndexError):
-                continue   # it ended during the walk, or /proc does not show it to this user
+                continue   # /proc gives no parent for it. It ended during the walk, or /proc hides it from this user.
             children.setdefault(parent, []).append(int(entry))
     return children
 
