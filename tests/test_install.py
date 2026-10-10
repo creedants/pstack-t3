@@ -871,6 +871,79 @@ def fired(home):
     return int((home / "fired").read_text())
 
 
+def raising(call):
+    """Hook code that makes the installer's own `call` raise an I/O error."""
+    return (
+        "import errno\n"
+        "def boom(*args, **kwargs):\n"
+        f"    raise OSError(errno.EIO, 'injected {call} failure')\n"
+        f"module.{call} = boom\n"
+    )
+
+
+def injected(call):
+    """What a `raising` run prints for the error it raised."""
+    return f"[Errno {errno.EIO}] injected {call} failure"
+
+
+SCRAP_LEFT = "an unfinished copy or an already restored backup; delete it by hand"
+
+# Hook code that fails the delete of the swarm entry an uninstall moved aside.
+UNLINK_ASIDE = (
+    "import errno\n"
+    "unlinking = os.unlink\n"
+    "def boom(path, *args, **kwargs):\n"
+    "    if '.pstack-t3-' in str(path) and str(path).endswith('/swarm'):\n"
+    "        raise OSError(errno.EIO, 'injected unlink failure')\n"
+    "    return unlinking(path, *args, **kwargs)\n"
+    "os.unlink = boom\n"
+)
+
+# Hook code that ends the run, as a kill would, once a directory backup has moved aside.
+KILLED_ASIDE = "module.place_proven = lambda *args: os._exit(9)\n"
+
+# Hook code that takes away the hard link from a held descriptor, as on a platform without /proc.
+NO_PROC = (
+    "import errno\n"
+    "linking = os.link\n"
+    "def no_proc(source, *args, **kwargs):\n"
+    "    if str(source).startswith('/proc/'):\n"
+    "        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), source)\n"
+    "    return linking(source, *args, **kwargs)\n"
+    "os.link = no_proc\n"
+)
+
+
+def unlock_failure(state, count):
+    """Hook code that fails the unlock of the state lock, then writes to `count` how many descriptors the run still has open on `state`."""
+    return (
+        "import fcntl\n"
+        "locking = fcntl.flock\n"
+        "def flock(fd, operation):\n"
+        "    if operation == fcntl.LOCK_UN:\n"
+        "        raise OSError(5, 'injected unlock failure')\n"
+        "    return locking(fd, operation)\n"
+        "fcntl.flock = flock\n"
+        "def still_open():\n"
+        "    found = 0\n"
+        "    for fd in os.listdir('/proc/self/fd'):\n"
+        "        try:\n"
+        f"            found += os.readlink(f'/proc/self/fd/{{fd}}') == {str(state)!r}\n"
+        "        except OSError:\n"
+        "            pass\n"
+        "    return found\n"
+        "running = module.main\n"
+        "def main(*args):\n"
+        "    try:\n"
+        "        return running(*args)\n"
+        "    except OSError as error:\n"
+        "        print(f'unlock raised: {error}')\n"
+        f"        Path({str(count)!r}).write_text(str(still_open()))\n"
+        "        return 0\n"
+        "module.main = main\n"
+    )
+
+
 class OwnershipTest(unittest.TestCase):
     def setUp(self):
         self.use_fresh()
@@ -1379,6 +1452,27 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(snapshot(state_dir(self.home)), before)
         self.assert_grok_text(a)
         self.assertFalse((project / ".pstack").exists())
+
+    def test_project_scope_leaves_holders_in_a_directory_shared_with_user_scope(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        shared = self.home / ".grok" / "skills"
+        project = self.home / "project"
+        (project / ".grok").mkdir(parents=True)
+        os.symlink(shared, project / ".grok" / "skills")
+        empty = shared / ".pstack-t3-live0000"
+        empty.mkdir()
+        stray = shared / ".pstack-t3-other000" / "notes"
+        stray.parent.mkdir()
+        stray.write_bytes(b"stray\x00\xfd")
+        for command in ((), ("uninstall",)):
+            with self.subTest(command=command):
+                result = run(self.home, a, "--project", str(project), "--harness", "grok", *command)
+                self.ok(result)
+                self.assertNotIn(".pstack-t3-", result.stdout + result.stderr)
+                self.assertEqual(os.listdir(empty), [])
+                self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")
+                self.assertFalse((project / ".pstack").exists())
 
     def share_cursor_with_agents(self):
         agents = self.home / ".agents" / "skills"
@@ -2728,3 +2822,355 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(read_legacy(self.home)["backups"], [row for row in rows if row["backup"] == str(backup)])
         self.assert_claims(a, [str(swarm)])
         self.assert_grok_text(b)
+
+    def holders(self):
+        """Every hidden directory an installer made to move an entry through, anywhere under the home."""
+        return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
+
+    def strand_backup(self, hook, kind="directory"):
+        """Checkout a's uninstall, stopped by `hook` with the backup of a displaced swarm left aside."""
+        a, swarm, rows = self.displaced_by(kind)
+        backup = Path(rows[0]["backup"])
+        raced = uninstall_hooked(self.home, a, hook)
+        aside = set_aside(backup)
+        self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
+        self.assert_displaced(aside[0], kind)
+        return a, swarm, backup, raced, aside[0]
+
+    def strand_link(self):
+        """Checkout a's uninstall, stopped with its own swarm link left aside and the claim still recorded."""
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, UNLINK_ASIDE)
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
+        self.assertEqual(os.readlink(aside[0]), str(a / "skills" / "swarm"))
+        self.assert_claims(a, [str(swarm)])
+        return a, swarm, raced, aside[0]
+
+    def strand_copied_backup(self):
+        """Checkout a's uninstall across filesystems, stopped after the copy landed at swarm and before the backup was deleted."""
+        a, swarm, rows = self.displaced_by("directory")
+        backup = Path(rows[0]["backup"])
+        hook = cross_device(state_dir(self.home) / "backups", swarm) + raising("discard")
+        raced = uninstall_hooked(self.home, a, hook)
+        self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+        aside = set_aside(backup)
+        self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
+        self.assert_displaced(aside[0], "directory")
+        self.assert_displaced(swarm, "directory")
+        return a, swarm, backup, raced, aside[0]
+
+    def plant(self, beside, holder=".pstack-t3-unproven"):
+        """A file in a holder beside `beside` that no installer put there."""
+        stray = beside.parent / holder / beside.name
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"stray\x00\xfd")
+        return stray
+
+    def test_a_restore_that_raises_names_where_the_backup_is_kept(self):
+        with self.subTest(stage="directory moved aside"):
+            a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"))
+            self.ok(
+                raced,
+                "removed 3 links, restored 0 entries",
+                f"skipped restore {backup}: {injected('same_entry')}; it is kept at {aside}",
+            )
+            self.assertFalse(os.path.lexists(swarm))
+        with self.subTest(stage="backup already linked to its path"):
+            self.use_fresh()
+            a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"), kind="file")
+            self.ok(
+                raced,
+                "removed 3 links, restored 0 entries",
+                f"skipped restore {backup}: {injected('same_entry')}; it is kept at {aside}",
+            )
+            self.assert_displaced(swarm, "file")
+
+    def test_a_put_back_that_raises_names_where_the_entry_is_kept(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        raced = uninstall_hooked(self.home, a, put_back_race(swarm, "link") + raising("put_back"))
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: {injected('put_back')}; it is kept at {aside[0]}",
+        )
+        self.assertEqual(os.readlink(aside[0]), "/foreign/swarm")
+        self.assertFalse(os.path.lexists(swarm))
+
+    def test_a_discard_that_raises_after_a_copy_landed_names_where_the_backup_is_kept(self):
+        a, swarm, backup, raced, aside = self.strand_copied_backup()
+        self.ok(
+            raced,
+            "removed 3 links, restored 0 entries",
+            f"skipped restore {backup}: {injected('discard')}; it is kept at {aside}",
+        )
+
+    def test_a_link_removal_that_raises_names_where_the_link_is_kept(self):
+        a, swarm, raced, aside = self.strand_link()
+        self.ok(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: {injected('unlink')}; it is kept at {aside}",
+        )
+
+    def test_a_later_uninstall_restores_a_backup_left_in_a_holder(self):
+        for stopped, hook in (("error", raising("same_entry")), ("kill", KILLED_ASIDE)):
+            with self.subTest(stopped=stopped):
+                self.use_fresh()
+                a, swarm, backup, raced, aside = self.strand_backup(hook)
+                self.assertEqual(raced.returncode, 9 if stopped == "kill" else 0, raced.stdout + raced.stderr)
+                self.ok(
+                    run(self.home, a, "--harness", "grok", "uninstall"),
+                    f"recovered {backup} from {aside}",
+                    "removed 0 links, restored 1 entries",
+                )
+                self.assert_displaced(swarm, "directory")
+                self.assertFalse(os.path.lexists(backup))
+                self.assert_empty_records()
+                self.assertEqual(self.holders(), [])
+
+    def test_a_later_install_returns_a_backup_left_in_a_holder_before_it_links(self):
+        a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"))
+        self.ok(
+            run(self.home, a, "--harness", "grok"),
+            f"recovered {backup} from {aside}",
+            "linked 3 skills into grok",
+        )
+        self.assert_displaced(backup, "directory")
+        self.assert_grok_text(a)
+        self.assertEqual(self.holders(), [])
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+        self.assert_displaced(swarm, "directory")
+        self.assert_empty_records()
+
+    def test_a_later_uninstall_returns_this_checkouts_link_left_in_a_holder(self):
+        a, swarm, raced, aside = self.strand_link()
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            f"recovered {swarm} from {aside}",
+            "removed 1 links, restored 0 entries",
+        )
+        self.assert_gone()
+        self.assert_empty_records()
+        self.assertEqual(self.holders(), [])
+
+    def test_a_later_install_returns_this_checkouts_link_left_in_a_holder(self):
+        a, swarm, raced, aside = self.strand_link()
+        self.ok(
+            run(self.home, a, "--harness", "grok"),
+            f"recovered {swarm} from {aside}",
+            "linked 2 skills into grok",
+        )
+        self.assert_grok_text(a)
+        self.assert_claims(a, grok_paths(self.home))
+        self.assertEqual([row["path"] for row in read_legacy(self.home)["links"]].count(str(swarm)), 1)
+        self.assertEqual(self.holders(), [])
+
+    def test_an_entry_no_record_proves_is_left_and_reported_on_every_run(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = Path(rows[0]["backup"])
+        beside_skill = self.plant(swarm.parent / "notes")
+        beside_backup = self.plant(backup.parent / "notes")
+        lines = (
+            f"left {beside_skill}: it is not a link this checkout recorded at {swarm.parent / 'notes'}",
+            f"left {beside_backup}: no backup record names {backup.parent / 'notes'}",
+        )
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", *lines)
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", *lines)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries", *lines)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries", *lines)
+        self.assertEqual(beside_skill.read_bytes(), b"stray\x00\xfd")
+        self.assertEqual(beside_backup.read_bytes(), b"stray\x00\xfd")
+        self.assertFalse(os.path.lexists(swarm.parent / "notes"))
+        self.assertFalse(os.path.lexists(backup.parent / "notes"))
+
+    def test_an_entry_whose_recorded_path_is_taken_is_never_placed_over_the_occupant(self):
+        a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"))
+        backup.write_bytes(b"occupant\x00\xff")
+        line = f"left {aside}: {backup} is the recorded backup of {swarm} and another entry is there now"
+        self.ok(run(self.home, a, "--harness", "grok"), line, "linked 3 skills into grok")
+        self.ok(run(self.home, a, "--harness", "grok"), line, "linked 0 skills into nothing (already installed)")
+        self.assert_displaced(aside, "directory")
+        self.assertEqual(backup.read_bytes(), b"occupant\x00\xff")
+
+    def test_empty_holders_are_removed_without_a_line(self):
+        a, swarm, rows = self.displaced_by("file")
+        backup = Path(rows[0]["backup"])
+        for parent in (swarm.parent, backup.parent):
+            (parent / ".pstack-t3-empty000").mkdir()
+            (parent / ".pstack-t3-scrap-empty000").mkdir()
+        result = run(self.home, a, "--harness", "grok")
+        self.ok(result)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["linked 0 skills into nothing (already installed)", f"manifest: {legacy_file(self.home)}"],
+        )
+        self.assertEqual(self.holders(), [])
+        self.assert_displaced(backup, "file")
+        self.assert_grok_text(a)
+
+    def test_a_copy_in_a_scrap_holder_is_never_placed(self):
+        for copy in ("directory", "link"):
+            with self.subTest(copy=copy):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by("directory")
+                os.unlink(swarm)
+                scrap = swarm.parent / ".pstack-t3-scrap-partial0" / "swarm"
+                scrap.parent.mkdir()
+                if copy == "directory":
+                    scrap.mkdir()
+                    (scrap / "SKILL.md").write_bytes(b"partial\x00")
+                else:
+                    os.symlink(a / "skills" / "swarm", scrap)
+                self.assert_claims(a, grok_paths(self.home))
+                self.assertEqual(read_legacy(self.home)["backups"], rows)
+                line = f"left {scrap}: {SCRAP_LEFT}"
+                self.ok(run(self.home, a, "--harness", "grok"), line, "linked 1 skills into grok")
+                self.assert_grok_text(a)
+                self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 3 links, restored 1 entries")
+                self.assert_displaced(swarm, "directory")
+                if copy == "directory":
+                    self.assertEqual(os.listdir(scrap), ["SKILL.md"])
+                    self.assertEqual((scrap / "SKILL.md").read_bytes(), b"partial\x00")
+                else:
+                    self.assertEqual(os.readlink(scrap), str(a / "skills" / "swarm"))
+
+    def test_what_is_left_of_a_copied_backup_is_never_returned_to_the_backups_path(self):
+        a, swarm, backup, raced, aside = self.strand_copied_backup()
+        line = f"left {aside}: {SCRAP_LEFT}"
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 0 links, restored 0 entries")
+        self.assertFalse(os.path.lexists(backup))
+        self.assert_displaced(aside, "directory")
+        self.assert_displaced(swarm, "directory")
+        swarm.rename(swarm.parent / "kept")
+        self.ok(run(self.home, a, "--harness", "grok"), line, "linked 3 skills into grok")
+        self.assertFalse(os.path.lexists(backup))
+        self.assert_displaced(aside, "directory")
+        self.assert_grok_text(a)
+
+    def test_a_second_name_of_a_backup_left_in_a_holder_is_removed(self):
+        a, swarm, backup, raced, aside = self.strand_backup(NO_PROC + raising("same_entry"), kind="file")
+        self.assertTrue(os.path.samefile(aside, backup))
+        rows = read_legacy(self.home)["backups"]
+        self.ok(
+            run(self.home, a, "--harness", "grok"),
+            f"removed {aside}: it was a second name for {backup}",
+            "linked 3 skills into grok",
+        )
+        self.assert_displaced(backup, "file")
+        self.assertEqual(backup.stat().st_nlink, 1)
+        self.assertEqual(read_legacy(self.home)["backups"], rows)
+        self.assertEqual(self.holders(), [])
+
+    def test_a_second_name_of_a_restored_entry_left_in_a_holder_is_removed_with_its_row(self):
+        a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry"), kind="file")
+        self.assertTrue(os.path.samefile(aside, swarm))
+        self.assertEqual([row["backup"] for row in read_legacy(self.home)["backups"]], [str(backup)])
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            f"removed {aside}: it was a second name for {swarm}",
+            "removed 0 links, restored 0 entries",
+        )
+        self.assert_displaced(swarm, "file")
+        self.assertEqual(swarm.stat().st_nlink, 1)
+        self.assert_empty_records()
+        self.assertEqual(self.holders(), [])
+
+    def test_a_foreign_entry_in_a_holder_beside_a_path_this_checkout_claims_is_left(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        self.assert_claims(a, grok_paths(self.home))
+        stray = self.plant(swarm)
+        line = f"left {stray}: it is not a link this checkout recorded at {swarm}"
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", line)
+        self.assertEqual(os.readlink(swarm), str(a / "skills" / "swarm"))
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries", line)
+        self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")
+        self.assertFalse(os.path.lexists(swarm))
+
+    def test_this_checkouts_link_in_a_holder_whose_path_is_taken_is_removed(self):
+        a, swarm, raced, aside = self.strand_link()
+        swarm.write_bytes(b"occupant\x00\xff")
+        self.ok(
+            run(self.home, a, "--harness", "grok", "uninstall"),
+            f"removed {aside}: it is this checkout's link and {swarm} is taken",
+        )
+        self.assertFalse(swarm.is_symlink())
+        self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+        self.assertEqual(self.holders(), [])
+
+    def test_a_link_in_a_holder_that_no_record_of_this_checkout_names_is_left(self):
+        a = make_checkout(self.home, "a")
+        swarm = provider_link(self.home, "grok", "swarm")
+        aside = swarm.parent / ".pstack-t3-unnamed0" / "swarm"
+        aside.parent.mkdir(parents=True)
+        os.symlink(a / "skills" / "swarm", aside)
+        line = f"left {aside}: it is not a link this checkout recorded at {swarm}"
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 0 links, restored 0 entries")
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 0 links, restored 0 entries")
+        self.assertEqual(os.readlink(aside), str(a / "skills" / "swarm"))
+        self.assertFalse(os.path.lexists(swarm))
+
+    def test_a_dry_run_reports_holders_and_changes_nothing(self):
+        a, swarm, raced, aside = self.strand_link()
+        stray = self.plant(swarm.parent / "notes")
+        before = snapshot(self.home)
+        lines = (
+            f"would recover {swarm} from {aside}",
+            f"left {stray}: it is not a link this checkout recorded at {swarm.parent / 'notes'}",
+        )
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"), "would remove 0 links, would restore 0 entries", *lines)
+        self.ok(run(self.home, a, "--harness", "grok", "--dry-run"), "3 links planned", *lines)
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_a_dry_run_that_finds_a_holder_creates_no_state_directory(self):
+        a = make_checkout(self.home, "a")
+        stray = self.plant(provider_link(self.home, "grok", "notes"))
+        line = f"left {stray}: it is not a link this checkout recorded at {provider_link(self.home, 'grok', 'notes')}"
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"), line)
+        self.ok(run(self.home, a, "--harness", "grok", "--dry-run"), line)
+        self.assertFalse(state_dir(self.home).exists())
+        self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")
+
+    def test_a_run_with_no_holders_and_no_steps_creates_no_state_directory(self):
+        a = make_checkout(self.home, "a")
+        provider_link(self.home, "grok", "swarm").parent.mkdir(parents=True)
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 0 entries")
+        self.assertFalse(state_dir(self.home).exists())
+
+    def test_the_state_lock_descriptor_is_closed_when_the_unlock_raises(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        count = self.home / "descriptors"
+        raced = uninstall_hooked(self.home, a, unlock_failure(state_dir(self.home), count))
+        self.ok(raced, "removed 3 links, restored 0 entries", f"unlock raised: [Errno {errno.EIO}] injected unlock failure")
+        self.assertEqual(count.read_text(), "0")
+
+    def test_an_older_uninstall_restores_a_backup_the_new_installer_returned(self):
+        a, swarm, backup, raced, aside = self.strand_backup(KILLED_ASIDE)
+        b = make_checkout(self.home, "b", old=True)
+        self.ok(
+            run(self.home, a, "--harness", "codex", "uninstall"),
+            f"recovered {backup} from {aside}",
+            "removed 0 links, restored 0 entries",
+        )
+        self.assert_displaced(backup, "directory")
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
+        self.assert_displaced(swarm, "directory")
+        self.assertFalse(os.path.lexists(backup))
+
+    def test_a_holder_beside_a_skills_directory_does_not_stop_an_older_installer(self):
+        b = make_checkout(self.home, "b", old=True)
+        stray = self.plant(provider_link(self.home, "grok", "swarm"))
+        self.ok(run(self.home, b, "--harness", "grok"), "linked 3 skills into grok")
+        self.assert_grok_text(b)
+        self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries")
+        self.assert_gone()
+        self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")

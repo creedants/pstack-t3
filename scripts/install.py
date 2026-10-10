@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -672,51 +673,92 @@ def discard(path):
         os.unlink(path)
 
 
+HOLDER = ".pstack-t3-"
+SCRAP = ".pstack-t3-scrap-"
+SCRAP_LEFT = "an unfinished copy or an already restored backup; delete it by hand"
+
+
+def listing(directory):
+    """The names in `directory`, sorted. A directory that is missing or cannot be read has none."""
+    try:
+        return sorted(os.listdir(directory))
+    except OSError:
+        return []
+
+
+class Stranded(OSError):
+    """An OSError that left entries in a holder. Its text is the original error plus where they are kept."""
+
+    def __init__(self, error, kept):
+        super().__init__(error.errno, error.strerror)
+        self.error = error
+        self.kept = tuple(kept)
+
+    def __str__(self):
+        return f"{self.error}; it is kept at {', '.join(self.kept)}"
+
+
+class Holder:
+    """A private directory beside `home`. `aside` is the one name an entry takes inside it.
+
+    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. Nothing in a SCRAP directory was:
+    it holds a copy being built, or a backup whose copy is already in place.
+    As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
+    leaves while entries are inside becomes a `Stranded` that names them.
+    """
+
+    def __init__(self, home, prefix=HOLDER):
+        parent, name = os.path.split(home)
+        # A directory this call just created holds nothing yet, so a move into it cannot land on an existing entry.
+        # mkdtemp ends the name with characters from [a-z0-9_], so no HOLDER name starts with SCRAP.
+        self.directory = tempfile.mkdtemp(prefix=prefix, dir=parent)
+        self.home = home
+        self.aside = os.path.join(self.directory, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, error, trace):
+        left = tuple(os.path.join(self.directory, name) for name in listing(self.directory))
+        if not left:
+            with suppress(OSError):
+                os.rmdir(self.directory)
+        elif isinstance(error, Stranded):
+            error.kept += left
+        elif isinstance(error, OSError):
+            raise Stranded(error, left) from error
+        return False
+
+
 def place_copy(source, path):
     """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
-    parent, name = os.path.split(path)
-    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
-    copy = os.path.join(holder, name)
-    try:
-        if os.path.isdir(source) and not os.path.islink(source):
-            shutil.copytree(source, copy, symlinks=True)
-        else:
-            shutil.copy2(source, copy, follow_symlinks=False)
-        return place(copy, path)
-    finally:
-        # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
-        if os.path.lexists(copy):
-            discard(copy)
-        # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
-        with suppress(OSError):
-            os.rmdir(holder)
+    with Holder(path, SCRAP) as holder:
+        copy = holder.aside
+        try:
+            if os.path.isdir(source) and not os.path.islink(source):
+                shutil.copytree(source, copy, symlinks=True)
+            else:
+                shutil.copy2(source, copy, follow_symlinks=False)
+            return place(copy, path)
+        finally:
+            # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
+            if os.path.lexists(copy):
+                discard(copy)
 
 
 def remove_link(path, root, original, noun):
     """Move the link at `path` aside, then delete it only if it is this checkout's link for `original`. Return why it was kept."""
-    parent, name = os.path.split(path)
-    # A directory this call just created holds nothing yet, so the move cannot land on an existing entry.
-    holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
-    aside = os.path.join(holder, name)
-    try:
+    with Holder(path) as holder:
+        aside = holder.aside
         # Another installer can replace the link after the plan proved it; the rename takes whatever is there now.
         os.rename(path, aside)
-    except OSError:
-        with suppress(OSError):
-            os.rmdir(holder)
-        raise
-    if proves(root, aside, original):
-        os.unlink(aside)
-        reason = None
-    else:
+        if proves(root, aside, original):
+            os.unlink(aside)
+            return None
         reason = put_back(aside, path)
         if reason is not None:
             return f"the {noun} no longer matches the recorded checkout and {reason}; it is kept at {aside}"
-        reason = f"the {noun} no longer matches the recorded checkout"
-    # rmdir refuses a directory that is not empty, so an entry that arrived in it stays.
-    with suppress(OSError):
-        os.rmdir(holder)
-    return reason
+        return f"the {noun} no longer matches the recorded checkout"
 
 
 CHANGED = "the backup is no longer the entry uninstall read"
@@ -770,8 +812,19 @@ def place_proven(aside, path):
         # A copy that failed left nothing at the path, so the entry goes back like one that was refused.
         return str(error)
     if code == 0:
-        discard(aside)
+        retire(aside)
     return refusal(path, code)
+
+
+def retire(aside):
+    """Delete the entry at `aside`, whose full copy is now in place.
+
+    It moves into a SCRAP directory beside its holder first, so what a stopped removal leaves is never taken for a backup.
+    """
+    holder, name = os.path.split(aside)
+    with Holder(os.path.join(os.path.dirname(holder), name), SCRAP) as scrap:
+        os.rename(aside, scrap.aside)
+        discard(scrap.aside)
 
 
 def restore_aside(backup, aside, path, fd):
@@ -817,22 +870,146 @@ def restore_backup(backup, path, held):
     code = link_held(held.fd, path)
     if code == errno.EEXIST:
         return refusal(path, code)
-    parent, name = os.path.split(backup)
     try:
-        holder = tempfile.mkdtemp(prefix=".pstack-t3-", dir=parent)
+        holder = Holder(backup)
     except FileNotFoundError:
         # The backup left with its directory, so no name is left to clean up or to restore from.
         return None if code == 0 else CHANGED
-    aside = os.path.join(holder, name)
-    try:
+    with holder:
         if code == 0:
-            drop_backup(backup, aside, path, held.fd)
+            drop_backup(backup, holder.aside, path, held.fd)
             return None
-        return restore_aside(backup, aside, path, held.fd)
-    finally:
-        # rmdir refuses a directory that is not empty, so an entry kept in it stays.
-        with suppress(OSError):
-            os.rmdir(holder)
+        return restore_aside(backup, holder.aside, path, held.fd)
+
+
+@dataclass(frozen=True)
+class Stray:
+    """One thing found in a holder directory, and the one action the records allow.
+
+    `kind` is "empty" for a holder with nothing in it, where `path` is the holder. Otherwise `path` is the entry, and
+    `kind` is "home" to return it to `home`, "spare" to remove a second name of the entry at `twin`, "own" to remove
+    this checkout's link whose `home` is taken, or "left" for an entry that stays because of `why`.
+    `drop` is the backup path of a row that a "spare" finishes.
+    """
+    kind: str
+    path: str
+    home: str = ""
+    twin: str = ""
+    drop: str = ""
+    why: str = ""
+
+
+def holder_parents(scope, user, state):
+    """Every directory a holder can sit in, as ("skills" or "backups", directory). A directory that is missing yields nothing.
+
+    The skills directories are the ones `layout` accepts, so a directory another scope manages is never swept.
+    """
+    groups, _refusals = layout(scope, user, HARNESSES)
+    for directory, _harnesses in groups:
+        yield "skills", directory
+    backups = os.path.join(state, "backups")
+    for stamp in listing(backups):
+        for harness in listing(os.path.join(backups, stamp)):
+            yield "backups", os.path.join(backups, stamp, harness)
+
+
+def owns(view, root, home):
+    """Whether this checkout's claim, or a link row for it, names the slot of `home`."""
+    return slot_of(home) in records(view, root)
+
+
+def one_entry(first, second):
+    """Whether both paths name one entry that is not a directory, so that removing one name deletes nothing."""
+    try:
+        one, other = os.lstat(first), os.lstat(second)
+    except OSError:
+        return False
+    return os.path.samestat(one, other) and not stat.S_ISDIR(one.st_mode)
+
+
+def judge(view, root, side, aside, home):
+    """Return the Stray for the entry at `aside`, which a HOLDER directory holds for `home`. Reads only."""
+    if one_entry(aside, home):
+        return Stray("spare", aside, home, twin=home)
+    rows = [row for row in view.backups if row.backup == home] if side == "backups" else []
+    if rows:
+        if os.path.lexists(home):
+            return Stray("left", aside, home, why=f"{home} is the recorded backup of {rows[-1].original} and another entry is there now")
+        for row in rows:
+            if one_entry(aside, row.original):
+                return Stray("spare", aside, home, twin=row.original, drop=row.backup)
+        return Stray("home", aside, home)
+    if side == "skills" and owns(view, root, home) and proves(root, aside, home):
+        return Stray("own" if os.path.lexists(home) else "home", aside, home)
+    if side == "backups":
+        return Stray("left", aside, home, why=f"no backup record names {home}")
+    return Stray("left", aside, home, why=f"it is not a link this checkout recorded at {home}")
+
+
+def survey(view, scope, user, state, root):
+    """List every holder directory beside the skills directories and the backups, and judge its entries. Reads only."""
+    found = []
+    for side, parent in holder_parents(scope, user, state):
+        for name in listing(parent):
+            directory = os.path.join(parent, name)
+            if not name.startswith(HOLDER) or os.path.islink(directory) or not os.path.isdir(directory):
+                continue
+            entries = listing(directory)
+            if not entries:
+                found.append(Stray("empty", directory))
+            for entry in entries:
+                aside, home = os.path.join(directory, entry), os.path.join(parent, entry)
+                if name.startswith(SCRAP):
+                    found.append(Stray("left", aside, home, why=SCRAP_LEFT))
+                else:
+                    found.append(judge(view, root, side, aside, home))
+    return tuple(found)
+
+
+def settle(strays, state, root, dry_run):
+    """Act on each Stray and print one line for each that held an entry. Without `dry_run`, call it only inside `locked`.
+
+    Every move is `place`, so nothing is overwritten. Only a second name and this checkout's own link are ever deleted,
+    and a holder is removed only once it is empty. With `dry_run` it prints what it would do and changes nothing.
+    """
+    recovered, removed = ("would recover", "would remove") if dry_run else ("recovered", "removed")
+    for stray in strays:
+        try:
+            if stray.kind == "empty":
+                if not dry_run:
+                    with suppress(OSError):
+                        os.rmdir(stray.path)
+            elif stray.kind == "left":
+                print(f"left {stray.path}: {stray.why}")
+            elif stray.kind == "home":
+                reason = None if dry_run else put_back(stray.path, stray.home)
+                if reason is None:
+                    print(f"{recovered} {stray.home} from {stray.path}")
+                else:
+                    print(f"left {stray.path}: {reason}")
+            elif stray.kind == "spare":
+                if not dry_run:
+                    if not one_entry(stray.path, stray.twin):
+                        print(f"left {stray.path}: it is no longer a second name for {stray.twin}")
+                        continue
+                    os.unlink(stray.path)
+                    if stray.drop:
+                        patch_legacy(state, (), (), (), (stray.drop,), False)
+                print(f"{removed} {stray.path}: it was a second name for {stray.twin}")
+            elif stray.kind == "own":
+                if not dry_run:
+                    if not proves(root, stray.path, stray.home):
+                        print(f"left {stray.path}: it is no longer this checkout's link")
+                        continue
+                    os.unlink(stray.path)
+                print(f"{removed} {stray.path}: it is this checkout's link and {stray.home} is taken")
+        except OSError as error:
+            print(f"left {stray.path}: {error}")
+    if not dry_run:
+        for holder in sorted({os.path.dirname(stray.path) for stray in strays if stray.kind != "empty"}):
+            # rmdir refuses a directory that is not empty, so an entry that was left stays.
+            with suppress(OSError):
+                os.rmdir(holder)
 
 
 def buried(state, root, path):
@@ -924,8 +1101,10 @@ def locked(state):
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def count_steps(plan, kind):
@@ -1004,12 +1183,19 @@ def install(args):
             lines = [f"  {'/'.join(harnesses)}: {path} ({describe(path)})" for harnesses, path in plan.conflicts]
             sys.exit("these skills already exist; rerun with --replace to move them aside (uninstall restores them):\n" + "\n".join(lines))
 
-    plan = make_plan(load(scope, user))
+    def strays(view):
+        return survey(view, scope, user, state, root)
+
+    view = load(scope, user)
+    plan = make_plan(view)
     reject(plan)
-    if args.dry_run or not plan.steps:
+    found = strays(view)
+    if args.dry_run or not (plan.steps or found):
+        settle(found, state, root, True)
         report_install(plan, state, root, None, args.dry_run)
         return 0
     with locked(state):
+        settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user))
         reject(plan)
         if not plan.steps:
@@ -1028,12 +1214,19 @@ def uninstall(args):
     def make_plan(view, holds):
         return plan_uninstall(view, root, args.harness, holds)
 
+    def strays(view):
+        return survey(view, scope, user, state, root)
+
+    view = load(scope, user)
     with ExitStack() as holds:
-        plan = make_plan(load(scope, user), holds)
-    if args.dry_run or not plan.steps:
+        plan = make_plan(view, holds)
+    found = strays(view)
+    if args.dry_run or not (plan.steps or found):
+        settle(found, state, root, True)
         report_uninstall(plan, None, args.dry_run)
         return 0
     with locked(state), ExitStack() as holds:
+        settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user), holds)
         if not plan.steps:
             report_uninstall(plan, None, False)
