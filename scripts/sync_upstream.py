@@ -7,10 +7,12 @@ file changed. Re-port each one, then run `build.py --update-lock`.
 With --check, sync nothing. Print each path upstream changed since the pinned
 commit and what pstack-t3 does with that path, and write nothing in the checkout.
 
-With --merge, sync and, for each file in t3/overrides whose upstream file changed, either write a clean
-three-way merge of it or leave the override as it is and name it. The merge base is the file in
-vendor/pstack before the sync, used only when its sha256 is the one in t3/overrides.lock.json. The lock is
-never refreshed. With --merge --dry-run, print the same rows and write nothing in the checkout.
+With --merge, sync and, for each file in t3/overrides whose upstream file
+changed, either write a clean three-way merge of it or leave the override as it
+is and name it. The merge base is the file in vendor/pstack before the sync,
+used only when its sha256 is the one in t3/overrides.lock.json. The lock is
+never refreshed. With --merge --dry-run, print a row for each of those files
+and write nothing in the checkout.
 """
 
 import argparse
@@ -51,7 +53,7 @@ DRY_RUN_DETAIL = {**MERGE_DETAIL, "clean": "would merge"}
 MERGE_FOOTER = """\
 t3/overrides.lock.json is not refreshed.
 A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.
-Review each merged override and re-port each override left as is. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
+Review each merged override and re-port each override whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
 """
 FIXED_COPIES = {
     "pstack-runtime/SKILL.md": "runtime.md",
@@ -275,7 +277,7 @@ def main():
     parser.add_argument(
         "--merge",
         action="store_true",
-        help="sync, write each override whose three-way merge with upstream's change is clean, and name each override left as it is",
+        help="sync and, for each override whose upstream file changed, write a clean three-way merge of it or leave it as it is and name it",
     )
     parser.add_argument(
         "--dry-run",

@@ -98,7 +98,7 @@ NO_ROWS = "no override's upstream file changed"
 FOOTER = [
     "t3/overrides.lock.json is not refreshed.",
     "A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.",
-    "Review each merged override and re-port each override left as is. "
+    "Review each merged override and re-port each override whose row says so. "
     "Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.",
 ]
 
