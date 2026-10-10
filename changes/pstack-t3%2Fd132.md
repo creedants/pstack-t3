@@ -1,0 +1,5 @@
+- `brigade.py ticket add --from-report` answers `reports/<name> is not a regular file; nothing added` for an entry that is neither a symbolic link nor a regular file, such as a directory. It answered `does not exist`.
+- `brigade.py pass record --report` refuses a `reports/<name>` that is a symbolic link, is not a regular file, or resolves outside the store's `reports/`, and records no row.
+- `brigade.py close` exits 0 with one warning for each entry under `reports/` named like a review report that is a symbolic link, is not a regular file, or resolves outside the store's `reports/`, when no `pass.tsv` row of its item names it. A link to a missing file stopped `close` with a traceback.
+- `brigade.py ticket add --from-report` prints `not filed, heading inside the section: <text>` for the text of a heading deeper than the open follow-ups heading that does not itself say follow-ups, and never files it.
+- `brigade.py` names the store in the malformed-table line, as in `app/docs/rail.tsv line 3 is malformed; fix or remove it`.
