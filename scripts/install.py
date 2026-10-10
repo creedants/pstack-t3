@@ -419,7 +419,7 @@ def plan_uninstall(view, root, selected, holds):
         rows = present.get(slot, ())
         consumers = []
         for row in rows:
-            if proves(root, row.backup, row.original):
+            if proves(root, row.backup, row.original) and contested_by(row.backup) is None:
                 consumers.append(Step("withdraw", record.path, backup=row.backup, remove_backups=(row.backup,)))
                 withdrawn.add(row.backup)
         unlinks = proves(root, record.path, record.path)
@@ -444,7 +444,12 @@ def plan_uninstall(view, root, selected, holds):
         top = remaining[-1]
         free = slot in uncovered or not os.path.lexists(top.original)
         if free and (slot in uncovered or selected_row(top.harnesses)):
-            steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), held=hold(top.backup, holds)))
+            aside = contested_by(top.backup)
+            if aside is None:
+                steps.append(Step("restore", top.original, backup=top.backup, remove_backups=(top.backup,), held=hold(top.backup, holds)))
+            else:
+                occupied.append(f"kept backup {top.backup}: {aside} is held for that path and another entry is there now; "
+                                "remove the one that is not the backup and rerun uninstall")
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
@@ -686,6 +691,13 @@ def listing(directory):
         return []
 
 
+def holders(parent):
+    for name in listing(parent):
+        directory = os.path.join(parent, name)
+        if name.startswith(HOLDER) and not os.path.islink(directory) and os.path.isdir(directory):
+            yield name, directory
+
+
 class Stranded(OSError):
     """An OSError that left entries in a holder. Its text is the original error plus where they are kept."""
 
@@ -899,18 +911,18 @@ class Stray:
     why: str = ""
 
 
-def holder_parents(scope, user, state):
-    """Every directory a holder can sit in, as ("skills" or "backups", directory). A directory that is missing yields nothing.
-
-    The skills directories are the ones `layout` accepts, so a directory another scope manages is never swept.
-    """
-    groups, _refusals = layout(scope, user, HARNESSES)
-    for directory, _harnesses in groups:
+def holder_parents(scope, user, state, selected):
+    groups, _refusals = layout(scope, user, selected)
+    filed_under = set(selected)
+    for directory, harnesses in groups:
+        filed_under.update(harnesses)
         yield "skills", directory
     backups = os.path.join(state, "backups")
     for stamp in listing(backups):
-        for harness in listing(os.path.join(backups, stamp)):
-            yield "backups", os.path.join(backups, stamp, harness)
+        for name in listing(os.path.join(backups, stamp)):
+            if name in HARNESSES and name not in filed_under:
+                continue
+            yield "backups", os.path.join(backups, stamp, name)
 
 
 def owns(view, root, home):
@@ -925,6 +937,17 @@ def one_entry(first, second):
     except OSError:
         return False
     return os.path.samestat(one, other) and not stat.S_ISDIR(one.st_mode)
+
+
+def contested_by(backup):
+    if not os.path.lexists(backup):
+        return None
+    parent, name = os.path.split(backup)
+    for _holder, directory in holders(parent):
+        aside = os.path.join(directory, name)
+        if os.path.lexists(aside) and not one_entry(aside, backup):
+            return aside
+    return None
 
 
 def judge(view, root, side, aside, home):
@@ -946,14 +969,10 @@ def judge(view, root, side, aside, home):
     return Stray("left", aside, home, why=f"it is not a link this checkout recorded at {home}")
 
 
-def survey(view, scope, user, state, root):
-    """List every holder directory beside the skills directories and the backups, and judge its entries. Reads only."""
+def survey(view, scope, user, state, root, selected):
     found = []
-    for side, parent in holder_parents(scope, user, state):
-        for name in listing(parent):
-            directory = os.path.join(parent, name)
-            if not name.startswith(HOLDER) or os.path.islink(directory) or not os.path.isdir(directory):
-                continue
+    for side, parent in holder_parents(scope, user, state, selected):
+        for name, directory in holders(parent):
             entries = listing(directory)
             if not entries:
                 found.append(Stray("empty", directory))
@@ -1107,6 +1126,12 @@ def locked(state):
             os.close(fd)
 
 
+def needs_lock(plan, strays, state):
+    writes = bool(plan.steps) or any(stray.kind != "left" for stray in strays)
+    another_run_can_hold_it = os.path.isdir(state)
+    return writes or (bool(strays) and another_run_can_hold_it)
+
+
 def count_steps(plan, kind):
     kinds = {kind} if isinstance(kind, str) else set(kind)
     return sum(1 for step in plan.steps if step.kind in kinds)
@@ -1184,13 +1209,15 @@ def install(args):
             sys.exit("these skills already exist; rerun with --replace to move them aside (uninstall restores them):\n" + "\n".join(lines))
 
     def strays(view):
-        return survey(view, scope, user, state, root)
+        return survey(view, scope, user, state, root, args.harness)
 
     view = load(scope, user)
     plan = make_plan(view)
-    reject(plan)
     found = strays(view)
-    if args.dry_run or not (plan.steps or found):
+    if plan.conflicts and not args.replace:
+        settle(tuple(stray for stray in found if stray.kind == "left"), state, root, True)
+    reject(plan)
+    if args.dry_run or not needs_lock(plan, found, state):
         settle(found, state, root, True)
         report_install(plan, state, root, None, args.dry_run)
         return 0
@@ -1215,13 +1242,13 @@ def uninstall(args):
         return plan_uninstall(view, root, args.harness, holds)
 
     def strays(view):
-        return survey(view, scope, user, state, root)
+        return survey(view, scope, user, state, root, args.harness)
 
     view = load(scope, user)
     with ExitStack() as holds:
         plan = make_plan(view, holds)
     found = strays(view)
-    if args.dry_run or not (plan.steps or found):
+    if args.dry_run or not needs_lock(plan, found, state):
         settle(found, state, root, True)
         report_uninstall(plan, None, args.dry_run)
         return 0
