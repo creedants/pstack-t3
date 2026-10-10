@@ -26,6 +26,16 @@ If you changed a skill's behavior, run it in a real T3 thread and say in the PR 
 
 ## Syncing upstream
 
+Before you sync, see what upstream changed. This reads upstream in a temporary clone and writes nothing in the checkout.
+
+```bash
+python3 scripts/sync_upstream.py --check
+```
+
+It prints `up to date (<commit>)` when upstream is at the pinned commit. Otherwise it prints the new commit and one row for each changed, added, or removed path under `pstack/`. Each row ends with what pstack-t3 does with that path, which is `overridden by <file under t3/>`, `dropped by t3/removed.txt`, `ships unchanged`, or `not shipped`. Add `--json` for one JSON object a script can read, `--ref` to read a branch, tag, or commit, and `--repository` to read another upstream. A git or network failure exits 1 with git's error.
+
+Then sync.
+
 ```bash
 python3 scripts/sync_upstream.py
 ```
