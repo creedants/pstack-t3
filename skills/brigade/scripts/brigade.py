@@ -10,9 +10,11 @@ Kitchen words name files and commands. Output is plain engineering prose.
 
 import argparse
 import fcntl
+import functools
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -945,12 +947,19 @@ def status_line(restaurant):
     return ", ".join(f"{label}: {value}" for label, value in counts(restaurant).items() if value) or "nothing on record"
 
 
-def model_family(model):
-    return model.split("/")[-1].split("-")[0].lower()
+@functools.cache
+def roles_family():
+    """roles.py's family, loaded in process.
+
+    pass record asks under the store lock, which forbids a subprocess.
+    runpy writes no __pycache__ under skills/.
+    """
+    return runpy.run_path(str(roles_script()))["family"]
 
 
 def cross_family(row):
-    return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
+    family = roles_family()
+    return family(row["author"]) != family(row["verifier"]) and not row["note"].startswith("same model family")
 
 
 def item_verdicts(rows, dish_id):
@@ -1047,7 +1056,7 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
-    if model_family(author) == model_family(verifier) and not same_family:
+    if roles_family()(author) == roles_family()(verifier) and not same_family:
         raise BrigadeError(f"verifier {verifier} is the same model family as author {author}; "
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:

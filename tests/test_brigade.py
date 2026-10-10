@@ -1,4 +1,5 @@
 import fcntl
+import io
 import json
 import os
 import runpy
@@ -555,6 +556,72 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertIn('"crossFamily": false', out)
             self.assertEqual(json.loads(out)["note"], note)
+
+    BEDROCK = "amazon-bedrock/us.anthropic.claude-sonnet-5-5-v1:0"
+    NAMESPACED_MUSE = "opencode/opencode/muse-lite-2-free"
+
+    def same_family_refusal(self, author, verifier):
+        return (f"brigade: verifier {verifier} is the same model family as author {author}; "
+                "pick a verifier from another family, or pass --same-family when no other family is runnable")
+
+    def assert_one_family(self, author, verifier):
+        self.fired_bug_fix()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", author, "--verifier", verifier)
+        self.assertEqual(self.brigade(*record, ok=False), self.same_family_refusal(author, verifier))
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.brigade(*record, "--same-family"), "D1 passed")
+        self.assertEqual([row[5:8] for row in self.pass_rows()], [[author, verifier, "same model family;"]])
+
+    def test_pass_record_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
+        self.assert_one_family(self.BEDROCK, CLAUDE)
+
+    def test_pass_record_refuses_an_underscored_claude_author_with_a_claude_verifier(self):
+        self.assert_one_family("anthropic/claude_opus_5", "cursor/claude-sonnet-5-5")
+
+    def test_pass_record_refuses_a_dated_claude_author_with_a_dated_claude_verifier(self):
+        self.assert_one_family("vertex/claude-sonnet-5-5@20260101", "claudeAgent/claude-haiku-5-5-20260301")
+
+    def test_pass_record_refuses_a_namespaced_muse_author_with_a_muse_verifier(self):
+        self.assert_one_family(self.NAMESPACED_MUSE, "openrouter/muse-lite-2")
+
+    def test_pass_record_records_two_families_with_no_flag(self):
+        self.fired_bug_fix()
+        for sha, author, verifier in (("abc", CLAUDE, CODEX), ("def", self.NAMESPACED_MUSE, CLAUDE)):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass",
+                                          "--author", author, "--verifier", verifier), "D1 passed")
+        self.assertEqual([row[5:8] for row in self.pass_rows()], [[CLAUDE, CODEX, ""], [self.NAMESPACED_MUSE, CLAUDE, ""]])
+
+    def test_pass_check_json_reads_a_stored_bedrock_row_as_one_family(self):
+        self.fired_bug_fix()
+        with (self.at / "pass.tsv").open("a") as table:
+            table.write(f"2026-10-08T00:00:00+00:00\tD1\t\tabc\tpass\t{self.BEDROCK}\t{CLAUDE}\t\n")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn('"crossFamily": false', out)
+
+    def test_the_built_brigade_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
+        self.fired_bug_fix()
+        built = ROOT / "skills/brigade/scripts/brigade.py"
+        result = subprocess.run([sys.executable, str(built), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                 "--author", self.BEDROCK, "--verifier", CLAUDE], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr.strip(), self.same_family_refusal(self.BEDROCK, CLAUDE))
+        self.assertEqual(self.pass_rows(), [])
+
+    def test_pass_record_without_roles_py_refuses_and_records_nothing(self):
+        self.fired_bug_fix()
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        missing = Path(self.temporary.name) / "missing"
+        glob["BUILT_ROLES"], glob["SOURCE_ROLES"] = missing / "built.py", missing / "source.py"
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "pass", "record", "D1",
+                "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX]
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            code = glob["main"](argv)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.getvalue(), f"brigade: cannot find roles.py at {missing / 'built.py'} or "
+                                            f"{missing / 'source.py'}; build or reinstall pstack-t3\n")
+        self.assertEqual(self.pass_rows(), [])
 
     def test_pass_check_json_at_another_sha_has_no_verdict(self):
         self.fired_bug_fix()
