@@ -1,10 +1,10 @@
 - In `merge` mode `land` now builds each queued entry on the candidate of the entry ahead of it when the merge method is `squash` or `merge`, so the PR of a later entry holds trunk, the entries ahead of it, and its own change.
-- In `merge` mode `land` now runs `gh pr merge` only for the first entry of that line, and only when the PR's head is the candidate and trunk holds the tree the candidate was built on.
+- In `merge` mode `land` now merges or requests a merge only for the first entry of that line, and only when the PR's head is the candidate and trunk holds the tree the candidate was built on.
 - After a merge lands an entry, the same `land` run now judges the next entry of the line.
-- A failed posted check now bounces only the first entry of the line. An entry behind it whose checks passed or failed is noted `waiting for E<n> to merge first`.
+- A failed posted check no longer bounces an entry behind the first entry of the line. `land` notes such an entry whose checks passed or failed `waiting for E<n> to merge first`.
 - In `merge` mode `land` now rebuilds an awaiting-merge entry that is outside the line on the same PR and prints `rebuilt E<n> (<holder>) <url>`.
 - In `merge` mode `land` now pauses the queue when a landed entry's merge commit does not hold its candidate's tree.
-- With the merge method `rebase`, `land` now builds at most one entry in a run, and none while the line holds an entry.
+- With the merge method `rebase`, `land` now builds at most one entry in a run, and none while an awaiting-merge entry is in the line or is noted `merge requested by the queue`.
 - A plain merge refused with `Base branch was modified` is now run again after 2 seconds, at most 3 more times, and a last refusal of that kind no longer pauses the queue.
 - In `merge` mode a `land` run that pauses now prints what it landed, opened, adopted, bounced, and rebuilt before the pause line.
-- The landing skill now tells a coordinator to run `land` again, at most 3 more times 5 seconds apart, when the `land` after a submit prints `queue busy`.
+- The landing skill now tells a coordinator to run `land` again, at most 3 more times 5 seconds apart, when `land` prints `queue busy`.
