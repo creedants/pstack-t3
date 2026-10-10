@@ -1275,6 +1275,9 @@ class DocumentTest(OutputCase):
     def test_encode_writes_each_string_value_as_entities_writes_it_and_leaves_numbers_null_and_keys(self):
         self.assertEqual(MOD["encode"]({"<": ["</script>\t", 1, None, {"b": "\"\\"}]}), '{"<":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
 
+    def test_encode_writes_a_string_in_a_tuple_as_entities_writes_it(self):
+        self.assertEqual(MOD["encode"]({"a": ("<",)}), '{"a":["&lt;"]}')
+
     def test_no_invented_id_or_path_is_in_the_document_or_the_text(self):
         for build in (failed_child, busy):
             with self.subTest(build.__name__):
@@ -1556,7 +1559,7 @@ class RendererTest(OutputCase):
         self.assertEqual([bar for bar in built["bars"] if not all(re.fullmatch(r"[0-9]+(\.[0-9])?%", side) for side in bar)], [])
         self.assertIn("review · failed · 3m", built["titles"])
 
-    def test_renderer_draws_markup_a_quote_a_backslash_and_text_that_reads_as_an_entity_as_that_text_and_a_tab_and_u2028_as_one_space(self):
+    def test_page_that_render_html_writes_is_drawn_with_markup_a_quote_a_backslash_and_text_that_reads_as_an_entity_as_that_text_and_a_tab_and_u2028_as_one_space(self):
         built = self.render(MOD["render_html"](hostile()))
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
         self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],

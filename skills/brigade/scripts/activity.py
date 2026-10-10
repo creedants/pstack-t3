@@ -800,7 +800,7 @@ def encode(data):
             return entities(value)
         if isinstance(value, dict):
             return {key: written(each) for key, each in value.items()}
-        return [written(each) for each in value] if isinstance(value, list) else value
+        return [written(each) for each in value] if isinstance(value, (list, tuple)) else value
 
     return json.dumps(written(data), separators=(",", ":"), ensure_ascii=False)
 
@@ -1015,7 +1015,7 @@ def squeezed(source):
     return "".join(part if part.startswith("'") else tight(part) for part in re.split(r"('[^']*')", source.strip()))
 
 
-# The page sets no background on html, body, or #o. The only colors it names are theme variables of html_render and transparent.
+# The page sets no background on html, body, or #o. The only colors it names are theme variables of html_render, its own variable --c, inherit, and transparent.
 STYLE = joined_lines("""
     #o{font:13px/1.4 var(--font-sans);color:var(--foreground)}
     #o a{color:inherit;text-decoration:none}
