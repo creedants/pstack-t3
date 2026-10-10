@@ -2531,8 +2531,8 @@ class VisualReportsDocTest(unittest.TestCase):
             "A short status with no table stays text.",
             "A rendered page is a reply the user reads, even with no reply text.",
             "Render none on a wake that sends no reply.",
-            "Brigade at `digest` renders no page, so its replies stay in the plain form "
-            "[Digest messages](../brigade/SKILL.md#digest-messages) sets.",
+            "Brigade at `digest` renders no page except the one [Agent activity](../brigade/SKILL.md#agent-activity) names, "
+            "so its replies stay in the plain form [Digest messages](../brigade/SKILL.md#digest-messages) sets.",
         ):
             self.assertIn(sentence, self.section)
 

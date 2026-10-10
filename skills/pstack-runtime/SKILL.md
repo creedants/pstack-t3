@@ -452,7 +452,7 @@ A page is for a reply that is already due. When the playbook that runs this thre
 
 Leave `html`, `body`, and the outermost element with no background color, and style the page with the theme variables `html_render` describes. When either tool is missing or `html_render` fails, send the same facts as text.
 
-A rendered page is a reply the user reads, even with no reply text. Render none on a wake that sends no reply. Brigade at `digest` renders no page, so its replies stay in the plain form [Digest messages](../brigade/SKILL.md#digest-messages) sets. At every level, step 9 of brigade's [Run a service](../brigade/SKILL.md#run-a-service) decides which wakes reply before any page is drawn.
+A rendered page is a reply the user reads, even with no reply text. Render none on a wake that sends no reply. Brigade at `digest` renders no page except the one [Agent activity](../brigade/SKILL.md#agent-activity) names, so its replies stay in the plain form [Digest messages](../brigade/SKILL.md#digest-messages) sets. At every level, step 9 of brigade's [Run a service](../brigade/SKILL.md#run-a-service) decides which wakes reply before any page is drawn.
 
 ## History
 
