@@ -1495,17 +1495,35 @@ def forget_local_branch(store, branch):
     return ""
 
 
+def opened_on_another_branch(store, entry, branch, stderr):
+    """True when git says branch is absent and the entry's PR was opened from a different branch.
+
+    An older queue opened the PR on landing/q<n> and never created
+    landing/e<n>. The merged PR then settles without deleting that name.
+    Git's absent line alone is not proof in merge and human mode, because a
+    hidden ref can raise it for a branch that exists. The PR head must also
+    be another branch. A failed read leaves the entry."""
+    if _CLIENT_ABSENT_REF.search(stderr or "") is None:
+        return False
+    view = gh("pr", "view", entry["pr"], "--json", "headRefName", "-q", ".headRefName", cwd=store.repo)
+    head = (view.stdout or "").strip()
+    return view.returncode == 0 and bool(head) and head != branch
+
+
 def delete_queue_branch(store, entry):
     """Drop landing/e<n> after the PR has merged.
 
     Returns (deleted, warning). The branch is done when the server accepts
-    the delete, or when remote_branch_is_gone says it is gone. A local branch
-    that exists and cannot be deleted is named in warning. The entry still
-    lands when the remote ref is gone."""
+    the delete, when remote_branch_is_gone says it is gone, or when git says
+    it does not exist and the PR was opened from another branch. A local
+    branch that exists and cannot be deleted is named in warning. The entry
+    still lands when the remote ref is gone."""
     branch = human_branch(entry)
     pushed = git_push(store.contract["remote"], "--delete", branch, cwd=store.repo, check=False)
-    if pushed.returncode != 0 and not remote_branch_is_gone(store, branch, pushed.stderr or ""):
-        return False, ""
+    if pushed.returncode != 0:
+        stderr = pushed.stderr or ""
+        if not remote_branch_is_gone(store, branch, stderr) and not opened_on_another_branch(store, entry, branch, stderr):
+            return False, ""
     return True, forget_local_branch(store, branch)
 
 
