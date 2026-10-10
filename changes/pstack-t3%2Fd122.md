@@ -1,1 +1,5 @@
-- The runtime tells an agent what to do after a `t3_thread_send` to a child whose task already published its result (collect the returned `taskId` per Delegation step 5, or read the thread when there is none), stops calling a worktree safe where storage cleanup can delete ignored files with it and says to rely on the thread's final message for a resume note, and adds short rules for parallel preview tabs, a missing preview host, and a `Killed: out of memory.` child.
+- After a `t3_thread_send` to a child whose task already published its result, the runtime says to collect the returned `taskId` per Delegation step 5. It says to read the thread when there is none.
+- The runtime no longer calls a worktree safe where storage cleanup can delete ignored files with it. It says to push the tracked work and rely on the thread's final message for a resume note.
+- Children that run in parallel on one provider session each open their own preview tab.
+- A missing preview host gets one status check and one open, then a report.
+- A `Killed: out of memory.` child is respawned once, after the load drops.
