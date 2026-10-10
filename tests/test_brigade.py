@@ -4736,17 +4736,20 @@ class BrigadeTest(unittest.TestCase):
             "T2 low, 0m: below auto-start; c.txt",
         ]))
 
-    def test_startable_lists_a_low_ticket_that_shares_a_path_with_one_startable_ticket_as_riding_with_it(self):
+    def test_startable_lists_a_low_ticket_on_a_startable_ticket_file_or_under_its_directory_as_riding_with_it(self):
         self.queue()
-        self.filed("Tidy the docs", "--paths", "docs", "--priority", "low")
-        self.filed("Fix the guide", "--paths", "docs/guide.md")
+        self.filed("Fix the guide and the scripts", "--paths", "docs/guide.md,scripts")
+        self.filed("Tidy the guide", "--paths", "docs/guide.md", "--priority", "low")
+        self.filed("Tidy the installer", "--paths", "scripts/install.py", "--priority", "low")
         self.assertEqual(self.brigade("startable"), "\n".join([
             self.NONE_RUNNING,
-            "waiting tickets: 2, startable: 1, riding: 1",
-            "T2 normal, 0m: startable; docs/guide.md",
-            "  Fix the guide",
-            "T1 low, 0m: rides with T2; docs",
-            "  Tidy the docs",
+            "waiting tickets: 3, startable: 1, riding: 2",
+            "T1 normal, 0m: startable; docs/guide.md,scripts",
+            "  Fix the guide and the scripts",
+            "T2 low, 0m: rides with T1; docs/guide.md",
+            "  Tidy the guide",
+            "T3 low, 0m: rides with T1; scripts/install.py",
+            "  Tidy the installer",
         ]))
 
     def test_startable_blocks_a_second_normal_ticket_that_shares_a_path_with_a_startable_one(self):
@@ -4776,21 +4779,30 @@ class BrigadeTest(unittest.TestCase):
             "T3 low, 0m: blocked, starts after T1, T2; a.txt,b.txt",
         ]))
 
-    def test_startable_lists_a_low_ticket_that_shares_a_path_only_with_a_riding_ticket_as_riding_with_the_same_startable_ticket(self):
+    def test_startable_blocks_a_low_ticket_with_one_path_on_a_startable_ticket_file_and_one_path_outside_its_paths(self):
         self.queue()
-        self.brigade("set", "--autofire", "low")
         self.filed("Fix the guide", "--paths", "docs/guide.md")
         self.filed("Tidy the docs", "--paths", "docs/guide.md,docs/cli.md", "--priority", "low")
-        self.filed("Tidy the CLI page", "--paths", "docs/cli.md", "--priority", "low")
         self.assertEqual(self.brigade("startable"), "\n".join([
-            "workers: 0 of 2 running, 2 idle, auto-start: low",
-            "waiting tickets: 3, startable: 1, riding: 2",
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
             "T1 normal, 0m: startable; docs/guide.md",
             "  Fix the guide",
-            "T2 low, 0m: rides with T1; docs/cli.md,docs/guide.md",
-            "  Tidy the docs",
-            "T3 low, 0m: rides with T1; docs/cli.md",
-            "  Tidy the CLI page",
+            "T2 low, 0m: blocked, starts after T1; docs/cli.md,docs/guide.md",
+        ]))
+
+    def test_startable_blocks_a_low_ticket_on_a_directory_above_a_startable_ticket_file_at_a_cap_of_one(self):
+        self.queue("--workers", "1")
+        self.filed("Fix one", "--paths", "src/a/one.py", "--priority", "urgent")
+        self.filed("Fix two", "--paths", "src/b/two.py")
+        self.filed("Tidy the source", "--paths", "src", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: normal",
+            "waiting tickets: 3, startable: 1, blocked: 2",
+            "T1 urgent, 0m: startable; src/a/one.py",
+            "  Fix one",
+            "T2 normal, 0m: blocked, waiting for an idle worker; src/b/two.py",
+            "T3 low, 0m: blocked, starts after T1; src",
         ]))
 
     def test_startable_blocks_a_free_ticket_when_the_worker_cap_is_reached(self):
