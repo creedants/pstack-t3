@@ -1133,7 +1133,8 @@ def home_of(state, backup):
     place = backup_place(spelled, backup)
     if place is None:
         return backup
-    with suppress(OSError), ExitStack() as stack:
+    # os.open raises ValueError for a name with a NUL byte or a lone surrogate, and a JSON record can hold either.
+    with suppress(OSError, ValueError), ExitStack() as stack:
         given, named = chains(state, spelled, *place, stack)
         if os.path.samestat(os.fstat(given[2]), os.fstat(named[2])):
             return os.path.join(str(state), "backups", *place, os.path.basename(backup))

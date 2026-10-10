@@ -5344,3 +5344,14 @@ class OwnershipTest(unittest.TestCase):
         self.ok(run(self.home, a, "uninstall", "--harness", "grok"), "removed 3 links, restored 0 entries")
         for name in NAMES:
             self.assertFalse(os.path.lexists(provider_link(self.home, "grok", name)))
+
+    def test_a_dry_run_under_a_relative_config_home_with_a_backup_row_recorded_as_an_absolute_path_whose_stamp_holds_a_nul_byte_prints_only_the_counts_line_and_exits_0(self):
+        a = make_checkout(self.home, "a")
+        swarm = provider_link(self.home, "grok", "swarm")
+        (state_dir(self.home) / "backups").mkdir(parents=True)
+        backup = f"{state_dir(self.home)}/backups/a\x00b/grok/swarm"
+        write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": backup}])
+        dry = run(self.home, a, "uninstall", "--dry-run", "--harness", "grok", env=self.RELATIVE)
+        self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
+        self.assertEqual(dry.stdout, "would remove 0 links, would restore 0 entries\n")
+        self.assertNotIn("Traceback", dry.stderr)
