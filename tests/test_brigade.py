@@ -919,10 +919,31 @@ class BrigadeTest(unittest.TestCase):
 
     def test_from_report_reads_every_form_of_the_heading(self):
         self.fired_bug_fix()
-        for heading in ("## Follow-ups (outside lease L91)", "### Follow-ups", "## Follow-up",
-                        "## Follow-ups outside my lease", "## follow-ups"):
-            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run"),
-                             "would add from perf/reports/D1.md#1: One thing.", heading)
+        for heading, rest in (("## Follow-ups (outside lease L91)", ["(outside lease L91)"]), ("### Follow-ups", []),
+                              ("## Follow-up", []), ("## Follow-ups outside my lease", ["outside my lease"]),
+                              ("## follow-ups", [])):
+            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run").splitlines(),
+                             ["would add from perf/reports/D1.md#1: One thing.",
+                              *(f"not filed, text on the heading line: {text}" for text in rest)], heading)
+
+    def test_from_report_prints_text_on_the_heading_line_and_does_not_file_it(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.follow_ups_in("## Follow-ups: None of the tests cover the retry path.\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, text on the heading line: None of the tests cover the retry path.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups: none ##\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, text on the heading line: none",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+        self.assertEqual(self.follow_ups_in("## Follow-ups (outside lease L91)\n\n- One thing.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: One thing.",
+            "not filed, text on the heading line: (outside lease L91)",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- One thing.\n", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: One thing.")
 
     def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
         self.fired_bug_fix()

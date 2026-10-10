@@ -703,6 +703,9 @@ def follow_ups(text):
     are part of it. Each block is a follow-up, with three exceptions that are asides. A block that is one of NO_WORK
     and nothing more is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph
     below its section's last list item, which closes the section.
+
+    The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
+    line without closing `#` marks, leading colons, and surrounding spaces.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -712,9 +715,10 @@ def follow_ups(text):
         heading = plain and re.match(r"(#{1,6})(\s|$)", line)
         if heading:
             depth = len(heading.group(1))
-            if re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I):
+            named = re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I)
+            if named:
                 level = depth
-                sections.append([])
+                sections.append([("heading", [line[named.end():].strip().rstrip("#").lstrip(": ")])])
             elif depth <= level:
                 level = 0
             block, blank = None, True
@@ -738,7 +742,9 @@ def follow_ups(text):
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
-            if says_no_work(text):
+            if kind == "heading":
+                asides.append(("text on the heading line", text))
+            elif says_no_work(text):
                 asides.append(("says no work is needed", text))
             elif kind == "para" and kinds[index + 1] == "item":
                 asides.append(("prose that introduces a list", text))
