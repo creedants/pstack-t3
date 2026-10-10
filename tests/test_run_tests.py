@@ -131,6 +131,94 @@ NEVER_AN_EVENT = """
                     time.sleep(0.05)
 """
 
+# {body} is DURING_THE_TEST or AT_EXIT with remove, replace, or shorten for {act}.
+RESULT_FILE = """
+    import atexit
+    import os
+    import shutil
+    import time
+    import unittest
+    from pathlib import Path
+
+    # The runner gives a worker one directory. It holds the result file, the worker's output, and TMPDIR.
+    HOME = Path(os.environ["TMPDIR"]).parent
+    RESULTS = HOME / "results.jsonl"
+
+    def remove():
+        for entry in HOME.iterdir():
+            shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+
+    def replace():
+        for entry in HOME.iterdir():
+            if entry.is_file():
+                copy = entry.with_name(entry.name + ".copy")
+                shutil.copyfile(entry, copy)
+                os.replace(copy, entry)
+
+    def shorten():
+        # One second is 20 of the runner's poll intervals. The test relies on the runner reading in that time what the worker has written.
+        time.sleep(1)
+        os.truncate(RESULTS, 8)
+
+    class ResultFileTest(unittest.TestCase):
+        def test_result_file(self):
+            {body}
+"""
+DURING_THE_TEST = "{act}(); time.sleep(60)"
+AT_EXIT = "atexit.register({act})"
+
+# Argument 1 is the project directory. The launcher starts a child that starts a sleeper in a new session, then
+# becomes the command in its other arguments. The child ends when allow-parent-exit appears in the project.
+LAUNCHER_CHILD = (
+    "import os, subprocess, sys, time\n"
+    "from pathlib import Path\n"
+    "root = Path(sys.argv[1])\n"
+    "sleeper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', str(root)], start_new_session=True,\n"
+    "                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+    "(root / 'sleeper.tmp').write_text(str(sleeper.pid))\n"
+    "os.replace(root / 'sleeper.tmp', root / 'sleeper')\n"
+    "while not (root / 'allow-parent-exit').exists():\n"
+    "    time.sleep(.01)\n"
+)
+LAUNCHER = (
+    "import os, subprocess, sys, time\n"
+    "from pathlib import Path\n"
+    "root = Path(sys.argv[1])\n"
+    f"child = subprocess.Popen([sys.executable, '-c', {LAUNCHER_CHILD!r}, str(root)],\n"
+    "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+    "(root / 'parent').write_text(str(child.pid))\n"
+    "while not (root / 'sleeper').exists():\n"
+    "    time.sleep(.01)\n"
+    "os.execv(sys.executable, [sys.executable, *sys.argv[2:]])\n"
+)
+
+# Lets the launcher's child end, waits until it has ended, and then sleeps {seconds}.
+RELEASES_THE_PARENT = """
+    import time
+    import unittest
+    from pathlib import Path
+
+    PROJECT = Path(__file__).resolve().parents[1]
+
+    def ended(pid):
+        try:
+            return Path(f"/proc/{{pid}}/stat").read_text().rsplit(") ", 1)[1][0] == "Z"
+        except FileNotFoundError:
+            return True
+
+    class ReleaseTest(unittest.TestCase):
+        def test_release(self):
+            parent = int((PROJECT / "parent").read_text())
+            (PROJECT / "allow-parent-exit").touch()
+            deadline = time.monotonic() + 20
+            while not ended(parent):
+                self.assertLess(time.monotonic(), deadline, "the launcher's child is still running")
+                time.sleep(0.01)
+            (PROJECT / "released").touch()
+            time.sleep({seconds})
+"""
+INHERITED = "run_tests: this process had a child before the run, so the runner ends only the process groups of the children it starts"
+
 
 class RunTestsTest(unittest.TestCase):
     def setUp(self):
@@ -146,8 +234,8 @@ class RunTestsTest(unittest.TestCase):
     def write(self, name, body):
         (self.tests / name).write_text(textwrap.dedent(body))
 
-    def start(self, *args, env=None):
-        proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "2", *args],
+    def start(self, *args, env=None, before=()):
+        proc = subprocess.Popen([sys.executable, *before, str(RUNNER), "-s", str(self.tests), "-j", "2", *args],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env={**(env or os.environ), "TMPDIR": str(self.scratch)}, start_new_session=True)
         self.addCleanup(lambda: (proc.stdout.close(), proc.stderr.close()))
@@ -193,6 +281,47 @@ class RunTestsTest(unittest.TestCase):
     def assert_gone(self, pid):
         with self.assertRaises(ProcessLookupError, msg=f"process {pid} is still there"):
             os.kill(pid, 0)
+
+    def assert_alive(self, pid):
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+        except FileNotFoundError:
+            state = "gone"
+        self.assertIn(state, ("S", "R"), f"process {pid}")
+
+    def inherited(self, *args, seconds, sig=None):
+        """Run RELEASES_THE_PARENT in a runner whose process had a child before the run. Return the runner's result and the pid of that child's sleeper."""
+        self.write("test_release.py", RELEASES_THE_PARENT.format(seconds=seconds))
+        proc = self.start(*args, before=("-c", LAUNCHER, str(self.proj)))
+        sleeper = self.pid_from("sleeper")
+        self.pid_from("parent")
+        if sig is not None:
+            deadline = time.monotonic() + 30
+            while not (self.proj / "released").exists():
+                self.assertLess(time.monotonic(), deadline, "the test did not let the launcher's child end")
+                time.sleep(0.02)
+            proc.send_signal(sig)
+        return self.finish(proc), sleeper
+
+    def result_file(self, act, body):
+        """Run RESULT_FILE with that act and body. Return the runner's stderr."""
+        self.write("test_result_file.py", RESULT_FILE.format(body=body.format(act=act)))
+        result = self.runner()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("\nERROR: shard 1 of test_result_file\n", result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        return result.stderr
+
+    def assert_stopped_and_lost(self, stderr, what):
+        self.assertRegex(stderr, r"\nThe worker for shard 1 was killed by signal 9 before the runner read that it had finished\.\n"
+                                 rf"Its result file {what}\. The runner stopped reading it\.\n")
+        self.assertIn("\nLOST: test_result_file.ResultFileTest.test_result_file\n" + "-" * 70 + "\n"
+                      "The runner stopped reading the result file of shard 1 before it read a result for this test.\n", stderr)
+        self.assertTrue(stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), stderr)
+
+    def assert_stopped_and_none_lost(self, stderr, what):
+        self.assertRegex(stderr, rf"\nIts result file {what}\. The runner stopped reading it\.\n")
+        self.assertTrue(stderr.endswith("\n\nFAILED (errors=1)\n"), stderr)
 
     def escape(self, *args, seconds, sig=None):
         """Run a test that starts a sleeper in a new session. Return the runner's result and the sleeper's pid."""
@@ -510,14 +639,19 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stderr, f"run_tests: no test found under {self.tests}\n")
 
-    def test_help_exits_0_and_ends_with_the_last_paragraph_of_the_module_docstring_with_10_seconds_for_sweep_seconds(self):
+    def test_help_exits_0_and_ends_with_the_last_2_paragraphs_of_the_module_docstring_with_10_seconds_for_sweep_seconds(self):
         result = subprocess.run([sys.executable, str(RUNNER), "--help"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        paragraph = " ".join(run_tests.__doc__.split("\n\n")[-1].split())
-        self.assertEqual(paragraph.count("SWEEP_SECONDS"), 2)
-        self.assertTrue(paragraph.startswith("The runner sends SIGKILL to the process group of each child it starts "), paragraph)
-        self.assertTrue(" ".join(result.stdout.split()).endswith(" " + paragraph.replace("SWEEP_SECONDS", "10 seconds")),
-                        result.stdout)
+        guarantee, processes = (" ".join(paragraph.split()) for paragraph in run_tests.__doc__.split("\n\n")[-2:])
+        self.assertTrue(guarantee.startswith("What this runner guarantees. The tests are trusted code. "), guarantee)
+        self.assertIn(" A worker runs the test objects its own discovery builds, and the run fails when that discovery "
+                      "differs from the listing's in ids, count, or order. ", guarantee)
+        self.assertEqual(processes.count("SWEEP_SECONDS"), 2)
+        self.assertTrue(processes.startswith("The runner sends SIGKILL to the process group of each child it starts "), processes)
+        self.assertTrue(" ".join(result.stdout.split()).endswith(
+            f" {guarantee} {processes}".replace("SWEEP_SECONDS", "10 seconds")), result.stdout)
+        self.assertIn("\n\nWhat this runner guarantees. ", result.stdout)
+        self.assertIn("\n\nThe runner sends SIGKILL ", result.stdout)
 
     def test_a_start_directory_with_no_test_ends_as_the_serial_command_ends(self):
         result = self.runner()
@@ -707,6 +841,60 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=2)\n"), result.stderr)
 
+    def test_a_load_tests_hook_that_adds_a_test_on_each_call_exits_1_and_the_listed_test_is_lost(self):
+        self.write("test_grow.py", """
+            import unittest
+            from pathlib import Path
+
+            CALLS = Path(__file__).resolve().parents[1] / "calls"
+
+            class GrowTest(unittest.TestCase):
+                def runTest(self):
+                    pass
+
+            def load_tests(loader, tests, pattern):
+                with open(CALLS, "a") as calls:
+                    calls.write("x")
+                return unittest.TestSuite(GrowTest() for _ in CALLS.read_text())
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 1 test, 1 shard, 1 at a time")
+        self.assertIn("\nLOST: test_grow.GrowTest.runTest\n" + "-" * 70 + "\n"
+                      "The worker for shard 1 exited with status 1 before it started this test.\n", result.stderr)
+        self.assertIn("  run_tests: this worker discovered 2 tests and the listing discovered 1. "
+                      "The ids first differ at position 1.\n", result.stderr)
+        self.assertEqual((self.proj / "calls").read_text(), "xx")
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
+
+    def test_a_behind_event_a_test_writes_for_the_next_test_before_it_stops_the_suite_exits_1_and_the_next_test_is_lost(self):
+        self.write("test_probe.py", """
+            import json
+            import sys
+            import unittest
+
+            class P(unittest.TestCase):
+                def test_a(self):
+                    spec = json.load(open(sys.argv[sys.argv.index("--worker") + 1]))
+                    with open(spec["results"], "a") as out:
+                        out.write(json.dumps({"ev": "behind", "seq": spec["seqs"][1], "skip": True}) + "\\n")
+                    self._outcome.result.stop()
+
+                def test_b(self):
+                    self.fail("never ran")
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("\nERROR: shard 1 of test_probe\n" + "-" * 70 + "\n"
+                      "The worker reported a test as behind a skipped fixture with no earlier report that the setUpClass of "
+                      "its class or the setUpModule of its module raised SkipTest. The test is test_probe.P.test_b.\n",
+                      result.stderr)
+        self.assertIn("\nLOST: test_probe.P.test_b\n" + "-" * 70 + "\n"
+                      "The worker for shard 1 finished without an accepted result for this test.\n", result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "2")
+        self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
+
     def test_a_test_no_fixture_covers_is_lost_when_another_class_skipped_in_setupclass(self):
         self.write("test_probe.py", """
             import unittest
@@ -804,24 +992,27 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1)\n"), result.stderr)
 
-    def test_a_test_that_removes_its_result_file_exits_1_with_an_error_for_its_shard_and_is_lost(self):
-        self.write("test_remove.py", """
-            import json
-            import os
-            import sys
-            import unittest
+    def test_a_test_that_removes_everything_in_the_directory_of_its_result_file_exits_1_with_an_error_for_its_shard_and_is_lost(self):
+        self.assert_stopped_and_lost(self.result_file("remove", DURING_THE_TEST),
+                                     r"cannot be found at its path\. \[Errno 2\] [^\n]*results\.jsonl'")
 
-            class RemoveTest(unittest.TestCase):
-                def test_remove(self):
-                    os.remove(json.load(open(sys.argv[sys.argv.index("--worker") + 1]))["results"])
-        """)
-        result = self.runner()
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("\nERROR: shard 1 of test_remove\n" + "-" * 70 + "\n"
-                      "The worker for shard 1 exited with status 0 before it reported that it had finished.\n"
-                      "Its result file cannot be read. ", result.stderr)
-        self.assertEqual(RAN.search(result.stderr).group(1), "1")
-        self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
+    def test_a_test_that_replaces_its_result_file_and_each_file_beside_it_with_a_copy_exits_1_with_an_error_for_its_shard_and_is_lost(self):
+        self.assert_stopped_and_lost(self.result_file("replace", DURING_THE_TEST), "was replaced by another file at its path")
+
+    def test_a_test_that_cuts_its_result_file_to_8_bytes_after_1_second_exits_1_with_an_error_for_its_shard_and_is_lost(self):
+        self.assert_stopped_and_lost(self.result_file("shorten", DURING_THE_TEST),
+                                     r"was shortened to 8 bytes after the runner had read \d+")
+
+    def test_an_exit_handler_that_removes_everything_in_the_directory_of_the_result_file_exits_1_with_an_error_for_its_shard_and_no_lost_test(self):
+        self.assert_stopped_and_none_lost(self.result_file("remove", AT_EXIT),
+                                          r"cannot be found at its path\. \[Errno 2\] [^\n]*results\.jsonl'")
+
+    def test_an_exit_handler_that_replaces_the_result_file_and_each_file_beside_it_with_a_copy_exits_1_with_an_error_for_its_shard_and_no_lost_test(self):
+        self.assert_stopped_and_none_lost(self.result_file("replace", AT_EXIT), "was replaced by another file at its path")
+
+    def test_an_exit_handler_that_cuts_the_result_file_to_8_bytes_after_1_second_exits_1_with_an_error_for_its_shard_and_no_lost_test(self):
+        self.assert_stopped_and_none_lost(self.result_file("shorten", AT_EXIT),
+                                          r"was shortened to 8 bytes after the runner had read \d+")
 
     def test_a_passing_result_a_test_writes_for_the_failing_test_after_it_exits_1_with_an_error_for_its_shard(self):
         self.write("test_forge.py", """
@@ -992,7 +1183,32 @@ class RunTestsTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=60, env={**os.environ, "TMPDIR": str(self.scratch)})
         child = self.pid_from("child")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(Path(f"/proc/{child}/stat").read_text().rsplit(") ", 1)[1][0], ("S", "R"))
+        self.assert_alive(child)
+        self.assertEqual(result.stderr.splitlines()[0], INHERITED)
+
+    @unittest.skipUnless(LINUX, NEEDS_LINUX)
+    def test_a_passing_run_whose_process_had_a_child_says_so_and_leaves_alone_that_childs_orphan_in_a_new_session(self):
+        result, sleeper = self.inherited(seconds=0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], "OK")
+        self.assert_alive(sleeper)
+        self.assertEqual(result.stderr.splitlines()[0], INHERITED)
+
+    @unittest.skipUnless(LINUX, NEEDS_LINUX)
+    def test_sigint_on_a_run_whose_process_had_a_child_exits_130_and_leaves_alone_that_childs_orphan_in_a_new_session(self):
+        result, sleeper = self.inherited(seconds=60, sig=signal.SIGINT)
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], "run_tests: interrupted")
+        self.assert_alive(sleeper)
+        self.assertEqual(result.stderr.splitlines()[0], INHERITED)
+
+    @unittest.skipUnless(LINUX, NEEDS_LINUX)
+    def test_a_run_whose_process_had_a_child_and_that_kills_a_worker_at_a_2_second_timeout_leaves_alone_that_childs_orphan_in_a_new_session(self):
+        result, sleeper = self.inherited("--timeout", "2", seconds=60)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("The worker for shard 1 exceeded the limit of 2 s while this test was running.\n", result.stderr)
+        self.assert_alive(sleeper)
+        self.assertEqual(result.stderr.splitlines()[0], INHERITED)
 
     def test_a_worker_that_writes_bytes_with_no_newline_past_a_2_second_timeout_is_killed_and_its_test_is_lost(self):
         self.write("test_junk.py", NEVER_AN_EVENT.format(text="x"))
@@ -1020,7 +1236,7 @@ class BuildShardsTest(unittest.TestCase):
             with self.subTest(sizes=sizes):
                 # Round-robin, so the tests of different modules interleave in the plan while each has tests left.
                 modules = [f"m{index}" for turn in range(max(sizes)) for index, size in enumerate(sizes) if turn < size]
-                plan = tuple(run_tests.Test(seq, "one.id", module) for seq, module in enumerate(modules))
+                plan = tuple(run_tests.Test(seq, "one.id", module, f"{module}.C{seq}") for seq, module in enumerate(modules))
                 shards = run_tests.build_shards(plan)
                 self.assertEqual(sorted(seq for shard in shards for seq in shard.seqs), list(range(len(plan))))
                 self.assertEqual([shard.number for shard in shards], list(range(1, len(shards) + 1)))
@@ -1028,6 +1244,7 @@ class BuildShardsTest(unittest.TestCase):
                     self.assertIn(len(shard.seqs), range(1, 11))
                     self.assertEqual({plan[seq].module for seq in shard.seqs}, {shard.module})
                     self.assertEqual(list(shard.seqs), sorted(shard.seqs))
+                    self.assertEqual(shard.classes, tuple(plan[seq].cls for seq in shard.seqs))
 
     def test_no_test_makes_no_shard(self):
         self.assertEqual(run_tests.build_shards(()), [])
@@ -1035,7 +1252,12 @@ class BuildShardsTest(unittest.TestCase):
 
 class AccountTest(unittest.TestCase):
     OK = {"ev": "result", "status": "ok", "problems": []}
-    SHARD = run_tests.Shard(2, "test_x", (4, 5))
+    SHARD = run_tests.Shard(2, "test_x", (4, 5), ("test_x.A", "test_x.B"))
+    ONE = run_tests.Shard(2, "test_x", (4,), ("test_x.A",))
+    SKIPPED_A = {"ev": "skipped", "method": "setUpClass", "name": "test_x.A"}
+    SKIPPED_B = {"ev": "skipped", "method": "setUpClass", "name": "test_x.B"}
+    UNSUPPORTED = ("reported a test as behind a skipped fixture with no earlier report that the setUpClass of its class "
+                   "or the setUpModule of its module raised SkipTest")
 
     def test_a_seq_with_no_event_from_a_worker_that_finished_is_lost(self):
         events = [{"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "done"}]
@@ -1048,15 +1270,57 @@ class AccountTest(unittest.TestCase):
         self.assertEqual(accounting.ending, "")
 
     def test_a_seq_behind_a_fixture_that_skipped_is_skipped_and_the_seq_with_no_event_beside_it_is_lost(self):
-        events = [{"ev": "behind", "seq": 4, "skip": True}, {"ev": "done"}]
+        events = [self.SKIPPED_A, {"ev": "behind", "seq": 4, "skip": True}, {"ev": "done"}]
         accounting = run_tests.account(self.SHARD, events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "skip")
         self.assertEqual(accounting.verdicts[5].kind, "lost")
         self.assertEqual(accounting.violations, ())
 
+    def test_a_seq_reported_behind_a_skipped_fixture_is_skipped_after_a_skipped_event_for_its_class_or_module_and_else_a_violation_and_lost(self):
+        behind = {"ev": "behind", "seq": 5, "skip": True}
+        module = {"ev": "skipped", "method": "setUpModule", "name": "test_x"}
+        cases = {
+            "no skipped event": ([behind], "lost"),
+            "the setUpClass of another class": ([self.SKIPPED_A, behind], "lost"),
+            "the setUpModule of another module": ([{**module, "name": "test_y"}, behind], "lost"),
+            "a setUpModule with the name of its class": ([{**module, "name": "test_x.B"}, behind], "lost"),
+            "a setUpClass with the name of its module": ([{**self.SKIPPED_B, "name": "test_x"}, behind], "lost"),
+            "the skipped event after it": ([behind, self.SKIPPED_B], "lost"),
+            "the setUpClass of its class": ([self.SKIPPED_B, behind], "skip"),
+            "the setUpModule of its module": ([module, behind], "skip"),
+        }
+        for case, (events, kind) in cases.items():
+            with self.subTest(case=case):
+                accounting = run_tests.account(self.SHARD, [*events, {"ev": "done"}], run_tests.Ended(0))
+                self.assertEqual(accounting.verdicts[5].kind, kind)
+                self.assertEqual(accounting.violations, ((5, self.UNSUPPORTED),) if kind == "lost" else ())
+
+    def test_a_start_and_a_result_after_a_refused_behind_event_give_the_seq_that_result(self):
+        events = [{"ev": "behind", "seq": 4, "skip": True}, {"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "done"}]
+        accounting = run_tests.account(self.ONE, events, run_tests.Ended(0))
+        self.assertEqual(accounting.verdicts[4].kind, "ok")
+        self.assertEqual(accounting.violations, ((4, self.UNSUPPORTED),))
+
+    def test_a_seq_with_no_result_when_the_runner_stopped_reading_is_lost_with_that_cause_and_a_seq_with_a_result_keeps_it(self):
+        events = [{"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "start", "seq": 5}]
+        accounting = run_tests.account(self.SHARD, events, run_tests.Ended(-9), stopped=True)
+        self.assertEqual(accounting.verdicts[4].kind, "ok")
+        self.assertEqual(accounting.verdicts[5].kind, "lost")
+        self.assertEqual(accounting.verdicts[5].cause,
+                         "The runner stopped reading the result file of shard 2 before it read a result for this test.")
+        self.assertEqual(accounting.ending,
+                         "The worker for shard 2 was killed by signal 9 before the runner read that it had finished.")
+
+    def test_a_worker_the_runner_stopped_reading_after_its_done_event_has_no_ending_with_status_0_and_an_ending_when_killed(self):
+        events = [{"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "done"}]
+        self.assertEqual(run_tests.account(self.ONE, events, run_tests.Ended(0), stopped=True).ending, "")
+        self.assertEqual(run_tests.account(self.ONE, events, run_tests.Ended(-9), stopped=True).ending,
+                         "The worker for shard 2 was killed by signal 9 after it reported that it had finished.")
+
     def test_a_seq_behind_a_fixture_that_failed_is_lost_with_the_fixture_cause(self):
         events = [{"ev": "fixture", "label": "setUpClass (test_x.A)", "traceback": "RuntimeError\n"},
-                  {"ev": "behind", "seq": 4, "skip": False}, {"ev": "behind", "seq": 5, "skip": True}, {"ev": "done"}]
+                  {"ev": "behind", "seq": 4, "skip": False}, self.SKIPPED_B, {"ev": "behind", "seq": 5, "skip": True},
+                  {"ev": "done"}]
         accounting = run_tests.account(self.SHARD, events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "lost")
         self.assertEqual(accounting.verdicts[4].cause,
@@ -1067,7 +1331,7 @@ class AccountTest(unittest.TestCase):
     def test_a_result_for_a_seq_the_shard_was_not_given_is_a_violation_and_no_verdict(self):
         events = [{"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "start", "seq": 9}, {**self.OK, "seq": 9},
                   {"ev": "done"}]
-        accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
+        accounting = run_tests.account(self.ONE, events, run_tests.Ended(0))
         self.assertEqual(sorted(accounting.verdicts), [4])
         self.assertEqual(accounting.verdicts[4].kind, "ok")
         self.assertEqual(accounting.violations, ((9, "reported a test it was not given"),))
@@ -1076,7 +1340,7 @@ class AccountTest(unittest.TestCase):
         bad = {"ev": "result", "seq": 4, "status": "bad",
                "problems": [{"kind": "fail", "label": "test_a (test_x.T)", "traceback": "AssertionError\n"}]}
         events = [{"ev": "start", "seq": 4}, bad, {**self.OK, "seq": 4}, {"ev": "done"}]
-        accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
+        accounting = run_tests.account(self.ONE, events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "bad")
         self.assertEqual(accounting.verdicts[4].problems[0].traceback, "AssertionError\n")
         self.assertEqual(accounting.violations, ((4, "reported a second result for one test"),))
@@ -1089,20 +1353,20 @@ class AccountTest(unittest.TestCase):
         self.assertEqual(accounting.violations, ((4, "reported a result for a test it had not started"),))
 
     def test_a_start_for_a_seq_behind_a_fixture_is_a_violation_and_the_seq_stays_skipped(self):
-        events = [{"ev": "behind", "seq": 4, "skip": True}, {"ev": "start", "seq": 4}, {"ev": "done"}]
-        accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
+        events = [self.SKIPPED_A, {"ev": "behind", "seq": 4, "skip": True}, {"ev": "start", "seq": 4}, {"ev": "done"}]
+        accounting = run_tests.account(self.ONE, events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "skip")
         self.assertEqual(accounting.violations, ((4, "started a test it had already reported"),))
 
     def test_a_result_after_the_done_event_is_a_violation_and_the_seq_is_lost(self):
         events = [{"ev": "done"}, {"ev": "start", "seq": 4}, {**self.OK, "seq": 4}]
-        accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
+        accounting = run_tests.account(self.ONE, events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "lost")
         self.assertEqual(accounting.violations, ((4, "wrote an event after it reported that it had finished"),))
 
     def test_the_ending_is_empty_only_for_a_done_event_with_status_0_inside_the_limit(self):
         done = [{"ev": "start", "seq": 4}, {**self.OK, "seq": 4}, {"ev": "done"}]
-        shard = run_tests.Shard(2, "test_x", (4,))
+        shard = self.ONE
         endings = {
             (True, 0, None): "",
             (True, 3, None): "The worker for shard 2 exited with status 3 after it reported that it had finished.",
@@ -1129,6 +1393,7 @@ class ParseEventTest(unittest.TestCase):
             {"ev": "result", "seq": 3, "status": "ok", "problems": []},
             {"ev": "result", "seq": 3, "status": "bad", "problems": [{"kind": "fail", "label": "a", "traceback": "b"}]},
             {"ev": "behind", "seq": 3, "skip": True},
+            {"ev": "skipped", "method": "setUpClass", "name": "a.B"},
             {"ev": "fixture", "label": "setUpClass (a.B)", "traceback": "c"},
             {"ev": "done"},
         ]
@@ -1144,6 +1409,7 @@ class ParseEventTest(unittest.TestCase):
             b'{"ev": "start", "seq": true}', b'{"ev": "start", "seq": 3, "more": 1}',
             b'{"ev": "done", "seq": 3}',
             b'{"ev": "behind", "seq": 3, "skip": 1}',
+            b'{"ev": "skipped", "method": "setUpClass"}', b'{"ev": "skipped", "method": "setUpClass", "name": 3}',
             b'{"ev": "fixture", "label": "a"}',
             b'{"ev": "result", "seq": 3, "status": "lost", "problems": []}',
             b'{"ev": "result", "seq": 3, "status": "bad", "problems": []}',

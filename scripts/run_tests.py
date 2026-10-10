@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test under the start directory in separate processes and print one merged report.
+"""Run the tests under the start directory in separate processes and print one merged report.
 
 A listing child discovers the tests. The runner cuts them into shards of at most SHARD_SIZE tests whose
 classes are defined in one module and runs each shard in a fresh process. A worker makes the same discovery
@@ -8,29 +8,50 @@ then runs the test objects its own discovery put at the positions of its shard. 
 event to its own result file. Before it prints the report, the runner settles exactly one verdict per
 discovered test, so the `Ran` line counts the tests discovery returned.
 
+The runner opens each result file before it starts the worker and reads the file through that descriptor. It
+stops reading a result file when it finds that the path of the file no longer leads to the file it opened, or
+that the file is shorter than what the runner has read of it. That is an error for the shard. A test of that
+shard with no verdict by then is LOST.
+
 A shard finished cleanly when its worker reported that it had finished, then exited with status 0 before the
-runner found it past the `--timeout` limit, and its result file holds only events the shard may write. Every
+runner found it past the `--timeout` limit, and no result file error or event violation was recorded. Every
 other shard adds one error to the report, whatever results its worker wrote. A test with no result is LOST,
 with one exception. A worker reports a test as behind a fixture when the suite passes over it, the setUpClass
 of its class or the setUpModule of its module failed or raised SkipTest, and no test started between those
 two events. It reports that when the next test starts or the suite returns. A test reported behind a fixture
-that raised SkipTest is skipped. The runner cannot tell an event its worker wrote from the same event written
-by a test that runs in that worker.
+that raised SkipTest is skipped when an earlier event of the result file says that the setUpClass of the
+test's class or the setUpModule of its module raised SkipTest. Without that earlier event the report is a
+violation and gives the test no verdict. The runner cannot tell an event its worker wrote from the same event
+written by a test that runs in that worker.
 
 The exit status is 0 when the last line of the report starts with OK, 1 when it starts with FAILED, 2 when
 the runner did not start the tests, 5 when it is NO TESTS RAN, and 130 when SIGINT or SIGTERM stops the run.
 When discovery returns no test, the report ends as `python3 -m unittest discover` ends on the same Python.
 That is NO TESTS RAN from Python 3.12 on and OK before it.
 
+What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
+are not written to defeat the runner. A run that discovers a test exits 0 only when each discovered test has
+exactly one verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the
+test's shard, and each shard finished cleanly. So each of these makes the run exit with another status than
+0. A failing assertion. An error in a test or in a fixture. A module that fails to import. A worker that
+exits or is killed before it reported that it had finished, as when a test calls `os._exit`. A worker past
+the `--timeout` limit. A result file that the runner finds removed, replaced, or cut shorter than what it
+read. A line the runner reads from a result file that is not an event. SIGINT or SIGTERM that stops the run.
+A worker runs the test objects its own discovery builds, and the run fails when that discovery differs from
+the listing's in ids, count, or order. Test code that writes or rewrites result events, or that stops,
+signals, or inspects the runner process, is outside this guarantee. `python3 -m unittest` gives no such
+guarantee either.
+
 The runner sends SIGKILL to the process group of each child it starts when that child ends, when that child
-is past the `--timeout` limit, and when the run stops before that child ends. On Linux with /proc the runner
-tries to become the child subreaper, so that a process orphaned below it becomes its child. Where that
-succeeds, after its last child ends, it sends SIGKILL to every process below it in /proc's parent links and
-repeats until none is left or SWEEP_SECONDS pass. That reaches a process that left its group for a new
-session. The runner names each process still there after SWEEP_SECONDS. Such a process does not change the
-exit status. The runner sends no signal to a child its process had before the run and does not look below
-one. Everywhere else the runner does not end a process that left the process group of the child that started
-it.
+is past the `--timeout` limit, when the runner stops reading that child's result file, and when the run stops
+before that child ends. On Linux with /proc the runner looks for children of its process as the run begins.
+When it finds none, it tries to become the child subreaper, so that a process orphaned below it becomes its
+child. Where that succeeds, after its last child ends, it sends SIGKILL to every process below it in /proc's
+parent links and repeats until none is left or SWEEP_SECONDS pass. That reaches a process that left its group
+for a new session. The runner names each process still there after SWEEP_SECONDS. Such a process does not
+change the exit status. When it finds a child, the runner prints one line that says so and does not try to
+become the child subreaper. There, and wherever it did not become the child subreaper, the runner signals
+those process groups only, so it does not end a process that left the group of the child that started it.
 """
 
 from __future__ import annotations
@@ -46,6 +67,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from dataclasses import dataclass
@@ -66,7 +88,7 @@ NO_TESTS = (5, "NO TESTS RAN") if sys.version_info >= (3, 12) else (0, "OK")
 # From linux/prctl.h.
 PR_SET_CHILD_SUBREAPER = 36
 # The report quotes at most this many complete lines that are not events from one result file, and at most this
-# many bytes of each line it quotes. It also quotes a last line that has no newline.
+# many bytes of each line it quotes. From a file it read to the end, it also quotes a last line that has no newline.
 QUOTED_LINES = 5
 QUOTED_BYTES = 120
 SEP1 = "=" * 70
@@ -77,6 +99,7 @@ EVENTS = {
     "start": {"seq": int},                                    # the test began
     "result": {"seq": int, "status": str, "problems": list},  # the test ended
     "behind": {"seq": int, "skip": bool},                     # the test did not start, behind a setUpClass or setUpModule that skipped or failed
+    "skipped": {"method": str, "name": str},                  # the setUpClass of the class with that name or the setUpModule of the module with that name raised SkipTest
     "fixture": {"label": str, "traceback": str},              # an error or a failure outside a running test
     "done": {},                                               # the worker's suite returned
 }
@@ -124,6 +147,7 @@ class Test:
     seq: int         # index in discovery order, the key for every result
     id: str
     module: str
+    cls: str         # its class, as class_name returns it
 
 
 @dataclass(frozen=True)
@@ -131,6 +155,7 @@ class Shard:
     number: int
     module: str
     seqs: tuple[int, ...]
+    classes: tuple[str, ...]   # the cls of the test at each seq, in the order of seqs
 
 
 @dataclass(frozen=True)
@@ -256,26 +281,36 @@ def quoted(raw: bytes) -> str:
 
 
 class Channel:
-    """Reads the complete lines a worker appends to its result file and keeps those that are events."""
+    """Makes a shard's result file and holds it open. Reads the complete lines the file gains through that descriptor and keeps those that are events."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_EXCL, 0o666)
         self.offset = 0
         self.lines = 0
         self.events: list[dict] = []
-        self.errors: list[str] = []   # the report's text for what the file holds that is not an event, and for a file that cannot be read
+        self.errors: list[str] = []   # the report's text for what the file holds that is not an event, and for why the runner stopped reading it
         self.unquoted = 0             # lines that are not events, past the QUOTED_LINES that errors quotes
+        self.stopped = False          # whether read found a change that `changed` names
+
+    def changed(self, held: os.stat_result) -> str:
+        """Return what happened to the file, or "" when the path leads to the open file and the file is no shorter than what was read."""
+        try:
+            named = os.stat(self.path)
+        except OSError as error:
+            return f"cannot be found at its path. {error}"
+        if (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+            return "was replaced by another file at its path"
+        if held.st_size < self.offset:
+            return f"was shortened to {plural(held.st_size, 'byte')} after the runner had read {self.offset}"
+        return ""
 
     def read(self, last: bool = False) -> bool:
-        """Take the complete lines the file gained since the last read. Return whether they held an event."""
-        try:
-            with open(self.path, "rb") as file:
-                file.seek(self.offset)
-                data = file.read()
-        except OSError as error:
-            if last:
-                self.errors.append(f"Its result file cannot be read. {error}.")
+        """Take the complete lines the file gained since the last read, then set `stopped` when `changed` names a change. Return whether the lines held an event. Read nothing once `stopped` is set."""
+        if self.stopped:
             return False
+        held = os.fstat(self.fd)
+        data = os.pread(self.fd, max(held.st_size - self.offset, 0), self.offset)
         end = data.rfind(b"\n") + 1
         self.offset += end
         known = len(self.events)
@@ -292,7 +327,14 @@ class Channel:
             self.errors.append(f"The number of further lines of its result file that are not events is {self.unquoted}.")
         if last and end < len(data):
             self.errors.append(f"Its result file ends in a line with no newline. It reads {quoted(data[end:])}.")
+        what = self.changed(held)
+        if what:
+            self.stopped = True
+            self.errors.append(f"Its result file {what}. The runner stopped reading it.")
         return len(self.events) > known
+
+    def close(self) -> None:
+        os.close(self.fd)
 
 
 @dataclass
@@ -308,9 +350,11 @@ def verdict_of(event: dict) -> Verdict:
     return Verdict(event["status"], tuple(Problem(**problem) for problem in event["problems"]))
 
 
-def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
-    """Return one verdict for every seq of the shard, from the events its worker wrote and how the worker ended."""
+def account(shard: Shard, events: list[dict], ended: Ended, stopped: bool = False) -> Accounting:
+    """Return one verdict for every seq of the shard, from the events the runner read, how the worker ended, and whether the runner stopped reading the result file."""
     given = set(shard.seqs)
+    classes = dict(zip(shard.seqs, shard.classes))
+    skipped: set[tuple[str, str]] = set()   # the method and name of each skipped event so far
     last: dict[int, str] = {}   # the kind of the last event accepted for a seq
     results: dict[int, Verdict] = {}
     skips: dict[int, bool] = {}
@@ -330,6 +374,8 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
             done = True
         elif kind == "fixture":
             fixtures.append(Problem("error", event["label"], event["traceback"]))
+        elif kind == "skipped":
+            skipped.add((event["method"], event["name"]))
         elif seq not in given:
             violate(seq, "reported a test it was not given")
         elif kind == "result" and last.get(seq) == "start":
@@ -340,6 +386,9 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
             violate(seq, "reported a result for a test it had not started")
         elif seq in last:
             violate(seq, f"{'started' if kind == 'start' else 'passed over'} a test it had already reported")
+        elif kind == "behind" and event["skip"] and not skipped & {("setUpClass", classes[seq]), ("setUpModule", shard.module)}:
+            violate(seq, "reported a test as behind a skipped fixture with no earlier report that the setUpClass of its class "
+                         "or the setUpModule of its module raised SkipTest")
         else:
             last[seq] = kind
             if kind == "behind":
@@ -352,8 +401,14 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
         how = f"was killed by signal {-ended.status}"
     else:
         how = f"exited with status {ended.status}"
-    clean = done and ended.status == 0 and ended.over is None
-    ending = "" if clean else f"{worker} {how} {'after' if done else 'before'} it reported that it had finished."
+    if done and ended.status == 0 and ended.over is None:
+        ending = ""
+    elif done:
+        ending = f"{worker} {how} after it reported that it had finished."
+    elif stopped:
+        ending = f"{worker} {how} before the runner read that it had finished."
+    else:
+        ending = f"{worker} {how} before it reported that it had finished."
 
     verdicts = {}
     for seq in shard.seqs:
@@ -365,6 +420,8 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
             verdicts[seq] = Verdict("lost", cause=f"A class or module fixture failed in the worker for shard {shard.number}, and this test did not start.")
         elif done:
             verdicts[seq] = Verdict("lost", cause=f"{worker} finished without an accepted result for this test.")
+        elif stopped:
+            verdicts[seq] = Verdict("lost", cause=f"The runner stopped reading the result file of shard {shard.number} before it read a result for this test.")
         elif last.get(seq) == "start":
             verdicts[seq] = Verdict("lost", cause=f"{worker} {how} while this test was running.")
         else:
@@ -381,14 +438,13 @@ def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
         count = math.ceil(len(seqs) / size)
         # When a module needs more than one shard, a stride puts neighbours in discovery order in different shards.
         for offset in range(count):
-            shards.append(Shard(len(shards) + 1, module, tuple(seqs[offset::count])))
+            mine = tuple(seqs[offset::count])
+            shards.append(Shard(len(shards) + 1, module, mine, tuple(plan[seq].cls for seq in mine)))
     return shards
 
 
 def adopt_orphans() -> bool:
-    """Try to make this process the child subreaper. Return whether Linux did and /proc lists this process."""
-    if not sys.platform.startswith("linux") or not Path("/proc/self/stat").exists():
-        return False
+    """Try to make this process the child subreaper. Return whether Linux did."""
     try:
         import ctypes
         prctl = ctypes.CDLL(None, use_errno=True).prctl
@@ -420,9 +476,11 @@ class Watch:
         self.signals: list[int] = []
         signal.signal(signal.SIGINT, self.note)
         signal.signal(signal.SIGTERM, self.note)
-        self.adopts = adopt_orphans()
-        # The children this process had before the run. Empty where adopt_orphans did not work.
-        self.spared = frozenset(children_by_parent().get(os.getpid(), ())) if self.adopts else frozenset()
+        listed = sys.platform.startswith("linux") and Path("/proc/self/stat").exists()
+        # The run started neither a child this process has now nor a process below such a child.
+        self.inherited = listed and bool(children_by_parent().get(os.getpid()))
+        # With no child now, a process that is below this one later was started by the run or by a process the run started.
+        self.adopts = listed and not self.inherited and adopt_orphans()
 
     def note(self, signum, frame) -> None:
         self.signals.append(signum)
@@ -449,7 +507,7 @@ class Watch:
         deadline = time.monotonic() + seconds
         while True:
             children = children_by_parent()
-            left, todo = [], [pid for pid in children.get(os.getpid(), ()) if pid not in self.spared]
+            left, todo = [], list(children.get(os.getpid(), ()))
             while todo:
                 left.append(todo.pop())
                 todo.extend(children.get(left[-1], ()))
@@ -514,7 +572,7 @@ def list_tests(start: Path, scratch: Path, timeout: float, pause) -> tuple[Test,
         raise Refusal(f"the listing of {start} ended with status {status}\n{read_output(home)}".rstrip())
     try:
         entries = json.loads((home / "plan.json").read_text())
-        return tuple(Test(seq, entry["id"], entry["module"]) for seq, entry in enumerate(entries))
+        return tuple(Test(seq, entry["id"], entry["module"], entry["cls"]) for seq, entry in enumerate(entries))
     except (OSError, ValueError, KeyError, TypeError):
         raise Refusal(f"the listing of {start} left no plan the runner can read\n{read_output(home)}".rstrip()) from None
 
@@ -522,12 +580,12 @@ def list_tests(start: Path, scratch: Path, timeout: float, pause) -> tuple[Test,
 def launch(shard: Shard, scratch: Path, start: Path) -> Running:
     home = scratch / f"s{shard.number:03d}"
     home.mkdir()
-    (home / "results.jsonl").touch()
+    channel = Channel(home / "results.jsonl")
     spec = {"start": str(start), "results": str(home / "results.jsonl"), "plan": str(scratch / "list" / "plan.json"),
             "seqs": shard.seqs}
     (home / "spec.json").write_text(json.dumps(spec))
     proc = start_child(["--worker", str(home / "spec.json")], home, start)
-    return Running(shard, proc, home, Channel(home / "results.jsonl"), time.monotonic())
+    return Running(shard, proc, home, channel, time.monotonic())
 
 
 def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish, tick, pause) -> None:
@@ -545,7 +603,10 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
                     worker.progress_at = now
                 status = worker.proc.poll()
                 over = None
-                if status is None and now - worker.progress_at > timeout:
+                if status is None and worker.channel.stopped:
+                    kill_group(worker.proc)
+                    status = worker.proc.wait()
+                elif status is None and now - worker.progress_at > timeout:
                     kill_group(worker.proc)
                     status, over = worker.proc.wait(), timeout
                 if status is None:
@@ -559,6 +620,7 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
         for worker in running:
             kill_group(worker.proc)
             worker.proc.wait()
+            worker.channel.close()
 
 
 def run(start: Path, jobs: int, timeout: float) -> int:
@@ -573,6 +635,8 @@ def run(start: Path, jobs: int, timeout: float) -> int:
     def say(line: str) -> None:
         print(line, file=sys.stderr, flush=True)
 
+    if watch.inherited:
+        say("run_tests: this process had a child before the run, so the runner ends only the process groups of the children it starts")
     try:
         try:
             plan = list_tests(start, scratch, timeout, watch.pause)
@@ -591,7 +655,8 @@ def run(start: Path, jobs: int, timeout: float) -> int:
             def finish(worker: Running, ended: Ended) -> None:
                 shard = worker.shard
                 worker.channel.read(last=True)
-                accounting = account(shard, worker.channel.events, ended)
+                worker.channel.close()
+                accounting = account(shard, worker.channel.events, ended, worker.channel.stopped)
                 for seq, verdict in accounting.verdicts.items():
                     settle(seq, verdict)
                 for problem in accounting.fixtures:
@@ -639,6 +704,11 @@ def enter(start: Path) -> None:
     sys.path[:] = [str(start), str(start.parent)] + [entry for entry in sys.path if Path(entry).resolve() != here]
 
 
+def class_name(test) -> str:
+    """Return the name unittest gives the class of a test in the label of its setUpClass."""
+    return f"{type(test).__module__}.{type(test).__qualname__}"
+
+
 def discover(start: Path) -> list:
     """Return the tests under start in discovery order. The listing child and every worker call this."""
     def flatten(suite):
@@ -653,7 +723,7 @@ def discover(start: Path) -> list:
 
 
 class Recorder(unittest.TestResult):
-    """Turns what unittest reports into the start, result, behind, and fixture events of EVENTS. A subtest counts as its test."""
+    """Turns what unittest reports into the start, result, behind, skipped, and fixture events of EVENTS. A subtest counts as its test."""
 
     def __init__(self, tests: list[tuple[unittest.TestCase, int]], emit) -> None:
         super().__init__()
@@ -667,7 +737,7 @@ class Recorder(unittest.TestResult):
     def pass_over(self, index: int) -> None:
         """Emit a behind event for each test from `reached` up to index whose class or module a fixture in `setups` names."""
         for test, seq in self.tests[self.reached:index]:
-            names = {"setUpClass": f"{type(test).__module__}.{type(test).__qualname__}", "setUpModule": type(test).__module__}
+            names = {"setUpClass": class_name(test), "setUpModule": type(test).__module__}
             skips = [skip for method, name, skip in self.setups if names[method] == name]
             if skips:
                 self.emit({"ev": "behind", "seq": seq, "skip": skips[0]})
@@ -690,6 +760,8 @@ class Recorder(unittest.TestResult):
         named = SETUP.fullmatch(holder.id())
         if named:
             self.setups.append((named[1], named[2], skip))
+            if skip:
+                self.emit({"ev": "skipped", "method": named[1], "name": named[2]})
 
     def problem(self, kind, test, label, err):
         text = self._exc_info_to_string(err, test)
@@ -726,7 +798,8 @@ class Recorder(unittest.TestResult):
 
 
 def list_main(start: Path, out: Path) -> int:
-    out.write_text(json.dumps([{"id": test.id(), "module": type(test).__module__} for test in discover(start)]))
+    out.write_text(json.dumps([{"id": test.id(), "module": type(test).__module__, "cls": class_name(test)}
+                               for test in discover(start)]))
     return 0
 
 
@@ -762,8 +835,12 @@ def positive(kind):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
-                                     epilog=__doc__.split("\n\n")[-1].replace("SWEEP_SECONDS", f"{SWEEP_SECONDS:g} seconds"))
+    # The width argparse wraps the rest of the help at.
+    width = shutil.get_terminal_size().columns - 2
+    told = [paragraph.replace("SWEEP_SECONDS", f"{SWEEP_SECONDS:g} seconds") for paragraph in __doc__.split("\n\n")[-2:]]
+    parser = argparse.ArgumentParser(description=textwrap.fill(__doc__.splitlines()[0], width),
+                                     epilog="\n\n".join(textwrap.fill(" ".join(paragraph.split()), width) for paragraph in told),
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, os.cpu_count() or 1),
                         help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the CPU count, or 1 when the CPU count is unknown.")
     parser.add_argument("-s", "--start-directory", default=str(ROOT / "tests"),
