@@ -1140,7 +1140,7 @@ console.log(JSON.stringify({
 """
 
 
-# Markup, a quote, a backslash, a tab, and U+2028, then the same text as entities() writes it and as the renderer draws it.
+# Markup, a quote, a backslash, an ampersand, a tab, text that reads as an entity, and U+2028. Then the same text as entities() writes it and as the renderer draws it.
 HOSTILE = "x</script><img onerror=a(1)> \"q\" \\ & 'p'\t&lt;\u2028z"
 HOSTILE_WRITTEN = "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; 'p' &amp;lt; z"
 HOSTILE_DRAWN = "x</script><img onerror=a(1)> \"q\" \\ & 'p' &lt; z"
@@ -1197,6 +1197,12 @@ def day(fixture):
 
 def extreme(fixture):
     return populate(fixture, units=200, agents=3000, running=60, failed=10, heavy=True)
+
+
+def declarations(style):
+    """Each declaration of a stylesheet as (selector, property, value), once for each selector of its rule."""
+    rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", ""))
+    return [(selector, *declaration.split(":", 1)) for selectors, body in rules for selector in selectors.split(",") for declaration in body.split(";")]
 
 
 def data_of(document):
@@ -1271,16 +1277,16 @@ class DocumentTest(OutputCase):
 
     def test_markup_a_quote_a_backslash_and_an_escape_character_in_the_store_name_a_summary_a_title_and_a_model_leave_no_backslash_or_angle_bracket_in_the_data_element(self):
         fixture = one_running(self.fixture)
-        text, written = "x</script><img onerror=a(1)> \"q\" \\ & 'p'", "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; 'p'"
-        fixture.meta["restaurant"] = text + "\x1b"
-        fixture.units[0]["summary"] = text + "\x1b"
+        text, written = "x</script><img onerror=a(1)> \"q\" \\ & p\x1b", "x&lt;/script&gt;&lt;img onerror=a(1)&gt; &quot;q&quot; &#92; &amp; p "
+        fixture.meta["restaurant"] = text
+        fixture.units[0]["summary"] = text
         fixture.thread(delegated(worker(1), "helper"), title=text, model="<b>\\\"model\x1b", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.write()
         raw = DATA.search(self.document()).group(1)
         self.assertEqual([character for character in "\\<>" if character in raw], [])
         data = json.loads(raw)
         self.assertEqual((data["c"], data["I"][1][1], data["G"][0][1][1][1], data["M"]),
-                         (written + " ", written + " ", written, ["model-a", "&lt;b&gt;&#92;&quot;model "]))
+                         (written, written, written, ["model-a", "&lt;b&gt;&#92;&quot;model "]))
 
     def test_data_element_of_a_page_whose_strings_hold_markup_a_quote_a_backslash_a_tab_and_u2028_holds_no_backslash_or_angle_bracket(self):
         raw = DATA.search(MOD["render_html"](hostile())).group(1)
@@ -1292,8 +1298,12 @@ class DocumentTest(OutputCase):
     def test_entities_writes_five_characters_as_entities_and_each_control_character_u2028_and_u2029_as_one_space(self):
         self.assertEqual(MOD["entities"]("&<>\"\\'"), "&amp;&lt;&gt;&quot;&#92;'")
         self.assertEqual(MOD["entities"]("&amp;&#92;"), "&amp;amp;&amp;#92;")
-        self.assertEqual(MOD["entities"]("a\x00b\tc\nd\x1fe\x7ff\x80g\x9fh\u2028i\u2029j k\xa0l"), "a b c d e f g h i j k\xa0l")
-        self.assertEqual(MOD["encode"]({"a": ["</script>\t", 1, None, {"b": "\"\\"}]}), '{"a":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
+        controls = "".join(map(chr, [*range(0x20), *range(0x7F, 0xA0), 0x2028, 0x2029]))
+        self.assertEqual(MOD["entities"](controls), " " * 67)
+        self.assertEqual(MOD["entities"](" ~\xa0\u2027\u202a"), " ~\xa0\u2027\u202a")
+
+    def test_encode_writes_each_string_value_as_entities_writes_it_and_leaves_numbers_null_and_keys(self):
+        self.assertEqual(MOD["encode"]({"<": ["</script>\t", 1, None, {"b": "\"\\"}]}), '{"<":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
 
     def test_no_invented_id_or_path_is_in_the_document_or_the_text(self):
         for build in (failed_child, busy):
@@ -1324,16 +1334,19 @@ class DocumentTest(OutputCase):
         self.assertEqual([call for call in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function(", "setTimeout", "\"", "`") if call in MOD["RENDERER"]], [])
         self.assertIn(MOD["UNGROUPED"], MOD["RENDERER"])
 
-    def test_stylesheet_has_no_rule_for_html_body_root_or_every_element_sets_only_font_and_color_on_the_outermost_one_and_names_a_color_only_as_a_variable_transparent_or_inherit(self):
-        style = MOD["STYLE"]
-        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", ""))
-        declared = [(selector, *declaration.split(":", 1)) for selectors, body in rules for selector in selectors.split(",") for declaration in body.split(";")]
+    def test_stylesheet_has_no_rule_for_html_body_root_or_every_element_sets_only_font_and_color_on_the_outermost_one_and_gives_the_threads_background_only_to_a_header_row(self):
+        declared = declarations(MOD["STYLE"])
         whole_page = re.compile(r"(html|body|:root)(?![\w-])|\*")
         self.assertEqual([selector for selector in ("html", "body>div", ":root", "*", "#o", ".html", "bodyguard") if whole_page.match(selector)], ["html", "body>div", ":root", "*"])
         self.assertEqual([selector for selector, _, _ in declared if whole_page.match(selector)], [])
         self.assertEqual([(name, value) for selector, name, value in declared if selector == "#o"], [("font", "13px/1.4 var(--font-sans)"), ("color", "var(--foreground)")])
         self.assertEqual([selector for selector, _, value in declared if "var(--background)" in value], [".grp"])
+
+    def test_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
+        style = MOD["STYLE"]
+        declared = declarations(style)
         self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
+
         def other_words(value):
             """The words of a declaration's value that are not a variable, a number, `solid`, `transparent`, `inherit`, or the gradient function."""
             plain = r"var\(--[\w-]+\)|[0-9.]+(px|%|deg)?|solid|transparent|inherit|repeating-linear-gradient"
@@ -1402,7 +1415,7 @@ class SizeTest(OutputCase):
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
-    def test_page_of_a_168_hour_window_with_six_providers_the_most_rows_and_every_string_cut_at_its_byte_limit_fits_16000_bytes_after_the_last_fold_step(self):
+    def test_page_of_a_168_hour_window_with_six_providers_the_most_rows_and_every_clipped_string_over_its_byte_limit_fits_16000_bytes_after_the_last_fold_step(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
         hidden = MOD["Hidden"](**dict.fromkeys(("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name"), 9999999))
         legend = tuple((name, 9999999) for name in ("Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"))
