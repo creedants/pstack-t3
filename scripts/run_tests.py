@@ -440,7 +440,7 @@ def flatten(suite):
 
 
 class Recorder(unittest.TestResult):
-    """Emits a start and a result event for each given test that runs, and a fixture event for an error, a failure, or a skip on anything else."""
+    """Emits a start and a result event for each given test that runs, and a fixture event for an error, a failure, or a skip on anything else. A subtest counts as its test."""
 
     def __init__(self, tests: list[tuple[unittest.TestCase, int]], emit) -> None:
         super().__init__()
@@ -480,10 +480,10 @@ class Recorder(unittest.TestResult):
         pass
 
     def addSkip(self, test, reason):
-        if test is self.current:
+        if getattr(test, "test_case", test) is self.current:
             self.status = "skip"
         else:
-            self.emit({"ev": "fixture", "skip": True, "label": str(test), "reason": reason})
+            self.emit({"ev": "fixture", "skip": True})
 
     def addExpectedFailure(self, test, err):
         self.status = "xfail"

@@ -138,6 +138,25 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK (skipped=1)\n"), result.stderr)
 
+    def test_a_test_with_one_skipped_subtest_exits_0_with_ok_skipped_1_as_the_serial_command_prints_and_counts_1_test(self):
+        self.write("test_subskip.py", """
+            import unittest
+
+            class SubSkipTest(unittest.TestCase):
+                def test_each(self):
+                    with self.subTest(i=0):
+                        self.skipTest("later")
+                    with self.subTest(i=1):
+                        self.assertEqual(1, 1)
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], "OK (skipped=1)")
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], cwd=self.proj,
+                                capture_output=True, text=True)
+        self.assertEqual(serial.stderr.splitlines()[-1], "OK (skipped=1)")
+
     def test_two_failed_subtests_print_two_blocks_and_count_one_test(self):
         self.write("test_sub.py", """
             import unittest
@@ -360,7 +379,7 @@ class AccountTest(unittest.TestCase):
 
     def test_a_seq_with_no_start_is_lost_with_the_fixture_cause_when_one_fixture_failed_and_one_skipped(self):
         events = [{"ev": "fixture", "label": "setUpClass (test_x.A)", "traceback": "RuntimeError\n"},
-                  {"ev": "fixture", "skip": True, "label": "setUpClass (test_x.B)", "reason": "no git"},
+                  {"ev": "fixture", "skip": True},
                   {"ev": "done"}]
         accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
         self.assertEqual(accounting.verdicts[4].kind, "lost")
