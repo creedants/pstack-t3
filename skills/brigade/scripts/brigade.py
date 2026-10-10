@@ -618,8 +618,8 @@ def quoted_paths(text, tracked):
     if tracked is None:
         return ()
     found = set()
-    for span in re.findall(r"`([^`\n]+)`", text):
-        span = re.sub(r":\d+(?:-\d+)?$", "", span.strip())
+    for quote in re.finditer(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", text):
+        span = re.sub(r":\d+(?:-\d+)?$", "", quote.group(2).strip())
         if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
             continue
         span = posixpath.normpath(span)

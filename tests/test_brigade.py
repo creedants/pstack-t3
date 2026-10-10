@@ -4572,6 +4572,14 @@ class BrigadeTest(unittest.TestCase):
                            "- Nothing matches `docs/*.rst`, `**` or `*.md` has no directory, and `src/*.py` is not tracked.\n")
         self.assertEqual(self.paths_cells(), {"T1": "", "T2": "t3,tests", "T3": ""})
 
+    def test_from_report_records_the_paths_quoted_beside_a_double_backtick_code_span(self):
+        self.tracked_project("src/a/one.py", "src/b/two.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- Replace ``with `x` `` in `src/a/one.py` and `src/b/two.py`\n"
+                           "- Change ``rows[0]`` in `src/a/one.py`\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/a/one.py,src/b/two.py", "T3": "src/a/one.py"})
+
     def test_from_report_records_no_path_for_a_quote_outside_the_repository_or_of_the_repository_itself(self):
         self.tracked_project(*TRACKED)
         self.fired_bug_fix()
