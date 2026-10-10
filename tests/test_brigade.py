@@ -4587,6 +4587,18 @@ class BrigadeTest(unittest.TestCase):
                          "T2 added from perf/reports/D1.md#1: Fix `docs/guide.md`.")
         self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
 
+    def test_from_report_records_a_quoted_path_in_a_repository_that_tracks_a_file_name_that_is_not_utf_8(self):
+        try:
+            with open(os.fsencode(self.project) + b"/\xff.md", "wb") as handle:
+                handle.write(b"x\n")
+        except OSError:
+            self.skipTest("the file system refuses a file name that is not UTF-8")
+        self.tracked_project("guide.md")
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `guide.md`.\n"),
+                         "T2 added from perf/reports/D1.md#1: Fix `guide.md`.")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "guide.md"})
+
     def test_from_report_dry_run_in_a_git_project_changes_no_store_file(self):
         self.tracked_project(*TRACKED)
         self.fired_bug_fix()
