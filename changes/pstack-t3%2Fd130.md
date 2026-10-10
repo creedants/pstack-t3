@@ -1,0 +1,1 @@
+- `python3 scripts/run_tests.py` runs every test under `tests/` in worker processes and prints one report. CI runs it in place of `python3 -m unittest discover -s tests -v`.
