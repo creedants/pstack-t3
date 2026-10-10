@@ -900,13 +900,13 @@ class Stray:
 
 
 def holder_parents(scope, user, state):
-    """Every directory a holder can sit in, as ("skills" or "backups", directory). A directory that is missing yields nothing."""
-    seen = set()
-    for directory in skill_dirs(scope, user).values():
-        real = os.path.realpath(directory)
-        if real not in seen:
-            seen.add(real)
-            yield "skills", str(directory)
+    """Every directory a holder can sit in, as ("skills" or "backups", directory). A directory that is missing yields nothing.
+
+    The skills directories are the ones `layout` accepts, so a directory another scope manages is never swept.
+    """
+    groups, _refusals = layout(scope, user, HARNESSES)
+    for directory, _harnesses in groups:
+        yield "skills", directory
     backups = os.path.join(state, "backups")
     for stamp in listing(backups):
         for harness in listing(os.path.join(backups, stamp)):
@@ -941,7 +941,9 @@ def judge(view, root, side, aside, home):
         return Stray("home", aside, home)
     if side == "skills" and owns(view, root, home) and proves(root, aside, home):
         return Stray("own" if os.path.lexists(home) else "home", aside, home)
-    return Stray("left", aside, home, why=f"no backup record or owner record of this checkout names {home}")
+    if side == "backups":
+        return Stray("left", aside, home, why=f"no backup record names {home}")
+    return Stray("left", aside, home, why=f"it is not a link this checkout recorded at {home}")
 
 
 def survey(view, scope, user, state, root):
@@ -1194,7 +1196,6 @@ def install(args):
         return 0
     with locked(state):
         settle(strays(load(scope, user)), state, root, False)
-        # An entry that was returned to its path is an ordinary link or backup to this plan.
         plan = make_plan(load(scope, user))
         reject(plan)
         if not plan.steps:
@@ -1226,7 +1227,6 @@ def uninstall(args):
         return 0
     with locked(state), ExitStack() as holds:
         settle(strays(load(scope, user)), state, root, False)
-        # An entry that was returned to its path is an ordinary link or backup to this plan.
         plan = make_plan(load(scope, user), holds)
         if not plan.steps:
             report_uninstall(plan, None, False)

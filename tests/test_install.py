@@ -1453,6 +1453,27 @@ class OwnershipTest(unittest.TestCase):
         self.assert_grok_text(a)
         self.assertFalse((project / ".pstack").exists())
 
+    def test_project_scope_leaves_holders_in_a_directory_shared_with_user_scope(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        shared = self.home / ".grok" / "skills"
+        project = self.home / "project"
+        (project / ".grok").mkdir(parents=True)
+        os.symlink(shared, project / ".grok" / "skills")
+        empty = shared / ".pstack-t3-live0000"
+        empty.mkdir()
+        stray = shared / ".pstack-t3-other000" / "notes"
+        stray.parent.mkdir()
+        stray.write_bytes(b"stray\x00\xfd")
+        for command in ((), ("uninstall",)):
+            with self.subTest(command=command):
+                result = run(self.home, a, "--project", str(project), "--harness", "grok", *command)
+                self.ok(result)
+                self.assertNotIn(".pstack-t3-", result.stdout + result.stderr)
+                self.assertEqual(os.listdir(empty), [])
+                self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")
+                self.assertFalse((project / ".pstack").exists())
+
     def share_cursor_with_agents(self):
         agents = self.home / ".agents" / "skills"
         agents.mkdir(parents=True)
@@ -2957,8 +2978,8 @@ class OwnershipTest(unittest.TestCase):
         beside_skill = self.plant(swarm.parent / "notes")
         beside_backup = self.plant(backup.parent / "notes")
         lines = (
-            f"left {beside_skill}: no backup record or owner record of this checkout names {swarm.parent / 'notes'}",
-            f"left {beside_backup}: no backup record or owner record of this checkout names {backup.parent / 'notes'}",
+            f"left {beside_skill}: it is not a link this checkout recorded at {swarm.parent / 'notes'}",
+            f"left {beside_backup}: no backup record names {backup.parent / 'notes'}",
         )
         self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", *lines)
         self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", *lines)
@@ -3061,6 +3082,19 @@ class OwnershipTest(unittest.TestCase):
         self.assert_empty_records()
         self.assertEqual(self.holders(), [])
 
+    def test_a_foreign_entry_in_a_holder_beside_a_path_this_checkout_claims_is_left(self):
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        self.assert_claims(a, grok_paths(self.home))
+        stray = self.plant(swarm)
+        line = f"left {stray}: it is not a link this checkout recorded at {swarm}"
+        self.ok(run(self.home, a, "--harness", "grok"), "linked 0 skills into nothing (already installed)", line)
+        self.assertEqual(os.readlink(swarm), str(a / "skills" / "swarm"))
+        self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 0 entries", line)
+        self.assertEqual(stray.read_bytes(), b"stray\x00\xfd")
+        self.assertFalse(os.path.lexists(swarm))
+
     def test_this_checkouts_link_in_a_holder_whose_path_is_taken_is_removed(self):
         a, swarm, raced, aside = self.strand_link()
         swarm.write_bytes(b"occupant\x00\xff")
@@ -3078,7 +3112,7 @@ class OwnershipTest(unittest.TestCase):
         aside = swarm.parent / ".pstack-t3-unnamed0" / "swarm"
         aside.parent.mkdir(parents=True)
         os.symlink(a / "skills" / "swarm", aside)
-        line = f"left {aside}: no backup record or owner record of this checkout names {swarm}"
+        line = f"left {aside}: it is not a link this checkout recorded at {swarm}"
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 0 links, restored 0 entries")
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), line, "removed 0 links, restored 0 entries")
         self.assertEqual(os.readlink(aside), str(a / "skills" / "swarm"))
@@ -3090,7 +3124,7 @@ class OwnershipTest(unittest.TestCase):
         before = snapshot(self.home)
         lines = (
             f"would recover {swarm} from {aside}",
-            f"left {stray}: no backup record or owner record of this checkout names {swarm.parent / 'notes'}",
+            f"left {stray}: it is not a link this checkout recorded at {swarm.parent / 'notes'}",
         )
         self.ok(run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"), "would remove 0 links, would restore 0 entries", *lines)
         self.ok(run(self.home, a, "--harness", "grok", "--dry-run"), "3 links planned", *lines)
@@ -3099,7 +3133,7 @@ class OwnershipTest(unittest.TestCase):
     def test_a_dry_run_that_finds_a_holder_creates_no_state_directory(self):
         a = make_checkout(self.home, "a")
         stray = self.plant(provider_link(self.home, "grok", "notes"))
-        line = f"left {stray}: no backup record or owner record of this checkout names {provider_link(self.home, 'grok', 'notes')}"
+        line = f"left {stray}: it is not a link this checkout recorded at {provider_link(self.home, 'grok', 'notes')}"
         self.ok(run(self.home, a, "--harness", "grok", "uninstall", "--dry-run"), line)
         self.ok(run(self.home, a, "--harness", "grok", "--dry-run"), line)
         self.assertFalse(state_dir(self.home).exists())
