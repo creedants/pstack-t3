@@ -13,6 +13,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/guide.md">Guide</a> ·
   <a href="docs/skills.md">All skills</a> ·
+  <a href="docs/cli/README.md">Command-line reference</a> ·
   <a href="docs/how-it-works.md">How it works</a> ·
   <a href="docs/live-runs.md">Live runs</a> ·
   <a href="#faq">FAQ</a>
@@ -144,7 +145,7 @@ You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) `0.0.
 Complete each prerequisite before using the feature it names.
 
 - Install the GitHub CLI and run `gh auth login`. GitHub intake sources named in the house rules, `gh issue list` and `gh pr list`, need `gh`. Landing in `merge` and `human` modes needs `gh` too. User requests need no `gh`.
-- To make the first commit in a new repository, run `git config --local user.name "Your Name"` and `git config --local user.email "you@example.com"` in that repository. `land.py init --base` needs an existing commit, and a clone already has one. A global identity is optional.
+- To make the first commit in a new repository, run `git config --local user.name "Your Name"` and `git config --local user.email "you@example.com"` in that repository. [`land.py init --base`](docs/cli/land.md#landpy-init) needs an existing commit, and a clone already has one. A global identity is optional.
 - Run `pip install pyyaml` before the test suite. `scripts/check.py` skips YAML frontmatter validation when PyYAML is missing.
 - Confirm `orchestrator_capabilities` is in the T3 thread's tool list. `$setup-pstack` calls it first.
 
@@ -181,7 +182,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
-See [all 55 skills and every playbook](docs/skills.md).
+See [all 55 skills and every playbook](docs/skills.md). Every command and flag of `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
 
 ## How it works
 
@@ -281,17 +282,18 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 - **Nothing is overwritten.** Without `--replace`, a path taken by another entry stops the install and nothing is linked. With it, the old entry moves into `backups/` beside the manifest. Uninstall restores a backup only to an empty path, and only while the backup is still the entry it read when it planned. A backup that is no longer that entry is never put back in its place. Uninstall leaves whatever it finds at the backup path. When it detects the change, it prints a line that begins `skipped restore` or `kept` and names the path.
   - When uninstall finds the original path of a backup taken, it keeps the backup and prints a line that begins `kept backup` or `skipped restore`. When the occupant is a link into a deleted checkout, the `kept backup` line says so. Clear the path and rerun uninstall.
 - **State stays after a full cleanup.** Uninstall never deletes `install-manifest.json`. Once it has removed every record, the file's `links` and `backups` lists are empty. A checkout's file under `install-owners/` is removed with its last record, and the empty `install-owners/` directory and your `roles.json` stay. An install that moves an entry aside creates directories under `backups/`. They stay after a full cleanup and hold no backed-up entries.
-- **Known limits.** A stop or an error in the middle of a move can leave an entry in a `.pstack-t3-*` directory beside the path it left. Nothing deletes it or moves it back, so look there when a skill is missing after an interrupted run. A process of the same user that works inside such a directory during a run can swap an entry there. Off Linux, uninstall keeps a backup it cannot move without risking an overwrite, such as a directory, and says why. Tests exercise that route by simulation only.
+- **Interrupted runs are recovered.** A stop or an error in the middle of a move can leave an entry in a `.pstack-t3-*` directory beside the path it left. When a step fails with an entry left there, its `skipped` line ends with `; it is kept at <path>`. Every later install or uninstall looks in those directories under the skills directories of the harnesses you ran it for, and in the backups filed for them. That includes a harness that shares a skills directory with one of them. It prints `recovered <path> from <entry>` and moves the entry back when a backup record or this checkout's own record proves where it belongs, and it never overwrites a taken path. It deletes only a second name for an entry that is already in place, and this checkout's own link when its path is taken, and prints `removed <entry>: <reason>`. It prints `left <entry>: <reason>` on every run for an entry it cannot prove, and leaves that entry for you to move or delete. An install that stops on a taken path prints the `left` lines and recovers nothing. `--dry-run` prints `would recover`, `would remove`, and `left` lines and changes nothing. When a backup is in a `.pstack-t3-*` directory and another entry has taken its backup path, uninstall restores neither and keeps the backup's record. Its `left` line names both. Remove the one that is not the backup and rerun uninstall.
+- **Known limits.** An entry in a `.pstack-t3-scrap-*` directory is an unfinished copy or a backup that was already restored. Nothing returns or deletes it, so delete it by hand. If another entry replaces a backup and no `.pstack-t3-*` directory holds the original, uninstall cannot tell the two apart and restores the entry it finds. A process of the same user that works inside a `.pstack-t3-*` directory during a run can swap an entry there. Off Linux, uninstall keeps a backup it cannot move without risking an overwrite, such as a directory, and says why. Tests exercise that route by simulation only.
 
 ## Roadmap
 
 - More live end-to-end runs of the longest playbooks on real multi-PR projects. Autopilot has run once, on a four-PR scratch queue. Orchestrate has not run yet. See [Live runs](docs/live-runs.md) for what merged and the defects each run found.
 - Testing on macOS, and on T3's other providers (OpenCode, Antigravity, ACP agents).
 - A T3-native port of Lauren's long-form guide.
-- Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. Today syncing is a manual `scripts/sync_upstream.py` run.
+- Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. `scripts/sync_upstream.py --check` reports what upstream changed and what pstack-t3 does with each changed path. Nothing runs it on a schedule or files the porting work yet, and syncing is a manual `scripts/sync_upstream.py` run.
 - Cloud workers through local cua container sandboxes. Today landing still only needs a branch, a path lease, and a reviewed commit.
-- Batch bisection in the landing queue. Today a failed batch tries one entry alone, then batches the rest again. `--batch` applies to `push` and `local` only. `merge` and `human` open one PR per change.
-- A cap on running workers across repositories. Today `brigade.py set --workers` caps one coordinator's units in progress or in review, and `fire` refuses past it. `land.py cap` caps changes in flight on one repository, and `land.py slot` limits heavy commands on the machine. Nothing counts workers across repositories.
+- Batch bisection in the landing queue. Today a failed batch tries one entry alone, then batches the rest again. `--batch` of [`land.py init`](docs/cli/land.md#landpy-init) applies to `push` and `local` only. `merge` and `human` open one PR per change.
+- A cap on running workers across repositories. Today [`brigade.py set --workers`](docs/cli/brigade.md#brigadepy-set) caps one coordinator's units in progress or in review, and `fire` refuses past it. [`land.py cap`](docs/cli/land.md#landpy-cap) caps changes in flight on one repository, and [`land.py slot`](docs/cli/land.md#landpy-slot) limits heavy commands on the machine. Nothing counts workers across repositories.
 
 Ideas and bug reports are welcome in [issues](https://github.com/creedants/pstack-t3/issues).
 
