@@ -1,0 +1,4 @@
+- roles: `backup` takes `--runtime-mode`. With it, a runnable provider whose `driverKind` is `muse` counts as not runnable under a mode other than `approval-required` and `full-access`, as it does in `show`.
+- roles: `backup` exits 2 when `--runtime-mode` is empty or holds whitespace.
+- roles: with `--runtime-mode` and a catalog, `show` exits 2 when a role it resolves has a seat that inherits the parent, and the parent is on a runnable provider whose `driverKind` is `muse`, under a mode other than `approval-required` and `full-access`. The error is `role '<name>' cannot inherit <provider>/<model>: <provider> is not runnable (the muse driver lacks runtime mode <mode>)`.
+- roles: with the same flag, catalog, parent, and mode, the default `verifiers` panel carries the note `skipped inherit of <provider>/<model>: <provider> is not runnable (the muse driver lacks runtime mode <mode>)`.
