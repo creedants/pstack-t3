@@ -5,6 +5,8 @@ import fcntl
 import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -3516,21 +3518,85 @@ class OwnershipTest(unittest.TestCase):
                 self.assertTrue(saved.parent.is_dir())
                 self.assertEqual(os.listdir(saved.parent), [])
 
-    def test_a_restore_through_a_stamp_that_is_a_symlink_leaves_the_directory_it_points_at(self):
+    def restore_through_symlink(self, level):
+        """Restore swarm from a backup whose `level` directory is a symlink to a directory outside the state directory.
+
+        Return the symlink, the directory it points at, and the real <harness> directory the backup was in.
+        """
         a = make_checkout(self.home, "a")
         swarm = provider_link(self.home, "grok", "swarm")
-        real = self.home / "elsewhere" / "stamp"
-        (real / "grok").mkdir(parents=True)
-        (real / "grok" / "swarm").write_bytes(b"saved\x00\xfe")
-        stamp = state_dir(self.home) / "backups" / "20260101T000000-1-abcd"
-        stamp.parent.mkdir(parents=True)
-        os.symlink(real, stamp)
+        backups = state_dir(self.home) / "backups"
+        stamp = backups / "20260101T000000-1-abcd"
+        link = {"backups": backups, "stamp": stamp, "harness": stamp / "grok"}[level]
+        real = self.home / "elsewhere" / level
+        emptied = real / {"backups": Path(stamp.name) / "grok", "stamp": "grok", "harness": ""}[level]
+        emptied.mkdir(parents=True)
+        (emptied / "swarm").write_bytes(b"saved\x00\xfe")
+        link.parent.mkdir(parents=True)
+        os.symlink(real, link)
         write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(stamp / "grok" / "swarm")}])
         self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
         self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
-        self.assertEqual(os.readlink(stamp), str(real))
-        self.assertTrue((real / "grok").is_dir())
-        self.assertEqual(os.listdir(real / "grok"), [])
+        self.assertEqual(os.readlink(link), str(real))
+        self.assertTrue(emptied.is_dir())
+        self.assertEqual(os.listdir(emptied), [])
+        return link, real, emptied
+
+    def test_a_restore_through_a_symlink_at_backups_leaves_the_stamp_and_harness_directories_it_reaches(self):
+        link, real, emptied = self.restore_through_symlink("backups")
+        self.assertEqual(os.listdir(real), ["20260101T000000-1-abcd"])
+        self.assertEqual(os.listdir(emptied.parent), ["grok"])
+
+    def test_a_restore_through_a_symlink_at_a_stamp_leaves_the_harness_directory_it_reaches(self):
+        link, real, emptied = self.restore_through_symlink("stamp")
+        self.assertEqual(os.listdir(real), ["grok"])
+        self.assertEqual(os.listdir(link.parent), [link.name])
+
+    def test_a_restore_through_a_symlink_at_a_harness_leaves_the_link_its_stamp_and_the_directory_it_points_at(self):
+        link, real, emptied = self.restore_through_symlink("harness")
+        self.assertEqual(real, emptied)
+        self.assertEqual(os.listdir(link.parent), ["grok"])
+        self.assertEqual(os.listdir(link.parent.parent), [link.parent.name])
+
+    def test_an_uninstall_with_the_state_directory_behind_a_symlink_removes_the_emptied_directories_in_the_real_one(self):
+        places = (
+            ("~/.config/pstack-t3 is the symlink", lambda: state_dir(self.home), lambda real: real),
+            ("~/.config is the symlink", lambda: state_dir(self.home).parent, lambda real: real / "pstack-t3"),
+        )
+        for where, link, real_state in places:
+            with self.subTest(where=where):
+                self.use_fresh()
+                real = self.home / "dotfiles" / "kept"
+                real.mkdir(parents=True)
+                link().parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(real, link())
+                a = self.replaced_file()
+                swarm = provider_link(self.home, "grok", "swarm")
+                backups = real_state(real) / "backups"
+                stamps = os.listdir(backups)
+                self.assertEqual(len(stamps), 1, stamps)
+                self.assertEqual((backups / stamps[0] / "grok" / "swarm").read_bytes(), b"mine\x00grok\n")
+                self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
+                self.assertFalse(swarm.is_symlink())
+                self.assertEqual(swarm.read_bytes(), b"mine\x00grok\n")
+                self.assertEqual(os.readlink(link()), str(real))
+                self.assertFalse(backups.is_symlink())
+                self.assertEqual(os.listdir(backups), [])
+                self.assertEqual(sorted(os.listdir(real_state(real))), ["backups", "install-manifest.json", "install-owners"])
+                self.assertEqual(sorted(os.listdir(self.home / "dotfiles")), ["kept"])
+
+    def follow(self, checkout, command):
+        """Run `command`, a string doctor printed, the way a person who copied it does: in a shell, from the checkout.
+
+        `python3` in that shell is this test run's interpreter.
+        """
+        with tempfile.TemporaryDirectory() as shims:
+            shim = Path(shims) / "python3"
+            shim.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+            shim.chmod(0o755)
+            env = _env(self.home)
+            env["PATH"] = shims + os.pathsep + env.get("PATH", os.defpath)
+            return subprocess.run(["sh", "-c", command], env=env, cwd=checkout, capture_output=True, text=True)
 
     def doctor(self, checkout, status, *args):
         result = run(self.home, checkout, "doctor", *args)
@@ -3581,8 +3647,8 @@ class OwnershipTest(unittest.TestCase):
             self.doctor(a, 1, "--harness", "grok"),
             [self.harness_line("grok", "2/3 pstack-t3, 1 missing"), self.relink_line(swarm)],
         )
-        self.ok(run(self.home, a, "install", "--harness", "grok"), "linked 1 skills into grok")
-        self.ok(run(self.home, a, "uninstall", "--harness", "grok"), "removed 3 links, restored 0 entries")
+        self.ok(self.follow(a, "python3 scripts/install.py install --harness grok"), "linked 1 skills into grok")
+        self.ok(self.follow(a, "python3 scripts/install.py uninstall --harness grok"), "removed 3 links, restored 0 entries")
         self.assertIsNone(read_owner(self.home, a))
         self.assert_gone()
 
@@ -3610,10 +3676,11 @@ class OwnershipTest(unittest.TestCase):
                     ],
                 )
                 taken = snapshot(swarm.parent)
-                stopped = run(self.home, a, "install", "--harness", "grok")
+                advised = "python3 scripts/install.py install --harness grok"
+                stopped = self.follow(a, advised)
                 self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
                 self.assertIn("these skills already exist", stopped.stderr)
-                self.ok(run(self.home, a, "install", "--harness", "grok", "--replace"), "linked 1 skills into grok")
+                self.ok(self.follow(a, advised + " --replace"), "linked 1 skills into grok")
                 self.assert_grok_text(a)
                 self.ok(run(self.home, a, "uninstall", "--harness", "grok"), "removed 3 links, restored 1 entries")
                 self.assertIsNone(read_owner(self.home, a))
@@ -3648,32 +3715,50 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
         self.assertEqual(stopped.stderr, "skills/ is missing; run python3 scripts/build.py first\n")
 
-    def test_doctor_under_project_ends_each_advised_command_with_the_project_and_they_clear_the_claim(self):
+    def test_the_commands_doctor_prints_for_a_project_path_with_a_space_quotes_and_a_semicolon_clear_the_claim_in_a_shell(self):
         a = make_checkout(self.home, "a")
-        project = self.home / "project"
+        project = self.home / """a "b" 'c'; touch ADVICE_RAN"""
         project.mkdir()
         scope = ("--project", str(project), "--harness", "grok")
         self.ok(run(self.home, a, *scope), "linked 3 skills into grok")
         swarm = project / ".grok" / "skills" / "swarm"
         swarm.unlink()
+        owner = project / ".pstack" / "install-owners" / owner_file(self.home, a).name
+        self.assertEqual(set(json.loads(owner.read_text())["links"]), {str(swarm.parent / name) for name in NAMES})
+        lines = self.doctor(a, 1, *scope)
+        self.assertEqual(len(lines), 2, lines)
+        printed = re.fullmatch(
+            re.escape(f"        claim {swarm}: nothing is there; ")
+            + r'run "(.+)" to link it again, then "(.+)" removes the link and this claim',
+            lines[1],
+        )
+        self.assertIsNotNone(printed, lines[1])
+        install, uninstall = printed.groups()
         self.assertEqual(
-            self.doctor(a, 1, *scope),
+            lines,
             [
                 f"grok    {swarm.parent}: 2/3 pstack-t3, 1 missing",
-                f'        claim {swarm}: nothing is there; run "python3 scripts/install.py install --harness grok '
-                f'--project {project}" to link it again, then "python3 scripts/install.py uninstall --harness grok '
-                f'--project {project}" removes the link and this claim',
+                f'        claim {swarm}: nothing is there; run "{install}" to link it again, '
+                f'then "{uninstall}" removes the link and this claim',
             ],
         )
-        owners = project / ".pstack" / "install-owners"
-        self.assertEqual(os.listdir(owners), [owner_file(self.home, a).name])
-        self.ok(run(self.home, a, "install", "--harness", "grok", "--project", str(project)), "linked 1 skills into grok")
-        self.ok(
-            run(self.home, a, "uninstall", "--harness", "grok", "--project", str(project)),
-            "removed 3 links, restored 0 entries",
-        )
-        self.assertFalse((owners / owner_file(self.home, a).name).exists())
+        self.assertEqual(shlex.split(install), ["python3", "scripts/install.py", "install", "--harness", "grok", "--project", str(project)])
+        self.assertEqual(shlex.split(uninstall), ["python3", "scripts/install.py", "uninstall", "--harness", "grok", "--project", str(project)])
+        checkout = snapshot(a)
+        linked = self.follow(a, install)
+        self.assertEqual((linked.returncode, linked.stderr), (0, ""), linked.stdout)
+        self.assertEqual(linked.stdout.splitlines(), ["linked 1 skills into grok", f"manifest: {project / '.pstack' / 'install-manifest.json'}"])
+        self.assertEqual(os.readlink(swarm), str(a / "skills" / "swarm"))
+        self.assertEqual(self.doctor(a, 0, *scope), [f"grok    {swarm.parent}: 3/3 pstack-t3"])
+        removed = self.follow(a, uninstall)
+        self.assertEqual((removed.returncode, removed.stderr), (0, ""), removed.stdout)
+        self.assertEqual(removed.stdout.splitlines(), ["removed 3 links, restored 0 entries"])
+        self.assertFalse(owner.exists())
         self.assertEqual(os.listdir(swarm.parent), [])
+        self.assertEqual(snapshot(a), checkout)
+        self.assertEqual(sorted(os.listdir(self.home)), sorted([project.name, "checkouts"]))
+        self.assertEqual(os.listdir(self.home / "checkouts"), ["a"])
+        self.assertEqual(sorted(os.listdir(project)), [".grok", ".pstack"])
 
     def test_doctor_names_a_claim_whose_link_sits_in_a_holder_beside_it(self):
         a, swarm, raced, aside = self.strand_link()

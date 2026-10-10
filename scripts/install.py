@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -1014,8 +1015,11 @@ def backup_place(state, backup):
 
 
 def prune(state, backup):
-    """Remove the <stamp>/<harness> directory `backup` was in if it is empty, then <stamp> if that is empty.
+    """Remove the <harness> directory `backup` was in if it is empty, then its <stamp> directory if that is empty.
 
+    It removes only empty directories at those two levels, under `state`/backups. It never follows a symlink at
+    backups/, <stamp>, or <harness>. A symlink at `state` or above it is followed like any other path to the state
+    directory, so a state directory kept behind a symlink is pruned too.
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
@@ -1352,7 +1356,9 @@ AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory
 
 
 def command(args, *words):
-    return "python3 scripts/install.py " + " ".join(words) + (f" --project {args.project}" if args.project else "")
+    """One shell command for a person to copy and run from this checkout. Every argument is quoted for a POSIX shell."""
+    project = ("--project", args.project) if args.project else ()
+    return shlex.join(("python3", "scripts/install.py", *words, *project))
 
 
 def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
