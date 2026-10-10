@@ -234,7 +234,7 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 ## Agent activity
 
-When the user asks what the agents are doing, or asks for activity or status as a picture, show the activity page. That request is a message from the user, so a reply is due at every reporting level.
+When the user asks what the agents are doing, or asks for activity or status as a picture, show the activity page. That request is a message from the user, so a reply is due at every reporting level. The script builds the page from this store and T3 Code's state database.
 
 ```bash
 A="python3 <skills>/brigade/scripts/activity.py --at <restaurant dir>"
@@ -243,7 +243,7 @@ $A --hours 12      # the last 12 hours
 $A --text          # plain lines instead of the HTML document
 ```
 
-1. Run `$A`. Its stdout is the whole document.
+1. Run `$A`. Its stdout is the whole document. Never edit it.
 2. Publish that document per steps 2 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports), with the title `Agent activity`.
 3. When the preview shows `This copy differs from what the tool wrote`, the `html` argument is not the script's output. Run `$A` again and pass its stdout unchanged.
 4. When `html_preview` or `html_render` is missing, or `html_render` fails, send the stdout of `$A --text` as the reply.
