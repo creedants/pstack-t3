@@ -223,7 +223,7 @@ The default `$interrogate` panel is two seats, Claude Opus and Grok, so that rev
 <details>
 <summary><b>Will it overwrite my existing skills?</b></summary>
 
-No. The installer refuses if a skill with the same name exists. `--replace` moves the old one aside and records it, and `python3 scripts/install.py uninstall` restores it.
+No. If a skill with the same name exists, the installer lists the taken paths, links nothing, and exits. `--replace` moves each one aside and records it instead, and `python3 scripts/install.py uninstall` restores it when its path is still free. Nothing is ever overwritten. See [Install details](#install-details).
 </details>
 
 <details>
@@ -276,6 +276,11 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 
 - `--project /path/to/repo` installs for one repository. `--harness claude,codex` limits the providers. `--dry-run` prints the plan.
 - **Prefer the user install.** When a name exists at both scopes, Claude and Grok load the user copy, so another pstack at user scope shadows a project install. `doctor` reports shadowed and stale copies.
+- **Each checkout records its own links.** The install state lives in `~/.config/pstack-t3` (or `$XDG_CONFIG_HOME/pstack-t3`) for a user install and in `<repo>/.pstack` for a project install. A checkout writes the links it made to its own file under `install-owners/`, and the shared `install-manifest.json` beside it lists links and moved-aside entries for older installers. `--dry-run` and a run with nothing to do write nothing. A state file that is not a valid JSON object stops the run with a message and changes nothing.
+- **Uninstall removes only what its checkout made.** `python3 scripts/install.py uninstall` removes the links that checkout recorded, including its links that another checkout's `--replace` moved aside. It leaves every link another checkout made. A recorded link that now points somewhere else is left alone and reported as `kept N records`. The record applies again if the link comes back.
+- **Nothing is ever overwritten.** Without `--replace`, a taken path stops the install. With it, the old entry moves into `backups/` beside the manifest and is never deleted. Uninstall deletes a link only after it proves the link points at its own checkout's `skills/<name>`. It restores a backup only when its original path is empty and the backup is still the entry it read at the start. A taken path keeps the backup and prints `kept backup <path>: <original> is occupied; clear it and rerun uninstall`. A backup that was replaced or changed is kept and reported as `skipped restore`.
+- **`install-manifest.json` stays after a full cleanup.** It holds empty `links` and `backups` lists. The checkout's `install-owners/` file is removed with its last record. The empty `install-owners/` and `backups/` directories and your `roles.json` stay.
+- **Known limits.** A stop or an error in the middle of a move can leave an entry in a `.pstack-t3-*` directory beside the path it left. Nothing deletes it or moves it back, so look there when a skill is missing after an interrupted run. A process of the same user that works inside such a directory during a run can swap an entry there. The route for platforms other than Linux is tested by simulation only.
 
 ## Roadmap
 

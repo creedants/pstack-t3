@@ -20,7 +20,7 @@ python3 scripts/install.py
 python3 scripts/install.py doctor
 ```
 
-`doctor` should show `55/55 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back.
+`doctor` should show `55/55 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back when its path is still free. Nothing is ever overwritten, as the [Uninstall](#uninstall) section describes.
 
 Open a **new** T3 thread afterwards. Providers scan their skills when a session starts. Type `$` in the composer and you should see `poteto-mode`, `poteto-help`, `interrogate`, `swarm`, and the rest. Ask `$poteto-help` when you are stuck or cannot tell which skill fits. It answers and hands you a prompt. It does not start the work.
 
@@ -345,4 +345,18 @@ To retire the admin, ask it to close. It routes or drops its waiting tickets, gi
 python3 scripts/install.py uninstall
 ```
 
-This removes every link pstack-t3 created and restores anything `--replace` moved aside. Your `~/.config/pstack-t3/roles.json` is left in place.
+`--project /path/to/repo` and `--harness claude,codex` select what to uninstall, and `--dry-run` prints the plan. Uninstall acts for the checkout you run it from.
+
+- **It removes only the links its checkout made.** Each checkout records its links in its own file under `install-owners/`, in `~/.config/pstack-t3` (or `$XDG_CONFIG_HOME/pstack-t3`) for a user install and `<repo>/.pstack` for a project install. Uninstall also removes this checkout's links that another checkout's `--replace` moved aside, and says how many. It leaves every link another checkout made, so worktrees and clones on one machine do not remove each other's skills.
+- **It restores what `--replace` moved aside.** The entry comes back when its original path is empty. Uninstall holds each backup open from its plan to its restore and restores that held entry, so a backup that was replaced or changed in between is kept and reported as `skipped restore`. A backup on another filesystem is copied beside its path and moved in the same way.
+- **It never overwrites.** Uninstall deletes a link only after it proves the link points at this checkout's `skills/<name>`, and it puts back anything else. If something took the original path of a backup, the backup stays and uninstall prints `kept backup <path>: <original> is occupied; clear it and rerun uninstall`. Clear the path, rerun, and the backup is restored.
+- **A repointed link keeps its record.** If you pointed a link somewhere else, uninstall leaves it and prints `kept N records whose links no longer point at this checkout`. The record applies again if the link comes back.
+- **A state file that cannot be read stops the run.** A manifest or owner file that is not a valid JSON object ends install and uninstall with a message that names the file. Nothing changes until you fix or move it.
+
+After a full cleanup, `install-manifest.json` stays with empty `links` and `backups` lists. The checkout's `install-owners/` file is gone, and the empty `install-owners/` and `backups/` directories stay. Your `~/.config/pstack-t3/roles.json` is left in place.
+
+Known limits.
+
+- A stop or an error in the middle of a move can leave an entry in a `.pstack-t3-*` directory beside the path it left. Nothing deletes it or moves it back. If a skill is missing after an interrupted run, look for that directory and move the entry back by hand.
+- A process of the same user that works inside a `.pstack-t3-*` directory during a run can swap an entry there.
+- On platforms other than Linux, uninstall moves an entry into a private directory, checks it there, and only then acts. Tests exercise that route by simulation only.
