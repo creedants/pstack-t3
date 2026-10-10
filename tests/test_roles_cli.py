@@ -1607,7 +1607,7 @@ class VertexHaikuCliTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertEqual(completed.stderr, (
             "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+            f"({VERTEX_ID}), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
         ))
 
     def test_unset_role_does_not_fall_back_to_it(self):
@@ -1616,7 +1616,7 @@ class VertexHaikuCliTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertEqual(completed.stderr, (
             "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-            f"({VERTEX_ID}), and {EXCLUDED_RULE}\n"
+            f"({VERTEX_ID}), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
         ))
 
     def test_missing_model_does_not_fall_back_to_it(self):
@@ -2291,8 +2291,8 @@ class FastGrokCliTest(unittest.TestCase):
             "models": [{"id": "grok-4.7-build-fast", "options": []}],
         }]}
         stderr = (
-            "error: role 'skill tests' has no seat: every runnable model in the catalog is excluded "
-            f"(grok-4.7-build-fast), and {FAST_RULE}\n"
+            "error: role 'skill tests' has no seat: every runnable model on grok is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
         )
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
@@ -2442,48 +2442,6 @@ class FastGrokCliTest(unittest.TestCase):
             "error: role 'bug-fix' cannot use grok/grok-4.7-build-fast: "
             f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}\n",
         )
-
-    def test_fast_only_catalog_names_the_rule(self):
-        fast_only = {"providers": [{
-            "providerInstanceId": "grok",
-            "canRunChildTask": True,
-            "constraints": [],
-            "models": [{"id": "grok-4.7-build-fast", "options": []}],
-        }]}
-        mixed = {"providers": [
-            {
-                "providerInstanceId": "claudeAgent",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "claude-haiku-4-5", "options": []}],
-            },
-            {
-                "providerInstanceId": "grok",
-                "canRunChildTask": True,
-                "constraints": [],
-                "models": [{"id": "grok-4.7-build-fast", "options": []}],
-            },
-        ]}
-        cases = {
-            "fast": (
-                fast_only,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-                f"(grok-4.7-build-fast), and {FAST_RULE}\n",
-            ),
-            "mixed": (
-                mixed,
-                "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
-                f"(claude-haiku-4-5, grok-4.7-build-fast), and {FAST_RULE}\n",
-            ),
-        }
-        for name, (catalog, stderr) in cases.items():
-            with self.subTest(name=name):
-                with tempfile.TemporaryDirectory() as directory:
-                    repo = Repo(directory)
-                    completed, _path = self.show(repo, catalog, "bug-fix")
-                self.assertEqual(completed.returncode, 2)
-                self.assertEqual(completed.stdout, "")
-                self.assertEqual(completed.stderr, stderr)
 
 
 def blocked_fast_option_provider(provider_id="cursor"):
@@ -3911,3 +3869,78 @@ class FamilyCliTest(unittest.TestCase):
             "seats": [{"providerInstanceId": "openrouter", "model": "x-ai/grok-4.7"}],
             "notes": ["skill tests seat 1: wanted claude-haiku-5-5, using openrouter/x-ai/grok-4.7 (missing family)"],
         }})
+
+
+class NoSeatMessageCliTest(unittest.TestCase):
+    def refusal(self, providers, role, *extra, roles_file=None):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": providers})
+            if roles_file is not None:
+                repo.put(repo.user, roles_file)
+            completed = repo.run(
+                "show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", role, *extra,
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        return completed.stderr
+
+    def test_fast_grok_ids_name_fast_grok_only(self):
+        stderr = self.refusal([plain_provider("grok", "grok-4.7-build-fast")], "bug-fix")
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
+        ))
+
+    def test_haiku_45_ids_name_haiku_45_only(self):
+        stderr = self.refusal([plain_provider("claudeAgent", "claude-haiku-4-5")], "bug-fix")
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(claude-haiku-4-5), and pstack never runs Claude Haiku 4.5 as a seat or a worker\n"
+        ))
+
+    def test_both_kinds_of_id_name_both(self):
+        stderr = self.refusal(
+            [plain_provider("claudeAgent", "claude-haiku-4-5"), plain_provider("grok", "grok-4.7-build-fast")],
+            "bug-fix",
+        )
+        self.assertEqual(stderr, (
+            "error: role 'bug-fix' has no seat: every runnable model in the catalog is excluded "
+            "(claude-haiku-4-5, grok-4.7-build-fast), "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker\n"
+        ))
+
+    def test_launch_pool_with_only_excluded_models_names_the_pool_provider(self):
+        stderr = self.refusal(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5", "claude-haiku-4-5"),
+                plain_provider("grok", "grok-4.7-build-fast"),
+            ],
+            "skill tests",
+            "--launches-seats",
+            roles_file={"roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}},
+        )
+        self.assertEqual(stderr, (
+            "error: role 'skill tests' has no seat: every runnable model on grok is excluded "
+            "(grok-4.7-build-fast), and pstack never runs a fast Grok model as a seat or a worker\n"
+        ))
+
+    def test_launch_pool_with_no_runnable_provider_names_the_pool(self):
+        stderr = self.refusal(
+            [
+                plain_provider("claudeAgent", "claude-opus-5-5", "claude-haiku-4-5"),
+                plain_provider("kilo", "kilo-1", runs=False),
+                plain_provider("acme", "acme-1", runs=False),
+            ],
+            "skill tests",
+            "--launches-seats",
+            roles_file={"roles": {
+                "bug-fix": [{"providerInstanceId": "kilo", "model": "kilo-1"}],
+                "hillclimb": [{"providerInstanceId": "acme", "model": "acme-1"}],
+            }},
+        )
+        self.assertEqual(stderr, (
+            "error: role 'skill tests' has no seat: "
+            "none of the providers it may use (acme, kilo) can run child tasks\n"
+        ))

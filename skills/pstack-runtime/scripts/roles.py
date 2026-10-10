@@ -53,7 +53,6 @@ SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
 CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
 FAST_GROK_OPTIONS = frozenset({"fastMode"})  # the user never runs a Grok model in its fast variant
-EXCLUDED_RULE = "pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker"
 HAIKU_BRIEF = (
     "Keep working until everything the user asked for is done, and only stop to ask when you can't go on without the user or before a risky step. When the work the user asked for is done and checked, stop and report. Don't add new features, docs, or refactors that weren't asked for. If you think one would help, mention it at the end instead of doing it.",
     "When you change code that can be run, built, or type-checked, run a real check that exercises the change before reporting it done: the project's tests, type-checker, or build, or the changed command itself. A syntax-only check, or a check command that failed to start, does not count; if all that is missing is the project's declared dependencies, install them with its own package manager and lockfile (e.g. npm install, pip install -r requirements.txt), never via sudo or the system package manager, unless told not to. Only if no real check can run here, say which one you did not run and why instead of reporting the change as done.",
@@ -339,10 +338,6 @@ def haiku_45(model_id):
     return re.search(r"(?:^|-)claude-haiku-4-5(?:-|$)", normalized_bare(model_id)) is not None
 
 
-def excluded_id(model_id):
-    return fast_grok(model_id) or haiku_45(model_id)
-
-
 def model_tokens(model_id):
     return re.split(r"[-_.]", model_id.lower())
 
@@ -352,6 +347,23 @@ def fast_grok(model_id):
     if not isinstance(model_id, str) or not model_id:
         return False
     return family(model_id) == "grok" and "fast" in model_tokens(bare_id(model_id))
+
+
+EXCLUDED_KINDS = (
+    ("a fast Grok model", fast_grok),
+    ("Claude Haiku 4.5", haiku_45),
+)
+
+
+def excluded_rule(labels):
+    return f"pstack never runs {' or '.join(labels)} as a seat or a worker"
+
+
+EXCLUDED_RULE = excluded_rule(label for label, _ in EXCLUDED_KINDS)
+
+
+def excluded_id(model_id):
+    return any(matches(model_id) for _, matches in EXCLUDED_KINDS)
 
 
 def pickable(model_id):
@@ -459,20 +471,30 @@ def parent_for(args, catalog, catalog_path):
     return inherit_parent(catalog)
 
 
-def no_seat_message(name, catalog):
-    excluded = []
-    for provider in catalog.get("providers") or []:
-        if not runnable(provider):
-            continue
-        for model in models_of(provider):
-            model_id = model.get("id")
-            if not pickable(model_id):
-                label = bare_id(model_id)
-                if label not in excluded:
-                    excluded.append(label)
+def _pool_providers(catalog, providers=None):
+    """Runnable providers a picker may use, in catalog order. providers limits them to a launch pool."""
+    return [
+        provider for provider in catalog.get("providers") or []
+        if (providers is None or provider["providerInstanceId"] in providers) and runnable(provider)
+    ]
+
+
+def no_seat_message(name, catalog, providers=None):
+    pool = _pool_providers(catalog, providers)
+    if providers is not None and not pool:
+        return (
+            f"role {name!r} has no seat: none of the providers it may use "
+            f"({', '.join(sorted(providers))}) can run child tasks"
+        )
+    excluded = [model.get("id") for provider in pool for model in models_of(provider) if not pickable(model.get("id"))]
+    labels = [label for label, matches in EXCLUDED_KINDS if any(matches(model_id) for model_id in excluded)]
+    if providers is None:
+        where = "in the catalog"
+    else:
+        where = f"on {', '.join(sorted(provider['providerInstanceId'] for provider in pool))}"
     return (
-        f"role {name!r} has no seat: every runnable model in the catalog is excluded "
-        f"({', '.join(excluded)}), and {EXCLUDED_RULE}"
+        f"role {name!r} has no seat: every runnable model {where} is excluded "
+        f"({', '.join(dict.fromkeys(bare_id(model_id) for model_id in excluded))}), and {excluded_rule(labels)}"
     )
 
 
@@ -630,16 +652,12 @@ def apply_budget(seat, model, budget):
 
 
 def _runnable_rows(catalog, providers=None):
-    rows = []
-    for provider in catalog["providers"]:
-        if providers is not None and provider["providerInstanceId"] not in providers:
-            continue
-        if not runnable(provider):
-            continue
-        for model in models_of(provider):
-            if pickable(model["id"]):
-                rows.append((provider, model))
-    return rows
+    return [
+        (provider, model)
+        for provider in _pool_providers(catalog, providers)
+        for model in models_of(provider)
+        if pickable(model["id"])
+    ]
 
 
 def _provider_for_exact(matches, wanted_family):
@@ -659,7 +677,7 @@ def _preferred_seat(preference, catalog, budget="default", role=None, providers=
         raise RolesError("no provider in the catalog can run child tasks")
     rows = _runnable_rows(catalog, providers)
     if not rows:
-        raise RolesError(no_seat_message(role or "bug-fix", catalog))
+        raise RolesError(no_seat_message(role or "bug-fix", catalog, providers))
     wanted = preference.model_id
     wanted_family = family(wanted)
     exact = [(provider, model) for provider, model in rows if model["id"] == wanted]
