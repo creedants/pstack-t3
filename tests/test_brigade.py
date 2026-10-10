@@ -403,6 +403,59 @@ LONGER_THAN_A_NO_WORK_PHRASE = [
 ]
 
 
+# Follow-ups from item reports of 2026-10-10, each with the paths cell `ticket add --from-report` records for it
+# in a repository that tracks TRACKED.
+REAL_FOLLOW_UPS = [
+    ('`docs/guide.md:246`. "`ticket add` refuses a source this coordinator does not own, and a ref that is still '
+     'open here or in a sibling." leaves out the same-summary refusal. Add after "So one issue becomes one '
+     'ticket.": "A request from you with no ref is refused while a waiting or assigned ticket of that coordinator '
+     'has the same summary, unless `--again` is passed."',
+     'docs/guide.md'),
+    ('`tests/test_pstack_t3.py:1869-1878` `test_history_states_the_thread_link_in_a_form_check_accepts` was written '
+     'when a literal thread link failed the link check. `check_tree` now accepts it. Lines 1877-1878 (the runtime '
+     'holds no link target starting `t3-thread:`) no longer guard anything. Once they go, the runtime can show the '
+     'literal `[title](t3-thread://v1/<threadId>)`. The test file is outside L136.',
+     'tests/test_pstack_t3.py'),
+    ('**`changes/pstack-t3%2Fd116.md`, third bullet, at release time.** Its sentence "Each line names a command to '
+     'run, or the entry or file to delete." is now true of each single sentence and each group head, and not of an '
+     'item line. Its last two sentences still hold. The release item corrects superseded bullets, so it can fold '
+     'this one into the D124 bullets.',
+     'changes/pstack-t3%2Fd116.md'),
+    ('`t3/scripts/roles.py`, `_resolve_inherit`, the excluded-parent refusal. For a parent on Claude Haiku 4.5 or a '
+     'fast Grok model whose provider the catalog marks not runnable, the error ends "`<provider>` has no other '
+     'model pstack may pick", even when that provider lists a pickable model. The true cause is that the provider '
+     'cannot run children. A parent the runtime mode blocks no longer reaches that text. The catalog-marked case '
+     'still does. The fix is to end that error with "`<provider>` is not runnable (`<constraints>`)" when '
+     '`runnable(provider)` is false, with a test on a fixture provider that has `canRunChildTask: false`, '
+     '`claude-haiku-4-5`, and one other model.',
+     't3/scripts/roles.py'),
+    ('**Move `OLD_INSTALLER` and the test wrappers to `tests/fixtures/`.** This is outside lease L104. '
+     '`tests/test_install.py` is 1,688 lines, 276 of them the embedded installer.',
+     'tests/fixtures,tests/test_install.py'),
+    ('**Own-thread wait coverage.** It is measured on Claude (with `runId`) and Codex (without `runId`). Grok, '
+     'Cursor, and ACP are untested.',
+     ''),
+    ("**`README.md`, `doctor`.** This replaces the `**`doctor` lists leftover records.**` bullet D116's second "
+     'follow-up proposed, which has not landed. Add it after the bullet that starts `**Nothing is overwritten.**`, '
+     "beside D116's `**A skipped step exits 3.**` bullet, which stands: ```markdown - **`doctor` lists leftover "
+     "records.** Under each harness, `doctor` prints this checkout's recorded links that it can prove neither at "
+     'their path nor in a recorded backup, backup records with nothing at their backup path, and owner files of '
+     'other checkouts whose checkout directory is missing. Each names a command to run, or the entry or file to '
+     'delete. Two or more under one harness with the same advice print as one group, a line with their count and '
+     'the advice and then one line per record. `doctor` writes nothing, and these lines do not change its exit '
+     'status. It names a record file it cannot read and still runs the checks that do not need that file. It exits '
+     "1 when that file is `install-manifest.json` or this checkout's owner file. ```",
+     'README.md'),
+    ('`t3/added/brigade/SKILL.md:81` quotes the old malformed line, and the file is leased to another item. Replace '
+     '``with `brigade: <table> line <n> is malformed; fix or remove it`.`` with ``with `brigade: '
+     '<project>/<restaurant>/<table> line <n> is malformed; fix or remove it`, where `<project>/<restaurant>` is '
+     'the last two parts of the restaurant directory that holds the table.``',
+     't3/added/brigade/SKILL.md'),
+]
+TRACKED = ("README.md", "changes/pstack-t3%2Fd116.md", "docs/guide.md", "t3/added/brigade/SKILL.md", "t3/runtime.md",
+           "t3/scripts/roles.py", "tests/fixtures/installer.py", "tests/test_install.py", "tests/test_pstack_t3.py")
+
+
 class BrigadeTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -4493,6 +4546,110 @@ class BrigadeTest(unittest.TestCase):
         workers = "workers: 2 of 1 running, 0 idle, auto-start: normal"
         self.assertEqual(self.brigade("status").splitlines()[2], workers)
         self.assertEqual(self.brigade("watch").splitlines()[0], workers)
+
+    def tracked_project(self, *files):
+        """The project as a git repository that tracks these files."""
+        for name in files:
+            path = self.project / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n")
+        run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
+        run("git", "init", "-q", "-b", "main")
+        run("git", "add", "-A")
+        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    def paths_cells(self):
+        return {row[0]: row[8] for row in (line.split("\t") for line in (self.at / "rail.tsv").read_text().splitlines()[1:])}
+
+    def test_from_report_records_the_tracked_paths_each_real_follow_up_quotes(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        printed = self.follow_ups_in("## Follow-ups\n\n" + "".join(f"- {text}\n" for text, _ in REAL_FOLLOW_UPS))
+        self.assertEqual(printed.splitlines(), [f"T{number} added from perf/reports/D1.md#{number - 1}: {text}"
+                                                for number, (text, _) in enumerate(REAL_FOLLOW_UPS, 2)])
+        self.assertEqual(self.paths_cells(), {"T1": "", **{f"T{number}": paths
+                                                           for number, (_, paths) in enumerate(REAL_FOLLOW_UPS, 2)}})
+
+    def test_from_report_records_the_directory_before_the_first_marked_component_of_a_pattern_that_matches(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- Reword `t3/**/*.md` and `tests/test_*.py`.\n"
+                           "- Nothing matches `docs/*.rst`, `**` or `*.md` has no directory, and `src/*.py` is not tracked.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "t3,tests", "T3": ""})
+
+    def test_from_report_records_no_path_for_a_quote_outside_the_repository_or_of_the_repository_itself(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- See `../README.md`, `/README.md`, `.`, `docs/../README.md`, "
+                           "and `docs/guide.md:x`.\n- Fix `./docs//guide.md:7` and `docs/`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "docs,docs/guide.md"})
+
+    def test_from_report_records_no_paths_when_the_project_is_not_a_git_repository(self):
+        (self.project / "docs").mkdir()
+        (self.project / "docs/guide.md").write_text("x\n")
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `docs/guide.md`.\n"),
+                         "T2 added from perf/reports/D1.md#1: Fix `docs/guide.md`.")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    def test_from_report_dry_run_in_a_git_project_changes_no_store_file(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.review_file("D1.md", "## Follow-ups\n\n- Fix `docs/guide.md`.\n")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: Fix `docs/guide.md`.")
+        self.assertEqual(self.store_files(), before)
+
+    def unrecorded_tickets(self):
+        """T1 and T2 waiting with no paths, T3 waiting with paths, and T4 dropped with no paths."""
+        self.tracked_project(*TRACKED)
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `docs/guide.md:246` and `tests/test_install.py`")
+        self.brigade("ticket", "add", "--summary", "Cover the `runId` wait")
+        self.brigade("ticket", "add", "--summary", "Reword `README.md`", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--summary", "Drop `t3/scripts/roles.py`")
+        self.brigade("ticket", "set", "T4", "--state", "dropped")
+
+    def test_ticket_paths_records_quoted_paths_on_waiting_tickets_that_record_none_and_logs_nothing(self):
+        self.unrecorded_tickets()
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths"),
+                         "T1 paths docs/guide.md,tests/test_install.py\nT2 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": "docs/guide.md,tests/test_install.py", "T2": "", "T3": "t3/runtime.md", "T4": ""})
+        after = self.store_files()
+        self.assertEqual(sorted(name for name in after if after[name] != before[name]), ["rail.tsv"])
+
+    def test_a_second_ticket_paths_run_changes_no_store_file(self):
+        self.unrecorded_tickets()
+        self.brigade("ticket", "paths")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths"), "T2 quotes no tracked path")
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_paths_dry_run_prints_what_it_would_record_and_changes_no_store_file(self):
+        self.unrecorded_tickets()
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths", "--dry-run", owner=False),
+                         "T1 would record docs/guide.md,tests/test_install.py\nT2 quotes no tracked path")
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_paths_says_so_when_every_waiting_ticket_records_paths(self):
+        self.tracked_project(*TRACKED)
+        self.open()
+        self.assertEqual(self.brigade("ticket", "paths"), "every waiting ticket records paths")
+        self.brigade("ticket", "add", "--summary", "Reword `README.md`", "--paths", "t3/runtime.md")
+        self.assertEqual(self.brigade("ticket", "paths"), "every waiting ticket records paths")
+
+    def test_ticket_paths_refuses_a_project_that_is_not_a_git_repository_and_changes_no_store_file(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `docs/guide.md`")
+        before = self.store_files()
+        for flags in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade("ticket", "paths", *flags, ok=False),
+                             f"brigade: cannot list tracked files in {self.project}")
+        self.assertEqual(self.store_files(), before)
 
     def test_from_report_refuses_priority_paths_and_decision(self):
         self.fired_bug_fix()
