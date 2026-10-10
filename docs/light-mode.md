@@ -83,7 +83,7 @@ Each row is one place a skill spawns a child or a thread. "Items" is the mean `i
 | 13 | Description eval | `pstack-author-skill/SKILL.md:61` | 5, plus a rerun per failure | When triggers are uncertain | n/s |
 | 14 | `swarm` workers | `t3/overrides/swarm/SKILL.md:24`, `:39` | N from the user or the shape, plus 1 respawn per bad result | Explicit swarm | n/s |
 | 15 | Trail reviewer | `t3/overrides/show-me-your-work/SKILL.md:67` | 1, another family than the worker | Hand-back of every run with a decision trail. Called by Autonomous run (`autonomous-run.md:10`), Hillclimb (`hillclimb.md:9`), Autopilot owners, and Orchestrate close (`orchestrate.md:67`) | 17 (two runs outside the sample) |
-| 16 | `reflect` | `t3/overrides/reflect/SKILL.md:27`, `:39` | 3 reviewers, then 1 synthesizer | The user says reflect, and brigade's weekly service (`brigade/SKILL.md:149`) | n/s |
+| 16 | `reflect` | `t3/overrides/reflect/SKILL.md:27`, `:39` | 3 reviewers, then 1 synthesizer | The user says reflect, and brigade's weekly service in full mode (`t3/added/brigade/SKILL.md`, Run a service step 8) | n/s |
 | 17 | Recall slices | `t3/overrides/recall/SKILL.md:19` | 1 per slice of the thread list, no fixed N | Every recall over more than two threads | n/s |
 | 18 | Automate-me miners | `t3/overrides/automate-me/SKILL.md:31` | 1 per history slice, 3 in the example | Every automate-me run | n/s |
 | 19 | Verification source wave | `t3/overrides/maintain-verification-skill/SKILL.md:29` | 1 per feature file, no cap | Every maintenance pass | n/s |
@@ -109,12 +109,12 @@ Each row is one place a skill spawns a child or a thread. "Items" is the mean `i
 
 | # | Spawn | Source | Children per run | When | Items |
 | --- | --- | --- | --- | --- | --- |
-| 32 | Coordinator thread | `t3/added/brigade/SKILL.md:106` | 1 `t3_thread_launch` | `open` printed `opened` | standing |
+| 32 | Coordinator thread | `t3/added/brigade/SKILL.md`, Open a restaurant step 6 | 1 `t3_thread_launch` | `open` printed `opened` | standing |
 | 33 | Executive admin thread | `t3/added/brigade-admin/SKILL.md:33` | 1 `t3_thread_launch` | `open --admin` printed `opened` | standing |
-| 34 | brigade worker | `brigade/SKILL.md:135` | 1 top-level thread per attempt | Every work item, and again on a bounce (`:141`), a send-back (`:142`), a missing worker (`:202`), and a timebox replacement (`:206`) | 29 to 354 per worker |
-| 35 | brigade gate verifier | `brigade/SKILL.md:138` | 1 from `verifiers`, another family than the author | Every attempt, at its head SHA | 38 |
+| 34 | brigade worker | `t3/added/brigade/SKILL.md`, Run a service step 4.3 | 1 top-level thread per attempt | When the item is neither held nor awaiting a round decision, its first attempt and replacements after a queue bounce or a send-back (Run a service step 7), a missing worker (Liveness check, the `in progress with no worker thread` line), and a timebox replacement (Liveness check step 4) | 29 to 354 per worker |
+| 35 | brigade gate verifier | `t3/added/brigade/SKILL.md`, Run a service step 6 | 1 from `verifiers` by default, another family than the author | Completed attempts that are neither held nor contested, at their head SHA | 38 |
 | 36 | brigade second reviewer | not in the skill text | 1 trial model | 19 times, on D59 to D70 during the reviewer trial | 110 |
-| 37 | brigade fix-the-recipe | `brigade/SKILL.md:149`, `:204` | 1 work item on the `correct` skill | Two items repeat one mistake | as one work item |
+| 37 | brigade fix-the-recipe | `t3/added/brigade/SKILL.md`, Run a service step 8 and Liveness check step 2 | 1 work item on the `correct` skill | Two items repeat one mistake, or Liveness check step 2 sees `report written, no report-back` | as one work item |
 | 38 | Landing writer | `t3/added/landing/SKILL.md:85` | 1 per writing unit, a thread for a long run, else a child | Each unit a coordinator lands | as rows 34 or 9 |
 | 39 | Landing queue | `t3/added/landing/scripts/land.py` (`Integration.check`, `land`) | 0. Subprocess checks and `gh` reads only | Every submitted entry | 0 |
 | 40 | Setup smoke test | `t3/setup.md:68` | 1 per distinct provider in the roles table, `mode: "wait"` | Setup only | n/s |
@@ -166,7 +166,7 @@ The highest level present wins. The order is brief, then session, then coordinat
 
 The brief has to carry the decision because a child may not see the project file. `.gitignore` lists `/.pstack/`, so a new worktree has no `.pstack/t3-roles.json`, and `project_config_path` stops at the worktree's `.git` file. A worker that ran `show --cwd` in its worktree would read only the user file. For the same reason `roles.py mode` runs in the coordinator's checkout, where the project's `escalate` list lives.
 
-The coordinator itself resolves two seats per attempt, the worker's `modelSelection` (`brigade/SKILL.md:135`) and the gate verifier (`:138`). It resolves both with `show --brief-mode <the item's mode>`, never with `--coordinator-mode`, so an escalated item's worker and gate get full seats.
+The coordinator resolves the worker's `modelSelection` when it launches the worker (`t3/added/brigade/SKILL.md`, Run a service step 4.3) and the gate verifier's seat when it launches the verifier (step 6). It resolves both with `show --brief-mode <the item's mode>`, never with `--coordinator-mode`, so an escalated item's worker and gate get full seats.
 
 So a coordinator set to `light` over a project set to `full` writes `Mode: light` into its worker's brief. The worker runs `roles.py show --brief-mode light`, and every seat it and its delegates resolve gets the light cap. A child escalated to `full` under a project set to `light` gets `Mode: full`. Its `roles.py show --brief-mode full` applies no light cap.
 
@@ -294,7 +294,7 @@ Light mode has one gate review per head SHA before merge. It is one read-only ch
 
 The gate's verdict is `pass`, `send-back`, or `blocked`, with the head SHA, the author, and the verifier.
 
-**In brigade** the gate is the existing verifier (`brigade/SKILL.md:138`). The coordinator records it with `pass record`, and `dish --state queued` refuses a SHA without a pass. A brigade worker's brief carries `Gate: brigade`, and the worker runs no gate of its own.
+**In brigade** the gate is the existing verifier (`t3/added/brigade/SKILL.md`, Run a service step 6). The coordinator records it with `pass record`, and `dish --state queued` refuses a SHA without a pass. A brigade worker's brief carries `Gate: brigade`, and the worker runs no gate of its own.
 
 **In a standalone playbook** (Feature, Bug fix, Refactoring, Perf issue, Hillclimb, Visual parity, Authoring a skill), Opening a PR runs the gate before it opens or marks the PR ready. Full mode has no such gate today. Feature, Bug fix, Refactoring, and Perf issue end with the parent's own read of the diff, and Opening a PR seats no `verifiers`. Light mode adds the gate because it removes the panels that gave full mode its diversity.
 
@@ -372,13 +372,13 @@ Gate: brigade
 
 ### Interaction with Deadlines
 
-The runtime's Deadlines rule (`t3/runtime.md:33`) says a timebox orders the work and never waives a step. brigade sends back a skip cited to the timebox (`brigade/SKILL.md:138`). Light mode keeps that rule whole. A waived step is not a skip, because the mode removes it before the attempt starts and the brief records it.
+The runtime's Deadlines rule (`t3/runtime.md:33`) says a timebox orders the work and never waives a step. brigade sends back a skip cited to the timebox (`t3/added/brigade/SKILL.md`, Run a service step 6). Light mode keeps that rule whole. A waived step is not a skip, because the mode removes it before the attempt starts and the brief records it.
 
 The worker runs every playbook step its `Waived by mode:` line does not name, under the Deadlines rule as written. It never adds a waiver of its own. At review, the coordinator compares the report's skipped steps with that line. A skip the line names passes. Any other skip, including one cited to the timebox, is still a send-back. A mode change mid-attempt does not change the line. It applies to the next brief.
 
 ### The fresh-worker rule
 
-Every send-back still launches a fresh worker with `t3_thread_launch` (`brigade/SKILL.md:142`). The rule exists so that a fix never inherits a stale context or drops a directive, and light mode does not weaken it. Light mode makes the fresh worker cheaper. Its brief carries `Attempt: fix`, the waivers from the table, the verifier's findings file, and the old branch head as its base. D24's sixth attempt and D65's second spawned no children and passed. D72's retry reran a five-seat panel for a one-paragraph change and cost more than its first attempt.
+A send-back launches a fresh worker with `t3_thread_launch` unless the item is held or owes its round decision (`t3/added/brigade/SKILL.md`, Run a service step 7). The rule exists so that a fix never inherits a stale context or drops a directive, and light mode does not weaken it. Light mode makes the fresh worker cheaper. Its brief carries `Attempt: fix`, the waivers from the table, the verifier's findings file, and the old branch head as its base. D24's sixth attempt and D65's second spawned no children and passed. D72's retry reran a five-seat panel for a one-paragraph change and cost more than its first attempt.
 
 A queue bounce is not a send-back. Its fresh worker gets `Attempt: bounce` and the bounce reason. It does not count toward rule 2.
 
