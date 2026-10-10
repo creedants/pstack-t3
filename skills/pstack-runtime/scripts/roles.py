@@ -1017,6 +1017,9 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
             verdicts = panel_verdicts(seats, catalog, budget)
             entry["seats"] = [verdict.seat for verdict in verdicts if verdict.seat is not None]
             panel_notes = selection_notes + [note for verdict in verdicts for note in verdict.notes]
+            shortfall = panel_shortfall(entry["seats"])
+            if shortfall is not None:
+                panel_notes.append(shortfall)
             if panel_notes:
                 entry["notes"] = panel_notes
         else:
@@ -1167,20 +1170,27 @@ def panel_verdicts(configured, catalog, budget, blocked=frozenset(), authors=())
     return verdicts
 
 
+def panel_shortfall(seats):
+    """None when seats can run a panel, else the clause that says how far short they are."""
+    if len(seats) >= PANEL_MINIMUM_PASSES:
+        return None
+    return f"has {len(seats)} usable seat{'' if len(seats) == 1 else 's'} and needs {PANEL_MINIMUM_PASSES}"
+
+
 def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume):
     configured, skipped = review_backups
     verdicts = panel_verdicts(configured or [], catalog, budget, blocked, authors)
     seats = [verdict.seat for verdict in verdicts if verdict.seat is not None]
     notes = skipped + [note for verdict in verdicts for note in verdict.notes]
     lead = f"{role}: {label} is still out after the reset" if resume else f"{role}: {label} hit its usage limit"
-    if len(seats) >= PANEL_MINIMUM_PASSES:
+    shortfall = panel_shortfall(seats)
+    if shortfall is None:
         report = (
             f"{lead}; every paid reviewer backup is out, so review backups runs {len(seats)} seats; "
             "land only if no reviewer reproduces a blocker and at least two pass"
         )
         return Backup("panel", report, seats=tuple(seats), notes=tuple(notes))
-    usable = f"{len(seats)} usable seat{'' if len(seats) == 1 else 's'}"
-    report = f"{lead}; review backups has {usable} and needs {PANEL_MINIMUM_PASSES}, so the work waits for the reset"
+    report = f"{lead}; review backups {shortfall}, so the work waits for the reset"
     if notes:
         report += f" ({'; '.join(notes)})"
     return Backup("park", report)
@@ -1300,6 +1310,9 @@ def validate(config, catalog):
         if name == PANEL_BACKUP_ROLE:
             verdicts = panel_verdicts(seats, catalog, config["budget"])
             problems.extend(f"{name}: {problem}" for verdict in verdicts for problem in verdict.problems)
+            shortfall = panel_shortfall([verdict.seat for verdict in verdicts if verdict.seat is not None])
+            if shortfall is not None:
+                problems.append(f"{name}: {shortfall}")
             continue
         for seat in seats:
             _, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name)
