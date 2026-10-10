@@ -361,7 +361,7 @@ class AutoMergeStillEnabled(Infrastructure):
 
 
 class UncheckedTrunk(Infrastructure):
-    """The message is the whole pause. take_pr stores it in the transaction that lands the entry."""
+    pass
 
 
 def trunk_ref(contract):
@@ -1165,14 +1165,6 @@ Outcome = namedtuple("Outcome", "landed bounced opened adopted rebuilt")
 
 
 def build(store, integration, entry, onto, trunk, out):
-    """Replay one entry on onto, check it, push landing/e<n>, store the row, and open its PR when it has none.
-
-    Returns the commit the next entry is built on. That is this entry's candidate, or onto when it has none.
-    An awaiting-merge entry is a rebuild. It keeps its PR, and its absent-check marker is dropped. A rebuild
-    that conflicts or fails bounces the entry and leaves its PR open. The push comes before the row. A run
-    killed between them leaves the row as it was, and the next run builds the entry again. An empty replay
-    settles as already in trunk only when onto holds trunk's tree. On any other onto the entry is left as
-    it is, because an entry that has not merged holds the change."""
     contract, ident = store.contract, entry["id"]
     integration.reset(onto)
     reason = integration.apply(entry)
@@ -1208,13 +1200,10 @@ def build(store, integration, entry, onto, trunk, out):
 
 
 def build_line(store, integration, out):
-    """Merge mode: build the stale entries by id, then the unheld queued entries, each on the tip of the line.
-
-    Returns the ids it built. Under merge method rebase GitHub replays every commit of a pull request, so
-    no entry is built on another. At most one entry is built, and only when every awaiting-merge entry is stale."""
     trunk = fetch_trunk(store)
     line = line_of(store, trunk)
     tip, todo = line.tip, line.stale + unheld_queued(store)
+    # Under merge method rebase GitHub replays every commit of a pull request, so no entry is built on another.
     if merge_method(store) == "rebase":
         todo = todo[:1] if len(store.entries("awaiting-merge")) == len(line.stale) else []
     for entry in todo:
@@ -1295,7 +1284,6 @@ MERGE_REQUESTED = "merge requested by the queue"
 
 
 WAITING_FOR_CHECKS = "waiting for required checks before merging"
-# GitHub's mergePullRequest error names a moved base branch in this sentence.
 BASE_MOVED = "Base branch was modified"
 BLOCKER_QUERY = (
     '[.reviewDecision // "", '
@@ -1341,16 +1329,12 @@ def fetch_trunk(store):
 
 
 def same_tree(repo, first, second):
-    """True when both commits resolve and hold the same tree. A squash commit holds its candidate's tree under another id."""
     found = git("rev-parse", f"{first}^{{tree}}", f"{second}^{{tree}}", cwd=repo, check=False)
     trees = found.stdout.split()
     return found.returncode == 0 and len(trees) == 2 and trees[0] == trees[1]
 
 
 def built_on(store, entry, trunk):
-    """The commit this entry's candidate was built on.
-
-    An entry opened before the onto column existed stores none. Its merge base with trunk stands in."""
     if entry["onto"]:
         return entry["onto"]
     base = git("merge-base", entry["candidate"], trunk, cwd=store.repo, check=False)
@@ -1362,14 +1346,6 @@ def merge_method(store):
 
 
 def line_of(store, trunk):
-    """Merge mode's line against one trunk commit. Reads the store and git and writes nothing.
-
-    Returns the entries of the line in merge order, the stale entries by id, and the tip.
-    The first entry is the lowest-id awaiting-merge entry with a candidate whose built_on
-    commit holds trunk's tree. Each next entry is the one whose onto is the candidate ahead
-    of it. Under merge method rebase the line stops after its first entry. An awaiting-merge
-    entry with a pull request that is outside the line is stale, unless its note is
-    MERGE_REQUESTED. The tip is the last candidate of the line, or trunk when the line is empty."""
     waiting = store.entries("awaiting-merge")
     built = [row for row in waiting if row["candidate"]]
     first = next((row for row in built if same_tree(store.repo, built_on(store, row, trunk), trunk)), None)
@@ -1407,12 +1383,6 @@ def remember_absent(store, ident, drain):
 
 
 def merge_blocker(store, url):
-    """Why this PR must not merge yet, whether auto-merge is requested, and the head the read describes.
-
-    One gh pr view supplies the review, the pending count, the failed names, how many
-    checks are posted, whether autoMergeRequest is set, and the head commit. Returns the
-    classify_rollup pair, True when autoMergeRequest is not null, and that head. A failed
-    command or an unparseable rollup raises Infrastructure, and the caller must not merge."""
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup,autoMergeRequest,headRefOid",
               "-q", BLOCKER_QUERY, cwd=store.repo)
     if view.returncode != 0:
@@ -1459,24 +1429,6 @@ def pause_for_review(store, url, detail, disarm, armed=False):
 
 
 def request_merge(store, ident, out):
-    """Judge one entry of the line from one check read. Returns True when a merge command succeeded.
-
-    The read runs before any gh pr merge, including --auto. A pending posted check waits.
-    A failed posted check bounces. With no posted check, the land run that first sees it
-    waits. A later land merges when checks are still absent. While checks are still absent,
-    the queue waits and does not pause only when the plain merge itself is refused because
-    the base branch policy prohibits the merge. Any other plain-merge failure pauses and
-    names that failure, whatever the --auto attempt said. An approving review, or changes
-    requested, pauses the queue and does not call gh pr merge. A plain merge refused with
-    BASE_MOVED is asked again after 2 seconds, at most 3 more times. When it is still
-    refused the entry waits and the queue does not pause.
-
-    Only the first entry of the line merges or bounces. It merges when the read shows the
-    candidate as the head and, after a fresh fetch, trunk holds the tree the candidate was
-    built on. An entry behind the first keeps the pending and absent notes. On any other
-    read its note names the entry ahead of it. An entry outside the line is not read, and
-    build_line rebuilds it when it is stale. A head that is not the candidate waits in any
-    position."""
     entry = entry_row(store, ident)
     url = entry["pr"]
     line = line_of(store, trunk_commit(store)).entries
@@ -1685,9 +1637,6 @@ def read_pr_state(store, url):
 
 
 def unchecked_trunk(store, entry, merged):
-    """The pause for a merge commit that holds another tree than the entry's candidate, or an empty string.
-
-    A merge commit that does not resolve in this repository is not compared."""
     resolved = git("rev-parse", "--verify", "--quiet", f"{merged}^{{commit}}", cwd=store.repo, check=False)
     if resolved.returncode != 0 or same_tree(store.repo, merged, entry["candidate"]):
         return ""
@@ -1696,10 +1645,6 @@ def unchecked_trunk(store, entry, merged):
 
 
 def take_pr(store, entry, landed, bounced):
-    """Settle a merged or closed PR before a failed check can bounce it.
-
-    Returns True when this poll should leave the entry alone. In merge mode a landed entry whose merge
-    commit holds another tree than its candidate stays landed, and the queue pauses in the same transaction."""
     state, head, merged = read_pr_state(store, entry["pr"])
     if state == "MERGED":
         deleted, warning = delete_queue_branch(store, entry)
@@ -1707,7 +1652,6 @@ def take_pr(store, entry, landed, bounced):
             return True
         checked, unchecked = head == entry["candidate"], ""
         if store.contract["mode"] == "merge":
-            # The line is read against trunk as this merge left it.
             fetch_trunk(store)
             unchecked = unchecked_trunk(store, entry, merged) if checked else ""
         with store.tx() as db:
@@ -1736,7 +1680,6 @@ def take_pr(store, entry, landed, bounced):
 
 
 def poll(store, entry, out):
-    """One awaiting-merge entry. Give it a PR, settle a merged or closed one, and in merge mode judge it."""
     merging = store.contract["mode"] == "merge"
     if not entry["pr"]:
         outcome = ensure_pr(store, entry)
@@ -1773,10 +1716,6 @@ def poll(store, entry, out):
 
 
 def walk(store, out, only=None):
-    """Merge mode: poll each awaiting-merge entry once, or each of the ids in only.
-
-    Entries outside the line go first by id, then the line from its first entry. The order is
-    read again after every poll, so an entry is judged after the entry ahead of it settled."""
     polled = set()
     while True:
         line = line_of(store, trunk_commit(store)).entries
@@ -1959,14 +1898,12 @@ def land(store):
                 pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
             else:
                 pause(store, f"{problem}. Fix it, then run land.py resume")
-        # Merge mode prints what the run did before the pause. The other modes print the pause alone.
         return report(store, out if store.contract["mode"] == "merge" else Outcome([], [], [], [], []))
     finally:
         handle.close()
 
 
 def report(store, out):
-    """The lines of one land run. An entry this run opened or rebuilt prints as such only while it still awaits its merge."""
     rows = {row["id"]: row for row in store.db.execute("SELECT * FROM entry")}
     landed, bounced, adopted = out.landed, out.bounced, out.adopted
     opened, rebuilt = ([i for i in ids if rows[i]["state"] == "awaiting-merge"] for ids in (out.opened, out.rebuilt))

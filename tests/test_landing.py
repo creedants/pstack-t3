@@ -797,19 +797,6 @@ exit 0
         self.assertEqual(sh("git", "status", "--porcelain", cwd=self.work), "")
 
     def fake_gh(self):
-        """A gh stand-in that models several pull requests.
-
-        prs.json holds every pull request pr create opened, keyed by number. An open one
-        reports the commit its head branch holds on origin.git when asked. pr merge merges
-        that head into main on origin.git with real git and reports the new commit.
-        pr-<n>-checks holds one pull request's check result and the head it was posted for,
-        so a new head has no posted check. checks and pr-checks.json answer the check read
-        of a pull request with no pr-<n>-checks file. pr-state, when present, answers every
-        state read. pr-url answers for a branch that no pull request in prs.json has as its
-        head. pr-<n>-base-moved counts the plain merges of that pull request still to refuse
-        with GitHub's moved base branch error. outside-commit-before-merge adds one commit
-        to main right before the next merge. crash-on-create kills land after creating, and
-        crash-after-merge kills it after merging."""
         fake = self.base / "gh"
         fake.write_text(r"""#!PYTHON
 import json, os, signal, subprocess, sys
@@ -1142,7 +1129,6 @@ os.execv(real, [real, *args])
         return self.land("submit", "--holder", holder, "--branch", name, "--sha", sha, "--lease", lease, "--reviewer", REVIEWER)
 
     def queue_entries(self, count):
-        """Queue E1 to E<count>, one file each: a.txt gets one, b.txt gets two, lib/x.py gets three."""
         edits = [("a.txt", "one\n"), ("b.txt", "two\n"), ("lib/x.py", "three\n")]
         for number, (path, text) in enumerate(edits[:count], 1):
             self.assertEqual(self.queue_one(path=path, text=text, name=f"w{number}", holder=f"r/D{number}"), f"E{number}")
@@ -1151,11 +1137,9 @@ os.execv(real, [real, *args])
         return sh("git", *args, cwd=self.base / "origin.git")
 
     def origin_files(self, ref):
-        """What a.txt, b.txt, and lib/x.py hold at this ref on origin."""
         return [self.on_origin("show", f"{ref}:{path}") for path in ("a.txt", "b.txt", "lib/x.py")]
 
     def checks(self, number, kind):
-        """Post one check result on pull request <number> for the head it has now."""
         branch = json.loads((self.base / "prs.json").read_text())[str(number)]["head"]
         (self.base / f"pr-{number}-checks").write_text(f"{kind} {self.on_origin('rev-parse', branch)}")
 
@@ -1164,20 +1148,17 @@ os.execv(real, [real, *args])
         return path.read_text().splitlines() if path.exists() else []
 
     def open_line(self, count):
-        """Squash merge mode with E1 to E<count> open as pull requests 9 and up, each built on the one ahead."""
         self.init(mode="merge", merge_method="squash")
         self.queue_entries(count)
         self.land("land")
 
     def killed_land(self):
-        """Run land and require that it died from SIGKILL."""
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
                                 capture_output=True, text=True, env=os.environ.copy())
         self.assertEqual(result.returncode, -9, result.stdout + result.stderr)
 
     @contextlib.contextmanager
     def land_dies_after_its_push_to(self, branch):
-        """Inside the block, the first git push to this branch completes and then kills the process that ran it."""
         bindir = self.base / "kill-bin"
         bindir.mkdir()
         real = shutil.which("git")
@@ -1198,7 +1179,6 @@ os.execv(real, [real, *args])
             return db.execute(f"SELECT {', '.join(names)} FROM entry WHERE id = ?", (ident,)).fetchone()
 
     def entry_table_without_onto(self, candidates):
-        """Rebuild the entry table without its onto column, and store these candidates by entry id."""
         with self.raw_db() as db:
             newer = db.execute("SELECT sql FROM sqlite_master WHERE name = 'entry'").fetchone()[0]
             older = newer.replace(", onto TEXT NOT NULL DEFAULT ''", "")
@@ -1213,7 +1193,6 @@ os.execv(real, [real, *args])
             db.commit()
 
     def gh(self, *args):
-        """Run the fake gh the way a person at GitHub would."""
         result = subprocess.run([os.environ["LAND_GH"], *args], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -2810,7 +2789,6 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused: trunk no longer contains the last landed commit", self.land("land"))
 
     def commit_on_origin(self, message, path="merged.txt"):
-        """Simulate GitHub merging: push a new commit to origin main that writes the message to path. Returns its SHA."""
         clone = self.base / "merger"
         if not clone.exists():
             sh("git", "clone", "-q", "origin.git", "merger", cwd=self.base)
