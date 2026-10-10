@@ -1431,15 +1431,24 @@ def report_uninstall(plan, executed, dry_run):
 
 
 UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+NO_SKILL = "skills/ holds no skill; run python3 scripts/build.py first"
 
 
 def skill_names():
     return sorted(path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file())
 
 
-def install(args):
+def unbuilt():
+    """Return the line for a checkout with no skill to link, or None. It is UNBUILT when skills/ is not a directory and NO_SKILL when skill_names() is empty."""
     if not SKILLS.is_dir():
-        sys.exit(UNBUILT)
+        return UNBUILT
+    return None if skill_names() else NO_SKILL
+
+
+def install(args):
+    stop = unbuilt()
+    if stop:
+        sys.exit(stop)
     user = args.project is None
     scope = scope_of(args)
     root = str(ROOT)
@@ -1742,8 +1751,9 @@ def link_health(harness, directory, names, scope, user):
 
 
 def doctor(args):
-    if not SKILLS.is_dir():
-        print(UNBUILT)
+    stop = unbuilt()
+    if stop:
+        print(stop)
         return 1
     user = args.project is None
     scope = scope_of(args)
