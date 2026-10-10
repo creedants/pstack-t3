@@ -309,7 +309,7 @@ class DatabasePathTest(ActivityCase):
         self.assertEqual(self.find(str(flagged.parents[1]), {"T3CODE_HOME": str(named.parents[1])}, self.home), flagged)
         self.assertEqual(self.find(None, {"T3CODE_HOME": f" {named.parents[1]} "}, self.home), named)
 
-    def test_blank_variable_falls_back_to_the_home_directory(self):
+    def test_blank_variable_falls_back_to_the_default_base_directory(self):
         default = self.make(self.home / ".t3")
         self.assertEqual(self.find(None, {"T3CODE_HOME": "  "}, self.home), default)
         self.assertEqual(self.find(None, {}, self.home), default)
@@ -746,7 +746,7 @@ class StatusTest(ActivityCase):
         self.assertEqual(MOD["status_of"](agent(delegated(worker(1), "x"), parent=worker(1), turns=(turn,), delegation=closed)).value, "stopped")
         self.assertEqual(MOD["status_of"](agent(worker(1))).value, "done")
 
-    def test_bars_join_when_the_same_status_is_under_5_thousandths_apart_an_open_turn_starts_its_own_and_a_queued_turn_adds_no_seconds(self):
+    def test_bars_join_when_the_same_status_is_under_5_thousandths_apart_and_a_queued_turn_adds_no_seconds(self):
         status, turn, window = MOD["Status"], MOD["Turn"], MOD["Window"](0.0, 1000.0)
         turns = (turn(status.DONE, -50.0, 100.0), turn(status.DONE, 104.0, 200.0), turn(status.DONE, 205.0, 300.0),
                  turn(status.STOPPED, 301.0, 310.0), turn(status.RUNNING, 400.0, 500.0), turn(status.QUEUED, 501.0, None))
@@ -892,6 +892,8 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(self.label("Why-Investigator: part 2", "why-investigator"), "why investigator")
         self.assertEqual(self.label("why-investigator", "why-investigator"), "why investigator")
         self.assertEqual(self.label("see the explorer", "explorer"), "see the explorer")
+        self.assertEqual(self.label("Act as the brigade-d7 sub-agent for this task.", "brigade-d7"), "brigade d7")
+        self.assertEqual(self.label("Act as the Brigade-D7 review sub-agent.", "brigade-d7"), "brigade d7")
 
     def test_request_name_of_one_ordinary_word_is_the_label_and_a_title_of_that_word_is_too(self):
         for word in ("explorer", "queue", "code", "review", "src", "451237"):
@@ -930,7 +932,7 @@ ORDINARY = ("queue", "code", "review", "src", "private auditor", "451237", "D7",
 
 
 class FilterTest(unittest.TestCase):
-    """Privacy.clean on one string. The identifiers and paths are the ones each test gives."""
+    """Privacy on one string: clean, field, model, and link, and the unescaped that clean reads. The identifiers and paths are the ones each test gives."""
 
     def clean(self, text, identifiers=(), paths=()):
         return MOD["Privacy"](identifiers, paths).clean(text)
@@ -962,13 +964,13 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(self.clean(f"at {UUID_TEXT} and x{UUID_TEXT.upper()}y and {quote(UUID_TEXT)} end"), "at and and end")
         for word in MOD["T3_KINDS"]:
             with self.subTest(word):
-                self.assertEqual(self.clean(f"a {word}:alpha b {word.upper()}:1 c prefix={word}:x d {word}%3Aalpha e {word}%253A_x f x{word}:%41 g"), "a b c d e f g")
+                self.assertEqual(self.clean(f"a {word}:alpha b {word.upper()}:1 c prefix={word}:x d {word}%3Aalpha e {word}%253A_x f x{word}:%41 g {word}:%20x h"), "a b c d e f g h")
                 self.assertEqual(self.clean(f"the {word}: one and {word} :x and {word}:) end"), f"the {word}: one and {word} :x and {word}:) end")
         self.assertEqual(self.clean("12:30 D7:fix feature:x key:value a::b Re:plan"), "12:30 D7:fix feature:x key:value a::b Re:plan")
 
     def test_clean_removes_a_word_that_holds_an_email_address_and_keeps_an_at_sign_with_no_address_around_it(self):
         self.assertEqual(self.clean("mail acct-homemarker@example.test and <a.b@c.org>, x=USER@EXAMPLE.TEST and user%40example.test now"), "mail and and now")
-        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test"
+        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and \"jd\"@example.test and (jd)@example.test"
         self.assertEqual(self.clean(kept), kept)
 
     def test_clean_removes_an_absolute_path_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
@@ -978,12 +980,15 @@ class FilterTest(unittest.TestCase):
         for word in gone:
             with self.subTest(word):
                 self.assertEqual(self.clean(f"see {word} now"), "see now")
-        kept = "see src/a.py and/or docs/guide.md with opencode-go/model at https://example.test/o/r/pull/7 for I/O 24/7 +/- ~ ~5 a\\b Makefile:12 profile:x file: x 1/2 ./a ../b now"
+        kept = "see src/a.py and/or docs/guide.md with opencode-go/model at https://example.test/o/r/pull/7 for I/O 24/7 +/- ~ ~5 ~1u/x ${HOME/x $HOME}/x a\\b é:\\x Makefile:12 profile:x file: x 1/2 ./a ../b now"
         self.assertEqual(self.clean(kept), kept)
 
     def test_clean_removes_a_path_after_a_quotation_mark_up_to_the_next_such_mark_and_any_other_through_each_next_word_with_a_slash(self):
         self.assertEqual(self.clean('see "/srv/private dir/secret file.txt" and `~/a b` and \'C:\\a b\\c d\' now'), "see and and now")
+        self.assertEqual(self.clean("see “/srv/private dir/secret file.txt” and ‘~/a b’ and x=”/srv/a now"), "see and and now")
+        self.assertEqual(self.clean('see "/srv/private dir/secret file.txt and more'), "see file.txt and more")
         self.assertEqual(self.clean("see /srv/private dir/secret file.txt now"), "see file.txt now")
+        self.assertEqual(self.clean("see file:/home/private/My Documents/n.txt and file:~/My Documents/n.txt now"), "see and now")
         self.assertEqual(self.clean("see /srv/a then b/c d/e and f/g"), "see then b/c d/e and f/g")
 
     def test_clean_writes_each_control_character_as_a_space_before_it_looks_and_drops_a_character_utf8_cannot_hold(self):
@@ -993,6 +998,7 @@ class FilterTest(unittest.TestCase):
                 self.assertEqual(self.clean(f"a two_words{character}here b", ids), "a b")
                 self.assertEqual(self.clean(f"a{character}b"), "a b")
         self.assertEqual(self.clean("a two_wo\udc80rds here b mcp\ud800:x", ids), "a b")
+        self.assertEqual(self.clean("a tab\there_id b tab here_id c TAB\x00HERE_ID d", {"tab\there_id"}), "a b c d")
 
     def test_clean_removes_text_that_is_private_only_as_the_document_writes_it(self):
         self.assertEqual(self.clean("a <private_thread9 b", {"lt;private_thread9"}), "a b")
@@ -1004,9 +1010,9 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(self.clean("  D7 worker   mcp:x   running for 5m"), "  D7 worker   running for 5m")
         self.assertEqual(self.clean("  mcp:x worker   node:y"), "  worker")
         self.assertEqual(self.clean("say left_1 /pathmarker/a right_2 end", ids), "say end")
-        nested = " ".join(["left_1"] * 3 + ["/pathmarker/a"] + ["right_2"] * 3)
+        nested = " ".join(["left_1"] * 7 + ["/pathmarker/a"] + ["right_2"] * 7)
         self.assertEqual(self.clean(f"say {nested} end", ids), "say end")
-        deep = " ".join(["left_1"] * 9 + ["/pathmarker/a"] + ["right_2"] * 9)
+        deep = " ".join(["left_1"] * 8 + ["/pathmarker/a"] + ["right_2"] * 8)
         self.assertEqual(self.clean(f"say {deep} end", ids), "")
         self.assertEqual(self.clean(""), "")
 
@@ -1261,7 +1267,7 @@ class FoldTest(ActivityCase):
     def test_joined_makes_one_bar_of_two_across_a_gap_of_99_and_the_footer_says_bars_may_join_across_gaps(self):
         spans = MOD["joined"]([MOD["Span"](x, 1, MOD["Status"].DONE) for x in (0, 100, 300, 600, 900)], 4)
         self.assertEqual([(span.x, span.w) for span in spans], [(0, 101), (300, 1), (600, 1), (900, 1)])
-        self.assertIn("'. Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns.'", MOD["RENDERER"])
+        self.assertIn("'. Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals.'", MOD["RENDERER"])
         self.assertNotIn("time an agent was at work", MOD["RENDERER"])
 
     def test_cap_everything_lists_8_in_flight_items_with_those_of_a_group_on_the_page_first(self):
@@ -1283,7 +1289,7 @@ class FoldTest(ActivityCase):
         self.assertEqual((second.item.summary, second.item.pr, second.rows[0].label), ("𝔸" * 8 + "…", "https://example.test/" + "x" * 69, "\\" * 3 + "…"))
         self.assertEqual((third.item.summary, third.item.pr), ('"' * 5 + "…", ""))
         self.assertEqual((fourth.item.summary, fourth.item.pr), ("s" * 33 + "…", "https://example.test/?" + "&" * 13))
-        self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 27 + "…", "𝔸" * 8 + "…"))
+        self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 21 + "…", "𝔸" * 8 + "…"))
         self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
         self.assertEqual([each.no_link for each in folded.items], ["cut", "", "cut", ""])
         self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
@@ -1657,20 +1663,23 @@ class EmitTest(OutputCase):
                 self.assertEqual(MOD["render_text"](drawn_page, tagged).split("\n"), [tagged(line) for line in lines])
                 self.assertEqual((lines[0][:19], len(lines) > 2), ("Agent activity for ", True))
 
-    def test_each_word_of_the_named_page_is_in_both_forms(self):
+    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_is_in_the_text(self):
         fixture = named(self.fixture).write()
         document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
         self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD"]))
 
     def test_run_gives_both_forms_the_filter_of_the_run(self):
+        """ODD, and the store's directory straight after a letter, are private text only to a filter that knows what this run read."""
         fixture = named(self.fixture)
-        fixture.units[0]["summary"] = f"SUMWORD of {worker(1)} and {fixture.store} today"
+        fixture.retired("IDWORD", ODD)
+        fixture.units[0]["summary"] = f"SUMWORD of {ODD} and x{fixture.store} today"
         fixture.write()
+        self.assertEqual(CLEAN(fixture.units[0]["summary"]), fixture.units[0]["summary"])
         self.assertEqual(data_of(self.document(clock=fixture.now))["I"][0][1], "SUMWORD of and today")
         self.assertIn("   working   SUMWORD of and today   ", self.out("--text", clock=fixture.now))
 
     @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
-    def test_renderer_draws_each_string_of_the_data_alone_in_a_text_or_an_attribute(self):
+    def test_renderer_draws_each_string_that_holds_a_word_of_the_named_page_alone_in_a_text_or_an_attribute(self):
         fixture = named(self.fixture).write()
         document = self.document(clock=fixture.now)
         built = RendererTest.render(self, document)
@@ -1766,7 +1775,7 @@ class SizeTest(OutputCase):
                     return item(str(number) + wide, summary=str(number) + wide, pr="https://example.test/" + "x" * 69, no_link=no_link)
 
                 def rows(prefix):
-                    return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status=status, spans=spans, open_seconds=604800, stands_for=99999, model=str(n) + wide),
+                    return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status=status, spans=spans, open_seconds=604800, stands_for=99999, model=f"{prefix}.{n}" + wide),
                                     seconds=604800) for n in range(40)]
 
                 groups = [group(big(number, "refused" if number % 2 else "cut"), *rows(str(number))) for number in range(40)]
@@ -1774,9 +1783,9 @@ class SizeTest(OutputCase):
                 totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
                 largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604799.0), totals=totals, legend=legend))
                 self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 11))
-                self.assertEqual(MOD["wire"](largest)["w"][2], "167h 59m 59s")
+                self.assertEqual((MOD["wire"](largest)["w"][2], len(MOD["wire"](largest)["M"])), ("167h 59m 59s", 37))
                 sizes[status, character] = len(MOD["render_html"](largest, same).encode())
-        self.assertEqual({case: size for case, size in sizes.items() if size >= 16000}, {})
+        self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 16000}, {})
 
 
 class TextTest(OutputCase):
@@ -1805,7 +1814,7 @@ class TextTest(OutputCase):
         self.assertEqual(data_of(self.document())["n"], [5, 36, 364, 3])
         self.assertEqual(self.out("--text").split("\n")[1], "5 running now, 36 agents, 364 sub-agents, 3 failed")
 
-    def test_text_cuts_each_list_and_counts_the_rest(self):
+    def test_text_cuts_the_running_work_item_and_failed_lists_and_counts_the_rest(self):
         lines = self.render(busy).split("\n")
         self.assertEqual((lines[2], lines[8]), ("Running now", "Work items"))
         self.assertEqual(len(lines[3:8]), 5)
@@ -1917,7 +1926,7 @@ class RendererTest(OutputCase):
         self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")],
                          ["D7", "worker", "model-a", "42m", "D7", "architect runner 2", "model-b", " · under ", "worker", "6m"])
         self.assertRegex(texts[-5], r"^As of \d+:\d\d [AP]M for $")
-        self.assertEqual(texts[-4:-2], ["kit", ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns."])
+        self.assertEqual(texts[-4:-2], ["kit", ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals."])
         self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
         classes = built["classes"]
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
@@ -2024,7 +2033,7 @@ def forms(value):
 
 
 class PrivacyTest(OutputCase):
-    """The contract: no T3 identifier the run read, no local path, no email address, and no request name as one string is in either form."""
+    """The contract: no private text, as the script's docstring defines it, is in either form, and a request name of two or more parts reaches a label only as separate words."""
 
     def staffed(self, name):
         fixture = self.fixture = Fixture(self.root / name)
@@ -2035,19 +2044,21 @@ class PrivacyTest(OutputCase):
         fixture.thread(BARE, title="D7 first worker", turns=(("completed", 60, 50),))
         self.child = delegated(worker(1), REQUEST)
         self.node = fixture.thread(self.child, title="Act as the audit sub-agent for this task.", provider="codex", parent=worker(1), turns=(("completed", 25, 20),))
-        fixture.thread(native(1), title="/root/spec_review", parent=self.child, delegation=("completed", 24, 23))
+        self.leaf = fixture.thread(native(1), title="/root/spec_review", parent=self.child, delegation=("completed", 24, 23))
         fixture.unit("D8", "in-review", "Second item", thread=ODD)
         fixture.thread(ODD, title="D8 worker", turns=(("completed", 45, 40),))
         return fixture
 
     def identifiers(self):
-        return (COORDINATOR, worker(1), BARE, ODD, self.child, unquote(self.child), self.node, native(1))
+        return (COORDINATOR, worker(1), BARE, ODD, self.child, self.node, native(1), self.leaf, unquote(self.child))
 
     def paths(self, fixture):
         return (str(fixture.store), str(fixture.home), str(fixture.base), str(fixture.database), fixture.meta["projectRoot"], str(fixture.store / "dishes.tsv"), str(fixture.home / ".config" / "secret.json"))
 
     def exact(self, fixture):
-        """Each identifier and path the run reads as written, and four of them in every case and encoding forms() gives."""
+        """The fixture's identifiers and paths as written, and four of them in every case and encoding forms() gives.
+        The run reads each identifier but the last, which is one thread id decoded. It reads each path but the last two, which lie below the store and below the home directory.
+        """
         ids, paths = self.identifiers(), self.paths(fixture)
         return tuple(dict.fromkeys((*ids, *paths, *(form for value in (ODD, self.child, *paths[:2]) for form in forms(value)))))
 
@@ -2061,12 +2072,14 @@ class PrivacyTest(OutputCase):
         return (*self.exact(fixture), *(f"pre{value}post" for value in self.exact(fixture)), *self.shapes())
 
     def plant(self, fixture, field, number, values):
-        """One thread or one work item that holds the values in the field. A thread is running, failed, or queued, so the text form prints its row."""
+        """One thread or one work item that holds the values in the field, or the store's name with the values added.
+        A thread is running, failed, or queued. With at most 6, 4, and 4 of them beside the fixture's own running worker, the text form prints each one's row.
+        """
         part, unit, joined = delegated(worker(1), f"part-{number}"), f"D{100 + number}", " and ".join(values)
         link = f"https://git.example/o/r/pull/{100 + number}"
         if field in ROW_FIELDS + ("provider", "instance id"):
             how = {"model": {"model": joined}, "title": {"title": joined}, "title in a sentence": {"title": f"see {joined} now"}, "provider": {"provider": joined}, "instance id": {"instance": joined}}[field]
-            turn = ("running", 20, None) if number % 15 < 7 else ("failed", 20, 10) if number % 15 < 11 else ("queued", 20, None)
+            turn = ("running", 20, None) if number % 14 < 6 else ("failed", 20, 10) if number % 14 < 10 else ("queued", 20, None)
             fixture.thread(part, parent=worker(1), turns=(turn,), **{"title": f"part {number}", **how})
         elif field == "store name":
             fixture.meta["restaurant"] += f" {joined}"
@@ -2096,12 +2109,13 @@ class PrivacyTest(OutputCase):
         self.assertEqual((self.found(document), self.found(self.document()), self.found(self.out("--text")) if text else []), ([], [], []), field)
 
     def test_no_identifier_the_run_read_no_path_and_no_address_in_a_model_or_a_title_is_in_the_document_or_the_text(self):
-        """The text form prints at most 7 running, 4 failed, and 4 queued rows, so each fixture holds 15 planted rows."""
+        """The text form prints at most 7 running, 4 failed, and 4 queued rows, so each fixture holds 14 planted rows beside its own running worker."""
         for field in ROW_FIELDS:
-            for start in range(0, len(self.planted(self.staffed("count"))), 15):
+            for start in range(0, len(self.planted(self.staffed("count"))), 14):
                 with self.subTest(field, start=start):
                     fixture = self.staffed(f"{field.replace(' ', '-')}-{start}")
-                    self.checked(fixture, field, [(value,) for value in self.planted(fixture)[start:start + 15]])
+                    self.checked(fixture, field, [(value,) for value in self.planted(fixture)[start:start + 14]])
+                    self.assertNotIn("more running agent", self.out("--text"))
 
     def test_no_identifier_the_run_read_no_path_and_no_address_in_a_summary_a_work_item_id_or_the_stores_name_is_in_the_document_or_the_text(self):
         """The text form prints at most 9 work items and two have agents, so the values are spread over 7 planted items."""
@@ -2126,15 +2140,15 @@ class PrivacyTest(OutputCase):
             for start in range(0, 21, 7):
                 with self.subTest(field, start=start):
                     fixture = self.staffed(f"{field.replace(' ', '-')}-{start}")
-                    core = (*self.identifiers(), *self.paths(fixture), ADDRESS, "mcp:alpha-secret", "/srv/secret/notes.md", "file:/home/secret/notes", "~/secret", "9f8e7d6c-e89b-12d3-a456-426614174000")
+                    core = (*self.identifiers()[:8], *self.paths(fixture), ADDRESS, "mcp:alpha-secret", "/srv/secret/notes.md", "file:/home/secret/notes", "~/secret", "9f8e7d6c-e89b-12d3-a456-426614174000")
                     self.assertEqual(len(core), 21)
                     self.checked(fixture, field, [(value,) for value in core[start:start + 7]])
 
-    def test_every_planted_value_is_private_text_and_the_fixture_reads_each_identifier_it_plants(self):
+    def test_every_planted_value_is_private_text_and_the_fixture_reads_each_identifier_it_plants_but_the_decoded_child_id(self):
         fixture = self.staffed("values")
         store, t3, _ = fixture.write().read()
         privacy = MOD["privacy_of"](store, t3, (fixture.store, fixture.database, fixture.base, fixture.home))
-        self.assertEqual([value for value in self.identifiers() if value not in {*t3.ids, *store.coordinators, unquote(self.child)}], [])
+        self.assertEqual([value for value in self.identifiers() if value not in {*t3.ids, *store.coordinators}], [unquote(self.child)])
         self.assertEqual([value for value in self.planted(fixture) if privacy.clean(f"a {value} b") != "a b"], [])
         self.assertEqual([value for value in self.planted(fixture) if not self.found(value)], [])
 
@@ -2203,7 +2217,7 @@ def ordinary(fixture):
 
 
 class OrdinaryWordsTest(OutputCase):
-    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_keeps_every_one_in_the_text(self):
+    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_loses_none_of_them_to_the_filter_in_the_text(self):
         fixture = ordinary(self.fixture).write()
         self.assertEqual(self.out("--text", clock=fixture.now), "\n".join([
             "Agent activity for private auditor, last 3h",
@@ -2224,7 +2238,7 @@ class OrdinaryWordsTest(OutputCase):
             "  code code review   451237   60s at work",
             ""]))
 
-    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_keeps_every_one_in_the_document(self):
+    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_loses_none_of_them_to_the_filter_in_the_document(self):
         fixture = ordinary(self.fixture).write()
         data = data_of(self.document(clock=fixture.now))
         self.assertEqual((data["c"], data["M"], data["N"]), ("private auditor", ["model-a", "src", "private auditor", "451237", "review", "code", "queue"], []))
@@ -2294,7 +2308,7 @@ class PrivateValuesTest(OutputCase):
             "Notes",
             "  No agent or sub-agent of this coordinator ran in this window."])
 
-    def test_document_and_text_keep_the_model_and_the_pull_request_address_and_count_a_refused_link(self):
+    def test_document_keeps_a_model_with_no_private_text_and_document_and_text_keep_the_pull_request_address_and_count_a_refused_link(self):
         fixture = one_running(self.fixture)
         fixture.units[0]["pr"] = "https://user:pw@example.test/o/r/pull/7?x=mcp:alpha-secret#task:alpha-secret"
         fixture.units[1]["pr"] = "https://example.test/o/r/pull/6/files"
@@ -2597,7 +2611,7 @@ class BudgetTest(OutputCase):
         self.assertLessEqual(len(fixture.stdout_bytes(clock=fixture.now)), 16000)
 
     def long_values(self):
-        """A store name, a summary, a work item id, a pull request number, a title, and a model that are each valid and thousands of characters long."""
+        """A store name, a summary, a work item id, a pull request number, and a model that are each valid and thousands of characters long, and a title of 60 characters, the longest a label is read from."""
         fixture = one_running(self.fixture)
         fixture.meta["restaurant"] = "name " * 10000
         fixture.units[0].update(summary="word " * 10000, pr="https://git.example/o/r/pull/" + "7" * 20000)
@@ -2624,7 +2638,7 @@ class BudgetTest(OutputCase):
             "  D6   landing   Queue fix   no activity in this window   " + PR6,
             "  D99999999…   working   long id   no activity in this window   https://git.example/o/r/pull/8",
             "Failed",
-            "  D7 " + "t" * 17 + "…   " + "m" * 27 + "…   10m at work",
+            "  D7 " + "t" * 17 + "…   " + "m" * 21 + "…   10m at work",
             "Notes",
             "  1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             ""])
@@ -2642,7 +2656,7 @@ class BudgetTest(OutputCase):
         data = data_of(under.decode()[:-1])
         self.assertEqual((data["c"], [item[:2] + item[4:5] for item in data["I"]], data["M"], data["N"]), (
             "name name name name name name nam…", [["D6", "Queue fix", PR6], ["D7", "word word word word word word wor…", ""], ["D99999999…", "long id", "https://git.example/o/r/pull/8"]],
-            ["model-a", "m" * 27 + "…"], ["1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more."]))
+            ["model-a", "m" * 21 + "…"], ["1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more."]))
 
     def test_largest_plain_form_of_a_shortened_page_is_under_8000_bytes_with_every_list_full_every_note_and_every_string_over_its_byte_limit(self):
         counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")

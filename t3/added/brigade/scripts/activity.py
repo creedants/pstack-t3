@@ -9,11 +9,13 @@ Output that would take more is shortened. It counts the agents, work items, and 
 Every string a page emits passes one filter after its parts are joined.
 In the HTML document that is each string of the data element. In the plain form it is each line.
 The filter drops each character UTF-8 cannot hold and writes each control character, line separator, and paragraph separator as a space.
-It then removes each word that holds private text, with the spaces before the word, and repeats until no word does.
+It then removes each word that holds private text and repeats until no word does.
+The first word that stays follows the spaces that start the string, and each later word that stays follows the spaces that stood before it.
 A string that still holds private text after 8 passes is emitted empty.
 The filter reads each string as written, as the HTML document writes it, and both with their percent escapes decoded once and twice.
 
-Private text is an identifier or a path this run read, in any case, as stored and with its own percent escapes decoded once and twice.
+Private text is an identifier or a path this run read, as stored and with its own percent escapes decoded once and twice.
+Its control characters are read as spaces, and it is compared with each character of both texts in lower case when that is one character.
 The identifiers are the thread ids, the sub-agent ids, and the work items' task values in the store and in T3's turn and sub-agent rows.
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
@@ -21,23 +23,26 @@ A form of fewer than 4 characters, or of spaces only, is not private text either
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
 Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
 
-Private text is also text of one of these shapes, in any case.
+Private text is also text of one of these shapes, with upper and lower case letters read alike.
 A UUID.
 One of mcp, thread, node, run, task, run-attempt, provider-turn, provider-session, context-transfer, and context-handoff anywhere in a word, then a colon, then a letter, a digit, an underscore, or a percent sign.
 An email address, which is an at sign between a local part and a domain name that holds a dot before two or more letters.
+The local part ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
-A drive path, which is a letter with no letter or digit before it, then a colon, then a slash or a backslash.
+A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
 Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde.
-Or it starts with a tilde or a tilde and a name before a slash or a backslash, with $HOME or ${HOME} before a slash or a backslash, or with two backslashes before a letter, a digit, an underscore, or a dot.
-A path after a quotation mark or a backtick is private text up to the next such mark.
-Any other path is private text to the end of its word and through each next word that holds a slash or a backslash.
+Or it starts with a tilde before a slash or a backslash, with a tilde and a name that starts with a letter or an underscore before one, with $HOME or ${HOME} before one, or with two backslashes before a letter, a digit, an underscore, or a dot.
+A path after an opening quotation mark or a backtick is private text up to the mark that closes it.
+Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash.
 
 The filter removes a word for no other reason.
-A work item id, a summary, a title, the store's name, and a model name stay unless they hold private text. A relative path such as src/a.py stays.
-The name of the request that started a delegated task reaches a page only as separate words in a label. The filter does not look for that name in other text.
+The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
+The name of the request that started a delegated task reaches a page only as separate words in a label.
+The filter looks for that name in other text only when it is a work item's task value and does not read as ordinary words.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
+Work items that print the same id, summary, state, and link count once.
 """
 
 import argparse
@@ -684,17 +689,18 @@ def selection_of(payload):
 
 
 UUID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
-# T3 Code writes one of these words and a colon before an id. A live T3 database read on 2026-10-10 used them for threads, runs, sub-agents,
-# delegated tasks, provider threads, sessions, and turns, and context transfers and handoffs. `thread` also matches in `provider-thread`.
+# T3 Code writes one of these words and a colon before most ids. A live T3 database read on 2026-10-10 used them for threads, runs, sub-agents,
+# delegated tasks, provider threads, sessions, and turns, and context transfers and handoffs. A thread id can also be a bare UUID.
+# `thread` also matches in `provider-thread`.
 T3_KINDS = ("mcp", "thread", "node", "run", "task", "run-attempt", "provider-turn", "provider-session", "context-transfer", "context-handoff")
-OPENS = r"(?:^|(?<=[\s\"'`(\[{<>=:,;|]))"
-PATH = rf"(?:{OPENS}(?:/[\w.~]|~(?:[^\W\d][\w.-]*)?[/\\]|\$\{{?HOME\}}?[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
+OPENS = r"(?:^|(?<=[\s\"'`“”‘’(\[{<>=:,;|]))"
+PATH = rf"(?:{OPENS}(?:/[\w.~]|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
 # The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
-SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:[\w/\\.~%]", re.IGNORECASE)
+SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:(?=[\w/\\.~%])", re.IGNORECASE)
 LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
 LOCAL_CHARS = 64
 DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
-QUOTES = "\"'`"
+CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
 NEXT_PATH_WORD = re.compile(r"\s+\S*[/\\]\S*")
 WORD = re.compile(r"\S+")
@@ -778,11 +784,11 @@ def views(text):
 
 
 def path_end(text, match):
-    """Where the path that starts at match ends. After a quotation mark it ends at the next such mark.
+    """Where the path that starts at match ends. After an opening quotation mark or a backtick it ends at the mark that closes it.
     With no such pair it ends with its word, or with the last of the words after it that each hold a slash or a backslash.
     """
     quote = text[match.start() - 1:match.start()]
-    close = text.find(quote, match.end()) if quote and quote in QUOTES else -1
+    close = text.find(CLOSES[quote], match.end()) if quote in CLOSES else -1
     if close >= 0:
         return close + 1
     end = WORD_END.match(text, match.end()).end()
@@ -794,7 +800,9 @@ def path_end(text, match):
 
 
 def without(text, spans):
-    """text without each word that a span touches, and without the spaces before that word. The spaces before the first word of text stay."""
+    """text without each word that a span touches. The first word that stays follows the spaces that start text.
+    Each later word that stays follows the spaces that stood before it. The spaces that end text stay when its last word stays.
+    """
     marked = bytearray(len(text))
     for start, end in spans:
         marked[start:end] = b"\x01" * (end - start)
@@ -817,7 +825,7 @@ class Privacy:
 
     def __init__(self, identifiers=(), paths=()):
         index = {}
-        for value, path in (*((value, False) for value in identifiers), *((value, True) for value in paths)):
+        for value, path in (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in paths)):
             for _ in range(3):
                 low = lowered(value)
                 if len(low) >= ANCHOR and low.strip() and (path or not ordinary(value)):
@@ -952,7 +960,7 @@ def assign(store, t3):
 
 def words_of(name, store=None, units=()):
     """The parts of a request name between its hyphens, joined by spaces, with `verify` read as `review` and without each part HASH matches.
-    With a store, also without a leading `brigade`, the store's leading slug parts, and each part that names a work item.
+    With a store, also without a leading `brigade`, the store's leading slug parts, and each part that is a work item's id in lower case, alone or before a letter and digits.
     """
     parts = name.split("-")
     if store and parts[0] == "brigade":
@@ -965,8 +973,8 @@ def words_of(name, store=None, units=()):
 def label_of(agent, store, unit, privacy):
     """`worker` or `earlier worker` for a thread the store records as one. For any other thread, the first of these that is not empty, and `sub-agent` or `agent` when all are:
     the written title, the request name's words without the parts the store explains, the role an `Act as` title names, and all the request name's words.
-    A request name reaches a label only through words_of. A title that holds its own row's request name of two or more parts is used only when it is a slug, which words_of reads.
-    A title that clean() would change is not used.
+    A request name of two or more parts reaches a label only through words_of. A title that holds its own row's request name of two or more parts is used only when it is a slug, which words_of reads, and its role is not used.
+    A written title that clean() would change is not used. The last name of a `/root/.../name` title and the role of an `Act as` title are read before that check, and each passes field().
     """
     if any(agent.thread == other.worker for other in store.units):
         return "worker"
@@ -975,8 +983,9 @@ def label_of(agent, store, unit, privacy):
     units = {other.id.lower(): other.id for other in store.units}
     line = " ".join(plain((agent.title.strip().splitlines() or [""])[0]).split())
     request = agent.request or ""
+    names = "-" in request and request.lower() in line.lower()
     written = ""
-    if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")) and not ("-" in request and request.lower() in line.lower() and not SLUG.fullmatch(line)):
+    if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")) and not (names and not SLUG.fullmatch(line)):
         tail = PATH_TAIL.fullmatch(line)
         written = tail.group(1) if tail else line
         if privacy.field(written) != written:
@@ -986,7 +995,7 @@ def label_of(agent, store, unit, privacy):
         if SLUG.fullmatch(written):
             written = words_of(written, store, units)
     role = ROLE.match(line)
-    for text in (written, words_of(request, store, units), role.group(1) if role else "", words_of(request)):
+    for text in (written, words_of(request, store, units), role.group(1) if role and not names else "", words_of(request)):
         text = privacy.field(text)
         if text:
             return short(text, LABEL_CHARS)
@@ -1077,8 +1086,8 @@ def item_of(unit, privacy):
 
 
 def build_page(store, t3, window, privacy):
-    """Each string of the page that comes from the store or from T3 is a value privacy.field, privacy.model, or privacy.link returned.
-    The other strings are the constants of this file and numbers. No page type holds an id or a path.
+    """Each string of the page that comes from the store or from T3 is a value privacy.field, privacy.model, or privacy.link returned, or a label short() cut from a field() value.
+    The other strings are the constants of this file and numbers. No page type holds a thread id, a sub-agent id, or a path.
     """
     def row(agent, depth, label):
         turn = open_turn(agent)
@@ -1135,7 +1144,7 @@ NAME_BYTES = 36
 ID_BYTES = 12
 LABEL_BYTES = 20
 SUMMARY_BYTES = 36
-MODEL_BYTES = 30
+MODEL_BYTES = 24
 LINK_BYTES = 90
 JOINED = (Status.RUNNING, Status.QUEUED, Status.FAILED, Status.UNKNOWN, Status.STOPPED, Status.DONE)
 
@@ -1575,7 +1584,7 @@ RENDERER = squeezed("""
       const foot = add(root, 'div', 'foot');
       add(foot, 'span', '', 'As of ' + clock(start + length) + ' for ');
       add(foot, 'span', '', D.c);
-      add(foot, 'span', '', '. Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns.');
+      add(foot, 'span', '', '. Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals.');
       for (const note of D.N) add(foot, 'div', '', note);
     }
 """)
