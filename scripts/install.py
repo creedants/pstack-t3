@@ -1340,6 +1340,8 @@ REPLACE = ('claim {path}: {there}; "{install}" stops on {n} taken paths; with --
            'and links this path (uninstall restores them and removes this claim)')
 EDIT = ('claim {path}: {there}; install plans no link at that path, so no command clears this claim; '
         'to drop it, delete the "{path}" entry from {owner_file}')
+UNBUILT = ('claim {path}: {there}; skills/ is missing, so install stops before it plans a link; '
+           'run python3 scripts/build.py first and rerun doctor')
 HELD_CLAIM = ('claim {path}: {there}, and {aside} holds this checkout\'s link for it; '
               '"{dry_run}" prints what the next run does with it')
 INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {original}); uninstall skips the row '
@@ -1360,7 +1362,8 @@ def claim_line(args, view, scope, user, names, root, path, harnesses, aside):
     there = f"a {describe(path)} is there" if os.path.lexists(path) else "nothing is there"
     if aside:
         return HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=command(args, "uninstall", "--dry-run"))
-    # A plan with --replace has the conflicts of the plain plan, and a link step for every path install can link.
+    if not SKILLS.is_dir():
+        return UNBUILT.format(path=path, there=there)
     plan = plan_install(view, scope, user, harnesses, names, root, True)
     install = command(args, "install", "--harness", ",".join(harnesses))
     if not any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps):
