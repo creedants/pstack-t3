@@ -1447,6 +1447,7 @@ def report_uninstall(plan, executed, dry_run):
 
 
 UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+NOT_A_DIRECTORY = "skills is not a directory; move it away, then run python3 scripts/build.py"
 NO_SKILL = "skills/ holds no skill; run python3 scripts/build.py first"
 
 
@@ -1455,9 +1456,13 @@ def skill_names():
 
 
 def unbuilt():
-    """Return the line for a checkout with no skill to link, or None. It is UNBUILT when skills/ is not a directory and NO_SKILL when skill_names() is empty."""
+    """Return the line for a checkout with no skill to link, or None.
+
+    When SKILLS.is_dir() is false it is NOT_A_DIRECTORY if os.path.lexists(SKILLS) is true and UNBUILT if it is false.
+    Otherwise it is NO_SKILL when skill_names() is empty.
+    """
     if not SKILLS.is_dir():
-        return UNBUILT
+        return NOT_A_DIRECTORY if os.path.lexists(SKILLS) else UNBUILT
     return None if skill_names() else NO_SKILL
 
 

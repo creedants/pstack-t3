@@ -4144,6 +4144,29 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(stopped.stdout, "")
         self.assertEqual(stopped.stderr, self.UNBUILT + "\n")
 
+    NOT_A_DIRECTORY = "skills is not a directory; move it away, then run python3 scripts/build.py"
+
+    def test_install_and_doctor_in_a_checkout_whose_skills_is_a_file_or_a_dangling_symlink_print_the_not_a_directory_line_and_exit_1(self):
+        def file(skills):
+            skills.write_bytes(b"mine\x00\xfe")
+
+        def dangling(skills):
+            os.symlink("nowhere", skills)
+
+        for entry, place in (("file", file), ("dangling symlink", dangling)):
+            with self.subTest(entry=entry):
+                self.use_fresh()
+                a = make_checkout(self.home, "a")
+                shutil.rmtree(a / "skills")
+                place(a / "skills")
+                before = snapshot(self.home)
+                stopped = run(self.home, a, "install", "--harness", "grok")
+                self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+                self.assertEqual(stopped.stdout, "")
+                self.assertEqual(stopped.stderr, self.NOT_A_DIRECTORY + "\n")
+                self.assertEqual(self.doctor(a, 1, "--harness", "grok"), [self.NOT_A_DIRECTORY])
+                self.assertEqual(snapshot(self.home), before)
+
     def test_doctor_in_a_checkout_whose_skills_directory_holds_no_skill_prints_one_line_and_exits_1(self):
         def fresh():
             return make_checkout(self.home, "a")
