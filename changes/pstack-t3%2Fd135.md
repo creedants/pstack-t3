@@ -1,0 +1,1 @@
+- Replace line-number citations in `docs/light-mode.md` with section, step, and symbol names, narrow its spawn conditions, and show the current executive admin request label in `docs/multi-coordinator.md`.
