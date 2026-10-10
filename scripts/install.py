@@ -226,9 +226,22 @@ class Unreadable(Exception):
     """A record file that cannot be used. Its text is the line install and uninstall exit 1 with."""
 
 
+# Path.exists() reads each of these as "not there" on Python 3.10 and 3.12.
+ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+
 def read_object(path):
+    """Read one record file. Return its JSON object, or None when no file is at `path`.
+
+    No file is there when the read fails with an errno in ABSENT. Any other OSError from the read, and any content
+    that is not a JSON object, raises Unreadable.
+    """
     try:
         data = json.loads(path.read_text())
+    except OSError as error:
+        if error.errno in ABSENT:
+            return None
+        raise Unreadable(f"{path} could not be read ({error.strerror}); clear that error and rerun") from None
     except ValueError:
         raise Unreadable(f"{path} is not valid JSON; fix or move it and rerun") from None
     if not isinstance(data, dict):
@@ -237,7 +250,10 @@ def read_object(path):
 
 
 def legacy_lists(path):
+    """Return the manifest's object and its links and backups lists, or None when `read_object` finds no file."""
     data = read_object(path)
+    if data is None:
+        return None
     found = []
     for key in ("links", "backups"):
         value = data.get(key, [])
@@ -248,10 +264,10 @@ def legacy_lists(path):
 
 
 def read_legacy(state, scope, user):
-    path = Path(state) / LEGACY_NAME
-    if not path.exists():
+    found = legacy_lists(Path(state) / LEGACY_NAME)
+    if found is None:
         return (), ()
-    _data, raw_links, raw_backups = legacy_lists(path)
+    _data, raw_links, raw_backups = found
     links = tuple(item for item in (parse_link(entry, scope, user) for entry in raw_links) if item)
     backups = tuple(item for item in (parse_backup(entry, scope, user) for entry in raw_backups) if item)
     return links, backups
@@ -491,9 +507,9 @@ def write_claims(state, root, claims):
 
 def current_claims(state, root):
     path = owner_path(state, root)
-    if not path.exists():
-        return {}
     data = read_object(path)
+    if data is None:
+        return {}
     recorded = data.get("checkout")
     if recorded != root:
         raise Unreadable(f"{path} records {recorded}, not this checkout")
@@ -517,9 +533,10 @@ def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, ad
     if not add_links and not add_backups and not remove_links and not remove_backups:
         return (), ()
     path = Path(state) / LEGACY_NAME
+    found = legacy_lists(path)
     # Older installers still read this file, so a cleanup leaves empty lists in place.
-    if path.exists():
-        data, links, backups = legacy_lists(path)
+    if found is not None:
+        data, links, backups = found
     elif adding:
         data, links, backups = {}, [], []
     else:
@@ -1020,11 +1037,23 @@ def prune(state, backup):
     It removes only empty directories at those two levels, under `state`/backups. It never follows a symlink at
     backups/, <stamp>, or <harness>. A symlink at `state` or above it is followed like any other path to the state
     directory, so a state directory kept behind a symlink is pruned too.
+    It removes nothing unless `backup_place` matches `backup` under `state` as given or as `os.path.abspath` spells it.
+    Under the second spelling `empty_out_matched` does the removing, with that spelling as its `recorded`.
     Call it only inside `locked`, after this run took the entry at `backup` out. It never raises and prints nothing.
     """
     place = backup_place(state, backup)
     if place is not None:
         empty_out(state, *place)
+        return
+    # tempfile.mkdtemp returns an absolute path from Python 3.12 on, so a row can hold that spelling of a state path given relative or with "..".
+    try:
+        spelled = os.path.abspath(state)
+    except OSError:
+        return
+    place = backup_place(spelled, backup)
+    if place is not None:
+        # abspath removes ".." as text and the system applies it after following a symlink, so the two spellings can name two directories.
+        empty_out_matched(state, spelled, *place)
 
 
 def empty_out(state, stamp, harness=None):
@@ -1049,6 +1078,37 @@ def empty_out(state, stamp, harness=None):
             os.rmdir(stamp, dir_fd=top)
         finally:
             os.close(top)
+
+
+def empty_out_matched(state, recorded, stamp, harness):
+    """Remove <state>/backups/<stamp>/<harness> if it is empty, then <stamp> if it is empty, when both match those under `recorded`.
+
+    Under `state` and under `recorded` it opens backups/ by path, then <stamp> under that descriptor, then <harness>
+    under the <stamp> descriptor, all with O_RDONLY | O_DIRECTORY | O_NOFOLLOW. To match, the two <harness> descriptors
+    must have one device and inode, and so must the two <stamp> descriptors, read while all six are open. A failed open
+    or a pair that does not match ends it with nothing removed. It removes <harness> by name under the <stamp>
+    descriptor it compared, and <stamp> by name under the backups descriptor it opened that <stamp> from.
+    The first rmdir that fails ends it. Call it only inside `locked`. It never raises and prints nothing.
+    """
+    if os.rmdir not in os.supports_dir_fd:
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with suppress(OSError), ExitStack() as stack:
+        def opened(path, dir_fd=None):
+            descriptor = os.open(path, flags, dir_fd=dir_fd)
+            stack.callback(os.close, descriptor)
+            return descriptor
+
+        def levels(root):
+            top = opened(os.path.join(str(root), "backups"))
+            inner = opened(stamp, top)
+            return top, inner, opened(harness, inner)
+
+        top, inner, leaf = levels(state)
+        _recorded_top, recorded_inner, recorded_leaf = levels(recorded)
+        if os.path.samestat(os.fstat(leaf), os.fstat(recorded_leaf)) and os.path.samestat(os.fstat(inner), os.fstat(recorded_inner)):
+            os.rmdir(harness, dir_fd=inner)
+            os.rmdir(stamp, dir_fd=top)
 
 
 def settle(strays, state, root, dry_run):
@@ -1103,10 +1163,10 @@ def settle(strays, state, root, dry_run):
 
 def buried(state, root, path):
     """Whether a backup row now holds this checkout's entry for the slot of `path`."""
-    file = Path(state) / LEGACY_NAME
-    if not file.exists():
+    found = legacy_lists(Path(state) / LEGACY_NAME)
+    if found is None:
         return False
-    _data, _links, backups = legacy_lists(file)
+    _data, _links, backups = found
     return any(
         isinstance(row, dict) and isinstance(row.get("original"), str) and isinstance(row.get("backup"), str)
         and slot_of(row["original"]) == slot_of(path) and proves(root, row["backup"], row["original"])
@@ -1273,13 +1333,16 @@ def report_uninstall(plan, executed, dry_run):
         print(f"kept {kept} records whose links no longer point at this checkout; they apply again if the links come back")
 
 
+UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+
+
 def skill_names():
     return sorted(path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file())
 
 
 def install(args):
     if not SKILLS.is_dir():
-        sys.exit("skills/ is missing; run python3 scripts/build.py first")
+        sys.exit(UNBUILT)
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
     root = str(ROOT)
@@ -1376,6 +1439,18 @@ class Unread:
 
 
 @dataclass(frozen=True)
+class Planned:
+    """What install plans right now for one harness list.
+
+    `plain` and `forced` are the slots, as `slot_of` returns them, of the create steps in the plans returned by
+    `plan_install` without and with --replace. `taken` is the number of conflicts in the plan without --replace.
+    """
+    plain: frozenset
+    forced: frozenset
+    taken: int
+
+
+@dataclass(frozen=True)
 class Audit:
     """What doctor found in the records. `findings` are Findings and `unread` are Unreads."""
     findings: tuple
@@ -1394,10 +1469,6 @@ EDIT = ('claim {path}: {there}; install plans no link at that path, so no comman
         'to drop it, delete the "{path}" entry from {owner_file}')
 EDIT_MANY = ('claims; install plans no link at the path of any of them, so no command clears them; '
              'to drop one, delete the entry named by its path from {owner_file}:')
-UNBUILT = ('claim {path}: {there}; skills/ is missing, so install stops before it plans a link; '
-           'run python3 scripts/build.py first and rerun doctor')
-UNBUILT_MANY = ('claims; skills/ is missing, so install stops before it plans a link; '
-                'run python3 scripts/build.py first and rerun doctor:')
 HELD_CLAIM = ('claim {path}: {there}, and {aside} holds this checkout\'s link for it; '
               '"{dry_run}" prints what the next run does with it')
 HELD_MANY = 'records; "{dry_run}" prints what the next run does with the entry held for each:'
@@ -1418,31 +1489,27 @@ def command(args, *words):
     return shlex.join(("python3", "scripts/install.py", *words, *project))
 
 
-def claim_finding(args, view, scope, user, names, root, path, harnesses, aside):
-    """The Finding for one stale claim. The advice comes from what `plan_install` plans for the path right now."""
+def claim_finding(args, state, root, path, harnesses, aside, planned):
+    """The Finding for one stale claim.
+
+    `planned` returns the Planned for a harness list. A claim with nothing held aside for it takes its advice from that.
+    """
     there = f"a {describe(path)} is there" if os.path.lexists(path) else "nothing is there"
     if aside:
         dry_run = command(args, "uninstall", "--dry-run")
         return Finding(harnesses, HELD_CLAIM.format(path=path, there=there, aside=aside, dry_run=dry_run),
                        HELD_MANY.format(dry_run=dry_run), f"claim {path}: {there}, and {aside} holds this checkout's link for it")
-    if not SKILLS.is_dir():
-        return Finding(harnesses, UNBUILT.format(path=path, there=there), UNBUILT_MANY, f"{path}: {there}")
-    plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
-    forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
-
-    def links(plan):
-        return any(step.kind == "create" and slot_of(step.path) == slot_of(path) for step in plan.steps)
-
+    plans = planned(harnesses)
+    slot = slot_of(path)
     install = command(args, "install", "--harness", ",".join(harnesses))
-    if links(plain) and not plain.conflicts:
+    if slot in plans.plain and not plans.taken:
         uninstall = command(args, "uninstall", "--harness", ",".join(harnesses))
         return Finding(harnesses, RELINK.format(path=path, install=install, uninstall=uninstall),
                        RELINK_MANY.format(install=install, uninstall=uninstall), path)
-    if links(forced):
-        n = len(plain.conflicts)
-        return Finding(harnesses, REPLACE.format(path=path, there=there, install=install, n=n),
-                       REPLACE_MANY.format(install=install, n=n), f"{path}: {there}")
-    owner_file = owner_path(state_dir(scope, user), root)
+    if slot in plans.forced:
+        return Finding(harnesses, REPLACE.format(path=path, there=there, install=install, n=plans.taken),
+                       REPLACE_MANY.format(install=install, n=plans.taken), f"{path}: {there}")
+    owner_file = owner_path(state, root)
     return Finding(harnesses, EDIT.format(path=path, there=there, owner_file=owner_file),
                    EDIT_MANY.format(owner_file=owner_file), f"{path}: {there}")
 
@@ -1489,8 +1556,10 @@ def audit(args, scope, user, names):
             continue
         try:
             data = read_object(file)
-        except (Unreadable, OSError) as error:
+        except Unreadable as error:
             unread.append(Unread(f"{error} (doctor read no checkout from it)", False))
+            continue
+        if data is None:
             continue
         checkout = data.get("checkout")
         if not isinstance(checkout, str):
@@ -1510,12 +1579,24 @@ def audit(args, scope, user, names):
         unread.append(Unread(f"{error} (doctor checked no claims and no backup rows)", True))
     try:
         claims = current_claims(state, root)
-    except (Unreadable, OSError) as error:
+    except Unreadable as error:
         claims = {}
         unread.append(Unread(f"{error} (doctor checked no claims of this checkout)", True))
     if manifest is None:
         return Audit(tuple(away), tuple(unread))
     view = View(claims, *manifest)
+    kept = {}
+
+    def created(plan):
+        return frozenset(slot_of(step.path) for step in plan.steps if step.kind == "create")
+
+    def planned(harnesses):
+        if harnesses not in kept:
+            plain = plan_install(view, scope, user, harnesses, names, root, replace=False)
+            forced = plan_install(view, scope, user, harnesses, names, root, replace=True)
+            kept[harnesses] = Planned(created(plain), created(forced), len(plain.conflicts))
+        return kept[harnesses]
+
     strays = survey(view, scope, user, state, root, HARNESSES)
     present = stacks(view)
     for path, harnesses in claims.items():
@@ -1523,7 +1604,7 @@ def audit(args, scope, user, names):
             continue
         aside = next((stray.path for stray in strays
                       if stray.kind in ("home", "own") and slot_of(stray.home) == slot_of(path)), None)
-        stale.append(claim_finding(args, view, scope, user, names, root, path, harnesses, aside))
+        stale.append(claim_finding(args, state, root, path, harnesses, aside, planned))
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
@@ -1564,9 +1645,12 @@ def link_health(harness, directory, names, scope, user):
 
 
 def doctor(args):
+    if not SKILLS.is_dir():
+        print(UNBUILT)
+        return 1
     user = args.project is None
     scope = Path(args.project).resolve() if args.project else None
-    names = skill_names() if SKILLS.is_dir() else []
+    names = skill_names()
     found = audit(args, scope, user, names)
     healthy = True
     for harness, directory in skill_dirs(scope, user).items():
