@@ -1,4 +1,5 @@
 import fcntl
+import io
 import json
 import os
 import runpy
@@ -479,6 +480,77 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "again", ok=False),
                          "brigade: T1 is assigned, not waiting")
 
+    def same_text_refusal(self, ticket, state):
+        return f"brigade: same text as {ticket} ({state}); nothing added; pass --again to file a second ticket"
+
+    def test_ticket_add_refuses_a_user_request_with_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T1")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "fix  the LOGIN page", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "  Fix the\tlogin\npage  ", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the loginpage"), "T2")
+        self.assertEqual(self.brigade("ticket", "list"),
+                         "T1 waiting [user] Fix the login page\nT2 waiting [user] Fix the loginpage")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "fix  the LOGIN page", "--again"), "T3")
+
+    def test_ticket_add_refuses_a_user_request_with_the_summary_of_an_assigned_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix login")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False),
+                         self.same_text_refusal("T1", "assigned"))
+
+    def test_ticket_add_takes_a_user_request_with_the_summary_of_a_done_or_dropped_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T2")
+        self.brigade("ticket", "set", "T2", "--state", "dropped")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page"), "T3")
+
+    def test_ticket_add_names_a_waiting_ticket_of_another_source_with_the_same_summary(self):
+        self.open()
+        self.brigade("set", "--intake", "github")
+        self.brigade("ticket", "add", "--summary", "Fix the login page", "--source", "github", "--ref", "#12")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+
+    def test_ticket_add_with_a_request_id_still_refuses_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--request", "A2", ok=False),
+                         self.same_text_refusal("T1", "waiting"))
+
+    def test_ticket_add_with_a_ref_takes_the_summary_of_a_waiting_ticket(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12"), "T2")
+
+    def test_again_lifts_neither_the_ref_refusal_nor_the_request_refusal_nor_the_source_refusal(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12", "--request", "A2")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12", "--again", ok=False),
+                         "brigade: #12 is already T1 (waiting); nothing added")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--request", "A2", "--again", ok=False),
+                         "brigade: request A2 is already T1; nothing added")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--source", "github", "--again", ok=False),
+                         "brigade: no coordinator owns intake from github; the one that reads it runs set --intake github")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user (request A2)] Fix the login page #12")
+
+    def test_the_skill_quotes_the_same_summary_refusal_ticket_add_prints(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        line = self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False)
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        section = text.split("## Filing tracker work", 1)[1].split("\n## ", 1)[0]
+        step = next(row for row in section.splitlines() if row.startswith("4. **Refusals.**"))
+        self.assertEqual(line, "brigade: same text as T1 (waiting); nothing added; pass --again to file a second ticket")
+        self.assertIn("`" + line.replace("T1 (waiting)", "T<n> (<state>)") + "`", step)
+        self.assertNotIn("never refused", step)
+
     def test_pass_refuses_a_verifier_from_the_author_family(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")
@@ -555,6 +627,72 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertIn('"crossFamily": false', out)
             self.assertEqual(json.loads(out)["note"], note)
+
+    BEDROCK = "amazon-bedrock/us.anthropic.claude-sonnet-5-5-v1:0"
+    NAMESPACED_MUSE = "opencode/opencode/muse-lite-2-free"
+
+    def same_family_refusal(self, author, verifier):
+        return (f"brigade: verifier {verifier} is the same model family as author {author}; "
+                "pick a verifier from another family, or pass --same-family when no other family is runnable")
+
+    def assert_one_family(self, author, verifier):
+        self.fired_bug_fix()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", author, "--verifier", verifier)
+        self.assertEqual(self.brigade(*record, ok=False), self.same_family_refusal(author, verifier))
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.brigade(*record, "--same-family"), "D1 passed")
+        self.assertEqual([row[5:8] for row in self.pass_rows()], [[author, verifier, "same model family;"]])
+
+    def test_pass_record_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
+        self.assert_one_family(self.BEDROCK, CLAUDE)
+
+    def test_pass_record_refuses_an_underscored_claude_author_with_a_claude_verifier(self):
+        self.assert_one_family("anthropic/claude_opus_5", "cursor/claude-sonnet-5-5")
+
+    def test_pass_record_refuses_a_dated_claude_author_with_a_dated_claude_verifier(self):
+        self.assert_one_family("vertex/claude-sonnet-5-5@20260101", "claudeAgent/claude-haiku-5-5-20260301")
+
+    def test_pass_record_refuses_a_namespaced_muse_author_with_a_muse_verifier(self):
+        self.assert_one_family(self.NAMESPACED_MUSE, "openrouter/muse-lite-2")
+
+    def test_pass_record_records_two_families_with_no_flag(self):
+        self.fired_bug_fix()
+        for sha, author, verifier in (("abc", CLAUDE, CODEX), ("def", self.NAMESPACED_MUSE, CLAUDE)):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass",
+                                          "--author", author, "--verifier", verifier), "D1 passed")
+        self.assertEqual([row[5:8] for row in self.pass_rows()], [[CLAUDE, CODEX, ""], [self.NAMESPACED_MUSE, CLAUDE, ""]])
+
+    def test_pass_check_json_reads_a_stored_bedrock_row_as_one_family(self):
+        self.fired_bug_fix()
+        with (self.at / "pass.tsv").open("a") as table:
+            table.write(f"2026-10-08T00:00:00+00:00\tD1\t\tabc\tpass\t{self.BEDROCK}\t{CLAUDE}\t\n")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn('"crossFamily": false', out)
+
+    def test_the_built_brigade_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
+        self.fired_bug_fix()
+        built = ROOT / "skills/brigade/scripts/brigade.py"
+        result = subprocess.run([sys.executable, str(built), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                 "--author", self.BEDROCK, "--verifier", CLAUDE], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr.strip(), self.same_family_refusal(self.BEDROCK, CLAUDE))
+        self.assertEqual(self.pass_rows(), [])
+
+    def test_pass_record_without_roles_py_refuses_and_records_nothing(self):
+        self.fired_bug_fix()
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        missing = Path(self.temporary.name) / "missing"
+        glob["BUILT_ROLES"], glob["SOURCE_ROLES"] = missing / "built.py", missing / "source.py"
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "pass", "record", "D1",
+                "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX]
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            code = glob["main"](argv)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.getvalue(), f"brigade: cannot find roles.py at {missing / 'built.py'} or "
+                                            f"{missing / 'source.py'}; build or reinstall pstack-t3\n")
+        self.assertEqual(self.pass_rows(), [])
 
     def test_pass_check_json_at_another_sha_has_no_verdict(self):
         self.fired_bug_fix()
@@ -945,9 +1083,9 @@ class BrigadeTest(unittest.TestCase):
         self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
         before = (self.at / "rail.tsv").read_bytes()
         add = ("ticket", "add", "--from-report", "reports/D1.md")
-        for extra in (("--source", "github"), ("--ref", "x"), ("--request", "A1")):
+        for extra in (("--source", "github"), ("--ref", "x"), ("--request", "A1"), ("--again",)):
             self.assertEqual(self.brigade(*add, *extra, ok=False),
-                             "brigade: --from-report takes no --source, --ref, or --request")
+                             "brigade: --from-report takes no --source, --ref, --request, or --again")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--dry-run", ok=False),
                          "brigade: --dry-run needs --from-report")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "x", "--source", "report", ok=False),
@@ -3958,6 +4096,13 @@ class StoresTest(unittest.TestCase):
 
 
 class HandoffTest(StoresTest):
+    def test_ticket_add_takes_a_user_request_with_the_summary_of_a_moved_ticket(self):
+        self.open("core")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "Fix the cache"), "T2")
+
     def test_from_report_files_the_same_report_name_in_two_siblings(self):
         body = "## Follow-ups\n\n- Shared text.\n"
         for name in ("core", "engine"):

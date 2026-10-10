@@ -10,9 +10,11 @@ Kitchen words name files and commands. Output is plain engineering prose.
 
 import argparse
 import fcntl
+import functools
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -607,7 +609,7 @@ def refuse_live_ref(restaurant, ref, rails):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -622,6 +624,11 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None):
         if source not in (meta.get("intake") or []):
             raise BrigadeError(f"no coordinator owns intake from {source}; the one that reads it runs set --intake {source}")
     refuse_live_ref(restaurant, ref, rails or {})
+    if source == "user" and not ref and not again:
+        for row in restaurant.rows("rail.tsv"):
+            if row["state"] in LIVE_TICKET_STATES and same_text(row["summary"]) == same_text(summary):
+                raise BrigadeError(f"same text as {row['id']} ({row['state']}); nothing added; "
+                                   "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
     return append_ticket(restaurant, summary, source, ref)
@@ -945,12 +952,19 @@ def status_line(restaurant):
     return ", ".join(f"{label}: {value}" for label, value in counts(restaurant).items() if value) or "nothing on record"
 
 
-def model_family(model):
-    return model.split("/")[-1].split("-")[0].lower()
+@functools.cache
+def roles_family():
+    """roles.py's family, loaded in process.
+
+    pass record asks under the store lock, which forbids a subprocess.
+    runpy writes no __pycache__ under skills/.
+    """
+    return runpy.run_path(str(roles_script()))["family"]
 
 
 def cross_family(row):
-    return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
+    family = roles_family()
+    return family(row["author"]) != family(row["verifier"]) and not row["note"].startswith("same model family")
 
 
 def item_verdicts(rows, dish_id):
@@ -1047,7 +1061,7 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
-    if model_family(author) == model_family(verifier) and not same_family:
+    if roles_family()(author) == roles_family()(verifier) and not same_family:
         raise BrigadeError(f"verifier {verifier} is the same model family as author {author}; "
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
@@ -2258,6 +2272,10 @@ def parser():
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
+    a.add_argument("--again", action="store_true",
+                   help="with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store "
+                        "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
+                        "do not count")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -2535,8 +2553,8 @@ def run(argv):
         lines = fragment_lines(restaurant, args.id, args.branch)
         return f"{result}\n{lines}" if lines else result
     if args.command == "ticket" and args.action == "add" and args.from_report is not None:
-        if args.source != "user" or args.ref or args.request:
-            raise BrigadeError("--from-report takes no --source, --ref, or --request")
+        if args.source != "user" or args.ref or args.request or args.again:
+            raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -2629,7 +2647,7 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {})
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":

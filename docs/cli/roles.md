@@ -68,7 +68,7 @@ roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT]
 | `--set SET` (repeatable) |  |  |  | '\<role>=\<seat>[;\<seat>]', seat = inherit \| provider/model[?option=value] |
 | `--project` |  |  |  | write the project file instead of the user file |
 | `--keep` |  |  |  | keep roles already in the target file |
-| `--force` |  |  |  | write even if seats do not match the catalog |
+| `--force` |  |  |  | write despite the problems validate lists, except an excluded seat |
 
 Give at most one of `--escalate`, `--clear-escalate`.
 

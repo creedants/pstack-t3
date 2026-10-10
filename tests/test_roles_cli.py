@@ -3738,7 +3738,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(refused.stdout, "")
         self.assertEqual(
             refused.stderr,
-            "error: refusing to write; these seats do not match the catalog:\n" + self.PANEL_PROBLEMS,
+            "error: refusing to write without --force:\n" + self.PANEL_PROBLEMS,
         )
         self.assertFalse(written_before_force)
         self.assertEqual(forced.returncode, 0, forced.stderr)
@@ -3771,6 +3771,78 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             "review backups: opencode/opencode/muse-lite-2-free: dropped unknown options bogus\n",
         )
 
+    ONE_SEAT = {"roles": {"review backups": [MUSE_SEAT]}}
+    SHORTFALL = "review backups: has 1 usable seat and needs 2\n"
+
+    def test_validate_reports_one_usable_seat_and_passes_two(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.ONE_SEAT)
+            one = repo.run("validate", "--catalog", catalog)
+            repo.put(repo.user, {"roles": {"review backups": [MUSE_SEAT, STEP_SEAT]}})
+            two = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(one.returncode, 1)
+        self.assertEqual(one.stdout, self.SHORTFALL)
+        self.assertEqual(one.stderr, "")
+        self.assertEqual(two.returncode, 0, two.stderr)
+        self.assertEqual(two.stdout, "ok\n")
+
+    def test_validate_and_backup_count_one_usable_seat_for_one_config_and_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.ONE_SEAT)
+            validated = repo.run("validate", "--catalog", catalog)
+            backed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+                    "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
+                ],
+                env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
+                capture_output=True,
+                text=True,
+                input=_LIMIT,
+            )
+        self.assertEqual(validated.returncode, 1)
+        self.assertEqual(validated.stdout, self.SHORTFALL)
+        self.assertEqual(backed.returncode, 0, backed.stderr)
+        payload = json.loads(backed.stdout)
+        self.assertEqual(payload["decision"], "park")
+        self.assertEqual(
+            payload["report"],
+            "verifiers: codex/gpt-6.1-sol hit its usage limit; review backups has 1 usable seat and needs 2, "
+            "so the work waits for the reset",
+        )
+
+    def test_write_refuses_one_usable_seat_without_force(self):
+        one_seat = "review backups=opencode/opencode/muse-lite-2-free?variant=high"
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory)
+            refused = repo.run("write", "--catalog", catalog, "--set", one_seat)
+            written_before_force = repo.user.exists()
+            forced = repo.run("write", "--catalog", catalog, "--set", one_seat, "--force")
+            stored = json.loads(repo.user.read_text())
+            user = str(repo.user)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, "")
+        self.assertEqual(
+            refused.stderr,
+            "error: refusing to write without --force:\n" + self.SHORTFALL,
+        )
+        self.assertFalse(written_before_force)
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertEqual(forced.stdout, f"wrote {user}\n")
+        self.assertEqual(stored["roles"], self.ONE_SEAT["roles"])
+
+    def test_show_notes_one_usable_seat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, self.ONE_SEAT)
+            completed = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [MUSE_SEAT],
+            "notes": ["has 1 usable seat and needs 2"],
+        }})
+
     def test_show_reports_a_role_set_to_one_fast_grok_seat_as_set(self):
         fast = {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}
         skipped = [
@@ -3786,7 +3858,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(json.loads(with_catalog.stdout)["roles"], {"review backups": {
             "source": user,
             "seats": [],
-            "notes": skipped,
+            "notes": skipped + ["has 0 usable seats and needs 2"],
         }})
         self.assertEqual(plain.returncode, 0, plain.stderr)
         self.assertEqual(json.loads(plain.stdout)["roles"], {"review backups": {
@@ -3798,6 +3870,19 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             ),
             "notes": skipped,
         }})
+
+    def test_validate_reports_a_role_set_to_one_fast_grok_seat_as_excluded_and_short(self):
+        fast = {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [fast]}})
+            validated = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(validated.returncode, 1)
+        self.assertEqual(validated.stdout, (
+            "review backups: grok/grok-4.7-build-fast: grok-4.7-build-fast is a fast Grok variant, "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker\n"
+            "review backups: has 0 usable seats and needs 2\n"
+        ))
+        self.assertEqual(validated.stderr, "")
 
 
 def plain_provider(provider_id, *model_ids, runs=True):
