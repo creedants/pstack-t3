@@ -1,7 +1,10 @@
+import fcntl
 import hashlib
 import json
 import os
+import re
 import runpy
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -10,6 +13,7 @@ import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,12 +141,21 @@ class Fixture:
         if self.writer is not None:
             self.writer.close()
 
-    def run(self, *args, at=True, t3_home=True, env=None):
+    def command(self, *args, at=True, t3_home=True, env=None):
+        """The words and keyword arguments that run the script. --at and --t3-home name this fixture unless given, and None leaves one out."""
         words = [sys.executable, str(SCRIPT)]
         words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
         words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
         environment = {"HOME": str(self.home), "PATH": os.environ.get("PATH", ""), **(env or {})}
-        return subprocess.run([*words, *args], capture_output=True, text=True, env=environment, cwd=self.root)
+        return [*words, *args], {"text": True, "env": environment, "cwd": self.root}
+
+    def run(self, *args, **how):
+        words, options = self.command(*args, **how)
+        return subprocess.run(words, capture_output=True, **options)
+
+    def start(self, *args, **how):
+        words, options = self.command(*args, **how)
+        return subprocess.Popen(words, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
 
     def read(self, hours=3.0):
         """read_store and read_t3 over this fixture, as (Store, T3, Window)."""
@@ -993,6 +1006,419 @@ class FoldTest(ActivityCase):
             "T3 gave 2 statuses this tool cannot read.",
             "9 agents are grouped by the name of the request that started them.",
             "3 other threads ran in T3 outside this coordinator."])
+
+
+DATA = re.compile(r"<script type=application/json id=d>(.*?)</script>", re.S)
+PROGRAM = re.compile(r"<script>(const H=(\d+);.*)</script>$", re.S)
+STORE_WORDS = re.compile(r"\b(dish|dishes|rail|86|pass|station|restaurant|fire|chef)\b", re.I)
+PR7 = "https://example.test/o/r/pull/7"
+PR6 = "https://example.test/o/r/pull/6"
+# A document with no HTML parser. It keeps every node the renderer makes.
+STUB = """
+const nodes = [];
+const make = tag => ({
+  tagName: tag.toUpperCase(), kids: [], style: {}, className: '', own: '',
+  appendChild(kid) { this.kids.push(kid); return kid; },
+  set textContent(value) { this.kids = []; this.own = String(value); },
+  get textContent() { return this.own; },
+});
+const page = make('div'), document = {
+  getElementById: id => id === 'd' ? {textContent: DATA} : page,
+  createElement: tag => { const node = make(tag); nodes.push(node); return node; },
+};
+"""
+REPORT = """
+console.log(JSON.stringify({
+  texts: nodes.map(node => node.own).filter(Boolean),
+  links: nodes.filter(node => node.href).map(node => [node.tagName, node.href, node.target, node.rel]),
+  classes: nodes.map(node => node.className),
+  titles: nodes.filter(node => node.title).map(node => node.title),
+  bars: nodes.filter(node => node.className.startsWith('b ')).map(node => [node.style.left, node.style.width]),
+}));
+"""
+
+
+def empty(fixture):
+    fixture.unit("D7", "in-progress", "Agent activity page", pr=PR7)
+    fixture.coordinator(turns=(("completed", 400, 390),))
+    return fixture
+
+
+def one_running(fixture):
+    fixture.coordinator()
+    fixture.unit("D7", "in-progress", "Agent activity page", thread=worker(1), pr=PR7)
+    fixture.unit("D6", "queued", "Queue fix", pr=PR6)
+    fixture.thread(worker(1), title="D7 worker", turns=(("completed", 100.5, 80), ("running", 42.5, None)))
+    return fixture
+
+
+def failed_child(fixture):
+    fixture.coordinator(turns=(("completed", 150, 140), ("running", 5.5, None)), model="model-c")
+    fixture.unit("D7", "in-review", "Agent activity page", thread=worker(1), pr=PR7)
+    fixture.unit("D6", "queued", "Queue fix", pr=PR6)
+    fixture.unit("D5", "merged", "Old work", thread=worker(5))
+    fixture.thread(worker(1), title="D7 worker", turns=(("completed", 120.5, 100), ("running", 42.5, None)))
+    runner = delegated(worker(1), "architect-d7-runner-2")
+    fixture.thread(runner, title="architect runner 2", provider="codex", model="model-b", parent=worker(1), turns=(("running", 6.5, None),))
+    fixture.thread(native(1), title="/root/spec_review", provider="codex", model="model-b", parent=runner, delegation=("completed", 5, 4))
+    fixture.thread(delegated(COORDINATOR, "brigade-kit-d7-verify-0a1b2c3"), title="Act as the review sub-agent for this task.",
+                   provider="grok", model="vendor/model-c", parent=COORDINATOR, turns=(("failed", 30.5, 27),))
+    fixture.thread(worker(5), title="D5 worker", turns=(("completed", 170, 165),))
+    fixture.thread(delegated(COORDINATOR, "why-investigator"), title="Read the brief at /pathmarker/brief.md", parent=COORDINATOR, turns=(("interrupted", 90, 88),))
+    fixture.thread("mcp:threadmarker-other-project", turns=(("completed", 20, 10),))
+    return fixture
+
+
+def typical(fixture):
+    return populate(fixture, units=9, agents=50, running=3, failed=1)
+
+
+def busy(fixture):
+    return populate(fixture, units=36, agents=400, running=5, failed=3)
+
+
+def extreme(fixture):
+    return populate(fixture, units=200, agents=3000, running=60, failed=10, heavy=True)
+
+
+def data_of(document):
+    return json.loads(DATA.search(document).group(1))
+
+
+def strings(value):
+    if isinstance(value, str):
+        return [value]
+    return [text for each in value for text in strings(each)] if isinstance(value, list) else []
+
+
+def agents_shown(data):
+    return sum(line[7] if len(line) > 7 else 1 for _, lines in data["G"] for line in lines)
+
+
+class OutputCase(ActivityCase):
+    def out(self, *args, **how):
+        result = self.fixture.run(*args, **how)
+        self.assertEqual((result.returncode, result.stderr), (0, ""), result.stdout[:200])
+        return result.stdout
+
+    def document(self, *args, **how):
+        """The document a run prints, without the newline print adds."""
+        out = self.out(*args, **how)
+        self.assertTrue(out.startswith("<!doctype html>") and out.endswith("</script>\n"), out[:80])
+        return out[:-1]
+
+
+class DocumentTest(OutputCase):
+    def test_default_window_is_3_hours_and_hours_changes_which_turns_are_on_the_page(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 200, 190), ("completed", 100, 90)))
+        fixture.meta.pop("thread")
+        fixture.write()
+        for args, length, bars in (((), 10800, [444, 56, 0]), (("--hours", "4"), 14400, [167, 41, 0, 583, 42, 0])):
+            with self.subTest(args):
+                data = data_of(self.document(*args))
+                self.assertEqual((data["w"][1], data["G"][0][1][0][6]), (length, bars))
+
+    def test_data_object_holds_the_counts_legend_items_groups_and_notes(self):
+        failed_child(self.fixture).write()
+        data = data_of(self.document())
+        self.assertEqual(sorted(data), ["G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
+        self.assertEqual((data["v"], data["c"], data["n"], data["w"][1]), (1, "kit", [2, 2, 4, 1], 10800))
+        self.assertEqual(data["S"], ["running", "queued", "waiting", "done", "failed", "stopped", "unknown"])
+        self.assertEqual(data["P"], [["Claude", 1, 3], ["Codex", 2, 2], ["Grok", 3, 1]])
+        self.assertEqual(data["M"], ["model-c", "model-a", "model-b"])
+        self.assertEqual(data["I"], [["D6", "Queue fix", "landing", "warn", PR6, 1], ["D7", "Agent activity page", "in review", "info", PR7, 1],
+                                     ["D5", "Old work", "merged", "", "", 0]])
+        self.assertEqual([index for index, _ in data["G"]], [1, 2, -1])
+        self.assertEqual([line[:5] + line[7:8] for line in data["G"][0][1]],
+                         [[0, "worker", 1, 0, 0, 1], [1, "architect runner 2", 2, 1, 0, 1], [2, "spec_review", 2, 1, 3], [0, "review", 0, 2, 4]])
+        self.assertEqual([[line[8] // 60 for line in lines if len(line) > 8] for _, lines in data["G"]], [[42, 6], [], []])
+        self.assertEqual([line[:2] + line[6:] for line in data["G"][2][1]], [[0, "Read the brief at", [500, 11, 3]]])
+        self.assertEqual(data["G"][0][1][3][6], [831, 19, 2])
+        self.assertEqual((data["k"][:2], data["k"][3]), ([0, 0], [167, 55, 0, 969, 31, 0]))
+        self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."])
+
+    def test_checksum_in_the_document_is_fnv_1a_over_the_data_elements_utf16_units(self):
+        fixture = one_running(self.fixture)
+        fixture.units[0]["summary"] = "Agent activity page 𝔸é"
+        fixture.write()
+        document = self.document()
+        value = 2166136261
+        units = DATA.search(document).group(1).encode("utf-16-le")
+        for at in range(0, len(units), 2):
+            value = ((value ^ (units[at] | units[at + 1] << 8)) * 16777619) % 2 ** 32
+        self.assertEqual(int(PROGRAM.search(document).group(2)), value)
+        self.assertEqual((MOD["checksum"]("a"), MOD["checksum"]("foobar")), (0xE40C292C, 0xBF9CF968))
+
+    def test_markup_in_a_summary_a_title_and_a_model_leaves_no_angle_bracket_or_ampersand_in_the_data_element(self):
+        fixture = one_running(self.fixture)
+        hostile = "x</script><img onerror=a(1)> \"q\" & 'p'"
+        fixture.units[0]["summary"] = hostile
+        fixture.thread(delegated(worker(1), "helper"), title=hostile, model="<b>&model", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.write()
+        raw = DATA.search(self.document()).group(1)
+        self.assertEqual([character for character in "<>&" if character in raw], [])
+        data = json.loads(raw)
+        self.assertEqual((data["I"][1][1], data["G"][0][1][1][1], data["M"]), (hostile, hostile, ["model-a", "<b>&model"]))
+        self.assertEqual(MOD["encode"]({"a": "</script>\u2028\u2029&"}), '{"a":"\\u003c/script\\u003e\\u2028\\u2029\\u0026"}')
+
+    def test_no_invented_id_or_path_is_in_the_document_or_the_text(self):
+        for build in (failed_child, busy):
+            with self.subTest(build.__name__):
+                fixture = self.fixture = Fixture(self.fixture.root / build.__name__)
+                build(fixture).write()
+                for output in (self.document(), self.out("--text"), self.document("--max-bytes", "500000")):
+                    self.assertEqual([marker for marker in MARKERS if marker in output], [])
+
+    def test_each_store_state_reads_as_its_plain_word_and_no_store_word_is_in_the_page_or_the_text(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        states = ("in-progress", "in-review", "passed", "queued", "sent-back", "blocked", "merged", "dropped", "plated")
+        for number, state in enumerate(states, start=1):
+            fixture.unit(f"D{number}", state, f"summary {number}", thread=worker(number))
+            fixture.thread(worker(number), turns=(("completed", 100 - number, 99 - number),))
+        fixture.write()
+        data, text = data_of(self.document()), self.out("--text")
+        words = ["working", "in review", "passed review", "landing", "sent back", "blocked", "merged", "dropped", "other"]
+        self.assertEqual([item[2] for item in sorted(data["I"], key=lambda item: item[0])], words)
+        for word in words:
+            self.assertIn(f"   {word}   summary", text)
+        for output in (" ".join(strings(list(data.values()))), text, MOD["STYLE"], MOD["RENDERER"]):
+            self.assertEqual(STORE_WORDS.findall(output), [])
+            self.assertEqual([state for state in ("in-progress", "in-review", "sent-back", "plated") if state in output], [])
+
+    def test_renderer_source_holds_no_call_that_parses_a_string_as_html_or_code(self):
+        self.assertEqual([call for call in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function(", "setTimeout", "\"", "`") if call in MOD["RENDERER"]], [])
+        self.assertIn(MOD["UNGROUPED"], MOD["RENDERER"])
+
+    def test_stylesheet_sets_no_background_on_the_page_and_takes_colors_only_from_theme_variables(self):
+        style = MOD["STYLE"]
+        rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", style.replace("@media(max-width:520px){", "")))
+        self.assertEqual(rules["#o"], "font:13px/1.4 var(--font-sans);color:var(--foreground)")
+        self.assertEqual([selector for selector in rules if re.fullmatch(r"(html|body|\*|:root)", selector)], [])
+        self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
+        allowed = {"--foreground", "--muted-foreground", "--border", "--success", "--destructive", "--warning", "--info", "--radius", "--font-sans", "--font-mono"}
+        allowed |= {f"--chart-{number}" for number in range(1, 7)}
+        own = set(re.findall(r"(--[\w-]+):", style))
+        self.assertEqual(own, {"--c", "--lab"})
+        self.assertEqual(set(re.findall(r"var\((--[\w-]+)", style)) - own - allowed, set())
+        self.assertEqual(re.findall(r"@media[^{]*", style), ["@media(max-width:520px)"])
+
+
+class SizeTest(OutputCase):
+    def test_empty_window_is_at_most_the_fixed_budget_and_says_no_agent_ran(self):
+        empty(self.fixture).write()
+        document = self.document()
+        data = data_of(document)
+        self.assertLessEqual(len(document.encode()), MOD["FIXED_BUDGET"])
+        self.assertEqual((data["n"], data["G"], data["k"], data["N"]), ([0, 0, 0, 0], [], None, ["No agent or sub-agent of this coordinator ran in this window."]))
+        self.assertEqual([item[0] for item in data["I"]], ["D7"])
+
+    def test_typical_window_is_unfolded_and_at_most_16000_bytes(self):
+        typical(self.fixture).write()
+        document = self.document()
+        data = data_of(document)
+        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertEqual((data["n"], agents_shown(data), sum(len(lines) for _, lines in data["G"])), ([3, 9, 41, 1], 50, 50))
+        self.assertEqual(data["N"], ["14 agents are grouped by the name of the request that started them."])
+
+    def test_busy_window_is_folded_to_at_most_16000_bytes_with_a_note_and_max_bytes_buys_every_row_back(self):
+        busy(self.fixture).write()
+        document = self.document()
+        data = data_of(document)
+        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertEqual(data["n"], [5, 36, 364, 3])
+        self.assertLess(sum(len(lines) for _, lines in data["G"]), 400)
+        self.assertRegex(" ".join(data["N"]), r"shown as \d+ summary rows?\.|not shown")
+        whole = data_of(self.document("--max-bytes", "500000"))
+        self.assertEqual((whole["n"], agents_shown(whole), sum(len(lines) for _, lines in whole["G"])), ([5, 36, 364, 3], 400, 400))
+        self.assertEqual(whole["N"], ["112 agents are grouped by the name of the request that started them."])
+
+    def test_extreme_window_with_four_byte_characters_and_long_links_is_at_most_16000_bytes(self):
+        extreme(self.fixture).write()
+        document = self.document()
+        data = data_of(document)
+        self.assertLessEqual(len(document.encode()), 16000)
+        self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 6, 8))
+        self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
+        self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
+
+    def test_page_with_every_field_at_its_largest_fits_16000_bytes_after_the_last_fold_step(self):
+        wide, spans = "𝕏" * 400, tuple((x * 40, 1, "failed") for x in range(25))
+        def big(number):
+            return item("D" + "9" * 30 + str(number), summary="<" * 400, pr="https://example.test/" + "x" * 69)
+        def rows(prefix):
+            return [row(prefix + wide + str(n), depth=min(n, 2), status="running", spans=spans, open_seconds=604800, stands_for=99999, model=wide + str(n)) for n in range(40)]
+        groups = [group(big(number), *rows(str(number))) for number in range(40)]
+        groups.append(group(big(98), row("worker"), row("9 sub-agents", depth=1, stands_for=99999)))
+        hidden = MOD["Hidden"](**dict.fromkeys(("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name"), 9999999))
+        largest = MOD["cap_everything"](page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide))
+        self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items)), (6, [6] * 6, 8))
+        self.assertLessEqual(len(MOD["render_html"](largest).encode()), 16000)
+
+
+class TextTest(OutputCase):
+    def test_text_lists_running_agents_work_items_failed_agents_and_notes(self):
+        failed_child(self.fixture).write()
+        self.assertEqual(self.out("--text"), "\n".join([
+            "Agent activity for kit, last 3 hours",
+            "2 running now, 2 agents, 4 sub-agents, 1 failed",
+            "Running now",
+            "  D7 worker   model-a   running for 42m",
+            "  D7 architect runner 2   model-b   running for 6m   under worker",
+            "Work items",
+            f"  D7   in review   Agent activity page   1 agent, 3 sub-agents, 74m at work   {PR7}",
+            "  D5   merged   Old work   1 agent, 5m at work",
+            f"  D6   landing   Queue fix   no activity in this window   {PR6}",
+            "  Not tied to a work item: 1 sub-agent, 2m at work",
+            "Failed",
+            "  D7 review   model-c   3m at work",
+            "Notes",
+            "  1 agent is grouped by the name of the request that started it.",
+            "  1 other thread ran in T3 outside this coordinator.",
+            ""]))
+
+    def test_text_and_document_hold_the_same_four_counts(self):
+        busy(self.fixture).write()
+        self.assertEqual(data_of(self.document())["n"], [5, 36, 364, 3])
+        self.assertEqual(self.out("--text").split("\n")[1], "5 running now, 36 agents, 364 sub-agents, 3 failed")
+
+    def test_text_cuts_each_list_and_counts_the_rest(self):
+        lines = self.render(busy).split("\n")
+        self.assertEqual((lines[2], lines[8]), ("Running now", "Work items"))
+        self.assertEqual(len(lines[3:8]), 5)
+        self.assertEqual((len(lines[9:18]), lines[18]), (9, "  and 27 more work items"))
+        self.assertEqual((lines[19], len(lines[20:23]), lines[23]), ("Failed", 3, "Notes"))
+        cut = MOD["render_text"](page(group(item("D1"), *[row(f"r{n}", status="running", open_seconds=5) for n in range(9)],
+                                              *[row(f"f{n}", status="failed") for n in range(5)]))).split("\n")
+        self.assertEqual((cut[10], cut[18]), ("  and 2 more running agents", "  and 1 more failed agent"))
+
+    def render(self, build):
+        build(self.fixture).write()
+        return self.out("--text")
+
+    def test_one_hour_window_reads_last_1_hour(self):
+        one_running(self.fixture).write()
+        self.assertEqual(self.out("--text", "--hours", "1").split("\n")[0], "Agent activity for kit, last 1 hour")
+
+
+class RunTest(OutputCase):
+    def test_out_writes_the_document_and_prints_one_line_with_the_file_and_its_size(self):
+        one_running(self.fixture).write()
+        target = self.fixture.root / "page.html"
+        printed = self.out("--out", str(target))
+        document = target.read_bytes()
+        self.assertEqual(printed, f"wrote {target} ({len(document)} bytes)\n")
+        self.assertTrue(document.startswith(b"<!doctype html>") and document.endswith(b"</script>"))
+        printed = self.out("--text", "--out", str(target))
+        self.assertEqual(printed, f"wrote {target} ({len(target.read_bytes())} bytes)\n")
+        self.assertTrue(target.read_text().startswith("Agent activity for kit, last 3 hours\n"))
+
+    def test_out_in_a_directory_that_does_not_exist_exits_1(self):
+        one_running(self.fixture).write()
+        line = self.fails(1, "--out", str(self.fixture.root / "pathmarker absent" / "page.html"))
+        self.assertEqual(line, "activity: cannot write the --out file (No such file or directory); pass a path this user can write")
+
+    def test_run_changes_no_file_in_the_store_or_beside_a_closed_database(self):
+        fixture = failed_child(self.fixture).write()
+        before = listing(fixture.store), listing(fixture.database.parent)
+        self.assertEqual(sorted(before[0]), ["dishes.tsv", "log.tsv", "restaurant.json"])
+        self.document()
+        self.out("--text")
+        self.assertEqual((listing(fixture.store), listing(fixture.database.parent)), before)
+
+    def test_run_beside_a_live_database_reads_its_log_and_keeps_the_same_files_and_database_and_log_bytes(self):
+        fixture = failed_child(self.fixture).write(live=True)
+        before = listing(fixture.database.parent)
+        self.assertEqual(sorted(before), ["statev2.sqlite", "statev2.sqlite-shm", "statev2.sqlite-wal"])
+        self.assertEqual(data_of(self.document())["n"], [2, 2, 4, 1])
+        self.assertEqual(live_listing(fixture.database.parent), live_listing(fixture.database.parent, before))
+
+    def test_database_under_a_directory_with_a_space_a_question_mark_and_a_hash_is_read(self):
+        fixture = self.fixture
+        fixture.base = fixture.root / "pathmarker t3 ?base #1"
+        fixture.database = fixture.base / "userdata" / "statev2.sqlite"
+        one_running(fixture).write()
+        self.assertEqual(data_of(self.document())["n"], [1, 1, 0, 0])
+
+    def test_t3code_home_names_the_base_directory_when_the_flag_is_absent(self):
+        fixture = one_running(self.fixture).write()
+        self.assertEqual(data_of(self.document(t3_home=None, env={"T3CODE_HOME": str(fixture.base)}))["n"], [1, 1, 0, 0])
+
+    def test_read_waits_while_a_writer_holds_the_stores_lock(self):
+        fixture = one_running(self.fixture).write()
+        with open(fixture.store / "restaurant.lock", "w") as held:
+            before = listing(fixture.store)
+            fcntl.flock(held, fcntl.LOCK_EX)
+            process = fixture.start()
+            self.addCleanup(process.kill)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+            fcntl.flock(held, fcntl.LOCK_UN)
+            self.assertEqual(process.wait(timeout=30), 0)
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual(listing(fixture.store), before)
+
+    def test_reference_page_holds_no_value_from_the_machine(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import cli_reference
+        hostile = {"BRIGADE_DIR": "/tmp/SENTINEL", "T3CODE_HOME": "/tmp/SENTINEL", "HOME": "/tmp/SENTINEL"}
+        with mock.patch.dict(os.environ, hostile):
+            parser = cli_reference.load(SCRIPT)
+            text = cli_reference.render_tool(ROOT, "t3/added/brigade/scripts/activity.py")
+        self.assertEqual(parser.prog, "activity.py")
+        self.assertEqual([action.default for action in parser._actions if isinstance(action.default, str) and action.default != "==SUPPRESS=="], [])
+        self.assertEqual([word for word in ("SENTINEL", str(Path.home()), str(ROOT)) if word in text], [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class RendererTest(OutputCase):
+    def render(self, document, spoil=False):
+        """What the renderer builds from a document, in a document object that has no HTML parser."""
+        data, program = DATA.search(document).group(1), PROGRAM.search(document).group(1)
+        if spoil:
+            data = data.replace('"kit"', '"kat"', 1)
+        script = self.fixture.root / "render.js"
+        script.write_text(f"const DATA = {json.dumps(data)};{STUB}{program}{REPORT}")
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "TZ": "UTC"})
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        return json.loads(result.stdout)
+
+    def test_renderer_draws_the_counts_the_running_list_the_rows_the_items_and_the_notes(self):
+        failed_child(self.fixture).write()
+        document = self.document()
+        built = self.render(document)
+        texts = built["texts"]
+        for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "D7 worker", "model-a", "42m",
+                     "D7 architect runner 2", "model-b · under worker", "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator ", "worker ",
+                     "architect runner 2 ", "spec_review ", "review ", "model-c", "Read the brief at ", "Not tied to a work item", "Work items in flight",
+                     "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
+                     "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
+            self.assertIn(text, texts)
+        self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
+        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Each bar is time an agent was at work\. A striped bar is still running, and a faded bar was stopped\.$")
+        self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
+        classes = built["classes"]
+        self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
+                         [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
+        self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
+        self.assertIn(["83.1%", "1.9%"], built["bars"])
+        self.assertIn("review · failed · 3m", built["titles"])
+
+    def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
+        one_running(self.fixture).write()
+        texts = self.render(self.document(), spoil=True)["texts"]
+        self.assertEqual(texts[0], "This copy differs from what the tool wrote. Run the command again.")
+        self.assertIn("D7 worker", texts)
+
+    def test_renderer_draws_a_folded_page_and_an_empty_one_with_no_error(self):
+        for build, heading in ((busy, "Running now"), (empty, "Timeline")):
+            with self.subTest(build.__name__):
+                fixture = self.fixture = Fixture(self.fixture.root / build.__name__)
+                build(fixture).write()
+                self.assertIn(heading, self.render(self.document())["texts"])
 
 
 if __name__ == "__main__":

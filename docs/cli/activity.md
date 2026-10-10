@@ -12,7 +12,7 @@ activity.py [--at AT] [--hours HOURS] [--text] [--out OUT] [--max-bytes MAX_BYTE
 
 Show what one brigade coordinator's agents and sub-agents are doing, as one HTML page.
 
-Reads the coordinator's store and T3 Code's state database and writes to neither. Prints one self-contained HTML document, or plain lines with --text.
+Opens the coordinator's store and T3 Code's state database read-only. Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Show what one brigade coordinator's agents and sub-agents are doing, as one HTML page.
 
-Reads the coordinator's store and T3 Code's state database and writes to neither.
-Prints one self-contained HTML document, or plain lines with --text.
+Opens the coordinator's store and T3 Code's state database read-only.
+Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 """
 
 import argparse
@@ -27,7 +27,7 @@ DEFAULT_HOURS = 3.0
 MAX_HOURS = 168.0
 # The whole document, in UTF-8 bytes. The coordinator types it once for html_preview and once for html_render.
 BUDGET = 16000
-# The stylesheet, the renderer, and the shell around the data, with the data of an empty window.
+# The document of an empty window, which is the stylesheet, the renderer, and the shell around almost no data. tests/test_activity.py holds it to this.
 FIXED_BUDGET = 7000
 # html_preview and html_render refuse more than 512000 characters.
 MAX_BUDGET = 500000
@@ -139,7 +139,7 @@ class Unit:
     pr: str
     worker: str                       # the current worker's thread id, or ""
     earlier_workers: tuple[str, ...]  # thread ids of retired workers, from the log
-    task: str                         # the latest delegation: a sub-agent id, a request name, or ""
+    task: str                         # the latest delegation as a sub-agent id or a request name, or ""
 
 
 @dataclass(frozen=True)
@@ -302,7 +302,7 @@ class Totals:
 
 @dataclass(frozen=True)
 class Hidden:
-    """Counts of what the page does not draw. notes() writes one sentence for each field that is not zero.
+    """Counts of what the page does not draw. notes() puts each field that is not zero in a sentence.
 
     The sum of `stands_for` over every row, plus `dropped_agents` and `cut_agents`, equals
     `totals.agents + totals.subagents` on every page.
@@ -467,7 +467,7 @@ def read_store(directory):
 
 
 def roots_of(store):
-    """The threads a coordinator's scope starts from: its own, each unit's worker, and each earlier worker."""
+    """The threads a coordinator's scope starts from. They are its own, each unit's worker, and each earlier worker."""
     workers = {thread for unit in store.units for thread in (unit.worker, *unit.earlier_workers) if thread}
     return frozenset(store.coordinators) | workers
 
@@ -746,7 +746,7 @@ def scrub(text):
 
 
 def model_name(text):
-    """A model's name as shown: the text after its last /, with each run of spaces as one space."""
+    """A model's name as shown. It is the text after its last /, with each run of spaces as one space."""
     return " ".join(text.encode("utf-8", "ignore").decode().rsplit("/", 1)[-1].split())
 
 
@@ -803,7 +803,7 @@ def label_of(agent, store, unit):
 
 
 def stretches(agent):
-    """The agent's time at work: its turns, or its delegation as one turn when it has no turns. An open delegation reads RUNNING."""
+    """The agent's time at work. It is its turns, or its delegation as one turn when it has no turns. An open delegation reads RUNNING."""
     delegation = agent.delegation
     if agent.turns or delegation is None:
         return agent.turns
@@ -832,7 +832,7 @@ def status_of(agent):
 
 
 def spans_of(agent, window):
-    """The agent's bars: one per stretch, clipped to the window.
+    """The agent's bars, one per stretch, clipped to the window.
 
     A stretch that has ended joins the bar before it when both show the same status and are less than 5 thousandths apart.
     """
@@ -858,7 +858,7 @@ def seconds_of(agent, window):
 
 
 def tree(agents):
-    """The agents as (agent, depth) in tree order: each agent with no parent among them, then its children, earliest start first. Depth stops at 2."""
+    """The agents as (agent, depth) in tree order. Each agent with no parent among them is followed by its children, earliest start first. Depth stops at 2."""
     def began(agent):
         return (min((turn.start for turn in stretches(agent)), default=0), agent.thread)
 
@@ -1043,7 +1043,7 @@ def drop_old_items(page):
 
 
 def first(values, limit, urgent):
-    """The limit values to keep, in their own order: the urgent ones are chosen first, then the earliest."""
+    """A flag for each value that says whether it is one of the limit to keep. The urgent ones are chosen first, then the earliest."""
     chosen = set(sorted(range(len(values)), key=lambda index: (not urgent(values[index]), index))[:limit])
     return [index in chosen for index in range(len(values))]
 
@@ -1063,7 +1063,7 @@ def cap_everything(page):
     """Step 4. Its output has a size limit whatever the input.
 
     At most MAX_GROUPS groups stay, those with a running row first. At most MAX_ROWS rows a group stay, running and failed rows first.
-    A row whose parent row was cut moves up a depth. At most MAX_SPANS bars a row and COORDINATOR_SPANS on the coordinator's row stay.
+    A row's depth becomes the number of its ancestor rows that stay. At most MAX_SPANS bars a row and COORDINATOR_SPANS on the coordinator's row stay.
     At most MAX_STRIP in-flight items stay, those of a group still on the page first.
     The coordinator's name, ids, labels, summaries, and model names are clipped, and a link over LINK_BYTES bytes is dropped.
     """
@@ -1150,6 +1150,315 @@ def notes(page):
     if hidden.other_threads:
         lines.append(say(hidden.other_threads, "1 other thread ran in T3 outside this coordinator.", "{n} other threads ran in T3 outside this coordinator."))
     return lines
+
+
+WIRE_VERSION = 1
+WIRE_STATUS = (Status.RUNNING, Status.QUEUED, Status.WAITING, Status.DONE, Status.FAILED, Status.STOPPED, Status.UNKNOWN)
+WIRE_BARS = (Status.DONE, Status.RUNNING, Status.FAILED, Status.STOPPED, Status.UNKNOWN)
+TEXT_RUNNING = 7
+TEXT_ITEMS = 9
+TEXT_FAILED = 4
+
+
+def joined_lines(source):
+    """A stylesheet's source as one line, without the indentation of each line."""
+    return "".join(line.strip() for line in source.splitlines())
+
+
+def squeezed(source):
+    """JavaScript source without the white space beside punctuation, with every other run of white space as one space, and with no `;` before a `}`.
+
+    Text inside single quotes is kept. The source may hold no other kind of string and no regular expression.
+    """
+    def tight(code):
+        return re.sub(r"\s+", " ", re.sub(r"\s*([^\w\s$.])\s*", r"\1", code)).replace(";}", "}")
+
+    return "".join(part if part.startswith("'") else tight(part) for part in re.split(r"('[^']*')", source.strip()))
+
+
+# The page sets no background on html, body, or #o, and takes every color from a theme variable of html_render.
+STYLE = joined_lines("""
+    #o{font:13px/1.4 var(--font-sans);color:var(--foreground)}
+    #o a{color:inherit;text-decoration:none}
+    h2{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;margin:18px 0 6px}
+    h2,small,.stat span,.legend,.axis,.sum,.foot,.co,.chip{color:var(--muted-foreground)}
+    .diff{color:var(--destructive);font-weight:600}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .stat,.now div,.strip>*{border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px}
+    .stat b{display:block;font-size:22px;line-height:1.1}
+    .live b{color:var(--success)}
+    .alarm b{color:var(--destructive)}
+    .now div,.strip>*,.grp{display:flex;gap:8px;align-items:baseline;min-width:0}
+    .now div{margin-bottom:4px}
+    .pulse{width:8px;height:8px;border-radius:50%;background:var(--success);align-self:center;flex:none}
+    .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400}
+    .strip{display:flex;flex-wrap:wrap;gap:6px}
+    .strip>*{max-width:100%;box-sizing:border-box}
+    .strip .sum{flex:0 1 auto;max-width:260px}
+    .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;margin-bottom:6px}
+    .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:var(--c)}
+    .tl{position:relative;--lab:230px}
+    .axis{position:relative;height:16px;margin-left:var(--lab);font-size:10.5px}
+    .axis i{position:absolute;transform:translateX(-50%);white-space:nowrap;font-style:normal}
+    .grid{position:absolute;left:var(--lab);right:0;top:16px;bottom:0;pointer-events:none}
+    .grid i{position:absolute;top:0;bottom:0;width:1px;background:var(--border)}
+    .grp{margin-top:8px;padding:3px 0;border-top:1px solid var(--border);font-weight:600}
+    .chip{font-size:10.5px;padding:1px 7px;border:1px solid;border-radius:99px;white-space:nowrap}
+    .go{color:var(--success)}
+    .info{color:var(--info)}
+    .warn{color:var(--warning)}
+    .bad{color:var(--destructive)}
+    .row{display:grid;grid-template-columns:var(--lab) 1fr;align-items:center;height:19px}
+    .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;font-size:12px}
+    .d1{padding-left:14px}
+    .d2{padding-left:28px}
+    small{font-size:10.5px}
+    .t{position:relative;height:100%}
+    .b{position:absolute;top:4px;height:11px;min-width:3px;border-radius:3px;background:var(--c)}
+    .run{background:repeating-linear-gradient(135deg,var(--c) 0 4px,transparent 4px 7px)}
+    .stop{opacity:.45}
+    .p0,.co{--c:var(--muted-foreground)}
+    .p1{--c:var(--chart-1)}
+    .p2{--c:var(--chart-2)}
+    .p3{--c:var(--chart-3)}
+    .p4{--c:var(--chart-4)}
+    .p5{--c:var(--chart-5)}
+    .p6{--c:var(--chart-6)}
+    .f{--c:var(--destructive)}
+    .foot{font-size:11px;margin-top:12px}
+    @media(max-width:520px){
+    .tl{--lab:128px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .l small,.axis i:nth-child(odd){display:none}
+    }
+""")
+
+# H is the checksum render_html writes before this text. The renderer builds every node with createElement and textContent,
+# so no string from the data is parsed as HTML. It sorts, groups, and counts nothing.
+RENDERER = squeezed("""
+    const root = document.getElementById('o'), raw = document.getElementById('d').textContent;
+    const add = (parent, tag, cls, text) => {
+      const node = parent.appendChild(document.createElement(tag));
+      node.className = cls || '';
+      node.textContent = text == null ? '' : text;
+      return node;
+    };
+    let sum = 2166136261, D = null;
+    for (let i = 0; i < raw.length; i++) sum = Math.imul(sum ^ raw.charCodeAt(i), 16777619) >>> 0;
+    if (sum !== H) add(root, 'p', 'diff', 'This copy differs from what the tool wrote. Run the command again.');
+    try { D = JSON.parse(raw); } catch (error) {}
+    if (D && D.v === 1) {
+      const [start, length] = D.w, kinds = ['', 'run', 'f', 'stop', 'p0'];
+      const span = s => s < 90 ? s + 's' : s < 5400 ? Math.floor(s / 60) + 'm' : Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm';
+      const clock = (t, day) => new Date(t * 1000).toLocaleString([], day ? {weekday: 'short', hour: 'numeric'} : {hour: 'numeric', minute: '2-digit'});
+      const link = (parent, text, url) => {
+        const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
+        if (safe) {
+          node.href = url;
+          node.target = '_blank';
+          node.rel = 'noopener';
+        }
+        return node;
+      };
+      const stats = add(root, 'div', 'stats');
+      ['running now', 'agents, last ' + Number((length / 3600).toFixed(1)) + 'h', 'sub-agents', 'failed'].forEach((label, i) => {
+        const box = add(stats, 'div', 'stat' + (i ? i > 2 && D.n[i] ? ' alarm' : '' : ' live'));
+        add(box, 'b', '', D.n[i]);
+        add(box, 'span', '', label);
+      });
+      const running = [];
+      for (const [index, rows] of D.G) {
+        const above = [];
+        for (const r of rows) {
+          above[r[0]] = r[1];
+          if (r[8] != null) running.push([(index < 0 ? '' : D.I[index][0] + ' ') + r[1], (D.M[r[2]] || '') + (r[0] ? ' · under ' + above[r[0] - 1] : ''), span(r[8])]);
+        }
+      }
+      if (running.length) {
+        add(root, 'h2', '', 'Running now');
+        const list = add(root, 'div', 'now');
+        for (const [name, detail, elapsed] of running) {
+          const line = add(list, 'div');
+          add(line, 'i', 'pulse');
+          add(line, 'b', '', name);
+          add(line, 'span', 'sum', detail);
+          add(line, 'span', '', elapsed);
+        }
+      }
+      add(root, 'h2', '', 'Timeline');
+      const legend = add(root, 'div', 'legend');
+      for (const [cls, text] of [...D.P.map(p => ['p' + p[1], p[0] + ' ' + p[2]]), ['f', 'failed']]) {
+        const entry = add(legend, 'span');
+        add(entry, 'i', 'dot ' + cls);
+        add(entry, 'span', '', text);
+      }
+      const lanes = add(root, 'div', 'tl'), axis = add(lanes, 'div', 'axis'), grid = add(lanes, 'div', 'grid');
+      const step = 60 * [15, 30, 60, 180, 720, 1440][[2, 6, 12, 24, 72].filter(hours => length > hours * 3600).length];
+      const day = new Date(start * 1000);
+      day.setHours(0, 0, 0, 0);
+      for (let t = day / 1000; t < start + length; t += step) {
+        const x = (t - start) / length * 100;
+        if (x > 4 && x < 97) for (const node of [add(axis, 'i', '', clock(t, length > 86400)), add(grid, 'i')]) node.style.left = x + '%';
+      }
+      const lane = (cls, depth, label, model, tip, spans) => {
+        const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth, label + ' '), track = add(row, 'div', 't');
+        add(name, 'small', '', model);
+        row.title = label + ' · ' + tip;
+        for (let i = 0; i < spans.length; i += 3) {
+          const bar = add(track, 'i', 'b ' + kinds[spans[i + 2]]);
+          bar.style.left = spans[i] / 10 + '%';
+          bar.style.width = spans[i + 1] / 10 + '%';
+        }
+      };
+      if (D.k) lane('co', 0, 'coordinator', D.M[D.k[0]] || '', D.S[D.k[1]] + ' · ' + span(D.k[2]), D.k[3]);
+      for (const [index, rows] of D.G) {
+        const head = add(lanes, 'div', 'grp'), item = D.I[index];
+        if (item) {
+          link(head, item[0], item[4]);
+          add(head, 'span', 'sum', item[1]);
+          add(head, 'b', 'chip ' + item[3], item[2]);
+        } else add(head, 'span', '', 'Not tied to a work item');
+        for (const r of rows) lane('p' + (r[3] < 0 ? 0 : D.P[r[3]][1]), r[0], r[1], D.M[r[2]] || '', D.S[r[4]] + ' · ' + span(r[5]), r[6]);
+      }
+      const strip = D.I.filter(item => item[5]);
+      if (strip.length) {
+        add(root, 'h2', '', 'Work items in flight');
+        const box = add(root, 'div', 'strip');
+        for (const item of strip) {
+          const chip = link(box, '', item[4]);
+          add(chip, 'b', '', item[0]);
+          add(chip, 'span', 'sum', item[1]);
+          add(chip, 'b', 'chip ' + item[3], item[2]);
+        }
+      }
+      const foot = add(root, 'div', 'foot', 'As of ' + clock(start + length) + ' for ' + D.c + '. Each bar is time an agent was at work. A striped bar is still running, and a faded bar was stopped.');
+      for (const note of D.N) add(foot, 'div', '', note);
+    }
+""")
+
+
+def wire(page):
+    """The data object the renderer reads.
+
+    v  WIRE_VERSION
+    c  the coordinator's name
+    w  the window's start in epoch seconds, then its length in seconds
+    n  running now, agents, sub-agents, failed
+    S  the status words that a row's status indexes
+    P  the legend, as [provider name, chart color, agents] each
+    M  the model names
+    k  the coordinator's row as [model, status, seconds, bars], or null
+    I  the work items, as [id, summary, state word, tone, link, 1 in the strip or 0] each
+    G  the groups, as [index into I or -1 for the agents tied to no work item, rows] each
+    N  the sentences from notes()
+
+    A row is [depth, label, model, provider, status, seconds, bars, stands_for, open_seconds].
+    model indexes M and provider indexes P, and either is -1 for none.
+    bars holds x, w, and an index into WIRE_BARS for each bar, flat.
+    A row with no open turn has no open_seconds, and when it also stands for one agent it has no stands_for.
+    """
+    models, providers = [], [name for name, _ in page.legend]
+    colors = dict([*PROVIDERS.values(), OTHER_PROVIDER])
+
+    def model(name):
+        if name and name not in models:
+            models.append(name)
+        return models.index(name) if name else -1
+
+    def bars(spans):
+        return [number for span in spans for number in (span.x, span.w, WIRE_BARS.index(span.status))]
+
+    def line(row):
+        tail = [row.stands_for, row.open_seconds] if row.open_seconds is not None else [row.stands_for] if row.stands_for != 1 else []
+        provider = providers.index(row.provider) if row.provider in providers else -1
+        return [row.depth, row.label, model(row.model), provider, WIRE_STATUS.index(row.status), row.seconds, bars(row.spans), *tail]
+
+    items = list(page.items)
+    items += [group.item for group in page.groups if group.item and group.item not in items]
+    own, totals = page.coordinator, page.totals
+    return {
+        "v": WIRE_VERSION,
+        "c": page.name,
+        "w": [int(page.window.start), round(page.window.end - page.window.start)],
+        "n": [totals.running, totals.agents, totals.subagents, totals.failed],
+        "S": [status.value for status in WIRE_STATUS],
+        "P": [[name, colors[name], agents] for name, agents in page.legend],
+        "k": own and [model(own.model), WIRE_STATUS.index(own.status), own.seconds, bars(own.spans)],
+        "I": [[item.id, item.summary, item.state, item.tone, item.pr, int(item in page.items)] for item in items],
+        "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
+        "M": models,
+        "N": notes(page),
+    }
+
+
+def checksum(text):
+    """32-bit FNV-1a over the UTF-16 code units of text, as the renderer computes it."""
+    value, units = 2166136261, text.encode("utf-16-le")
+    for at in range(0, len(units), 2):
+        value = ((value ^ int.from_bytes(units[at:at + 2], "little")) * 16777619) & 0xFFFFFFFF
+    return value
+
+
+def render_html(page):
+    """The whole document. The output of encode() and the checksum of it are the only text in it that depends on the page."""
+    data = encode(wire(page))
+    return (
+        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
+        f"<title>Agent activity</title><style>{STYLE}</style><div id=o></div>"
+        f"<script type=application/json id=d>{data}</script><script>const H={checksum(data)};{RENDERER}</script>")
+
+
+def dur(seconds):
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h {seconds % 3600 // 60}m"
+
+
+def render_text(page):
+    """The page as at most 40 plain lines.
+
+    Two lines of counts. Then at most TEXT_RUNNING running agents, at most TEXT_ITEMS work items, one line for the agents
+    tied to no work item, at most TEXT_FAILED failed agents, and the sentences from notes(), each list under a heading.
+    A list that was cut ends with a line that counts the rest. A work item is listed when it has a group or is in flight.
+    """
+    def capped(lines, limit, noun):
+        return lines[:limit] + ([f"  and {count(len(lines) - limit, 'more ' + noun)}"] if len(lines) > limit else [])
+
+    def line(*parts):
+        return "  " + "   ".join(part for part in parts if part)
+
+    running, failed, items, loose = [], [], [], []
+    for group in page.groups:
+        above = {}
+        for row in group.rows:
+            above[row.depth] = row.label
+            name = f"{group.item.id} {row.label}" if group.item else row.label
+            if row.open_seconds is not None:
+                running.append(line(name, row.model, f"running for {dur(row.open_seconds)}", f"under {above[row.depth - 1]}" if row.depth else ""))
+            if row.status is Status.FAILED:
+                failed.append(line(name, row.model, f"{dur(row.seconds)} at work"))
+        work = f"{people(group.agents, group.subagents)}, {dur(sum(row.seconds for row in group.rows))} at work"
+        if group.item:
+            items.append(line(group.item.id, group.item.state, group.item.summary, work, group.item.pr))
+        else:
+            loose.append(f"  {UNGROUPED}: {work}")
+    drawn = [group.item for group in page.groups]
+    items += [line(item.id, item.state, item.summary, "no activity in this window", item.pr) for item in page.items if item not in drawn]
+    hours, totals = (page.window.end - page.window.start) / 3600, page.totals
+    lines = [
+        f"Agent activity for {page.name}, last {hours:g} {'hour' if hours == 1 else 'hours'}",
+        f"{totals.running} running now, {count(totals.agents, 'agent')}, {count(totals.subagents, 'sub-agent')}, {totals.failed} failed",
+    ]
+    for heading, body in (
+            ("Running now", capped(running, TEXT_RUNNING, "running agent")),
+            ("Work items", capped(items, TEXT_ITEMS, "work item") + loose),
+            ("Failed", capped(failed, TEXT_FAILED, "failed agent")),
+            ("Notes", ["  " + note for note in notes(page)])):
+        if body:
+            lines += [heading, *body]
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
