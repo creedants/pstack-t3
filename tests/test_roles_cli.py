@@ -1023,6 +1023,16 @@ class ModeCliTest(unittest.TestCase):
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
 
+    def test_setup_says_write_runs_the_validate_checks_on_the_roles_it_stores(self):
+        text = (ROOT / "t3/setup.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- With no excluded seat, it runs `validate`'s checks on the roles it is about to store. "
+            "When they list a problem, it prints each one and writes nothing unless `--force` is passed. "
+            "Fix each problem and rerun. Do not pass `--force` unless the user asks.\n",
+            text,
+        )
+        self.assertNotIn("a seat that does not match the catalog", text)
+
     def test_coordinator_mode_light_caps_a_configured_verifier(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
@@ -4053,3 +4063,149 @@ class NoSeatMessageCliTest(unittest.TestCase):
             "error: role 'skill tests' has no seat: "
             "none of the providers it may use (acme, kilo) can run child tasks\n"
         ))
+
+
+MUSE_DRIVER_SEAT = {"providerInstanceId": "muse", "model": "muse-spark-1"}
+
+
+def muse_driver_provider(provider_id="muse", driver="muse"):
+    return {
+        "providerInstanceId": provider_id,
+        "driverKind": driver,
+        "canRunChildTask": True,
+        "constraints": [],
+        "models": [{"id": "muse-spark-1", "options": []}],
+    }
+
+
+def lacks_mode_note(mode, provider_id="muse"):
+    return (
+        f"{provider_id} is not runnable (the muse driver lacks runtime mode {mode}); "
+        "seat inherits the parent"
+    )
+
+
+class RuntimeModeCliTest(unittest.TestCase):
+    def show(self, role, roles_file=None, mode=None, provider=None, catalog_mode=None):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog = json.loads(CATALOG.read_text())
+            catalog["providers"].append(provider or muse_driver_provider())
+            if catalog_mode is not None:
+                catalog["runtimeMode"] = catalog_mode
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            if roles_file is not None:
+                repo.put(repo.user, roles_file)
+            flag = () if mode is None else ("--runtime-mode", mode)
+            completed = repo.run(
+                "show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", role, *flag,
+            )
+            return completed, str(repo.user)
+
+    def entry(self, role, **kwargs):
+        completed, user = self.show(role, **kwargs)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)["roles"][role], user
+
+    BUG_FIX = {"roles": {"bug-fix": [MUSE_DRIVER_SEAT]}}
+
+    def test_auto_replaces_a_configured_seat_on_a_muse_driver_with_inherit(self):
+        entry, user = self.entry("bug-fix", roles_file=self.BUG_FIX, mode="auto")
+        self.assertEqual(entry, {
+            "source": user,
+            "seats": ["inherit"],
+            "notes": ["muse is not runnable (the muse driver lacks runtime mode auto); seat inherits the parent"],
+        })
+
+    def test_auto_accept_edits_and_an_unlisted_mode_replace_the_seat_and_name_the_mode(self):
+        for mode in ("auto-accept-edits", "yolo"):
+            with self.subTest(mode=mode):
+                entry, user = self.entry("bug-fix", roles_file=self.BUG_FIX, mode=mode)
+                self.assertEqual(entry, {"source": user, "seats": ["inherit"], "notes": [lacks_mode_note(mode)]})
+
+    def test_supported_modes_and_a_catalog_file_mode_keep_the_seat_without_a_note(self):
+        cases = (
+            {"mode": "full-access"},
+            {"mode": "approval-required"},
+            {"catalog_mode": "auto"},
+        )
+        for case in cases:
+            with self.subTest(**case):
+                entry, user = self.entry("bug-fix", roles_file=self.BUG_FIX, **case)
+                self.assertEqual(entry, {"source": user, "seats": [MUSE_DRIVER_SEAT]})
+
+    def test_the_match_is_on_driver_kind_not_on_the_provider_id(self):
+        work_seat = {"providerInstanceId": "work", "model": "muse-spark-1"}
+        replaced, user = self.entry(
+            "bug-fix",
+            roles_file={"roles": {"bug-fix": [work_seat]}},
+            mode="auto",
+            provider=muse_driver_provider("work", "muse"),
+        )
+        kept, _user = self.entry(
+            "bug-fix",
+            roles_file=self.BUG_FIX,
+            mode="auto",
+            provider=muse_driver_provider("muse", "opencode"),
+        )
+        self.assertEqual(replaced, {
+            "source": user,
+            "seats": ["inherit"],
+            "notes": ["work is not runnable (the muse driver lacks runtime mode auto); seat inherits the parent"],
+        })
+        self.assertEqual(kept["seats"], [MUSE_DRIVER_SEAT])
+        self.assertNotIn("notes", kept)
+
+    def test_auto_replaces_the_muse_seat_of_a_panel_in_place(self):
+        opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        entry, _user = self.entry(
+            "arena runners",
+            roles_file={"roles": {"arena runners": [MUSE_DRIVER_SEAT, opus]}},
+            mode="auto",
+        )
+        self.assertEqual(entry["seats"], ["inherit", opus])
+
+    def test_auto_drops_a_review_backups_seat_on_a_muse_driver(self):
+        opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        entry, user = self.entry(
+            "review backups",
+            roles_file={"roles": {"review backups": [MUSE_DRIVER_SEAT, opus, grok]}},
+            mode="auto",
+        )
+        self.assertEqual(entry, {
+            "source": user,
+            "seats": [opus, grok],
+            "notes": ["dropped muse/muse-spark-1: not runnable or not in the catalog"],
+        })
+
+    def test_the_default_verifiers_panel_seats_a_muse_driver_under_full_access_and_not_under_auto(self):
+        def providers(mode):
+            entry, _user = self.entry("verifiers", mode=mode)
+            return [seat["providerInstanceId"] for seat in entry["seats"] if seat != "inherit"]
+
+        self.assertIn("muse", providers("full-access"))
+        self.assertNotIn("muse", providers("auto"))
+
+    def test_an_empty_mode_and_a_mode_with_whitespace_exit_2(self):
+        for text in ("", "a b"):
+            with self.subTest(text=text):
+                completed, _user = self.show("bug-fix", roles_file=self.BUG_FIX, mode=text)
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(
+                    completed.stderr,
+                    f"error: --runtime-mode {text!r}: expected runtimeMode from orchestrator_capabilities\n",
+                )
+
+    def test_validate_and_write_do_not_take_the_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            for command in ("validate", "write"):
+                with self.subTest(command=command):
+                    completed = repo.run(command, "--catalog", str(CATALOG), "--runtime-mode", "auto")
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("error: unrecognized arguments: --runtime-mode auto", completed.stderr)
+                    self.assertFalse(repo.user.exists())

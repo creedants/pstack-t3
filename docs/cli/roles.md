@@ -19,7 +19,7 @@ Roles map a pstack role name to a list of seats. A seat is "inherit" or a target
 ## roles.py show
 
 ```text
-roles.py show [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] [--catalog CATALOG] [--parent PARENT] [--role ROLE] [--launches-seats] [--brief-mode BRIEF_MODE] [--session-mode SESSION_MODE] [--coordinator-mode COORDINATOR_MODE]
+roles.py show [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] [--catalog CATALOG] [--parent PARENT] [--role ROLE] [--launches-seats] [--runtime-mode RUNTIME_MODE] [--brief-mode BRIEF_MODE] [--session-mode SESSION_MODE] [--coordinator-mode COORDINATOR_MODE]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -31,6 +31,7 @@ roles.py show [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] [-
 | `--parent PARENT` |  |  |  | this thread's provider/model from orchestrator_capabilities (inheritedProviderInstanceId/inheritedModel) |
 | `--role ROLE` (repeatable) |  |  |  |  |
 | `--launches-seats` |  |  |  | resolve skill tests for a child that launches seats (requires --catalog, --parent, and --role "skill tests") |
+| `--runtime-mode RUNTIME_MODE` |  |  |  | this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose driverKind is muse counts as not runnable under a mode other than approval-required and full-access |
 | `--brief-mode BRIEF_MODE` |  | `full`, `light` |  | brief mode; overrides session, coordinator, project, and user modes |
 | `--session-mode SESSION_MODE` |  | `full`, `light` |  | session mode; used after brief and before coordinator, project, and user modes |
 | `--coordinator-mode COORDINATOR_MODE` |  | `full`, `light` |  | coordinator mode; used after brief and session, before project and user modes |
