@@ -5,9 +5,9 @@ description: How pstack-t3 skills delegate, pick models, isolate work, schedule,
 
 # pstack-t3 runtime
 
-pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, OpenCode, Muse, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
+pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cursor, Pi, OpenCode, Muse, ACP agents) gets the same `t3-code` MCP server. This file maps each pstack concept onto those tools, so a skill works the same whatever model runs it.
 
-Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If the T3 tools do not appear in your first tool scan, make one direct call to `orchestrator_capabilities` before concluding they are missing. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback).
+Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If the T3 tools do not appear in your first tool scan, make one direct call to `orchestrator_capabilities` before concluding they are missing. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback). On Pi 0.99 or later, T3 declares only `orchestrator_capabilities`, `delegate_task`, and `task_status` directly. Find every other T3 tool with Pi's `tool_search` before its first call, then call it by the name it returns.
 
 ## Vocabulary
 
@@ -431,7 +431,9 @@ After a T3 restart, assume a child is gone unless `task_status` shows `working` 
 
 ## Verification surfaces
 
-- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Keep the `tabId` that `preview_open` returns and close each preview you opened with `t3_preview_close` and that `tabId`.
+- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. Close each preview you opened with `t3_preview_close` and its `tabId`.
+- Preview tabs. Pass the `tabId` that `preview_open` returns on every later preview call. Without it, T3 can resolve the call to the tab the user is viewing. Act only on tabs you opened. Never act on a tab whose `owner` in `preview_status` is `human`, and treat another session's tab as read-only.
+- Preview images and profiles. Pass `includeImage` on every `preview_snapshot`, `true` to see the page and `false` for page state alone. Pass `save: true` for a PNG file and its `screenshotPath`. With `includeImage: false`, the result is only the `url` and `screenshotPath`. T3 Code 0.0.46-nightly.20261009.2861 and later default `includeImage` to `false`, and `preview_open` opens a tab under the user's default browser profile and its saved logins. For a clean-state check on those builds, pass the `profileId` of an `incognito` entry in `preview_status` `profiles`. Older builds default `includeImage` to `true`, open tabs with isolated storage, and take no `profileId`.
 - Devices and simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`.
 - CLIs and TUIs: run them in the terminal and assert on output.
 - A project `verify-*` skill beats all of these when one exists.

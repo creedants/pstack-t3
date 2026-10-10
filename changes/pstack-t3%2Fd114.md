@@ -1,0 +1,1 @@
+- runtime: follow T3 nightly 2908. Verification surfaces gain the preview tab, image, and profile rules, the runtime names Pi and its deferred tools, and setup step 2 explains a missing Claude 5.5 model as a Claude Code version gate.
