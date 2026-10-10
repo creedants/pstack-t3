@@ -638,6 +638,33 @@ def uninstall_hooked(home, checkout, code):
     )
 
 
+def bind_mounts_refused():
+    """Why `unshare -Urnm` cannot bind-mount a directory on this host, or None when it can."""
+    if not all(shutil.which(tool) for tool in ("unshare", "mount", "sh")):
+        return "unshare, mount, or sh is not installed, so no bind mount can be made"
+    with tempfile.TemporaryDirectory() as directory:
+        probe = subprocess.run(["unshare", "-Urnm", "mount", "--bind", directory, directory], capture_output=True, text=True)
+    if probe.returncode:
+        return f"`unshare -Urnm mount --bind` failed here, so no bind mount can be made ({probe.stderr.strip() or probe.returncode})"
+    return None
+
+
+def run_bound(home, checkout, binds, *args, env=None):
+    """Run this checkout's installer with `args` in new user and mount namespaces, after bind-mounting each (source, target) of `binds` in order.
+
+    The mounts exist only in those namespaces and end with the run.
+    """
+    script = 'while [ "$1" != -- ]; do mount --bind "$1" "$2" || exit 97; shift 2; done; shift; exec "$@"'
+    pairs = [str(path) for pair in binds for path in pair]
+    return subprocess.run(
+        ["unshare", "-Urnm", "sh", "-c", script, "sh", *pairs, "--", sys.executable, str(Path(checkout) / "scripts" / "install.py"), *args],
+        env={**_env(home), **(env or {})},
+        cwd=home,
+        capture_output=True,
+        text=True,
+    )
+
+
 def install_hooked(home, checkout, code, *args):
     """Run this checkout's installer with `args`, with `code` run first against the loaded installer, named `module`."""
     wrapper = home / f"hooked-install-{checkout.name}.py"
@@ -3742,6 +3769,82 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(swarm.read_bytes(), b"user backup\x00\xff")
         self.assertTrue(unrelated.is_dir())
         self.assertEqual(os.listdir(unrelated.parent), ["grok"])
+        self.assertEqual(os.listdir(saved.parent), [])
+
+    def divergent_state(self):
+        """A config home whose `..` follows a symlink, with a manifest row for a backup of swarm under its absolute spelling.
+
+        Return the checkout, the environment, the state directory the system reaches, and the backup path in the row.
+        """
+        a = make_checkout(self.home, "a")
+        (self.home / "else" / "sub").mkdir(parents=True)
+        os.symlink(self.home / "else" / "sub", self.home / "x")
+        state = self.home / "else" / ".config" / "pstack-t3"
+        saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
+        (state / "backups").mkdir(parents=True)
+        row = {"harnesses": ["grok"], "original": str(provider_link(self.home, "grok", "swarm")), "backup": str(saved)}
+        (state / "install-manifest.json").write_text(json.dumps({"links": [], "backups": [row]}))
+        return a, {"XDG_CONFIG_HOME": f"{self.home}/x/../.config"}, state, saved
+
+    def test_a_restore_with_another_directory_mounted_at_the_stamp_under_the_state_directory_leaves_its_harness_directory(self):
+        reason = bind_mounts_refused()
+        if reason:
+            self.skipTest(reason)
+        a, env, state, saved = self.divergent_state()
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(b"user backup\x00\xff")
+        unrelated = self.home / "unrelated_stamp" / "grok"
+        unrelated.mkdir(parents=True)
+        recorded = state_dir(self.home) / "backups"
+        binds = ((recorded, state / "backups"), (unrelated.parent, state / "backups" / "20260101T000000-1-abcd"))
+        self.ok(run_bound(self.home, a, binds, "--harness", "grok", "uninstall", env=env), "removed 0 links, restored 1 entries")
+        self.assertEqual(provider_link(self.home, "grok", "swarm").read_bytes(), b"user backup\x00\xff")
+        self.assertTrue(unrelated.is_dir())
+        self.assertEqual(os.listdir(saved.parent), [])
+
+    def test_a_restore_through_a_mount_of_a_harness_directory_of_the_state_directory_leaves_that_directory_and_its_stamp(self):
+        reason = bind_mounts_refused()
+        if reason:
+            self.skipTest(reason)
+        a, env, state, saved = self.divergent_state()
+        real = state / "backups" / "20260101T000000-1-abcd" / "grok"
+        real.mkdir(parents=True)
+        (real / "swarm").write_bytes(b"user backup\x00\xff")
+        saved.parent.mkdir(parents=True)
+        self.ok(run_bound(self.home, a, ((real, saved.parent),), "--harness", "grok", "uninstall", env=env), "removed 0 links, restored 1 entries")
+        self.assertEqual(provider_link(self.home, "grok", "swarm").read_bytes(), b"user backup\x00\xff")
+        self.assertTrue(real.is_dir())
+        self.assertEqual(os.listdir(real), [])
+
+    def test_a_restore_whose_stamp_opens_under_backups_as_another_directory_leaves_its_harness_directory(self):
+        a = make_checkout(self.home, "a")
+        swarm = provider_link(self.home, "grok", "swarm")
+        saved = state_dir(self.home) / "backups" / "20260101T000000-1-abcd" / "grok" / "swarm"
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(b"saved\x00\xfe")
+        unrelated = self.home / "unrelated_stamp" / "grok"
+        unrelated.mkdir(parents=True)
+        write_legacy(self.home, [], [{"harnesses": ["grok"], "original": str(swarm), "backup": str(saved)}])
+        # With a directory mounted at <stamp> below the state path as given, that name opens as the mounted directory under a backups descriptor opened through that path.
+        code = (
+            "os.environ['XDG_CONFIG_HOME'] = '.config'\n"
+            "opening, closing = os.open, os.close\n"
+            "given = set()\n"
+            "def mounted(path, flags, mode=0o777, *, dir_fd=None):\n"
+            "    if dir_fd in given and path == '20260101T000000-1-abcd':\n"
+            f"        return opening({str(unrelated.parent)!r}, flags, mode)\n"
+            "    descriptor = opening(path, flags, mode, dir_fd=dir_fd)\n"
+            "    if path == '.config/pstack-t3/backups':\n"
+            "        given.add(descriptor)\n"
+            "    return descriptor\n"
+            "def closed(descriptor):\n"
+            "    given.discard(descriptor)\n"
+            "    closing(descriptor)\n"
+            "os.open, os.close = mounted, closed\n"
+        )
+        self.ok(uninstall_hooked(self.home, a, code), "removed 0 links, restored 1 entries")
+        self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
+        self.assertTrue(unrelated.is_dir())
         self.assertEqual(os.listdir(saved.parent), [])
 
     def test_an_uninstall_with_the_state_directory_behind_a_symlink_removes_the_emptied_directories_in_the_real_one(self):
