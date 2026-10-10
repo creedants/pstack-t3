@@ -29,6 +29,7 @@ SKILLS = ROOT / "skills"
 HARNESSES = ("claude", "codex", "grok", "cursor")
 LEGACY_NAME = "install-manifest.json"
 OWNERS_DIR = "install-owners"
+SKIPPED = 3
 
 
 def skill_dirs(scope_root, user):
@@ -1062,7 +1063,7 @@ def act(step, root):
 
 
 def execute(plan, state, root):
-    counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0}
+    counts = {"linked": 0, "removed": 0, "restored": 0, "withdrawn": 0, "kept_extra": 0, "skipped": 0}
     failed = set()
     stamp = None
     for step in plan.steps:
@@ -1081,6 +1082,7 @@ def execute(plan, state, root):
             note = skip_note(step)
             if note:
                 print(note)
+                counts["skipped"] += 1
             failed.add(step.path)
             continue
         undo = add_records(step, state, root)
@@ -1091,11 +1093,13 @@ def execute(plan, state, root):
             if not (step.kind == "move" and os.path.lexists(step.backup)):
                 undo()
             print(f"skipped {subject(step)}: {error}")
+            counts["skipped"] += 1
             failed.add(step.path)
             continue
         if declined:
             undo()
             print(f"skipped {subject(step)}: {declined}")
+            counts["skipped"] += 1
             failed.add(step.path)
             continue
         remove_records(step, state, root)
@@ -1225,11 +1229,9 @@ def install(args):
         settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user))
         reject(plan)
-        if not plan.steps:
-            report_install(plan, state, root, None, False)
-            return 0
-        report_install(plan, state, root, execute(plan, state, root), False)
-    return 0
+        executed = execute(plan, state, root) if plan.steps else None
+        report_install(plan, state, root, executed, False)
+    return SKIPPED if executed and executed["skipped"] else 0
 
 
 def uninstall(args):
@@ -1255,11 +1257,9 @@ def uninstall(args):
     with locked(state), ExitStack() as holds:
         settle(strays(load(scope, user)), state, root, False)
         plan = make_plan(load(scope, user), holds)
-        if not plan.steps:
-            report_uninstall(plan, None, False)
-            return 0
-        report_uninstall(plan, execute(plan, state, root), False)
-    return 0
+        executed = execute(plan, state, root) if plan.steps else None
+        report_uninstall(plan, executed, False)
+    return SKIPPED if executed and executed["skipped"] else 0
 
 
 def points_here(path):
