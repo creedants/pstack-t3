@@ -4466,3 +4466,55 @@ class RelativeConfigHomeCliTest(unittest.TestCase):
             self.ignored
             + f"error: {file}: invalid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n"
         ))
+
+
+class WriteFilesCliTest(unittest.TestCase):
+    def setUp(self):
+        wrapper = tempfile.TemporaryDirectory()
+        self.addCleanup(wrapper.cleanup)
+        self.home = Path(os.path.realpath(wrapper.name))
+        (self.home / ".git").mkdir()
+
+    def write(self, config_home):
+        env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": config_home}
+        return subprocess.run(
+            [
+                sys.executable, str(ROOT / "t3/scripts/roles.py"), "write", "--cwd", str(self.home),
+                "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7",
+            ],
+            env=env,
+            cwd=self.home,
+            capture_output=True,
+            text=True,
+        )
+
+    def temporary_files(self):
+        return sorted(str(path.relative_to(self.home)) for path in self.home.rglob("tmp*"))
+
+    def test_write_under_a_config_home_whose_dot_dot_follows_a_symlink_writes_both_files_in_the_directory_the_system_reaches(self):
+        (self.home / "else" / "sub").mkdir(parents=True)
+        os.symlink(self.home / "else" / "sub", self.home / "x")
+        given = f"{self.home}/x/../.config"
+        completed = self.write(given)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, f"wrote {given}/pstack-t3/roles.json\n")
+        self.assertEqual(completed.stderr, "")
+        reached = self.home / "else" / ".config" / "pstack-t3"
+        self.assertEqual(sorted(os.listdir(reached)), ["catalog.json", "roles.json"])
+        self.assertEqual(
+            json.loads((reached / "roles.json").read_text()),
+            {"version": 1, "roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}, "budget": "default", "mode": "full"},
+        )
+        self.assertEqual(json.loads((reached / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
+        self.assertEqual(self.temporary_files(), [])
+        self.assertFalse(os.path.lexists(self.home / ".config"))
+
+    def test_a_write_whose_catalog_json_is_a_directory_leaves_no_temporary_file(self):
+        state = self.home / ".config" / "pstack-t3"
+        (state / "catalog.json").mkdir(parents=True)
+        completed = self.write(str(self.home / ".config"))
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        self.assertIn("IsADirectoryError", completed.stderr)
+        self.assertEqual(sorted(os.listdir(state)), ["catalog.json", "roles.json"])
+        self.assertEqual(os.listdir(state / "catalog.json"), [])
+        self.assertEqual(self.temporary_files(), [])

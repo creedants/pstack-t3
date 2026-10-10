@@ -5591,3 +5591,8 @@ class SharedSourceTest(unittest.TestCase):
         self.assertEqual(install.IGNORED, "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}")
         self.assertEqual(roles.IGNORED, install.IGNORED)
         self.assertEqual(inspect.getsource(roles.config_home), inspect.getsource(install.config_home))
+
+    def test_install_and_roles_hold_the_same_new_file_source(self):
+        install = loaded("install_under_test", ROOT / "scripts" / "install.py")
+        roles = loaded("roles_under_test", ROOT / "t3" / "scripts" / "roles.py")
+        self.assertEqual(inspect.getsource(roles.new_file), inspect.getsource(install.new_file))

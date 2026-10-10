@@ -7,6 +7,7 @@ T3's orchestrator_capabilities tool returns.
 """
 
 import argparse
+import errno
 import fnmatch
 import functools
 import json
@@ -15,7 +16,7 @@ import posixpath
 import re
 import subprocess
 import sys
-import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -1350,12 +1351,35 @@ def command_backup(args):
     return 0
 
 
+def new_file(directory):
+    """Create a file in `directory` under a name no entry has. Return its descriptor, open for writing, and its path.
+
+    The path is os.path.join(directory, name) with `directory` as given. The name is "tmp" and eight hexadecimal digits.
+    tempfile.mkstemp is not used because it passes its directory through os.path.abspath. Like mkstemp, this passes
+    mode 0o600 to os.open. After 100 names that are taken it raises FileExistsError.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    for _attempt in range(100):
+        temporary = os.path.join(directory, f"tmp{os.urandom(4).hex()}")
+        try:
+            return os.open(temporary, flags, 0o600), temporary
+        except FileExistsError:
+            continue
+    raise FileExistsError(errno.EEXIST, "no unused temporary name", os.fspath(directory))
+
+
 def write_atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as handle:
-        json.dump(data, handle, indent=2)
-        handle.write("\n")
-    os.replace(handle.name, path)
+    fd, temporary = new_file(path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+        os.replace(temporary, path)
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(temporary)
+        raise
 
 
 def validate(config, catalog):
