@@ -16,6 +16,7 @@ import os
 import re
 import runpy
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -668,22 +669,32 @@ REPAIR = {
 }
 
 
-def report_entry(restaurant, name):
-    """`file` when reports/<name> is a regular file that resolves to this store's reports/<name>, else a key of NOT_A_REPORT.
+def report_stat(restaurant, name):
+    """(kind, status) of reports/<name>. The kind is `file` or a key of NOT_A_REPORT, and the status is None for `missing`.
 
-    The first that holds wins. `link` is a symbolic link, whether or not its target exists. `missing` is a name with
-    nothing there. `other` is an entry that is not a regular file. `elsewhere` is a path that resolves to another place.
+    The entry is read once, with one lstat that follows no link at <name>. Whether it is there, a symbolic link, or a
+    regular file comes from that status alone, and `elsewhere` adds where reports/ itself resolves.
+    The first that holds wins. `missing` is a name with nothing there, which is that lstat finding no entry or finding
+    that reports/ is not a directory. `link` is a symbolic link, whether or not its target exists. `other` is an entry
+    that is not a regular file. `elsewhere` is a regular file under a reports/ that resolves to another place.
     """
-    path = restaurant.dir / "reports" / name
-    if path.is_symlink():
-        return "link"
-    if not path.exists():
-        return "missing"
-    if not path.is_file():
-        return "other"
-    if path.resolve() != restaurant.dir.resolve() / "reports" / name:
-        return "elsewhere"
-    return "file"
+    reports = restaurant.dir / "reports"
+    try:
+        status = (reports / name).lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing", None
+    if stat.S_ISLNK(status.st_mode):
+        return "link", status
+    if not stat.S_ISREG(status.st_mode):
+        return "other", status
+    if reports.resolve() != restaurant.dir.resolve() / "reports":
+        return "elsewhere", status
+    return "file", status
+
+
+def report_entry(restaurant, name):
+    """The kind report_stat gives reports/<name>."""
+    return report_stat(restaurant, name)[0]
 
 
 def item_report(restaurant, report):
@@ -1150,9 +1161,10 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
 def unrecorded_reviews(restaurant):
     """(name, kind) for each entry under reports/ named like a review report that no pass.tsv row accounts for.
 
-    The kind is report_entry's. A row of the entry's dish that names it in `report` accounts for it, and nothing is read
+    The kind is report_stat's. A row of the entry's dish that names it in `report` accounts for it, and nothing is read
     from that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
-    dish written at or before it, and for no entry of another kind. An entry that report_entry calls `missing` is left out.
+    dish written at or before it, and for no entry of another kind. The time compared is the one in report_stat's status.
+    An entry that report_stat calls `missing` is left out.
     """
     rows = restaurant.rows("pass.tsv")
     reports = restaurant.dir / "reports"
@@ -1164,8 +1176,8 @@ def unrecorded_reviews(restaurant):
         mine = [row for row in rows if row["dish"] == match.group(1)]
         if any(row["report"] == path.name for row in mine):
             continue
-        kind = report_entry(restaurant, path.name)
-        if kind == "file" and any(datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= path.stat().st_mtime
+        kind, status = report_stat(restaurant, path.name)
+        if kind == "file" and any(datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= status.st_mtime
                                   for row in mine if not row["report"]):
             continue
         if kind != "missing":

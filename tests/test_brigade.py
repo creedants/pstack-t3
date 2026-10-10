@@ -1327,6 +1327,55 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.close_run("--dry-run"), (0, before, warning))
         self.assertEqual(self.close_run(), (0, before, warning))
 
+    def test_close_warns_about_a_review_report_replaced_by_a_dangling_link_while_close_classifies_it(self):
+        self.fired_bug_fix()
+        entry = self.review_file("D1-review-7.md")
+        pending = self.linked("pending.md", "gone.md")
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        replaced = []
+
+        def replacing(real):
+            def hooked(path):
+                result = real(path)
+                if not replaced and path.name == entry.name and path.parent.name == "reports":
+                    replaced.append(path)
+                    os.replace(pending, entry)
+                return result
+            return hooked
+
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "close", "--dry-run"]
+        with mock.patch.object(Path, "lstat", replacing(Path.lstat)), \
+                mock.patch.object(Path, "is_symlink", replacing(Path.is_symlink)), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            glob["run"](argv)
+        self.assertEqual(len(replaced), 1)
+        self.assertTrue(entry.is_symlink())
+        self.assertFalse(entry.exists())
+        self.assertEqual(stderr.getvalue().strip(), self.no_row("D1-review-7.md"))
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-7.md")))
+
+    def test_report_entry_names_the_kind_of_each_entry_under_reports(self):
+        self.fired_bug_fix()
+        reports = self.review_file("file.md").parent
+        (Path(self.temporary.name) / "findings.md").write_text("findings\n")
+        self.linked("live.md", "findings.md")
+        self.linked("dangling.md", "gone.md")
+        (reports / "directory.md").mkdir()
+        expected = {"file.md": "file", "live.md": "link", "dangling.md": "link", "directory.md": "other", "absent.md": "missing"}
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(reports / "fifo.md")
+            expected["fifo.md"] = "other"
+        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
+        restaurant = glob["Restaurant"](self.at)
+        self.assertEqual({name: glob["report_entry"](restaurant, name) for name in expected}, expected)
+        reports.rename(self.at / "kept")
+        reports.symlink_to(self.at / "kept")
+        self.assertEqual({name: glob["report_entry"](restaurant, name) for name in expected},
+                         {**expected, "file.md": "elsewhere"})
+        reports.unlink()
+        reports.write_text("not a directory\n")
+        self.assertEqual({glob["report_entry"](restaurant, name) for name in expected}, {"missing"})
+
     def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports_and_following_its_advice_ends_each_warning(self):
         self.fired_bug_fix()
         target = Path(self.temporary.name) / "findings.md"
