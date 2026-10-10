@@ -3774,6 +3774,34 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             "review backups: opencode/opencode/muse-lite-2-free: dropped unknown options bogus\n",
         )
 
+    def test_show_reports_a_role_set_to_one_fast_grok_seat_as_set(self):
+        fast = {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}
+        skipped = [
+            "skipped configured seat grok/grok-4.7-build-fast: grok-4.7-build-fast is a fast Grok variant, "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [fast]}})
+            with_catalog = repo.run("show", "--catalog", catalog, "--role", "review backups")
+            plain = repo.run("show", "--role", "review backups")
+            user = str(repo.user)
+        self.assertEqual(with_catalog.returncode, 0, with_catalog.stderr)
+        self.assertEqual(json.loads(with_catalog.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": [],
+            "notes": skipped,
+        }})
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(json.loads(plain.stdout)["roles"], {"review backups": {
+            "source": user,
+            "seats": "catalog-required",
+            "note": (
+                "review backups drops seats by the catalog: "
+                "call orchestrator_capabilities and rerun roles.py show --catalog"
+            ),
+            "notes": skipped,
+        }})
+
 
 
 def plain_provider(provider_id, *model_ids, runs=True):

@@ -977,7 +977,9 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
         if name not in ROLES:
             raise RolesError(f"unknown role {name!r}")
         configured, skipped = configured_seats(config, name)
-        entry = {"source": config["sources"].get(name, "default") if configured else "default"}
+        if configured is None and name == PANEL_BACKUP_ROLE and name in config["roles"]:
+            configured = []
+        entry = {"source": config["sources"].get(name, "default") if configured is not None else "default"}
         role_providers = providers if name == "skill tests" and providers is not None else None
         configured_cursor = (
             launches_seats
