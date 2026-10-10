@@ -9,10 +9,12 @@ moved aside is recorded in a manifest so `uninstall` restores the prior state.
 from __future__ import annotations
 
 import argparse
+import codecs
 import ctypes
 import errno
 import fcntl
 import hashlib
+import io
 import json
 import os
 import shlex
@@ -1800,6 +1802,33 @@ def doctor(args):
     return 0 if healthy and not any(item.blinds for item in found.unread) else 1
 
 
+ESCAPING = "pstack-t3-escaping"
+
+
+def escape_refused(stream):
+    """Make `stream` write text its error handler raises UnicodeError for as codecs.backslashreplace_errors writes it.
+
+    The handler it registers as ESCAPING calls the handler `stream` had, and calls codecs.backslashreplace_errors when
+    that one raises UnicodeError. It changes nothing when `stream` is not an io.TextIOWrapper or names a handler
+    codecs.lookup_error does not find.
+    """
+    if not isinstance(stream, io.TextIOWrapper):
+        return
+    try:
+        current = codecs.lookup_error(stream.errors)
+    except LookupError:
+        return
+
+    def escaping(error):
+        try:
+            return current(error)
+        except UnicodeError:
+            return codecs.backslashreplace_errors(error)
+
+    codecs.register_error(ESCAPING, escaping)
+    stream.reconfigure(errors=ESCAPING)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("install", "uninstall", "doctor"), nargs="?", default="install")
@@ -1815,6 +1844,7 @@ def main(argv=None):
     stop = unanchored(os.environ)
     if stop:
         sys.exit(stop)
+    escape_refused(sys.stdout)
     try:
         return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
     except Unreadable as error:

@@ -5597,6 +5597,51 @@ class OwnershipTest(unittest.TestCase):
                 self.assertEqual(done.stderr, "")
         self.assertEqual(os.listdir(f"{state}/backups"), [])
 
+    def doctor_with_surrogate_row(self, handler, surrogate):
+        """Run doctor with stdout set to utf-8 and the error handler `handler`, and a backup row whose backup path holds `surrogate`.
+
+        Return the run, with stdout and stderr as bytes, and the two lines doctor prints with `{surrogate}` where the character goes.
+        """
+        a, swarm = self.installed_for_grok()
+        notes = provider_link(self.home, "grok", "notes")
+        backup = f"{state_dir(self.home)}/backups/20260101T000000-1-abcd/grok/no{{surrogate}}tes"
+        self.add_rows(backups=[{"harnesses": ["grok"], "original": str(notes), "backup": backup.format(surrogate=surrogate)}])
+        checked = subprocess.run(
+            [sys.executable, str(a / "scripts" / "install.py"), "doctor", "--harness", "grok"],
+            env={**_env(self.home), "PYTHONIOENCODING": f"utf-8:{handler}"},
+            cwd=self.home,
+            capture_output=True,
+        )
+        lines = (
+            f"{self.harness_line('grok', '3/3 pstack-t3')}\n"
+            f"        backup row {backup}: nothing is there (recorded as the backup of {notes}); uninstall skips the row "
+            f'while that path is empty; to drop it, delete the row from "backups" in {legacy_file(self.home)}\n'
+        )
+        return checked, lines
+
+    def test_doctor_prints_a_lone_surrogate_in_a_backup_row_as_a_backslash_escape_when_the_stdout_error_handler_refuses_it(self):
+        refused = (("strict", "\ud800", "\\ud800"), ("surrogateescape", "\ud800", "\\ud800"), ("strict", "\udc80", "\\udc80"))
+        for handler, surrogate, escape in refused:
+            with self.subTest(handler=handler, escape=escape):
+                self.use_fresh()
+                checked, lines = self.doctor_with_surrogate_row(handler, surrogate)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+                self.assertEqual(checked.stdout, lines.format(surrogate=escape).encode())
+                self.assertEqual(checked.stderr, b"")
+
+    def test_doctor_under_a_surrogateescape_stdout_prints_the_byte_0x80_for_u_dc80_in_a_backup_row(self):
+        checked, lines = self.doctor_with_surrogate_row("surrogateescape", "\udc80")
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        before, after = lines.split("{surrogate}")
+        self.assertEqual(checked.stdout, before.encode() + b"\x80" + after.encode())
+        self.assertEqual(checked.stderr, b"")
+
+    def test_doctor_under_a_stdout_error_handler_name_that_is_not_registered_prints_a_backup_row_that_is_ascii(self):
+        checked, lines = self.doctor_with_surrogate_row("unregistered", "")
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        self.assertEqual(checked.stdout, lines.format(surrogate="").encode())
+        self.assertEqual(checked.stderr, b"")
+
     def test_the_record_files_an_install_writes_have_mode_600(self):
         a, swarm = self.installed_for_grok()
         self.assertEqual(os.stat(legacy_file(self.home)).st_mode & 0o777, 0o600)
