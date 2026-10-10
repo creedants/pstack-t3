@@ -653,11 +653,38 @@ def in_reports(restaurant, report, name):
     return report in (name, f"reports/{name}") or Path(report).parent.resolve() == restaurant.dir.resolve() / "reports"
 
 
+# What reports/<name> is when it is not a regular file of this store. Each value finishes the words `reports/<name> `.
+NOT_A_REPORT = {
+    "link": "is a symbolic link",
+    "missing": "does not exist",
+    "other": "is not a regular file",
+    "elsewhere": "resolves outside this store's reports/",
+}
+
+
+def report_entry(restaurant, name):
+    """`file` when reports/<name> is a regular file that resolves to this store's reports/<name>, else a key of NOT_A_REPORT.
+
+    The first that holds wins. `link` is a symbolic link, whether or not its target exists. `missing` is a name with
+    nothing there. `other` is an entry that is not a regular file. `elsewhere` is a path that resolves to another place.
+    """
+    path = restaurant.dir / "reports" / name
+    if path.is_symlink():
+        return "link"
+    if not path.exists():
+        return "missing"
+    if not path.is_file():
+        return "other"
+    if path.resolve() != restaurant.dir.resolve() / "reports" / name:
+        return "elsewhere"
+    return "file"
+
+
 def item_report(restaurant, report):
     """The bare name of an item report under this store's reports/.
 
-    Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
-    A path that in_reports turns down is refused, and so is a symbolic link.
+    Its content is read, so report_entry must call reports/<name> a `file`.
+    A path that in_reports turns down is refused.
     A `..` component is refused as written, before anything is resolved.
     """
     if ".." in Path(report).parts:
@@ -665,16 +692,11 @@ def item_report(restaurant, report):
     name = Path(report).name
     if not ITEM_REPORT.fullmatch(name):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
-    path = restaurant.dir / "reports" / name
-    home = restaurant.dir.resolve() / "reports" / name
     if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
-    if path.is_symlink():
-        raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
-    if not path.is_file():
-        raise BrigadeError(f"reports/{name} does not exist; nothing added")
-    if path.resolve() != home:
-        raise BrigadeError(f"reports/{name} resolves outside this store's reports/; nothing added")
+    kind = report_entry(restaurant, name)
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing added")
     return name
 
 

@@ -1073,6 +1073,15 @@ class BrigadeTest(unittest.TestCase):
                          "brigade: reports/D1.md is not UTF-8 text; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
+    def test_from_report_refuses_a_directory_named_like_an_item_report(self):
+        self.fired_bug_fix()
+        (self.at / "reports" / "D1.md").mkdir(parents=True)
+        before = (self.at / "rail.tsv").read_bytes()
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", *extra, ok=False),
+                             "brigade: reports/D1.md is not a regular file; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
     def test_from_report_refuses_a_symbolic_link_and_a_file_that_resolves_outside_reports(self):
         self.fired_bug_fix()
         body = "## Follow-ups\n\n- Outside file was read.\n"
