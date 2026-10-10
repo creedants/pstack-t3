@@ -38,6 +38,8 @@ Start from the upstream file and change only what T3 changes. Upstream's rules, 
 5. Run `python3 scripts/build.py`. The build fails on Cursor leftovers (see `scripts/check.py`), broken links, bad frontmatter, or override drift.
 6. Run `python3 scripts/build.py --update-lock` only after reviewing that the override matches the current upstream file.
 
+`python3 scripts/sync_upstream.py --merge` syncs and, for each override whose upstream file changed, either writes a clean three-way merge of it or leaves the override as it is and names it. A clean merge can carry a new Cursor mechanism in upstream's lines, so the build's Cursor-leftover check in step 5 and the review in step 6 still apply to a merged override.
+
 ## Writing style
 
 Follow upstream's: short declarative sentences, no long dashes, no mid-sentence colons, no hedging. Every instruction names a concrete tool, path, or check.
