@@ -1550,7 +1550,7 @@ class RendererTest(OutputCase):
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
             self.assertIn(text, texts)
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
-        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Each bar is time an agent was at work\. A striped bar is still running, and a faded bar was stopped\.$")
+        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Bars show turn intervals and may join across gaps\. Striped bars include running or queued turns\. Faded bars include stopped turns\.$")
         self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
         classes = built["classes"]
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
@@ -1564,7 +1564,7 @@ class RendererTest(OutputCase):
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
         self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],
                          ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN + " ", "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
-                          + ". Each bar is time an agent was at work. A striped bar is still running, and a faded bar was stopped."])
+                          + ". Bars show turn intervals and may join across gaps. Striped bars include running or queued turns. Faded bars include stopped turns."])
         self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · done · 60s"])
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):

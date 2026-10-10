@@ -1171,7 +1171,7 @@ RENDERER = squeezed("""
           add(chip, 'b', 'chip ' + item[3], item[2]);
         }
       }
-      const foot = add(root, 'div', 'foot', 'As of ' + clock(start + length) + ' for ' + D.c + '. Each bar is time an agent was at work. A striped bar is still running, and a faded bar was stopped.');
+      const foot = add(root, 'div', 'foot', 'As of ' + clock(start + length) + ' for ' + D.c + '. Bars show turn intervals and may join across gaps. Striped bars include running or queued turns. Faded bars include stopped turns.');
       for (const note of D.N) add(foot, 'div', '', note);
     }
 """)
