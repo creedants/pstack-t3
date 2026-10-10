@@ -1,6 +1,6 @@
 ---
 name: brigade
-description: "Give a project or a focus area its own standing head chef: one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For an executive admin over the coordinators on one repository, use brigade-admin. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
+description: "Give a project or a focus area its own standing head chef. It is one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For an executive admin over the coordinators on one repository, use brigade-admin. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
 ---
 
 # Brigade
@@ -244,9 +244,9 @@ First, for every dish that still holds an active lease, run the three drop steps
 
 ## Reporting to an executive admin
 
-A restaurant reports through the repository's executive admin while `$B status` prints `reports to <thread>`. The admin forwards the user's words, files shared intake, and rules on conflicts between coordinators. Its side of each line below, and its rulings, are in the [brigade-admin skill](../brigade-admin/SKILL.md). It never directs this restaurant's own work. The user stays in charge, and can still write to this thread directly. In the lines below, `<restaurant>` is this restaurant's directory name.
+A restaurant reports through the repository's executive admin while `$B status` prints `reports to <thread>`. What the admin does, its side of each line below, and its rulings are in the [brigade-admin skill](../brigade-admin/SKILL.md). [What the admin never does](../brigade-admin/SKILL.md#what-the-admin-never-does) lists its limits. The user can still write to this thread directly. In the lines below, `<restaurant>` is this restaurant's directory name.
 
-**Events.** Send each line to the admin's thread with `t3_thread_send` and mode `"queue"`, so it never interrupts a turn in progress. Send every event, whatever this restaurant's reporting level. The table's last column says which lines also leave a row in this restaurant's `log.tsv`. The admin's `sync` relays those rows, so a lost `merged`, `sent-back`, `decision`, `blocked`, or `misrouted` line only delays it. `failed`, `drained`, `report`, `reply`, `contest`, and `appeal` are message-only. No store row carries them, `sync` never prints them, and the admin learns of one only from the message. When a send fails, reply to the user about that event per Run a service step 9: at this restaurant's own level for a line with a store row, and at every level for a message-only line. A send to an admin thread that no longer exists is a failed send, so the user still hears every event.
+**Events.** Send each line to the admin's thread with `t3_thread_send` and mode `"queue"`, so it never interrupts a turn in progress. Send every event, whatever this restaurant's reporting level. The table's last column says which lines also leave a row in this restaurant's `log.tsv`. `failed`, `drained`, `report`, `reply`, `contest`, and `appeal` leave none, so they are message-only. How the admin reads each kind is in [Admin service](../brigade-admin/SKILL.md#admin-service) step 5. When a send fails, reply to the user about that event per Run a service step 9: at this restaurant's own level for a line with a store row, and at every level for a message-only line. A send to an admin thread that no longer exists is a failed send, so the user still hears every event.
 
 | Line | Send when | Store row |
 | --- | --- | --- |
@@ -264,7 +264,7 @@ A restaurant reports through the repository's executive admin while `$B status` 
 
 Send `blocked` from the Liveness check, once per ticket, with `clientRequestId` `blocked:<store path>/T<n>`, such as `blocked:app/docs/T4`, where the store path is the last two parts of `<restaurant dir>`, so a later check that sends it again delivers nothing new.
 
-**Requests.** The admin publishes each request into this restaurant's `inbox/` and wakes this thread. `$B inbox take` prints it as `A<n>: <line>`. Act on it, then run `$B inbox done A<n>`. A crash between the two replays the request, so key every action by its id.
+**Requests.** The admin sends each request as [Admin messages](../brigade-admin/SKILL.md#admin-messages) says. `$B inbox take` prints it as `A<n>: <line>`. Act on it, then run `$B inbox done A<n>`. A crash between the two replays the request, so key every action by its id.
 
 | Line | Do |
 | --- | --- |
@@ -277,13 +277,13 @@ The `ticket <restaurant>: run ticket take` line from the admin is a routed ticke
 
 **A ruling's side.** A coordinator complies with every ruling, and may appeal.
 
-- Contested paths. A reservation on the paths refuses every other holder's claim. The winner fires when `watch` prints `unblocked`. The other side starts no new work on those paths.
+- Contested paths. The admin reserves the paths as [Rulings](../brigade-admin/SKILL.md#rulings) says. The winner fires when `watch` prints `unblocked`. The other side starts no new work on those paths.
 - Ownership. When the ruling gives this restaurant's ticket to another coordinator, run `$B ticket move <id> --to <winner>` and send the `ticket` line per Run a service step 2.
 - Shares. `fire` refuses a claim past this restaurant's share. Nothing else changes.
-- Queue order. `land` holds the second holder's entries until the first lands. Nothing else changes.
+- Queue order. `land` holds the second holder's entries until an entry of the first holder lands. Nothing else changes.
 
-When this restaurant disagrees, it complies first, then sends `appeal`. When compliance would be irreversible, such as dropping work or deleting a branch, it holds and sends `appeal`, and the admin escalates.
+When this restaurant disagrees, it complies first, then sends `appeal`. When compliance would be irreversible, such as dropping work or deleting a branch, it holds and sends `appeal`. What the admin does with an appeal is in [Rulings](../brigade-admin/SKILL.md#rulings).
 
-**Contests.** When this restaurant's item and another coordinator's would break or conflict with each other in the queue, or when this restaurant's passed item depends on another coordinator's item that has not landed, run `$L contest --holders <restaurant>/D<n>,<sibling>/D<n> --owner <restaurant>/@<generation>`, such as `--holders docs/D4,core/D2 --owner docs/@1`. Each holder is the one `submit` takes: the restaurant's directory name, a slash, and the dish id. Read the other holder from `$L lease list`. It prints `C<n>`, and `land` holds both holders' entries until the admin settles it. Then send the `contest` line, naming which item depends on which. A contest also holds entries submitted after it, so open it before the dependent dish's `submit` and `land`, then submit per Run a service step 7. The admin then rules `dependency`. The coordinator opens the contest because it knows the dependency. The admin opens one only to carry out a `queue-order` ruling no contest covers yet. A refusal that says `there is nothing left to order` means one side already landed or is landing. Send nothing.
+**Contests.** When this restaurant's item and another coordinator's would break or conflict with each other in the queue, or when this restaurant's passed item depends on another coordinator's item that has not landed, run `$L contest --holders <restaurant>/D<n>,<sibling>/D<n> --owner <restaurant>/@<generation>`, such as `--holders docs/D4,core/D2 --owner docs/@1`. Each holder is the one `submit` takes: the restaurant's directory name, a slash, and the dish id. Read the other holder from `$L lease list`. It prints `C<n>`, and `land` holds both holders' entries until the admin settles it. Then send the `contest` line, naming which item depends on which. A contest also holds entries submitted after it, so open it before the dependent dish's `submit` and `land`, then submit per Run a service step 7. The coordinator opens the contest because it knows the dependency. How the admin orders the two, and when it opens a contest itself, is in [Rulings](../brigade-admin/SKILL.md#rulings). A refusal that says `there is nothing left to order` means one side already landed or is landing. Send nothing.
 
 **What the user hears.** While `reportsTo` is set, reply to the user only in a service the user started. Every other wake ends with no assistant text at all, not even a one-line status, as Run a service step 9 says. This restaurant's reporting level decides only the reply for a failed send of a line with a store row. A failed send of a message-only line gets a reply at every level. `$B close --to-file` still writes each report into this restaurant's store. Once `reportsTo` is cleared, reply at this restaurant's own level again.

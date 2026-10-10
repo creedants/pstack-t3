@@ -2630,15 +2630,101 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
         section = self.brigade.split("\n## Reporting to an executive admin\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("(../brigade-admin/SKILL.md)", section)
 
-    def test_brigade_links_in_brigade_admin_and_in_file_links_in_both_skills_name_a_heading(self):
+    def test_links_between_the_two_skills_and_in_file_links_in_both_name_a_heading(self):
         cross = re.findall(r"\(\.\./brigade/SKILL\.md#([^)\s]+)\)", self.admin)
         self.assertIn("reporting-to-an-executive-admin", cross)
         self.assertEqual([fragment for fragment in cross if fragment not in self.slugs(self.brigade)], [])
+        back = re.findall(r"\(\.\./brigade-admin/SKILL\.md#([^)\s]+)\)", self.brigade)
+        self.assertIn("rulings", back)
+        self.assertEqual([fragment for fragment in back if fragment not in self.slugs(self.admin)], [])
         for name, text in (("brigade", self.brigade), ("brigade-admin", self.admin)):
             with self.subTest(skill=name):
                 own = re.findall(r"\]\(#([^)\s]+)\)", text)
                 self.assertIn("filing-tracker-work" if name == "brigade" else "rulings", own)
                 self.assertEqual([fragment for fragment in own if fragment not in self.slugs(text)], [])
+
+    def test_a_section_of_the_other_skill_is_named_only_as_a_link(self):
+        # "Terms", "The script", and "Run a service" also occur as plain words, so they are only required once.
+        for section in ("Terms", "The script", "Run a service"):
+            with self.subTest(section=section):
+                self.assertIn(f"[{section}](../brigade/SKILL.md#{heading_slug(section)})", self.admin)
+        for text, target, sections in (
+            (
+                self.admin,
+                "../brigade/SKILL.md",
+                (
+                    "Open a restaurant",
+                    "First service",
+                    "Liveness check",
+                    "Git and PR housekeeping",
+                    "Filing tracker work",
+                    "Digest messages",
+                    "Reporting to an executive admin",
+                ),
+            ),
+            (
+                self.brigade,
+                "../brigade-admin/SKILL.md",
+                ("Admin service", "Admin messages", "Rulings", "What the admin never does"),
+            ),
+        ):
+            for section in sections:
+                with self.subTest(section=section):
+                    link = f"[{section}]({target}#{heading_slug(section)})"
+                    self.assertGreater(text.count(link), 0)
+                    self.assertEqual(text.count(section), text.count(link))
+
+    def test_a_rule_the_coordinator_and_the_admin_share_is_stated_in_one_skill(self):
+        skills = {"brigade": self.brigade, "brigade-admin": self.admin}
+        for phrase, owner in (
+            ("`failed`, `drained`, `report`, `reply`, `contest`, and `appeal`", "brigade"),
+            ('with `t3_thread_send` and mode `"queue"`', "brigade"),
+            ("until an entry of the first holder lands", "brigade"),
+            ("starts no new work on those paths", "brigade"),
+            ("it holds and sends `appeal`", "brigade"),
+            ("refuses to drop a source while a `waiting` or `assigned` ticket came from it", "brigade"),
+            ("The ref stays unchanged through every `ticket move`", "brigade"),
+            ("The check runs under the store lock", "brigade"),
+            ("A message-only line never appears in `sync`", "brigade-admin"),
+            ("Every other holder's claim on those paths is refused", "brigade-admin"),
+            ("Direct a coordinator's own work", "brigade-admin"),
+            ("An item the other depends on, as a `contest` line stated, lands first", "brigade-admin"),
+            ("when no contest covers the two holders", "brigade-admin"),
+            ("`from-user <coordinator>: <the user's words>`", "brigade-admin"),
+            ("`$B status` prints `thread <id>` first and `owner <thread>@<generation>` last", "brigade"),
+            ("End the message with one line that names that path", "brigade"),
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual([name for name, text in skills.items() if phrase in text], [owner])
+        for phrase in (
+            "`sync` never prints them",
+            "The admin's `sync` relays",
+            "It never directs this restaurant's own work",
+            "and the admin escalates",
+            "The admin then rules `dependency`",
+            "A reservation on the paths refuses",
+            "The admin publishes each request",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, self.brigade)
+        for phrase in (
+            "The message-only lines, ",
+            'with mode `"queue"`',
+            "`land` then holds the other holder's entries",
+            "keeps the holder from starting new work",
+            "the coordinator holds and has not complied",
+            "A ruling binds the coordinators",
+            "That is refused while it still has waiting or assigned tickets",
+            "`ticket move` in step 4 keeps that ref",
+            "Every `brigade.py` write checks the owner token under the store lock",
+            "The coordinator's store decides whether",
+            "no store row keeps it",
+            "It prints `thread <id>` first",
+            "asks the holder to move it",
+            "End with one line naming the full update",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, self.admin)
 
     def test_admin_links_brigades_script_and_ships_none(self):
         self.assertIn("(../brigade/scripts/brigade.py)", self.admin)
@@ -2651,6 +2737,13 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
             "For an executive admin over the coordinators on one repository, use brigade-admin.", description
         )
         self.assertNotIn("an executive admin over the coordinators on one repository'", description)
+
+    def test_neither_description_has_a_mid_sentence_colon(self):
+        for name, text in (("brigade", self.brigade), ("brigade-admin", self.admin)):
+            with self.subTest(skill=name):
+                description = next(line for line in text.splitlines() if line.startswith("description:"))
+                self.assertNotIn(": ", description.removeprefix("description: "))
+                self.assertIn(". Use for '", description)
 
     def test_catalog_lists_brigade_admin_under_plan_and_run_long_work(self):
         import catalog
