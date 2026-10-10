@@ -59,7 +59,7 @@ class RunTestsTest(unittest.TestCase):
         result = self.runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.splitlines()[0], "run_tests: 3 tests, 2 shards, 2 at a time")
-        self.assertRegex(result.stderr, r"\nRan 3 tests in \d+\.\ds\n\nOK\n\Z")
+        self.assertRegex(result.stderr, r"\nRan 3 tests in \d+\.\d{3}s\n\nOK\n\Z")
         self.assertEqual(RAN.search(result.stderr).group(1), "3")
         self.assertEqual(self.serial_count(), "3")
 
@@ -289,11 +289,32 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("\nERROR: setUpClass (test_fixture.FixtureTest)\n", result.stderr)
         self.assertIn("\nRuntimeError: no fixture\n", result.stderr)
-        cause = "A class or module fixture failed in the worker for shard 1, so this test did not start.\n"
+        cause = "A class or module fixture failed in the worker for shard 1, and this test did not start.\n"
         self.assertIn("\nLOST: test_fixture.FixtureTest.test_one\n" + "-" * 70 + "\n" + cause, result.stderr)
         self.assertIn("\nLOST: test_fixture.FixtureTest.test_two\n" + "-" * 70 + "\n" + cause, result.stderr)
         self.assertEqual(RAN.search(result.stderr).group(1), "2")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=2)\n"), result.stderr)
+
+    def test_a_setupclass_that_raises_skiptest_exits_0_with_ok_skipped_2_and_counts_4_tests(self):
+        self.write("test_alpha.py", PASSING)
+        self.write("test_git.py", """
+            import unittest
+
+            class GitTest(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls):
+                    raise unittest.SkipTest("no git")
+
+                def test_one(self):
+                    pass
+
+                def test_two(self):
+                    pass
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], "OK (skipped=2)")
+        self.assertEqual(RAN.search(result.stderr).group(1), "4")
 
     def test_the_runner_exits_2_when_pstack_run_tests_holds_its_start_directory(self):
         self.write("test_alpha.py", PASSING)
@@ -336,6 +357,16 @@ class AccountTest(unittest.TestCase):
         self.assertEqual(accounting.verdicts[4].kind, "bad")
         self.assertEqual(accounting.verdicts[4].problems[0].traceback, "AssertionError\n")
         self.assertEqual(accounting.violations, ((4, "reported a second result for one test"),))
+
+    def test_a_seq_with_no_start_is_lost_with_the_fixture_cause_when_one_fixture_failed_and_one_skipped(self):
+        events = [{"ev": "fixture", "label": "setUpClass (test_x.A)", "traceback": "RuntimeError\n"},
+                  {"ev": "fixture", "skip": True, "label": "setUpClass (test_x.B)", "reason": "no git"},
+                  {"ev": "done"}]
+        accounting = run_tests.account(run_tests.Shard(2, "test_x", (4,)), events, run_tests.Ended(0))
+        self.assertEqual(accounting.verdicts[4].kind, "lost")
+        self.assertEqual(accounting.verdicts[4].cause,
+                         "A class or module fixture failed in the worker for shard 2, and this test did not start.")
+        self.assertEqual(accounting.fixtures, (run_tests.Problem("error", "setUpClass (test_x.A)", "RuntimeError\n"),))
 
 
 if __name__ == "__main__":

@@ -4,11 +4,14 @@
 A listing child discovers the tests. A test the loader built in place of a module gets its outcome there.
 The runner cuts the other tests into shards of at most SHARD_SIZE tests of one module and runs each shard
 in a fresh process. A worker appends one JSON line per event to its own
-result file. The runner settles exactly one verdict per discovered test, so `Ran N tests` prints the
-number discovery returned.
+result file. The runner settles exactly one verdict per discovered test, so the `Ran` line counts the
+tests discovery returned.
 
-A test whose worker reported no result for it is LOST. The exit status is 0 when the report ends in OK,
-1 when it ends in FAILED, 2 when the runner did not start the tests, and 130 on SIGINT or SIGTERM.
+A test with no result from its worker is LOST, with one exception. A test that did not start in a worker
+that finished is skipped when a fixture skipped in that worker and no fixture failed there.
+
+The exit status is 0 when the report ends in OK, 1 when it ends in FAILED, 2 when the runner did not start
+the tests, and 130 on SIGINT or SIGTERM.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARD_SIZE = 10
-# land.py's governor defaults to one slot per four cores, with at least 1 slot and at most 4. A run inside one slot starts at most four workers by default.
+# land.py's governor defaults to one slot per four cores, with at least 1 slot and at most 4.
 MAX_DEFAULT_JOBS = 4
 DEFAULT_TIMEOUT = 300.0
 # A child holds the start directory of the runner that started it. The runner refuses that directory.
@@ -161,7 +164,7 @@ def exit_status(ledger: Ledger) -> int:
     return 1 if any(OUTCOMES[kind].fails for kind in tallies(ledger)) else 0
 
 
-def count(number: int, noun: str) -> str:
+def plural(number: int, noun: str) -> str:
     return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
@@ -190,7 +193,7 @@ def render(plan: tuple[Test, ...], ledger: Ledger, seconds: float) -> str:
     counted = tallies(ledger)
     listed = ", ".join(f"{outcome.tally}={counted[kind]}" for kind, outcome in OUTCOMES.items() if outcome.tally and counted[kind])
     word = "FAILED" if exit_status(ledger) else "OK"
-    out.append(f"{SEP2}\nRan {count(ran, 'test')} in {seconds:.1f}s\n\n")
+    out.append(f"{SEP2}\nRan {plural(ran, 'test')} in {seconds:.3f}s\n\n")
     out.append(f"{word} ({listed})\n" if listed else f"{word}\n")
     return "".join(out)
 
@@ -206,9 +209,11 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
     results: dict[int, Verdict] = {}
     fixtures: list[Problem] = []
     violations: list[tuple[int, str]] = []
-    done = False
+    done = skipped = False
     for event in events:
-        if event["ev"] == "fixture":
+        if event["ev"] == "fixture" and event.get("skip"):
+            skipped = True
+        elif event["ev"] == "fixture":
             fixtures.append(Problem("error", event["label"], event["traceback"]))
         elif event["ev"] == "done":
             done = True
@@ -240,7 +245,9 @@ def account(shard: Shard, events: list[dict], ended: Ended) -> Accounting:
         elif not done:
             verdicts[seq] = Verdict("lost", cause=f"{worker} {how} before it started this test.")
         elif fixtures and seq not in started:
-            verdicts[seq] = Verdict("lost", cause=f"A class or module fixture failed in the worker for shard {shard.number}, so this test did not start.")
+            verdicts[seq] = Verdict("lost", cause=f"A class or module fixture failed in the worker for shard {shard.number}, and this test did not start.")
+        elif skipped and seq not in started:
+            verdicts[seq] = Verdict("skip")
         else:
             verdicts[seq] = Verdict("lost", cause=f"{worker} finished and reported fewer tests than it was given.")
     return Accounting(verdicts, tuple(fixtures), tuple(violations))
@@ -403,7 +410,7 @@ def run(start: Path, jobs: int, timeout: float) -> int:
                 not_ok = sum(fails(verdict) for verdict in ledger.verdicts.values()) + len(ledger.run_errors)
                 say(f"run_tests: {len(ledger.verdicts)}/{len(plan)} done, {not_ok} not ok, {now - began:.0f}s")
 
-        say(f"run_tests: {count(len(plan), 'test')}, {count(len(shards), 'shard')}, {min(jobs, len(shards))} at a time")
+        say(f"run_tests: {plural(len(plan), 'test')}, {plural(len(shards), 'shard')}, {min(jobs, len(shards))} at a time")
         for test in plan:
             if test.preset is not None:
                 settle(test.seq, test.preset)
@@ -433,7 +440,7 @@ def flatten(suite):
 
 
 class Recorder(unittest.TestResult):
-    """Emits a start and a result event for each given test that runs, and a fixture event for an error or failure on anything else."""
+    """Emits a start and a result event for each given test that runs, and a fixture event for an error, a failure, or a skip on anything else."""
 
     def __init__(self, tests: list[tuple[unittest.TestCase, int]], emit) -> None:
         super().__init__()
@@ -475,6 +482,8 @@ class Recorder(unittest.TestResult):
     def addSkip(self, test, reason):
         if test is self.current:
             self.status = "skip"
+        else:
+            self.emit({"ev": "fixture", "skip": True, "label": str(test), "reason": reason})
 
     def addExpectedFailure(self, test, err):
         self.status = "xfail"
@@ -537,9 +546,9 @@ def positive(kind):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, os.cpu_count() or 1),
-                        help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and os.cpu_count().")
+                        help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the CPU count, or 1 when the CPU count is unknown.")
     parser.add_argument("-s", "--start-directory", default=str(ROOT / "tests"),
-                        help="Directory to discover tests under. Each worker runs in its parent directory. The default is tests/ in this repository.")
+                        help="Directory to discover tests under. Each worker runs in the parent of this directory. The default is tests/ in this repository.")
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,
                         help=f"Seconds a worker may go without writing an event before the runner kills it. The default is {DEFAULT_TIMEOUT:g}.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
