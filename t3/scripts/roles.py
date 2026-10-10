@@ -1284,6 +1284,7 @@ def command_backup(args):
     if args.catalog == "-":
         raise RolesError("--catalog - is refused because stdin carries the error text")
     given_parent(args)
+    mode = given_runtime_mode(args)
     if args.provider == INHERIT:
         raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configuration")
     if args.role not in ROLES:
@@ -1300,6 +1301,7 @@ def command_backup(args):
     _catalog_path, catalog = load_show_catalog(args)
     if catalog is None:
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
+    catalog = for_runtime_mode(catalog, mode)
     options = parse_applied_options(args.options) if args.options else {}
     failed = {"provider": args.provider, "model": args.model, "options": options}
     review_backups = configured_seats(config, PANEL_BACKUP_ROLE) if PANEL_BACKUP_ROLE in config["roles"] else None
@@ -1886,11 +1888,6 @@ def main(argv=None):
         action="store_true",
         help="resolve skill tests for a child that launches seats (requires --catalog, --parent, and --role \"skill tests\")",
     )
-    sub.choices["show"].add_argument(
-        "--runtime-mode",
-        help="this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose "
-             "driverKind is muse counts as not runnable under a mode other than approval-required and full-access",
-    )
     write = sub.choices["write"]
     write.add_argument("--budget", choices=list(BUDGETS))
     write.add_argument("--mode", choices=MODES)
@@ -1931,6 +1928,12 @@ def main(argv=None):
     )
     backup.add_argument("--out", action="append", default=None, help="provider already out. Repeat for each")
     backup.add_argument("--resume", action="store_true", help="after a parked item's reset, print the seat to launch")
+    for command in (sub.choices["show"], backup):
+        command.add_argument(
+            "--runtime-mode",
+            help="this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose "
+                 "driverKind is muse counts as not runnable under a mode other than approval-required and full-access",
+        )
     for command in (sub.choices["show"], mode, backup):
         command.add_argument("--brief-mode", choices=MODES,
                              help="brief mode; overrides session, coordinator, project, and user modes")

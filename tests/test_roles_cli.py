@@ -2651,30 +2651,34 @@ def bedrock_catalog():
     return catalog
 
 
+def run_backup(*args, text=_LIMIT, catalog=None, roles_file=None):
+    with tempfile.TemporaryDirectory() as directory:
+        repo = Repo(directory)
+        path = repo.directory / "catalog.json"
+        repo.put(path, backup_catalog() if catalog is None else catalog)
+        if roles_file is not None:
+            repo.put(repo.user, roles_file)
+        env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "t3/scripts/roles.py"),
+                "backup",
+                "--cwd", str(repo.directory),
+                "--catalog", str(path),
+                "--parent", "claudeAgent/claude-opus-5-5",
+                *args,
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            input=text,
+        )
+
+
 class BackupCliTest(unittest.TestCase):
     def backup(self, *args, text=_LIMIT, catalog=None, roles_file=None):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Repo(directory)
-            path = repo.directory / "catalog.json"
-            repo.put(path, backup_catalog() if catalog is None else catalog)
-            if roles_file is not None:
-                repo.put(repo.user, roles_file)
-            env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
-            return subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "t3/scripts/roles.py"),
-                    "backup",
-                    "--cwd", str(repo.directory),
-                    "--catalog", str(path),
-                    "--parent", "claudeAgent/claude-opus-5-5",
-                    *args,
-                ],
-                env=env,
-                capture_output=True,
-                text=True,
-                input=text,
-            )
+        return run_backup(*args, text=text, catalog=catalog, roles_file=roles_file)
 
     def assert_backup(self, completed, expected):
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -4209,3 +4213,87 @@ class RuntimeModeCliTest(unittest.TestCase):
                     self.assertEqual(completed.stdout, "")
                     self.assertIn("error: unrecognized arguments: --runtime-mode auto", completed.stderr)
                     self.assertFalse(repo.user.exists())
+
+
+class RuntimeModeBackupCliTest(unittest.TestCase):
+    PANEL = {"roles": {"review backups": [MUSE_DRIVER_SEAT, STEP_SEAT, BUNNY_SEAT]}}
+
+    def backup(self, *args, roles_file=None):
+        catalog = backup_catalog()
+        catalog["providers"].append(muse_driver_provider())
+        return run_backup(*args, catalog=catalog, roles_file=roles_file)
+
+    def payload(self, *args, roles_file=None):
+        completed = self.backup(*args, roles_file=roles_file)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_auto_drops_a_muse_driver_seat_from_a_three_seat_panel(self):
+        payload = self.payload(*VERIFIER_OUT, "--runtime-mode", "auto", roles_file=self.PANEL)
+        self.assertEqual(payload, {
+            "decision": "panel",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seats": [STEP_SEAT, BUNNY_SEAT],
+            "rule": PANEL_RULE,
+            "notes": ["dropped muse/muse-spark-1: not runnable or not in the catalog"],
+            "report": (
+                "verifiers: codex/gpt-6.1-sol hit its usage limit; every paid reviewer backup is out, "
+                "so review backups runs 2 seats; land only if no reviewer reproduces a blocker and at least two pass"
+            ),
+        })
+
+    def test_auto_parks_a_two_seat_panel_with_a_muse_driver_seat(self):
+        payload = self.payload(
+            *VERIFIER_OUT, "--runtime-mode", "auto",
+            roles_file={"roles": {"review backups": [MUSE_DRIVER_SEAT, STEP_SEAT]}},
+        )
+        self.assertEqual(payload, {
+            "decision": "park",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "report": (
+                "verifiers: codex/gpt-6.1-sol hit its usage limit; review backups has 1 usable seat and needs 2, "
+                "so the work waits for the reset (dropped muse/muse-spark-1: not runnable or not in the catalog)"
+            ),
+        })
+
+    def test_auto_resumes_a_bug_fix_seat_on_a_muse_driver_on_opus(self):
+        payload = self.payload(
+            "--role", "bug-fix", "--provider", "muse", "--model", "muse-spark-1", "--resume",
+            "--runtime-mode", "auto",
+        )
+        self.assertEqual(payload, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "muse/muse-spark-1",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+            "report": "bug-fix: muse/muse-spark-1 resumed on claudeAgent/claude-opus-5-5 after the reset",
+        })
+
+    def test_an_empty_mode_and_a_mode_with_whitespace_exit_2(self):
+        for text in ("", "a b"):
+            with self.subTest(text=text):
+                completed = self.backup(*VERIFIER_OUT, "--runtime-mode", text, roles_file=self.PANEL)
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(
+                    completed.stderr,
+                    f"error: --runtime-mode {text!r}: expected runtimeMode from orchestrator_capabilities\n",
+                )
+
+    def test_full_access_and_no_flag_keep_the_muse_driver_seat_first_in_a_three_seat_panel(self):
+        for flag in (("--runtime-mode", "full-access"), ()):
+            with self.subTest(flag=flag):
+                payload = self.payload(*VERIFIER_OUT, *flag, roles_file=self.PANEL)
+                self.assertEqual(payload, {
+                    "decision": "panel",
+                    "role": "verifiers",
+                    "failed": "codex/gpt-6.1-sol",
+                    "seats": [MUSE_DRIVER_SEAT, STEP_SEAT, BUNNY_SEAT],
+                    "rule": PANEL_RULE,
+                    "report": (
+                        "verifiers: codex/gpt-6.1-sol hit its usage limit; every paid reviewer backup is out, "
+                        "so review backups runs 3 seats; land only if no reviewer reproduces a blocker and at least two pass"
+                    ),
+                })
