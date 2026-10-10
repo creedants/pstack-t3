@@ -31,13 +31,14 @@ The local part ends in a character other than a space, an at sign, a round or sq
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
 A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
-Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde.
+Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.
 Or it starts with a tilde before a slash or a backslash, with a tilde and a name that starts with a letter or an underscore before one, with $HOME or ${HOME} before one, or with two backslashes before a letter, a digit, an underscore, or a dot.
 A path after an opening quotation mark or a backtick is private text up to the mark that closes it.
-Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash.
+Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash and does not start with a slash.
 
 The filter removes a word for no other reason.
 The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
+It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.
 The name of the request that started a delegated task reaches a page only as separate words in a label.
 The filter looks for that name in other text only when it is a work item's task value and does not read as ordinary words.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
@@ -694,7 +695,9 @@ UUID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 # `thread` also matches in `provider-thread`.
 T3_KINDS = ("mcp", "thread", "node", "run", "task", "run-attempt", "provider-turn", "provider-session", "context-transfer", "context-handoff")
 OPENS = r"(?:^|(?<=[\s\"'`“”‘’(\[{<>=:,;|]))"
-PATH = rf"(?:{OPENS}(?:/[\w.~]|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
+QUOTES = "\"'`“”‘’"
+# One segment after a slash is a slash command such as /review, so a path that starts with a slash needs a second segment.
+PATH = rf"(?:{OPENS}(?:/(?=[\w.~][^\s/{QUOTES}]*/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
 # The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
 SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:(?=[\w/\\.~%])", re.IGNORECASE)
 LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
@@ -702,7 +705,7 @@ LOCAL_CHARS = 64
 DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
 CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
-NEXT_PATH_WORD = re.compile(r"\s+\S*[/\\]\S*")
+NEXT_PATH_WORD = re.compile(r"\s+(?!/)\S*[/\\]\S*")
 WORD = re.compile(r"\S+")
 RUN = r"(?:[^\W\d_]+|\d+|[^\W_]{1,8})"
 ORDINARY = re.compile(rf"{RUN}(?:[ .-]{RUN})*")
@@ -785,7 +788,7 @@ def views(text):
 
 def path_end(text, match):
     """Where the path that starts at match ends. After an opening quotation mark or a backtick it ends at the mark that closes it.
-    With no such pair it ends with its word, or with the last of the words after it that each hold a slash or a backslash.
+    With no such pair it ends with its word, or with the last of the words after it that each hold a slash or a backslash and do not start with a slash.
     """
     quote = text[match.start() - 1:match.start()]
     close = text.find(CLOSES[quote], match.end()) if quote in CLOSES else -1

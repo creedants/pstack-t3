@@ -875,9 +875,10 @@ class LabelTest(unittest.TestCase):
     def test_title_that_is_one_path_under_root_gives_its_last_segment_when_that_is_letters_digits_hyphens_and_underscores(self):
         self.assertEqual(self.label("/root/spec_review", parent=worker(2)), "spec_review")
         self.assertEqual(self.label("/root/a/b/spec-review_2", parent=worker(2)), "spec-review_2")
-        for title in ("/root/notes.md", "/pathmarker/notes", "/root", "/root/spec_review now"):
+        for title in ("/root/notes.md", "/pathmarker/notes", "/root/spec_review now"):
             with self.subTest(title):
                 self.assertEqual(self.label(title, parent=worker(2)), "sub-agent")
+        self.assertEqual((self.label("/root", parent=worker(2)), self.label("/review", parent=worker(2))), ("/root", "/review"))
 
     def test_title_that_holds_private_text_loses_to_the_request_name(self):
         self.assertEqual(self.label("Read the brief at /pathmarker/brief.md", "why-investigator"), "why investigator")
@@ -973,15 +974,32 @@ class FilterTest(unittest.TestCase):
         kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and \"jd\"@example.test and (jd)@example.test"
         self.assertEqual(self.clean(kept), kept)
 
-    def test_clean_removes_an_absolute_path_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
-        gone = ("/pathmarker/notes.md", "/pathmarker", "(/pathmarker/a)", "x=/pathmarker", "a:/pathmarker", "~/pathmarker", "~user/pathmarker", "$HOME/pathmarker", "${HOME}/pathmarker", "~\\pathmarker",
-                "C:\\Users\\private\\file.txt", "c:/Users/private", "\\\\server\\share", "file:///home/private/secret", "file:/home/private/secret", "FILE:C:/x", "x=file:~/a", "file:secret.txt",
-                "%2Fpathmarker%2Fnotes.md", "%252Fpathmarker", "</pathmarker>", ">/pathmarker")
+    def test_clean_removes_an_absolute_path_of_two_or_more_segments_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
+        gone = ("/pathmarker/notes.md", "/a/b", "/home/someone/x", "(/pathmarker/a)", "x=/pathmarker/a", "a:/pathmarker/a", "/pathmarker//a", "/.config/a", "/~x/a", "/path-marker+1/a", "/pathmarker/a/",
+                "~/x", "~/pathmarker", "~user/pathmarker", "$HOME/pathmarker", "${HOME}/pathmarker", "~\\pathmarker",
+                "C:\\Users\\private\\file.txt", "c:/Users/private", "C:\\x", "\\\\server\\share", "file:///home/private/secret", "file:/home/private/secret", "FILE:C:/x", "x=file:~/a", "file:secret.txt",
+                "file:/secret", "%2Fpathmarker%2Fnotes.md", "%252Fpathmarker%252Fa", "</pathmarker/a>", ">/pathmarker/a")
         for word in gone:
             with self.subTest(word):
                 self.assertEqual(self.clean(f"see {word} now"), "see now")
         kept = "see src/a.py and/or docs/guide.md with opencode-go/model at https://example.test/o/r/pull/7 for I/O 24/7 +/- ~ ~5 ~1u/x ${HOME/x $HOME}/x a\\b é:\\x Makefile:12 profile:x file: x 1/2 ./a ../b now"
         self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_keeps_a_one_segment_word_that_starts_with_a_slash_wherever_a_path_could_start(self):
+        kept = ("/review", "/loop", "/code-review", "/pathmarker", "/secret", "/tmp", "/review.", "/review,", "(/review)", "x=/review", "key:/review", "</review>", ">/review", "/review/",
+                "\"/review\"", "'/review'/'/loop'", "`/loop`", "“/code-review”", "%2Freview", "%252Freview", "/review:", "/REVIEW", "/review_2", "/.hidden", "/~x")
+        for word in kept:
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"run {word} now"), f"run {word} now")
+        text = "Run /review then /loop and /code-review, or \"/review\" twice"
+        self.assertEqual(self.clean(text), text)
+        self.assertEqual(self.clean("/review /loop /a/b /code-review"), "/review /loop /code-review")
+        self.assertEqual(self.clean("see /srv/a b/c /loop d/e and /srv/f /g/h /review now"), "see /loop d/e and /review now")
+
+    def test_clean_removes_a_one_segment_path_it_was_given_in_any_case_and_keeps_another_one_segment_word(self):
+        paths = {"/storemarker", "/checkoutmarker"}
+        self.assertEqual(self.clean("read /storemarker and /CHECKOUTMARKER and x/storemarker/a and %2Fcheckoutmarker then /review and /loop end", paths=paths), "read and and and then /review and /loop end")
+        self.assertEqual(self.clean("read /storemarker and /checkoutmarker end"), "read /storemarker and /checkoutmarker end")
 
     def test_clean_removes_a_path_after_a_quotation_mark_up_to_the_next_such_mark_and_any_other_through_each_next_word_with_a_slash(self):
         self.assertEqual(self.clean('see "/srv/private dir/secret file.txt" and `~/a b` and \'C:\\a b\\c d\' now'), "see and and now")
@@ -2064,7 +2082,7 @@ class PrivacyTest(OutputCase):
 
     def shapes(self):
         return ("mcp:alpha-secret", "thread:secret-1", "node:alpha-secret", "run:alpha-secret", "task:alpha-secret", "prefix=mcp:alpha-secret", "id=mcp%3Aalpha-secret", "context-transfer:secret",
-                "provider-thread:secret", "9f8e7d6c-e89b-12d3-a456-426614174000", "/srv/secret/notes.md", "/secret", "~/secret/notes.md", "~user/secret", "$HOME/secret", "C:\\Users\\secret\\file.txt",
+                "provider-thread:secret", "9f8e7d6c-e89b-12d3-a456-426614174000", "/srv/secret/notes.md", "/secret/x", "~/secret/notes.md", "~user/secret", "$HOME/secret", "C:\\Users\\secret\\file.txt",
                 "file:/home/secret/notes", "file:///srv/secret", "(/srv/secret)", "x=/srv/secret", "%2Fsrv%2Fsecret%2Fnotes.md", ADDRESS, ADDRESS.upper(), quote(ADDRESS, safe=""), f"<{ADDRESS}>")
 
     def planted(self, fixture):
@@ -2272,6 +2290,87 @@ class OrdinaryWordsTest(OutputCase):
         self.assertEqual([word for word in ("queue", "review", "451237", "private auditor", "code", "src") if word in known], [])
 
 
+class SlashCommandTest(OutputCase):
+    """A one-segment word that starts with a slash is a slash command and stays in both forms. A path of two or more segments, a home path, a drive path, and a file: address go.
+    A one-segment path the run read goes too.
+    """
+
+    COMMANDS = ("/review", "/loop", "/code-review")
+    PATHS = ("/home/someone/x", "~/x", "/a/b", "C:\\Users\\someone", "file:someone.txt")
+
+    def staffed(self, name, root="/checkoutmarker"):
+        fixture = self.fixture = Fixture(self.fixture.root / name)
+        fixture.meta["projectRoot"] = root
+        fixture.coordinator()
+        return fixture
+
+    def test_title_a_summary_and_a_work_item_id_that_hold_slash_commands_keep_them_in_the_document_and_the_text(self):
+        fixture = self.staffed("commands")
+        for number, command in enumerate(self.COMMANDS, start=1):
+            fixture.unit(command, "in-progress", f"Run {command} on the queue", thread=worker(number))
+            fixture.thread(worker(number), title=f"{command} worker", turns=(("running", 40 - number, None),))
+            fixture.thread(delegated(worker(number), f"helper-{number}"), title=command, parent=worker(number), turns=(("running", 20 - number, None),))
+        fixture.unit("D9", "in-review", "Run /review then /loop and /code-review today")
+        fixture.thread(delegated(worker(3), "helper-4"), title="Run /review then /loop and /code-review", parent=worker(3), turns=(("running", 8, None),))
+        fixture.write()
+        data, text = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual([item[:2] for item in data["I"]], [["/code-review", "Run /code-review on the queue"], ["/loop", "Run /loop on the queue"], ["/review", "Run /review on the queue"],
+                                                            ["D9", "Run /review then /loop and /code-review today"]])
+        self.assertEqual([[data["I"][index][0], [line[1] for line in lines]] for index, lines in data["G"]], [
+            ["/code-review", ["worker", "/code-review", "Run /review then /loop and /code-review"]], ["/loop", ["worker", "/loop"]], ["/review", ["worker", "/review"]]])
+        self.assertEqual(text[2:10], [
+            "Running now",
+            "  /code-review worker   model-a   running for 37m",
+            "  /code-review /code-review   model-a   running for 17m   under worker",
+            "  /code-review Run /review then /loop and /code-review   model-a   running for 8m   under worker",
+            "  /loop worker   model-a   running for 38m",
+            "  /loop /loop   model-a   running for 18m   under worker",
+            "  /review worker   model-a   running for 39m",
+            "  /review /review   model-a   running for 19m   under worker"])
+        self.assertEqual([line.split("   ")[:3] for line in text[text.index("Work items") + 1:text.index("Work items") + 5]], [
+            ["  /code-review", "working", "Run /code-review on the queue"], ["  /loop", "working", "Run /loop on the queue"], ["  /review", "working", "Run /review on the queue"],
+            ["  D9", "in review", "Run /review then /loop and /code-review today"]])
+
+    def test_title_a_summary_and_a_work_item_id_that_hold_a_path_of_two_segments_a_home_path_a_drive_path_or_a_file_address_lose_it_in_the_document_and_the_text(self):
+        fixture = self.staffed("paths")
+        fixture.unit("D7", "in-progress", f"Read {' and '.join(self.PATHS)} after /review today", thread=worker(1))
+        fixture.thread(worker(1), title="D7 worker", turns=(("running", 30, None),))
+        for number, path in enumerate(self.PATHS, start=1):
+            fixture.unit(path, "in-progress", f"item {number}", thread=worker(10 + number))
+            fixture.thread(worker(10 + number), title="worker", turns=(("running", 20, None),))
+            fixture.thread(delegated(worker(1), f"helper-{number}"), title=f"/loop over {path} now", parent=worker(1), turns=(("running", 10 + number, None),))
+        fixture.write()
+        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        data = data_of(document)
+        self.assertEqual([word for word in ("someone", "/a/b", "~/x") if word in document or word in text], [])
+        self.assertEqual(sorted(item[:2] for item in data["I"]), [["D7", "Read and and and and after /review today"], *(["work item", f"item {number}"] for number in range(1, 6))])
+        self.assertEqual([line[1] for line in data["G"][[data["I"][index][0] for index, _ in data["G"]].index("D7")][1]], ["worker", "helper 5", "helper 4", "helper 3", "helper 2", "helper 1"])
+        self.assertIn("  D7   working   Read and and and and after /review today   1 agent, 5 sub-agents, ", text)
+
+    def test_one_segment_project_root_the_store_records_is_in_neither_form_and_a_slash_command_beside_it_is_in_both(self):
+        fixture = self.staffed("root")
+        fixture.unit("D7", "in-progress", "Run /review in /checkoutmarker and /CHECKOUTMARKER/src and x=/checkoutmarker today", thread=worker(1))
+        fixture.unit("/checkoutmarker", "in-progress", "second item")
+        fixture.thread(worker(1), title="D7 worker", turns=(("running", 30, None),))
+        fixture.thread(delegated(worker(1), "helper-1"), title="/loop in /checkoutmarker", parent=worker(1), turns=(("running", 20, None),))
+        fixture.thread(delegated(worker(1), "helper-2"), title="/loop", parent=worker(1), turns=(("running", 10, None),))
+        fixture.write()
+        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        data = data_of(document)
+        self.assertEqual(["checkoutmarker" in output.lower() for output in (document, text)], [False, False])
+        self.assertEqual((sorted(item[:2] for item in data["I"]), [line[1] for line in data["G"][0][1]]), ([["D7", "Run /review in and and today"], ["work item", "second item"]], ["worker", "helper 1", "/loop"]))
+        self.assertIn("  D7 /loop   model-a   running for 10m   under worker", text.split("\n"))
+        self.assertIn("  D7   working   Run /review in and and today   1 agent, 2 sub-agents, ", text)
+
+    def test_filter_of_a_run_whose_store_directory_and_project_root_are_one_segment_removes_both_and_keeps_a_slash_command(self):
+        fixture = self.staffed("places")
+        store, t3, _ = fixture.write().read()
+        privacy = MOD["privacy_of"](store, t3, ("/storemarker",))
+        self.assertEqual(store.project_root, "/checkoutmarker")
+        self.assertEqual(privacy.clean("in /storemarker and /checkoutmarker and /STOREMARKER/dishes.tsv run /review and /loop and /code-review"), "in and and run /review and /loop and /code-review")
+        self.assertEqual(MOD["Privacy"]().clean("in /storemarker and /checkoutmarker"), "in /storemarker and /checkoutmarker")
+
+
 class ReferenceTest(unittest.TestCase):
     """The sentences the review of round 2 corrected, as the script's docstring and its generated reference now state them."""
 
@@ -2280,11 +2379,14 @@ class ReferenceTest(unittest.TestCase):
         stated = ("Every string a page emits passes one filter after its parts are joined.",
                   "An identifier that reads as ordinary words is not private text.",
                   "The filter removes a word for no other reason.",
+                  "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.",
+                  "It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.",
                   "Userinfo, a query, and a fragment are dropped.",
                   "A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.",
                   "The output and the newline after it take at most --max-bytes bytes.")
         self.assertEqual([sentence for sentence in stated if sentence not in reference or sentence not in " ".join(MOD["__doc__"].split())], [])
-        replaced = ("4 characters or longer", "with any other value that is not blank", "the class Privacy", "6 or more digits", "the most bytes the HTML document")
+        replaced = ("4 characters or longer", "with any other value that is not blank", "the class Privacy", "6 or more digits", "the most bytes the HTML document",
+                    "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde. Or")
         self.assertEqual([words for words in replaced if words in reference], [])
         self.assertIn("| `--max-bytes MAX_BYTES` | | | `16000` | the most bytes the output and the newline after it take, from 16000 to 500000 |", reference)
 
