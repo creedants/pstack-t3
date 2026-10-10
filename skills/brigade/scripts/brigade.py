@@ -371,7 +371,7 @@ class Restaurant:
                 text = None
             row = text if header or text is None else parse_row(table, text)
             if row is None:
-                raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
+                raise BrigadeError(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
             if not header:
                 rows.append(row)
         return rows

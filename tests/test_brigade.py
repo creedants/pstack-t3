@@ -728,7 +728,7 @@ class BrigadeTest(unittest.TestCase):
         for fields, line in ((old.split("\t")[:7], 5), ([*old.split("\t"), "r.md", "", "extra"], 5)):
             table.write_text(table.read_text() + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
-                             f"brigade: pass.tsv line {line} is malformed; fix or remove it")
+                             f"brigade: bridge-kit/perf/pass.tsv line {line} is malformed; fix or remove it")
             table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
 
     def test_pass_record_stores_the_bare_name_of_an_existing_review_report(self):
@@ -3282,7 +3282,7 @@ class BrigadeTest(unittest.TestCase):
         for fields, line in ((old[1].split("\t")[:7], 5), ([*old[1].split("\t"), "", "", "extra"], 5)):
             table.write_text(table.read_text() + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("86", "list", ok=False),
-                             f"brigade: 86.tsv line {line} is malformed; fix or remove it")
+                             f"brigade: bridge-kit/perf/86.tsv line {line} is malformed; fix or remove it")
             table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
 
     def test_an_unrelated_answered_item_decision_lifts_no_refusal(self):
@@ -4496,15 +4496,15 @@ class HandoffTest(StoresTest):
         log = self.dir("core") / "log.tsv"
         stamp = "2026-10-06T00:00:00.000000+00:00"
         log.write_text(log.read_text() + f"{stamp}\tticket\tT6\twaiting\tfro{stamp}\tticket\tT7\twaiting\tnote\n")
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 3 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 3 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"fro{stamp}\tticket\tT7\twaiting\tnote", "fro"))
         self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
         log.write_text(log.read_text() + f"{stamp[:19]}\tticket")
         self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
         log.write_text(log.read_text() + f"{stamp}\tticket\tT8\twaiting\tnote\n")
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 4 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
-        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: log.tsv line 4 is malformed; fix or remove it")
+        self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 4 is malformed; fix or remove it")
 
     def test_a_table_that_is_not_utf8_names_the_line(self):
         self.open("core")
@@ -4512,7 +4512,23 @@ class HandoffTest(StoresTest):
         rail = self.dir("core") / "rail.tsv"
         rail.write_bytes(rail.read_bytes() + b"\xff\n")
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False),
-                         "brigade: rail.tsv line 3 is malformed; fix or remove it")
+                         "brigade: app/core/rail.tsv line 3 is malformed; fix or remove it")
+
+    def test_a_malformed_line_is_named_with_its_store_from_a_sibling_from_walk_and_from_the_store_itself(self):
+        self.open("core")
+        self.open("docs")
+        self.brigade("docs", "ticket", "add", "--summary", "a")
+        rail = self.dir("docs") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        line = "brigade: app/docs/rail.tsv line 3 is malformed; fix or remove it"
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "x", "--source", "user", "--ref", "gh#1", ok=False),
+                         line)
+        self.assertEqual(self.brigade("core", "watch", ok=False), line)
+        self.assertEqual(self.brigade("docs", "ticket", "list", ok=False), line)
+        for words, cwd in ((("walk",), None), (("--at", ".", "ticket", "list"), self.dir("docs"))):
+            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), *words],
+                                    capture_output=True, text=True, cwd=cwd)
+            self.assertEqual((result.returncode, result.stderr.strip()), (1, line), words)
 
     def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
         self.open("core")
