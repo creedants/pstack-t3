@@ -144,7 +144,7 @@ You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) `0.0.
 
 Complete each prerequisite before using the feature it names.
 
-- Install the GitHub CLI and run `gh auth login`. GitHub intake sources named in the house rules, `gh issue list` and `gh pr list`, need `gh`. Landing in `merge` and `human` modes needs `gh` too. User requests need no `gh`.
+- Install the GitHub CLI and run `gh auth login`. Reading GitHub issues or pull requests needs `gh`, and so does landing in `merge` and `human` modes. User requests need no `gh`.
 - To make the first commit in a new repository, run `git config --local user.name "Your Name"` and `git config --local user.email "you@example.com"` in that repository. [`land.py init --base`](docs/cli/land.md#landpy-init) needs an existing commit, and a clone already has one. A global identity is optional.
 - Run `pip install pyyaml` before the test suite. `scripts/check.py` skips YAML frontmatter validation when PyYAML is missing.
 - Confirm `orchestrator_capabilities` is in the T3 thread's tool list. `$setup-pstack` calls it first.
