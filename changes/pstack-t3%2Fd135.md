@@ -1,0 +1,1 @@
+- `docs/light-mode.md` cites skills, playbooks, and the runtime by section or step and scripts by name instead of by line number, and eleven rows of its spawn table state the conditions their cited text carries. `docs/multi-coordinator.md` shows `status` printing `requests from the executive admin`.
