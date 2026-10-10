@@ -1082,6 +1082,23 @@ class BrigadeTest(unittest.TestCase):
             self.assertIn(part, text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
+    def test_a_report_that_follows_the_brief_is_read_by_ticket_add_from_report(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+        text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
+                            "--lease", "L4", "--base", "origin/main")
+        line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
+        asked = "List each follow-up as one top-level list item under a `"
+        heading = line.split(asked, 1)[1].split("`", 1)[0]
+        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there."), line)
+        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
+                         "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
+        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\nNone.\n")
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
+                         "reports/D1.md lists no follow-ups; nothing added")
+
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
         self.fire_one(station="bug-fix")
