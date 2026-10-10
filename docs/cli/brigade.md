@@ -72,7 +72,7 @@ add, list, update, move, or take tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -84,6 +84,9 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
+| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads by source: upstream is urgent, report is low, every other source is normal |
+| `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
+| `--decision` |  |  |  | the ticket asks the owner to decide; next never lists it as startable |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -100,13 +103,16 @@ brigade.py [flags] ticket list [--state STATE]
 ## brigade.py ticket set
 
 ```text
-brigade.py [flags] ticket set --state STATE id
+brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] id
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `id` | yes |  |  |  |
-| `--state STATE` | yes | `waiting`, `assigned`, `done`, `dropped` |  |  |
+| `--state STATE` |  | `waiting`, `assigned`, `done`, `dropped` |  |  |
+| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
+| `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
+| `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
 
 ## brigade.py ticket move
 

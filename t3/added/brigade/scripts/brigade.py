@@ -13,6 +13,7 @@ import fcntl
 import functools
 import json
 import os
+import posixpath
 import re
 import runpy
 import shlex
@@ -41,9 +42,13 @@ ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
+# Highest first.
+PRIORITIES = ("urgent", "normal", "low")
+# The priority of a ticket whose priority cell is empty, by base_source. Every other source reads as normal.
+SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 
 TABLES = {
-    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
+    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
@@ -51,7 +56,7 @@ TABLES = {
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
-ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2}
+ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
@@ -543,6 +548,29 @@ def base_source(source):
     return re.split(r" \((?:from|request) ", source, maxsplit=1)[0]
 
 
+def priority_of(row):
+    """A ticket's priority: its priority cell, or SOURCE_PRIORITY for its base_source, or normal."""
+    return row["priority"] or SOURCE_PRIORITY.get(base_source(row["source"]), "normal")
+
+
+def paths_of(row):
+    """A ticket's recorded paths as a tuple. Empty means unknown."""
+    return tuple(part for part in row["paths"].split(",") if part)
+
+
+def ticket_paths(text):
+    """The --paths value of ticket add and ticket set as a sorted tuple with no repeats. "" is the empty tuple."""
+    if text == "":
+        return ()
+    found = set()
+    for part in text.split(","):
+        path = posixpath.normpath(part.strip().replace("\\", "/")).lstrip("/")
+        if path in ("", ".", "..") or path.startswith("../"):
+            raise BrigadeError(f"--paths takes files or directories inside the repository, got {part!r}")
+        found.add(path)
+    return tuple(sorted(found))
+
+
 def set_intake(restaurant, sources):
     meta = restaurant.meta
     refuse_owned_intake(restaurant.dir, meta.get("projectRoot"), sources)
@@ -616,7 +644,7 @@ def refuse_live_ref(restaurant, ref, rails):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -638,13 +666,14 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
                                    "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
-    return append_ticket(restaurant, summary, source, ref)
+    return append_ticket(restaurant, summary, source, ref, priority, paths, decision)
 
 
-def append_ticket(restaurant, summary, source, ref):
+def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
-                                   "ref": ref, "summary": summary})
+                                   "ref": ref, "summary": summary, "priority": priority,
+                                   "paths": ",".join(paths), "decision": "yes" if decision else ""})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
 
@@ -881,6 +910,7 @@ def move_ticket(restaurant, ident, to, rails):
     if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
+            "priority": row["priority"], "paths": row["paths"], "decision": row["decision"],
         }, indent=2) + "\n")
     return f"{ident} moved to {name}; {tell(name, sibling)}"
 
@@ -897,7 +927,8 @@ def take_tickets(restaurant):
         if row is None:
             rows = restaurant.rows("rail.tsv")
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
-                   "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"]}
+                   "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
+                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}}
             restaurant.save_rows("rail.tsv", rows + [row])
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
@@ -1456,7 +1487,7 @@ def ticket_lines(restaurant, state, held):
     for row in restaurant.rows("rail.tsv"):
         if state and row["state"] != state:
             continue
-        line = f"{row['id']} {row['state']} [{row['source']}] {row['summary']}"
+        line = f"{row['id']} {row['state']} {priority_of(row)} [{row['source']}] {row['summary']}"
         if row["ref"]:
             line += f" {row['ref']}"
         if row["state"] == "waiting" and row["id"] in held:
@@ -2357,11 +2388,19 @@ def parser():
                    help="with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store "
                         "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
                         "do not count")
+    a.add_argument("--priority", choices=PRIORITIES,
+                   help="missing reads by source: upstream is urgent, report is low, every other source is normal")
+    a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
+    a.add_argument("--decision", action="store_true", help="the ticket asks the owner to decide; next never lists it as startable")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
     a.add_argument("id")
-    a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"], required=True)
+    a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"])
+    a.add_argument("--priority", choices=PRIORITIES)
+    a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
+    a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
+                   help="mark or unmark the ticket as one that asks the owner to decide")
     a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
@@ -2636,6 +2675,8 @@ def run(argv):
     if args.command == "ticket" and args.action == "add" and args.from_report is not None:
         if args.source != "user" or args.ref or args.request or args.again:
             raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
+        if args.priority or args.paths or args.decision:
+            raise BrigadeError("--from-report takes no --priority, --paths, or --decision")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -2645,6 +2686,8 @@ def run(argv):
             return file_follow_ups(restaurant, name, found, not args.dry_run)
     if args.command == "ticket" and args.action == "add" and args.dry_run:
         raise BrigadeError("--dry-run needs --from-report")
+    if args.command == "ticket" and args.action in ("add", "set") and args.paths is not None:
+        args.paths = ticket_paths(args.paths)
     rails = None
     if args.command == "ticket" and (args.action == "move" or args.action == "add" and args.ref):
         rails = sibling_rails(restaurant)
@@ -2728,7 +2771,8 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again)
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again,
+                              priority=args.priority or "", paths=args.paths, decision=args.decision)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":
@@ -2736,8 +2780,23 @@ def command(restaurant, args, contract=None, rails=None):
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
-        restaurant.update("rail.tsv", args.id, "ticket", state=args.state)
-        return f"{args.id} {args.state}"
+        changes, said = {}, []
+        if args.state:
+            changes["state"] = args.state
+            said.append(args.state)
+        if args.priority:
+            changes["priority"] = args.priority
+            said.append(f"priority {args.priority}")
+        if args.paths is not None:
+            changes["paths"] = ",".join(args.paths)
+            said.append(f"paths {changes['paths']}" if args.paths else "no paths")
+        if args.decision is not None:
+            changes["decision"] = "yes" if args.decision else ""
+            said.append("decision" if args.decision else "no decision")
+        if not said:
+            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, or --no-decision")
+        restaurant.update("rail.tsv", args.id, "ticket", **changes)
+        return f"{args.id} {'; '.join(said)}"
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
