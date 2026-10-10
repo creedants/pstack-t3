@@ -5568,6 +5568,35 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(len(stamps), 1, stamps)
         self.assertEqual([row["backup"] for row in read_legacy(self.home)["backups"]], [f".config/pstack-t3/backups/{stamps[0]}/grok/swarm"])
 
+    def test_an_uninstall_with_a_backup_row_for_a_linked_path_whose_backup_holds_a_nul_byte_removes_every_link_and_exits_0(self):
+        a, swarm = self.installed_for_grok()
+        row = {"harnesses": ["grok"], "original": str(swarm), "backup": f"{state_dir(self.home)}/backups/a\x00b/grok/swarm"}
+        self.add_rows(backups=[row])
+        removed = run(self.home, a, "uninstall", "--harness", "grok")
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(removed.stdout, "removed 3 links, restored 0 entries\n")
+        self.assertEqual(removed.stderr, "")
+        self.assert_gone()
+        self.assertEqual(read_legacy(self.home), {"links": [], "backups": [row]})
+        self.assertIsNone(read_owner(self.home, a))
+
+    def test_prune_empty_out_and_empty_out_matched_given_a_stamp_that_holds_a_nul_byte_return_without_raising(self):
+        a = make_checkout(self.home, "a")
+        state = str(state_dir(self.home))
+        os.makedirs(f"{state}/backups")
+        calls = (
+            f"module.prune({state!r}, {state + '/backups/a' + chr(0) + 'b/grok/swarm'!r})",
+            f"module.empty_out({state!r}, {'a' + chr(0) + 'b'!r}, 'grok')",
+            f"module.empty_out_matched({state!r}, {state!r}, {'a' + chr(0) + 'b'!r}, 'grok')",
+        )
+        for call in calls:
+            with self.subTest(call=call):
+                done = install_hooked(self.home, a, f"{call}\nprint('returned')\nsys.exit(0)")
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(done.stdout, "returned\n")
+                self.assertEqual(done.stderr, "")
+        self.assertEqual(os.listdir(f"{state}/backups"), [])
+
     def test_the_record_files_an_install_writes_have_mode_600(self):
         a, swarm = self.installed_for_grok()
         self.assertEqual(os.stat(legacy_file(self.home)).st_mode & 0o777, 0o600)

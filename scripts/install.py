@@ -92,7 +92,7 @@ def link_target(checkout, path):
 def proves(checkout, entry, original):
     try:
         text = os.readlink(entry)
-    except OSError:
+    except (OSError, ValueError):
         return False
     base = os.path.realpath(os.path.dirname(original))
     return os.path.normpath(os.path.join(base, text)) == link_target(checkout, original)
@@ -1179,7 +1179,7 @@ def empty_out(state, stamp, harness=None):
         return
     # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    with suppress(OSError):
+    with suppress(OSError, ValueError):
         top = os.open(os.path.join(str(state), "backups"), flags)
         try:
             inner = os.open(stamp, flags, dir_fd=top)
@@ -1206,7 +1206,7 @@ def empty_out_matched(state, recorded, stamp, harness):
     if os.rmdir not in os.supports_dir_fd:
         return
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    with suppress(OSError), ExitStack() as stack:
+    with suppress(OSError, ValueError), ExitStack() as stack:
         def opened(path, dir_fd=None):
             descriptor = os.open(path, flags, dir_fd=dir_fd)
             stack.callback(os.close, descriptor)
