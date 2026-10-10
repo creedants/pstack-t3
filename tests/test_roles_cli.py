@@ -3871,6 +3871,19 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             "notes": skipped,
         }})
 
+    def test_validate_reports_a_role_set_to_one_fast_grok_seat_as_excluded_and_short(self):
+        fast = {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"}
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.panel_repo(directory, {"roles": {"review backups": [fast]}})
+            validated = repo.run("validate", "--catalog", catalog)
+        self.assertEqual(validated.returncode, 1)
+        self.assertEqual(validated.stdout, (
+            "review backups: grok/grok-4.7-build-fast: grok-4.7-build-fast is a fast Grok variant, "
+            "and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker\n"
+            "review backups: has 0 usable seats and needs 2\n"
+        ))
+        self.assertEqual(validated.stderr, "")
+
 
 def plain_provider(provider_id, *model_ids, runs=True):
     return {
