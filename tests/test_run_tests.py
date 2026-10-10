@@ -138,7 +138,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK (skipped=1)\n"), result.stderr)
 
-    def test_a_test_with_one_skipped_subtest_exits_0_with_ok_skipped_1_as_the_serial_command_prints_and_counts_1_test(self):
+    def test_a_test_with_one_skipped_subtest_exits_0_with_ok_skipped_1_and_counts_1_test_as_the_serial_command_prints_ok_skipped_1(self):
         self.write("test_subskip.py", """
             import unittest
 

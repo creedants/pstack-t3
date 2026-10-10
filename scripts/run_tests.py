@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test under the start directory in worker processes and print one merged report.
+"""Run every test under the start directory in separate processes and print one merged report.
 
 A listing child discovers the tests. A test the loader built in place of a module gets its outcome there.
 The runner cuts the other tests into shards of at most SHARD_SIZE tests of one module and runs each shard
