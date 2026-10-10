@@ -1429,7 +1429,7 @@ def command_write(args):
     _parent, checking = catalog_for_check(args, catalog, args.catalog)
     problems = validate({"budget": config.get("budget", "default"), "roles": roles, "sources": {}}, checking)
     if problems and not args.force:
-        raise RolesError("refusing to write; these seats do not match the catalog:\n" + "\n".join(problems))
+        raise RolesError("refusing to write without --force:\n" + "\n".join(problems))
     write_atomic(target, config)
     if not args.project and not args.config:
         write_atomic(snapshot_path(), catalog)
@@ -1866,7 +1866,7 @@ def main(argv=None):
     write.add_argument("--set", action="append", help="'<role>=<seat>[;<seat>]', seat = inherit | provider/model[?option=value]")
     write.add_argument("--project", action="store_true", help="write the project file instead of the user file")
     write.add_argument("--keep", action="store_true", help="keep roles already in the target file")
-    write.add_argument("--force", action="store_true", help="write even if seats do not match the catalog")
+    write.add_argument("--force", action="store_true", help="write despite the problems validate lists, except an excluded seat")
     mode = sub.add_parser("mode")
     mode.add_argument("--cwd", default=os.getcwd())
     mode.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")

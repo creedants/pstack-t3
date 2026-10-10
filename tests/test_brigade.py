@@ -529,6 +529,28 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("ticket", "add", "--summary", "Fix the login page")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12"), "T2")
 
+    def test_again_lifts_neither_the_ref_refusal_nor_the_request_refusal_nor_the_source_refusal(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12", "--request", "A2")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--ref", "#12", "--again", ok=False),
+                         "brigade: #12 is already T1 (waiting); nothing added")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--request", "A2", "--again", ok=False),
+                         "brigade: request A2 is already T1; nothing added")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--source", "github", "--again", ok=False),
+                         "brigade: no coordinator owns intake from github; the one that reads it runs set --intake github")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user (request A2)] Fix the login page #12")
+
+    def test_the_skill_quotes_the_same_summary_refusal_ticket_add_prints(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix the login page")
+        line = self.brigade("ticket", "add", "--summary", "Fix the login page", ok=False)
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        section = text.split("## Filing tracker work", 1)[1].split("\n## ", 1)[0]
+        step = next(row for row in section.splitlines() if row.startswith("4. **Refusals.**"))
+        self.assertEqual(line, "brigade: same text as T1 (waiting); nothing added; pass --again to file a second ticket")
+        self.assertIn(f"`{line}`", step)
+        self.assertNotIn("never refused", step)
+
     def test_pass_refuses_a_verifier_from_the_author_family(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "s")

@@ -3738,7 +3738,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(refused.stdout, "")
         self.assertEqual(
             refused.stderr,
-            "error: refusing to write; these seats do not match the catalog:\n" + self.PANEL_PROBLEMS,
+            "error: refusing to write without --force:\n" + self.PANEL_PROBLEMS,
         )
         self.assertFalse(written_before_force)
         self.assertEqual(forced.returncode, 0, forced.stderr)
@@ -3824,7 +3824,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(refused.stdout, "")
         self.assertEqual(
             refused.stderr,
-            "error: refusing to write; these seats do not match the catalog:\n" + self.SHORTFALL,
+            "error: refusing to write without --force:\n" + self.SHORTFALL,
         )
         self.assertFalse(written_before_force)
         self.assertEqual(forced.returncode, 0, forced.stderr)
