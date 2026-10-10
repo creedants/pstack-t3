@@ -3718,14 +3718,40 @@ class OwnershipTest(unittest.TestCase):
     def test_the_commands_doctor_prints_for_a_project_path_with_a_space_quotes_and_a_semicolon_clear_the_claim_in_a_shell(self):
         a = make_checkout(self.home, "a")
         project = self.home / """a "b" 'c'; touch ADVICE_RAN"""
+        self.clear_the_claim_as_printed(a, project, ("--project", str(project)), str(project))
+
+    def test_the_commands_doctor_prints_for_a_project_path_that_begins_with_a_dash_clear_the_claim_in_a_shell(self):
+        a = make_checkout(self.home, "a")
+        install, uninstall = self.clear_the_claim_as_printed(a, a / "-project", ("--project=-project",), "-project")
+        self.assertEqual(install, "python3 scripts/install.py install --harness grok --project=-project")
+        self.assertEqual(uninstall, "python3 scripts/install.py uninstall --harness grok --project=-project")
+
+    def clear_the_claim_as_printed(self, a, project, given, value):
+        """Strand one claim in `project`, then run the two commands doctor prints for it. Returns them as printed.
+
+        `given` is how the caller names the project and `value` is the path inside it. Every run starts in the checkout,
+        which is where the printed commands say to run them.
+        """
+
+        def call(*args):
+            command = [sys.executable, "scripts/install.py", *args, *given, "--harness", "grok"]
+            return subprocess.run(command, env=_env(self.home), cwd=a, capture_output=True, text=True)
+
+        def doctor(status):
+            result = call("doctor")
+            self.assertEqual((result.returncode, result.stderr), (status, ""), result.stdout)
+            return result.stdout.splitlines()
+
+        def outside():
+            return [record for record in snapshot(a) if project not in (a / record[0], *(a / record[0]).parents)]
+
         project.mkdir()
-        scope = ("--project", str(project), "--harness", "grok")
-        self.ok(run(self.home, a, *scope), "linked 3 skills into grok")
+        self.ok(call("install"), "linked 3 skills into grok")
         swarm = project / ".grok" / "skills" / "swarm"
         swarm.unlink()
         owner = project / ".pstack" / "install-owners" / owner_file(self.home, a).name
         self.assertEqual(set(json.loads(owner.read_text())["links"]), {str(swarm.parent / name) for name in NAMES})
-        lines = self.doctor(a, 1, *scope)
+        lines = doctor(1)
         self.assertEqual(len(lines), 2, lines)
         printed = re.fullmatch(
             re.escape(f"        claim {swarm}: nothing is there; ")
@@ -3742,23 +3768,24 @@ class OwnershipTest(unittest.TestCase):
                 f'then "{uninstall}" removes the link and this claim',
             ],
         )
-        self.assertEqual(shlex.split(install), ["python3", "scripts/install.py", "install", "--harness", "grok", "--project", str(project)])
-        self.assertEqual(shlex.split(uninstall), ["python3", "scripts/install.py", "uninstall", "--harness", "grok", "--project", str(project)])
-        checkout = snapshot(a)
+        self.assertEqual(shlex.split(install), ["python3", "scripts/install.py", "install", "--harness", "grok", f"--project={value}"])
+        self.assertEqual(shlex.split(uninstall), ["python3", "scripts/install.py", "uninstall", "--harness", "grok", f"--project={value}"])
+        checkout = outside()
         linked = self.follow(a, install)
         self.assertEqual((linked.returncode, linked.stderr), (0, ""), linked.stdout)
         self.assertEqual(linked.stdout.splitlines(), ["linked 1 skills into grok", f"manifest: {project / '.pstack' / 'install-manifest.json'}"])
         self.assertEqual(os.readlink(swarm), str(a / "skills" / "swarm"))
-        self.assertEqual(self.doctor(a, 0, *scope), [f"grok    {swarm.parent}: 3/3 pstack-t3"])
+        self.assertEqual(doctor(0), [f"grok    {swarm.parent}: 3/3 pstack-t3"])
         removed = self.follow(a, uninstall)
         self.assertEqual((removed.returncode, removed.stderr), (0, ""), removed.stdout)
         self.assertEqual(removed.stdout.splitlines(), ["removed 3 links, restored 0 entries"])
         self.assertFalse(owner.exists())
         self.assertEqual(os.listdir(swarm.parent), [])
-        self.assertEqual(snapshot(a), checkout)
-        self.assertEqual(sorted(os.listdir(self.home)), sorted([project.name, "checkouts"]))
+        self.assertEqual(outside(), checkout)
+        self.assertEqual(sorted(os.listdir(self.home)), sorted({"checkouts", project.relative_to(self.home).parts[0]}))
         self.assertEqual(os.listdir(self.home / "checkouts"), ["a"])
         self.assertEqual(sorted(os.listdir(project)), [".grok", ".pstack"])
+        return install, uninstall
 
     def test_doctor_names_a_claim_whose_link_sits_in_a_holder_beside_it(self):
         a, swarm, raced, aside = self.strand_link()

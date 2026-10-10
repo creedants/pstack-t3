@@ -1357,7 +1357,7 @@ AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory
 
 def command(args, *words):
     """One shell command for a person to copy and run from this checkout. Every argument is quoted for a POSIX shell."""
-    project = ("--project", args.project) if args.project else ()
+    project = (f"--project={args.project}",) if args.project else ()
     return shlex.join(("python3", "scripts/install.py", *words, *project))
 
 
