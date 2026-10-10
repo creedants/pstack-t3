@@ -85,7 +85,7 @@ Open one coordinator per project or focus area. Several can share one repository
 The coordinator and the queue have both run on real work.
 
 - **A pilot.** One coordinator on Claude Opus ran five units of work in 4.5 hours. Four merged as pull requests, and one was dropped because no change beat the noise. Grok wrote every change. Codex and Claude reviewed them, and two of six reviews sent work back for real bugs. The [pilot audit](docs/brigade-plan.md#pilot-bridgekit-performance-2026-10-04) lists what went wrong and what changed.
-- **This repository.** 38 of the 39 pull requests from #8 to #46 landed through the same queue. Each of the 38 names the reviewer and the commit that reviewer checked.
+- **This repository.** 38 of the 39 pull requests from #8 to #46 landed through the same queue. The queue then added a line to each body naming the reviewer and the commit that reviewer checked. It no longer adds that line, and the reviewer stays in the queue's local store.
 
 ## See it in action
 
@@ -291,7 +291,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 - Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. Today syncing is a manual `scripts/sync_upstream.py` run.
 - Cloud workers through local cua container sandboxes. Today landing still only needs a branch, a path lease, and a reviewed commit.
 - Batch bisection in the landing queue. Today a failed batch tries one entry alone, then batches the rest again. `--batch` applies to `push` and `local` only. `merge` and `human` open one PR per change.
-- A cap on running workers that a script enforces. Today `land.py slot` limits how many heavy commands run, and the worker cap is a line in `house-rules.md`.
+- A cap on running workers across repositories. Today `brigade.py set --workers` caps one coordinator's units in progress or in review, and `fire` refuses past it. `land.py cap` caps changes in flight on one repository, and `land.py slot` limits heavy commands on the machine. Nothing counts workers across repositories.
 
 Ideas and bug reports are welcome in [issues](https://github.com/creedants/pstack-t3/issues).
 
