@@ -3,17 +3,41 @@
 
 Opens the coordinator's store and T3 Code's state database read-only.
 Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
+The output and the newline after it take at most --max-bytes bytes.
+Output that would take more is shortened. It counts the agents, work items, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
 
-Every string the page takes from the store or from T3 passes one filter, the class Privacy.
-From each string the filter removes the exact text of each value below that is 4 characters or longer, as written and percent-decoded once and twice.
-The values are the thread ids, sub-agent ids, and request names in the store and in T3's turn and sub-agent rows.
-They are also the provider names and instance ids of the page's threads that are not one of this tool's provider names.
-They are also each run of characters around an at sign in a title, a summary, a work item id, a pull request value, a model name, or the store's name.
-They are also the paths of the store, the project it records, T3 Code's base directory and database, the home directory, and the --out file, each as an absolute path, with symbolic links followed, and as given when that is absolute.
-From the first line of a title, a request name's words, a summary, a work item id, and the store's name the filter then drops each word that holds a slash, a backslash, a percent escape, a leading tilde, a colon or an at sign between two characters, a UUID, 6 or more digits, 7 or more hexadecimal characters with a digit and no letter or digit beside them, or an underscore before 6 or more letters and digits that hold a lower-case letter and a digit or an upper-case letter.
-A model name is printed when it is at most 48 characters of lower-case letters and digits joined by single dots and hyphens, starts with a letter, and holds none of those values and none of those id shapes but 8 digits that start with 20. One leading provider name and slash is dropped first. Any other model reads `other model`.
-A pull request link is printed only as https://host/owner/repository/pull/number, when the host, the owner, and the repository hold nothing the filter removes. A work item on the page with any other value that is not blank has no link and is counted in a note.
-A label can hold the words of a request name.
+Every string a page emits passes one filter after its parts are joined.
+In the HTML document that is each string of the data element. In the plain form it is each line.
+The filter drops each character UTF-8 cannot hold and writes each control character, line separator, and paragraph separator as a space.
+It then removes each word that holds private text, with the spaces before the word, and repeats until no word does.
+A string that still holds private text after 8 passes is emitted empty.
+The filter reads each string as written, as the HTML document writes it, and both with their percent escapes decoded once and twice.
+
+Private text is an identifier or a path this run read, in any case, as stored and with its own percent escapes decoded once and twice.
+The identifiers are the thread ids, the sub-agent ids, and the work items' task values in the store and in T3's turn and sub-agent rows.
+An identifier that reads as ordinary words is not private text.
+That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
+A form of fewer than 4 characters, or of spaces only, is not private text either.
+The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
+Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
+
+Private text is also text of one of these shapes, in any case.
+A UUID.
+One of mcp, thread, node, run, task, run-attempt, provider-turn, provider-session, context-transfer, and context-handoff anywhere in a word, then a colon, then a letter, a digit, an underscore, or a percent sign.
+An email address, which is an at sign between a local part and a domain name that holds a dot before two or more letters.
+`file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
+A drive path, which is a letter with no letter or digit before it, then a colon, then a slash or a backslash.
+A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
+Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde.
+Or it starts with a tilde or a tilde and a name before a slash or a backslash, with $HOME or ${HOME} before a slash or a backslash, or with two backslashes before a letter, a digit, an underscore, or a dot.
+A path after a quotation mark or a backtick is private text up to the next such mark.
+Any other path is private text to the end of its word and through each next word that holds a slash or a backslash.
+
+The filter removes a word for no other reason.
+A work item id, a summary, a title, the store's name, and a model name stay unless they hold private text. A relative path such as src/a.py stays.
+The name of the request that started a delegated task reaches a page only as separate words in a label. The filter does not look for that name in other text.
+A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
+A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 """
 
 import argparse
@@ -37,7 +61,7 @@ DEFAULT_HOURS = 3.0
 MIN_HOURS = 0.01
 MAX_HOURS = 168.0
 BUDGET = 16000
-FIXED_BUDGET = 7500
+FIXED_BUDGET = 7700
 # html_preview and html_render refuse more than 512000 characters.
 MAX_BUDGET = 500000
 
@@ -95,6 +119,7 @@ PROVIDERS = {"claudeAgent": ("Claude", 1), "codex": ("Codex", 2), "grok": ("Grok
 OTHER_PROVIDER = ("Other", 6)
 OTHER_MODEL = "other model"
 UNGROUPED = "Not tied to a work item"
+UNNAMED = "work item"
 TITLE_CHARS = 60
 LABEL_CHARS = 40
 
@@ -197,7 +222,7 @@ class T3:
     other_threads: int
     unknown_status: int
     unstarted: int = 0
-    private: frozenset = frozenset()
+    ids: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -284,7 +309,7 @@ def parser():
     top.add_argument("--hours", type=float, default=DEFAULT_HOURS, help="how many hours back the page looks, from 0.01 to 168, rounded to whole seconds")
     top.add_argument("--text", action="store_true", help="print plain lines instead of the HTML document")
     top.add_argument("--out", help="write the output to this file and print `wrote <file> (<n> bytes)` instead; a file inside T3 Code's directory or the store is refused")
-    top.add_argument("--max-bytes", type=int, default=BUDGET, help="the most bytes the HTML document and the newline after it take, from 16000 to 500000")
+    top.add_argument("--max-bytes", type=int, default=BUDGET, help="the most bytes the output and the newline after it take, from 16000 to 500000")
     top.add_argument("--t3-home", help="T3 Code's base directory (default $T3CODE_HOME, else ~/.t3)")
     return top
 
@@ -322,7 +347,8 @@ def run(argv):
         connection.close()
     privacy = privacy_of(store, t3, (directory, path, path.parents[1], Path.home(), *((args.out,) if args.out else ())))
     page = build_page(store, t3, window, privacy)
-    output = render_text(page) if args.text else fit(page, args.max_bytes - len("\n"))[1]
+    budget = args.max_bytes - len("\n")
+    output = fit_text(page, budget, privacy.clean) if args.text else fit(page, budget, privacy.clean)[1]
     if target is None:
         return output
     data = output.encode(errors="backslashreplace")
@@ -577,6 +603,19 @@ def touches(start, end, window):
     return start <= window.end and (end is None or end >= window.start)
 
 
+def check_parents(parent_of):
+    """Refuse a thread that is its own parent or its own ancestor. The rows below a coordinator are drawn as a tree."""
+    clear = set()
+    for thread in parent_of:
+        chain = set()
+        while thread in parent_of and thread not in clear:
+            if thread in chain:
+                raise SourceError(f"T3's {SUBAGENTS} makes a thread its own ancestor; {CHANGED}")
+            chain.add(thread)
+            thread = parent_of[thread]
+        clear |= chain
+
+
 def read_t3(connection, window, roots):
     parent_of, delegations, nodes, unstarted, seen = {}, {}, {}, [], set()
     for node, parent, child, status, started, completed in connection.execute(
@@ -596,6 +635,7 @@ def read_t3(connection, window, roots):
         elif child not in delegations or start >= delegations[child].start:
             parent_of[child] = parent
             delegations[child] = Delegation(parse_status(status, end is not None), start, end)
+    check_parents(parent_of)
     # Every turn is read and compared as an instant. A filter on the stored text would hide a row whose text sorts before the window.
     turns, ran = {}, set()
     for thread, status, requested, completed in connection.execute(f"select thread_id, status, requested_at, completed_at from {RUNS}"):
@@ -613,12 +653,11 @@ def read_t3(connection, window, roots):
         for thread, title, provider, payload in connection.execute(
                 f"select thread_id, title, default_provider, payload_json from {THREADS} where thread_id in ({marks})", batch):
             described[thread] = (text_in(title, THREADS, "title", empty=True), text_in(provider, THREADS, "default_provider"), *selection_of(payload))
-    agents, instances = {}, set()
+    agents = {}
     for thread in sorted(kept):
         if thread not in described:
             raise SourceError(f"T3's {THREADS} has no row for a thread that {RUNS} or {SUBAGENTS} names; {CHANGED}")
-        title, provider, model, instance = described[thread]
-        instances.update((provider, instance))
+        title, provider, model, _ = described[thread]
         own = tuple(sorted(turns.get(thread, ()), key=lambda turn: turn.start))
         delegation = delegations.get(thread)
         if delegation and not (thread in active and touches(delegation.start, delegation.end, window)):
@@ -626,8 +665,7 @@ def read_t3(connection, window, roots):
         agents[thread] = Agent(thread, parent_of.get(thread), request_name(thread), provider, model, title, own, delegation)
     statuses = [record.status for agent in agents.values() for record in (*agent.turns, agent.delegation) if record]
     waiting = sum(parent in kept and (child is None or child not in turns) for parent, child in unstarted)
-    private = frozenset(seen | ran | (instances - set(PROVIDERS)))
-    return T3(agents, {node: child for node, child in nodes.items() if child in kept}, others, statuses.count(Status.UNKNOWN), waiting, private)
+    return T3(agents, {node: child for node, child in nodes.items() if child in kept}, others, statuses.count(Status.UNKNOWN), waiting, frozenset(seen | ran))
 
 
 def selection_of(payload):
@@ -645,21 +683,34 @@ def selection_of(payload):
     return tuple(selection[key] for key in SELECTION_KEYS)
 
 
-UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
-ID_LIKE = rf"{UUID}|(?<![0-9A-Za-z])(?=[0-9a-fA-F]*[0-9])[0-9a-fA-F]{{7,}}(?![0-9A-Za-z])|[0-9]{{6,}}|_(?=[0-9A-Za-z]*[0-9A-Z])(?=[0-9A-Za-z]*[a-z])[0-9A-Za-z]{{6,}}"
-# The shapes of a word the module docstring says the filter drops.
-PRIVATE_WORD = re.compile(rf"[/\\]|^~|%[0-9A-Fa-f]{{2}}|.[:@].|{ID_LIKE}")
-OPENERS = "\"'`([<{"
-EMAIL = re.compile(r"[^\s@<>()\[\]\"',;:]+@[^\s@<>()\[\]\"',;:]+")
-MODEL = re.compile(r"[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*")
+UUID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+# T3 Code writes one of these words and a colon before an id. A live T3 database read on 2026-10-10 used them for threads, runs, sub-agents,
+# delegated tasks, provider threads, sessions, and turns, and context transfers and handoffs. `thread` also matches in `provider-thread`.
+T3_KINDS = ("mcp", "thread", "node", "run", "task", "run-attempt", "provider-turn", "provider-session", "context-transfer", "context-handoff")
+OPENS = r"(?:^|(?<=[\s\"'`(\[{<>=:,;|]))"
+PATH = rf"(?:{OPENS}(?:/[\w.~]|~(?:[^\W\d][\w.-]*)?[/\\]|\$\{{?HOME\}}?[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
+# The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
+SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:[\w/\\.~%]", re.IGNORECASE)
+LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
+LOCAL_CHARS = 64
+DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
+QUOTES = "\"'`"
+WORD_END = re.compile(r"\S*")
+NEXT_PATH_WORD = re.compile(r"\s+\S*[/\\]\S*")
+WORD = re.compile(r"\S+")
+RUN = r"(?:[^\W\d_]+|\d+|[^\W_]{1,8})"
+ORDINARY = re.compile(rf"{RUN}(?:[ .-]{RUN})*")
+ORDINARY_CHARS = 48
+ESCAPES = re.compile("(?:%[0-9A-Fa-f]{2})+")
+ANCHOR = 4
+PASSES = 8
 MODEL_CHARS = 48
-MODEL_DATE = re.compile(r"20[0-9]{6}")
 HOST = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*")
 PULL = re.compile(r"/(?!\.+/)([A-Za-z0-9._-]+)/(?!\.+/)([A-Za-z0-9._-]+)/pull/[0-9]+")
-ANCHOR = 4
 REFUSED, CUT = "refused", "cut"
 PATH_TAIL = re.compile(r"/root/(?:\S*/)?([A-Za-z0-9_-]+)")
 SLUG = re.compile(r"[a-z0-9.]+(?:-[a-z0-9.]+)+")
+HASH = re.compile(r"(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,}")
 ROLE = re.compile(r"Act as the (.+?) sub-agent")
 UNIT_SUFFIX = re.compile(r"(.+?)[a-z][0-9]*")
 BAR = {
@@ -667,55 +718,172 @@ BAR = {
     Status.WAITING: Status.DONE, Status.DONE: Status.DONE,
     Status.FAILED: Status.FAILED, Status.STOPPED: Status.STOPPED, Status.UNKNOWN: Status.UNKNOWN,
 }
+ENTITIES = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ('"', "&quot;"), ("\\", "&#92;"))
+UNPRINTED = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def entities(text):
+    text = UNPRINTED.sub(" ", text)
+    for character, entity in ENTITIES:
+        text = text.replace(character, entity)
+    return text
+
+
+def plain(text):
+    """text without a character UTF-8 cannot hold, and with one space for each character entities() writes as a space."""
+    return UNPRINTED.sub(" ", text.encode("utf-8", "ignore").decode())
+
+
+def lowered(text):
+    """text in lower case, one character for each character of text."""
+    low = text.lower()
+    return low if len(low) == len(text) else "".join(char.lower() if len(char.lower()) == 1 else char for char in text)
+
+
+def ordinary(text):
+    """True for at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run that holds both letters and digits is at most 8 characters."""
+    return len(text) <= ORDINARY_CHARS and ORDINARY.fullmatch(text) is not None
+
+
+def unescaped(text, where=None):
+    """text with each run of percent escapes decoded once, and for each character of the result the span of the source it came from.
+    where gives that span for each character of text. Without it, text is the source.
+    """
+    where = [(at, at + 1) for at in range(len(text))] if where is None else where
+    parts, origin, at = [], [], 0
+    for run in ESCAPES.finditer(text):
+        decoded = bytes.fromhex(run.group().replace("%", "")).decode("utf-8", "replace")
+        parts += [text[at:run.start()], decoded]
+        origin += where[at:run.start()] + [(where[run.start()][0], where[run.end() - 1][1])] * len(decoded)
+        at = run.end()
+    return "".join([*parts, text[at:]]), origin + where[at:]
+
+
+def as_entities(text):
+    """entities(text) for a text plain() returned, and for each character of it the span of text it came from."""
+    written = dict(ENTITIES)
+    parts = [written.get(char, char) for char in text]
+    return "".join(parts), [(at, at + 1) for at, part in enumerate(parts) for _ in part]
+
+
+def views(text):
+    """The forms of text the filter reads: as written and as entities() writes it, each also with its percent escapes decoded once and twice."""
+    for view, where in ((text, None), *((as_entities(text),) if any(char in text for char, _ in ENTITIES) else ())):
+        yield view, where
+        for _ in range(2):
+            if not ESCAPES.search(view):
+                break
+            view, where = unescaped(view, where)
+            yield view, where
+
+
+def path_end(text, match):
+    """Where the path that starts at match ends. After a quotation mark it ends at the next such mark.
+    With no such pair it ends with its word, or with the last of the words after it that each hold a slash or a backslash.
+    """
+    quote = text[match.start() - 1:match.start()]
+    close = text.find(quote, match.end()) if quote and quote in QUOTES else -1
+    if close >= 0:
+        return close + 1
+    end = WORD_END.match(text, match.end()).end()
+    more = NEXT_PATH_WORD.match(text, end)
+    while more:
+        end = more.end()
+        more = NEXT_PATH_WORD.match(text, end)
+    return end
+
+
+def without(text, spans):
+    """text without each word that a span touches, and without the spaces before that word. The spaces before the first word of text stay."""
+    marked = bytearray(len(text))
+    for start, end in spans:
+        marked[start:end] = b"\x01" * (end - start)
+    words = list(WORD.finditer(text))
+    keeps = [1 not in marked[word.start():word.end()] for word in words]
+    if True not in keeps:
+        return ""
+    parts = [text[:words[0].start()]]
+    for index, word in enumerate(words):
+        if keeps[index]:
+            parts += [text[words[index - 1].end():word.start()] if len(parts) > 1 else "", word.group()]
+    return "".join(parts) + (text[words[-1].end():] if keeps[-1] else "")
 
 
 class Privacy:
-    """The filter every string from the store or from T3 passes before it is on a page.
-    text() is that filter. model() and link() call it and accept one fixed shape each.
+    """The one filter of both output forms. The module docstring states what it removes.
+    clean() is the filter. encode() passes it each string of the document's data, and render_text passes it each line.
+    field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
 
-    def __init__(self, values):
-        forms = set()
-        for value in values:
-            for _ in range(3):
-                forms.add(value)
-                value = unquote(value)
+    def __init__(self, identifiers=(), paths=()):
         index = {}
-        for form in forms:
-            if len(form) >= ANCHOR:
-                index.setdefault(form[:ANCHOR], []).append(form)
-        self.index = {anchor: sorted(found, key=len, reverse=True) for anchor, found in index.items()}
+        for value, path in (*((value, False) for value in identifiers), *((value, True) for value in paths)):
+            for _ in range(3):
+                low = lowered(value)
+                if len(low) >= ANCHOR and low.strip() and (path or not ordinary(value)):
+                    index.setdefault(low[:ANCHOR], set()).add(low)
+                value = unescaped(value)[0]
+        self.index = {anchor: tuple(found) for anchor, found in index.items()}
+        self.cache = {}
 
-    def without_known(self, text):
-        """text with a space in place of each value this run read, the longest value first where two start at one place."""
-        kept, at = [], 0
-        while at < len(text):
-            found = next((value for value in self.index.get(text[at:at + ANCHOR], ()) if text.startswith(value, at)), None)
-            kept.append(" " if found else text[at])
-            at += len(found) if found else 1
-        return "".join(kept)
+    def found(self, text):
+        """The spans of text that hold an indexed identifier or path in any case, or text of a private shape."""
+        low = lowered(text)
+        for at in range(len(low) - ANCHOR + 1 if self.index else 0):
+            for form in self.index.get(low[at:at + ANCHOR], ()):
+                if low.startswith(form, at):
+                    yield at, at + len(form)
+        covered = 0
+        for match in SHAPES.finditer(text):
+            if match.start() >= covered:
+                covered = path_end(text, match) if match.lastgroup == "path" else match.end()
+                yield match.start(), covered
+        at = text.find("@")
+        while at >= 0:
+            local, domain = LOCAL.search(text, max(0, at - LOCAL_CHARS), at), DOMAIN.match(text, at + 1)
+            if local and domain:
+                yield local.start(), domain.end()
+            at = text.find("@", at + 1)
 
-    def text(self, value):
-        """The first line of value with single spaces, repeated until it holds no value this run read and no word of a private shape."""
-        lines = value.encode("utf-8", "ignore").decode().strip().splitlines()
-        line = " ".join(lines[0].split()) if lines else ""
+    def private(self, text):
+        """The spans of text that found() gives for any of views(text)."""
+        return [(start, end) if where is None else (where[start][0], where[end - 1][1])
+                for view, where in views(text) for start, end in self.found(view)]
+
+    def clean(self, text):
+        """plain(text) without each word that holds private text, repeated until no word does. A text that still holds some after 8 passes becomes empty."""
+        if text not in self.cache:
+            kept = plain(text)
+            for _ in range(PASSES):
+                spans = self.private(kept)
+                if not spans:
+                    break
+                kept = without(kept, spans)
+            else:
+                kept = "" if self.private(kept) else kept
+            self.cache[text] = kept
+        return self.cache[text]
+
+    def field(self, text):
+        """The first line of text with single spaces between its words, as clean() leaves it."""
+        line = (text.strip().splitlines() or [""])[0]
         while True:
-            words = self.without_known(line).split()
-            kept = " ".join(word for word in words if not PRIVATE_WORD.search(word.lstrip(OPENERS)))
-            if kept == line:
-                return kept
-            line = kept
+            tidy = " ".join(self.clean(line).split())
+            if tidy == line:
+                return tidy
+            line = tidy
 
     def model(self, value):
-        """value without one leading `<a key of PROVIDERS>/`, or OTHER_MODEL when that is not a model name by the module docstring's rule."""
+        """value as field() leaves it, without one leading `<a key of PROVIDERS>/`, cut to 48 characters. OTHER_MODEL when nothing is left."""
         driver, slash, rest = value.partition("/")
-        name = rest if slash and driver in PROVIDERS else value
-        parts = [part for part in re.split("[.-]", name) if not MODEL_DATE.fullmatch(part)]
-        plain = MODEL.fullmatch(name) and len(name) <= MODEL_CHARS and self.text(" ".join(parts)) == " ".join(parts) and self.without_known(name) == name
-        return name if plain else OTHER_MODEL
+        name = self.field(rest if slash and driver in PROVIDERS else value)
+        return short(name, MODEL_CHARS) or OTHER_MODEL
 
     def link(self, value):
-        """The pull request address, or no address and REFUSED. A blank value gives neither. Userinfo, a query, and a fragment are not kept. A value with a port is refused."""
+        """The pull request address of value and no reason, or no address and REFUSED. A blank value gives neither.
+        The address is https, the host, and the path /owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
+        A value in another form, a value with a port, and an address clean() would change are refused.
+        """
         if not value.strip():
             return "", ""
         try:
@@ -723,25 +891,27 @@ class Privacy:
             host, port = parts.hostname or "", parts.port
         except ValueError:
             return "", REFUSED
-        address = PULL.fullmatch(parts.path)
-        if parts.scheme != "https" or port is not None or not HOST.fullmatch(host) or not address:
+        if parts.scheme != "https" or port is not None or not HOST.fullmatch(host) or not PULL.fullmatch(parts.path):
             return "", REFUSED
-        if any(self.text(word) != word for word in (host, *address.groups())):
-            return "", REFUSED
-        return f"https://{host}{parts.path}", ""
+        address = f"https://{host}{parts.path}"
+        return (address, "") if self.clean(address) == address else ("", REFUSED)
 
 
 def privacy_of(store, t3, paths=()):
-    ids = {*store.coordinators, *t3.private}
+    """The filter for one run. Its identifiers are the thread ids, sub-agent ids, and task values of the store and of T3's rows.
+    Its paths are the project root the store records and the given paths.
+    """
+    ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
         ids.update((unit.worker, unit.task, *unit.earlier_workers))
-    names = {request_name(value) or "" for value in ids}
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
-    read = [store.name, *(text for unit in store.units for text in (unit.id, unit.summary, unit.pr)),
-            *(text for agent in t3.agents.values() for text in (agent.title, agent.model))]
-    return Privacy({*ids, *names, *places, *(address for text in read for address in EMAIL.findall(text))})
+    return Privacy(ids, places)
+
+
+def short(text, limit):
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 def unit_named(part, units):
@@ -780,37 +950,46 @@ def assign(store, t3):
     return {thread: assignment for thread, assignment in found.items() if thread not in coordinators}
 
 
-def words_of(name, store, units, privacy):
+def words_of(name, store=None, units=()):
+    """The parts of a request name between its hyphens, joined by spaces, with `verify` read as `review` and without each part HASH matches.
+    With a store, also without a leading `brigade`, the store's leading slug parts, and each part that names a work item.
+    """
     parts = name.split("-")
-    if parts[0] == "brigade":
+    if store and parts[0] == "brigade":
         del parts[0]
-    while parts and parts[0] in store.slug_parts:
+    while store and parts and parts[0] in store.slug_parts:
         del parts[0]
-    return privacy.text(" ".join("review" if part == "verify" else part for part in parts if not unit_named(part, units)))
+    return " ".join("review" if part == "verify" else part for part in parts if not (store and unit_named(part, units)) and not HASH.fullmatch(part))
 
 
 def label_of(agent, store, unit, privacy):
+    """`worker` or `earlier worker` for a thread the store records as one. For any other thread, the first of these that is not empty, and `sub-agent` or `agent` when all are:
+    the written title, the request name's words without the parts the store explains, the role an `Act as` title names, and all the request name's words.
+    A request name reaches a label only through words_of. A title that holds its own row's request name of two or more parts is used only when it is a slug, which words_of reads.
+    A title that clean() would change is not used.
+    """
     if any(agent.thread == other.worker for other in store.units):
         return "worker"
     if any(agent.thread in other.earlier_workers for other in store.units):
         return "earlier worker"
     units = {other.id.lower(): other.id for other in store.units}
-    line = " ".join((agent.title.strip().splitlines() or [""])[0].split())
+    line = " ".join(plain((agent.title.strip().splitlines() or [""])[0]).split())
+    request = agent.request or ""
     written = ""
-    if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")) and privacy.without_known(line) == line:
+    if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")) and not ("-" in request and request.lower() in line.lower() and not SLUG.fullmatch(line)):
         tail = PATH_TAIL.fullmatch(line)
-        whole = tail.group(1) if tail else line
-        written = privacy.text(whole)
-        if written != whole:
+        written = tail.group(1) if tail else line
+        if privacy.field(written) != written:
             written = ""
         if unit:
             written = re.sub(rf"^{re.escape(unit)}(?::\s*|\s+)", "", written)
         if SLUG.fullmatch(written):
-            written = words_of(written, store, units, privacy)
+            written = words_of(written, store, units)
     role = ROLE.match(line)
-    for text in (written, words_of(agent.request or "", store, units, privacy), privacy.text(role.group(1)) if role else ""):
+    for text in (written, words_of(request, store, units), role.group(1) if role else "", words_of(request)):
+        text = privacy.field(text)
         if text:
-            return text if len(text) <= LABEL_CHARS else text[:LABEL_CHARS - 1].rstrip() + "…"
+            return short(text, LABEL_CHARS)
     return "sub-agent" if agent.parent else "agent"
 
 
@@ -894,12 +1073,12 @@ def with_parents(agents):
 def item_of(unit, privacy):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
-    return Item(privacy.text(unit.id), privacy.text(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why)
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why)
 
 
 def build_page(store, t3, window, privacy):
-    """Each string of the page that comes from the store or from T3 passes privacy.text, privacy.model, or privacy.link.
-    The other strings are the constants of this file and numbers.
+    """Each string of the page that comes from the store or from T3 is a value privacy.field, privacy.model, or privacy.link returned.
+    The other strings are the constants of this file and numbers. No page type holds an id or a path.
     """
     def row(agent, depth, label):
         turn = open_turn(agent)
@@ -943,7 +1122,7 @@ def build_page(store, t3, window, privacy):
 
     items = tuple(item_of(unit, privacy) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
-    return Page(privacy.text(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
+    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
 
 KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
@@ -961,21 +1140,11 @@ LINK_BYTES = 90
 JOINED = (Status.RUNNING, Status.QUEUED, Status.FAILED, Status.UNKNOWN, Status.STOPPED, Status.DONE)
 
 
-ENTITIES = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ('"', "&quot;"), ("\\", "&#92;"))
-UNPRINTED = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
-
-
-def entities(text):
-    text = UNPRINTED.sub(" ", text)
-    for character, entity in ENTITIES:
-        text = text.replace(character, entity)
-    return text
-
-
-def encode(data):
+def encode(data, clean):
+    """data as JSON. Each string value in it is clean(value), then written as entities."""
     def written(value):
         if isinstance(value, str):
-            return entities(value)
+            return entities(clean(value))
         if isinstance(value, dict):
             return {key: written(each) for key, each in value.items()}
         return [written(each) for each in value] if isinstance(value, (list, tuple)) else value
@@ -1098,13 +1267,16 @@ def joined(spans, limit):
     return tuple(sorted(spans, key=lambda span: span.status is Status.FAILED))
 
 
-def cap_everything(page):
-    def shown(item):
-        fits = size(item.pr) <= LINK_BYTES
-        return replace(item, id=clip(item.id, ID_BYTES), summary=clip(item.summary, SUMMARY_BYTES), pr=item.pr if fits else "", no_link=item.no_link if fits else CUT)
+def shown(item):
+    fits = size(item.pr) <= LINK_BYTES
+    return replace(item, id=clip(item.id, ID_BYTES), summary=clip(item.summary, SUMMARY_BYTES), pr=item.pr if fits else "", no_link=item.no_link if fits else CUT)
 
-    def narrow(row, limit):
-        return replace(row, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=joined(row.spans, limit))
+
+def narrow(row, limit=None):
+    return replace(row, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=row.spans if limit is None else joined(row.spans, limit))
+
+
+def cap_everything(page):
 
     def running(row):
         return row.open_seconds is not None
@@ -1134,14 +1306,27 @@ def cap_everything(page):
 FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_items, limit) for limit in KEPT_ITEMS), cap_everything)
 
 
-def fit(page, budget):
-    document = render_html(page)
+def fit(page, budget, clean):
+    document = render_html(page, clean)
     for fold in FOLDS:
         if len(document.encode()) <= budget:
             break
         page = fold(page)
-        document = render_html(page)
+        document = render_html(page, clean)
     return page, document
+
+
+def shortened(page):
+    """The page the plain form prints when it is over its budget. Every row and item stays.
+    The name, each item's id and summary, and each group row's label and model are clipped as cap_everything clips them, and each link it would leave out is left out.
+    """
+    groups = tuple(replace(group, item=shown(group.item) if group.item else None, rows=tuple(narrow(row) for row in group.rows)) for group in page.groups)
+    return replace(page, name=clip(page.name, NAME_BYTES), groups=groups, items=tuple(shown(item) for item in page.items))
+
+
+def fit_text(page, budget, clean):
+    text = render_text(page, clean)
+    return text if len(text.encode()) <= budget else render_text(shortened(page), clean)
 
 
 def say(number, one, several, **values):
@@ -1152,9 +1337,10 @@ def items_of(page):
     return [*page.items, *dict.fromkeys(group.item for group in page.groups if group.item and group.item not in page.items)]
 
 
-def notes(page):
+def notes(page, listed):
+    """The notes of a page. listed holds the work items the form prints, so a link is counted only for an item the reader sees."""
     rows = [row for group in page.groups for row in group.rows]
-    links = [item.no_link for item in items_of(page)]
+    links = [item.no_link for item in listed]
     below = [row.stands_for for row in rows if row.stands_for > 1 and row.depth]
     whole = [row for row in rows if row.stands_for > 1 and not row.depth]
     hidden, lines = page.hidden, []
@@ -1314,18 +1500,24 @@ RENDERER = squeezed("""
         const above = [];
         for (const r of rows) {
           above[r[0]] = r[1];
-          if (r[8] != null) open[r[4]].push([(index < 0 ? '' : D.I[index][0] + ' ') + r[1], (D.M[r[2]] || '') + (r[0] ? ' · under ' + above[r[0] - 1] : ''), r[8]]);
+          if (r[8] != null) open[r[4]].push([index < 0 ? '' : D.I[index][0], r[1], D.M[r[2]], r[0] ? above[r[0] - 1] : '', r[8]]);
         }
       }
       ['Running now', 'Queued'].forEach((heading, i) => {
         if (open[i].length) {
           add(root, 'h2', '', heading);
           const list = add(root, 'div', 'now');
-          for (const [name, detail, elapsed] of open[i]) {
+          for (const [item, label, model, parent, elapsed] of open[i]) {
             const line = add(list, 'div');
             add(line, 'i', i ? 'mark' : 'mark pulse');
-            add(line, 'b', '', name);
-            add(line, 'span', 'sum', detail);
+            if (item) add(line, 'b', '', item);
+            add(line, 'b', '', label);
+            const detail = add(line, 'span', 'sum');
+            add(detail, 'span', '', model);
+            if (parent) {
+              add(detail, 'span', '', ' · under ');
+              add(detail, 'span', '', parent);
+            }
             add(line, 'span', '', elapsed);
           }
         }
@@ -1350,9 +1542,9 @@ RENDERER = squeezed("""
       }
       const lane = (cls, depth, label, model, status, time, spans) => {
         const row = add(lanes, 'div', 'row ' + cls), name = add(row, 'div', 'l d' + depth), track = add(row, 'div', 't');
-        add(name, 'span', '', label);
-        add(name, 'small', '', D.M[model]);
-        row.title = [label, D.M[model], D.S[status], time].filter(Boolean).join(' · ');
+        add(name, 'span', '', label).title = label;
+        add(name, 'small', '', D.M[model]).title = D.M[model] || '';
+        row.title = D.S[status] + ' · ' + time;
         for (let i = 0; i < spans.length; i += 3) {
           const bar = add(track, 'i', 'b ' + kinds[spans[i + 2]]);
           bar.style.left = 'min(' + spans[i] / 10 + '%,100% - 3px)';
@@ -1380,7 +1572,10 @@ RENDERER = squeezed("""
           add(chip, 'b', 'chip ' + item[3], item[2]);
         }
       }
-      const foot = add(root, 'div', 'foot', 'As of ' + clock(start + length) + ' for ' + D.c + '. Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns.');
+      const foot = add(root, 'div', 'foot');
+      add(foot, 'span', '', 'As of ' + clock(start + length) + ' for ');
+      add(foot, 'span', '', D.c);
+      add(foot, 'span', '', '. Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns.');
       for (const note of D.N) add(foot, 'div', '', note);
     }
 """)
@@ -1416,7 +1611,7 @@ def wire(page):
         "I": [[item.id, item.summary, item.state, item.tone, item.pr, int(item in page.items)] for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
         "M": models,
-        "N": notes(page),
+        "N": notes(page, items),
     }
 
 
@@ -1427,8 +1622,9 @@ def checksum(text):
     return value
 
 
-def render_html(page):
-    data = encode(wire(page))
+def render_html(page, clean):
+    """The document. The only strings in it that are not constants of this file are in the data element, and encode() passes each of those to clean."""
+    data = encode(wire(page), clean)
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
         f"<title>Agent activity</title><style>{STYLE}</style><div id=o></div>"
@@ -1449,14 +1645,18 @@ def dur(seconds):
     return f"{seconds // 3600}h {seconds % 3600 // 60}m"
 
 
-def render_text(page):
+def render_text(page, clean):
+    """The plain lines. Each line is joined from its parts first and then passed to clean, whole."""
     def capped(lines, limit, noun):
         return lines[:limit] + ([f"  and {count(len(lines) - limit, 'more ' + noun)}"] if len(lines) > limit else [])
 
     def line(*parts):
         return "  " + "   ".join(part for part in parts if part)
 
-    running, queued, failed, items, loose = [], [], [], [], []
+    def worked(rows):
+        return f"{dur(sum(row.seconds for row in rows))} at work"
+
+    running, queued, failed = [], [], []
     for group in page.groups:
         above = {}
         for row in group.rows:
@@ -1467,14 +1667,12 @@ def render_text(page):
                 (queued if waits else running).append(line(name, row.model, f"{'queued' if waits else 'running'} for {dur(row.open_seconds)}",
                                                            f"under {above[row.depth - 1]}" if row.depth else ""))
             if row.status is Status.FAILED:
-                failed.append(line(name, row.model, f"{dur(row.seconds)} at work"))
-        work = f"{people(group.agents, group.subagents)}, {dur(sum(row.seconds for row in group.rows))} at work"
-        if group.item:
-            items.append(line(group.item.id, group.item.state, group.item.summary, work, group.item.pr))
-        else:
-            loose.append(line(UNGROUPED, work))
-    drawn = [group.item for group in page.groups]
-    items += [line(item.id, item.state, item.summary, "no activity in this window", item.pr) for item in page.items if item not in drawn]
+                failed.append(line(name, row.model, worked([row])))
+    drawn = {group.item: f"{people(group.agents, group.subagents)}, {worked(group.rows)}" for group in page.groups if group.item}
+    listed = [*drawn, *(item for item in page.items if item not in drawn)][:TEXT_ITEMS]
+    items = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
+    more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
+    loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
     totals = page.totals
     lines = [
         f"Agent activity for {page.name}, last {span(page.window)}",
@@ -1483,12 +1681,12 @@ def render_text(page):
     for heading, body in (
             ("Running now", capped(running, TEXT_RUNNING, "running agent")),
             ("Queued", capped(queued, TEXT_QUEUED, "queued agent")),
-            ("Work items", capped(items, TEXT_ITEMS, "work item") + loose),
+            ("Work items", items + ([f"  and {count(more, 'more work item')}"] if more else []) + loose),
             ("Failed", capped(failed, TEXT_FAILED, "failed agent")),
-            ("Notes", ["  " + note for note in notes(page)])):
+            ("Notes", ["  " + note for note in notes(page, listed)])):
         if body:
             lines += [heading, *body]
-    return "\n".join(lines)
+    return "\n".join(clean(line) for line in lines)
 
 
 if __name__ == "__main__":

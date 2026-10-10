@@ -2,6 +2,7 @@ import fcntl
 import hashlib
 import json
 import os
+import random
 import re
 import runpy
 import shutil
@@ -575,6 +576,15 @@ class ReadTest(ActivityCase):
             MOD["check_coordinator"](connection, (COORDINATOR,))
 
 
+def same(text):
+    return text
+
+
+def CLEAN(text):
+    """The filter with no identifier and no path of a run."""
+    return MOD["Privacy"]().clean(text)
+
+
 def page_of(fixture, hours=3.0):
     store, t3, window = fixture.write().read(hours)
     return MOD["build_page"](store, t3, window, MOD["privacy_of"](store, t3))
@@ -800,7 +810,7 @@ class PageTest(ActivityCase):
         self.assertEqual((page.totals, page.legend), (MOD["Totals"](running=0, agents=0, subagents=1, failed=1), (("Claude", 1),)))
         self.assertEqual((page.groups[0].agents, page.groups[0].subagents), (0, 1))
         self.assertEqual([line[6:] for line in MOD["wire"](page)["G"][0][1]], [[[], 0], [[889, 55, 2]]])
-        self.assertIn("  D7   working   1 sub-agent, 10m at work", MOD["render_text"](page).split("\n"))
+        self.assertIn("  D7   working   1 sub-agent, 10m at work", MOD["render_text"](page, CLEAN).split("\n"))
 
     def test_parent_with_no_turn_in_the_window_is_not_counted_as_grouped_by_request_name(self):
         fixture = self.fixture
@@ -838,11 +848,11 @@ class LabelTest(unittest.TestCase):
 
     def label(self, title="", request="", parent=COORDINATOR, unit="D7"):
         thread = delegated(parent, request) if request else native(1) if parent else worker(9)
-        return MOD["label_of"](agent(thread, title=title, parent=parent), self.STORE, unit, MOD["Privacy"]({thread, request, COORDINATOR, worker(1), worker(2)}))
+        return MOD["label_of"](agent(thread, title=title, parent=parent), self.STORE, unit, MOD["Privacy"]({thread, COORDINATOR, worker(1), worker(2)}))
 
     def test_current_worker_and_earlier_worker(self):
-        self.assertEqual(MOD["label_of"](agent(worker(2), title="D7 anything"), self.STORE, "D7", MOD["Privacy"](())), "worker")
-        self.assertEqual(MOD["label_of"](agent(worker(1), title="D7 anything"), self.STORE, "D7", MOD["Privacy"](())), "earlier worker")
+        self.assertEqual(MOD["label_of"](agent(worker(2), title="D7 anything"), self.STORE, "D7", MOD["Privacy"]()), "worker")
+        self.assertEqual(MOD["label_of"](agent(worker(1), title="D7 anything"), self.STORE, "D7", MOD["Privacy"]()), "earlier worker")
 
     def test_written_title_wins_over_the_request_name(self):
         self.assertEqual(self.label("how explorer: store and CLI", "brigade-kit-d7-verify-0a1b2c3"), "how explorer: store and CLI")
@@ -865,93 +875,194 @@ class LabelTest(unittest.TestCase):
     def test_title_that_is_one_path_under_root_gives_its_last_segment_when_that_is_letters_digits_hyphens_and_underscores(self):
         self.assertEqual(self.label("/root/spec_review", parent=worker(2)), "spec_review")
         self.assertEqual(self.label("/root/a/b/spec-review_2", parent=worker(2)), "spec-review_2")
-        for title in ("/root/notes.md", "/pathmarker/notes", "/root", "root/spec_review", "/root/spec_review now", "/root/acct_secretXYZ"):
+        for title in ("/root/notes.md", "/pathmarker/notes", "/root", "/root/spec_review now"):
             with self.subTest(title):
                 self.assertEqual(self.label(title, parent=worker(2)), "sub-agent")
 
-    def test_title_that_the_filter_changes_loses_to_the_request_name(self):
+    def test_title_that_holds_private_text_loses_to_the_request_name(self):
         self.assertEqual(self.label("Read the brief at /pathmarker/brief.md", "why-investigator"), "why investigator")
-        self.assertEqual(self.label("Fix 0a1b2c3 now", "brigade-kit-d7r2-fix"), "fix")
         self.assertEqual(self.label("Read /pathmarker/brief.md first", parent=worker(2)), "sub-agent")
-        self.assertEqual(self.label("Read the brief first", "why-investigator"), "Read the brief first")
         self.assertEqual(self.label(f"Ask {worker(1)} first", "why-investigator"), "why investigator")
-        self.assertEqual(self.label("see why-investigator", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("Mail acct-homemarker@example.test first", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("Read the brief first", "why-investigator"), "Read the brief first")
+        self.assertEqual(self.label("Fix 0a1b2c3 in src/a.py now", "brigade-kit-d7r2-fix"), "Fix 0a1b2c3 in src/a.py now")
 
-    def test_request_name_of_one_word_is_removed_from_its_own_label(self):
-        self.assertEqual(self.label(request="explorer"), "sub-agent")
-        self.assertEqual(self.label("explorer", "explorer"), "sub-agent")
-        self.assertEqual(self.label("Act as the review sub-agent for this task.", "explorer"), "review")
+    def test_title_that_holds_its_own_request_name_of_two_or_more_parts_loses_to_the_words_of_that_name(self):
+        self.assertEqual(self.label("see why-investigator", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("Why-Investigator: part 2", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("why-investigator", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("see the explorer", "explorer"), "see the explorer")
+
+    def test_request_name_of_one_ordinary_word_is_the_label_and_a_title_of_that_word_is_too(self):
+        for word in ("explorer", "queue", "code", "review", "src", "451237"):
+            with self.subTest(word):
+                self.assertEqual((self.label(request=word), self.label(word, word), self.label("Act as the review sub-agent for this task.", word)), (word, word, word))
         self.assertEqual(self.label(request="how-explorer"), "how explorer")
 
     def test_title_that_is_one_lower_case_word_with_a_hyphen_is_read_as_a_request_name(self):
         self.assertEqual(self.label("brigade-kit-d7-verify-2", "brigade-kit-d7-verify-0a1b2c3"), "review 2")
 
-    def test_request_name_words_drop_brigade_the_stores_leading_slug_parts_unit_ids_and_ids(self):
+    def test_request_name_words_drop_brigade_the_stores_leading_slug_parts_unit_ids_and_parts_of_7_or_more_hexadecimal_characters_with_a_digit_and_a_letter(self):
         self.assertEqual(self.label(request="brigade-kit-d7-verify-0a1b2c3"), "review")
-        self.assertEqual(self.label(request="proj-kit-nightly-audit-kit-1234567"), "nightly audit kit")
+        self.assertEqual(self.label(request="proj-kit-nightly-audit-kit-1234567"), "nightly audit kit 1234567")
+        self.assertEqual(self.label(request="audit-0a1b2c-facade-defaced-deadbeef01"), "audit 0a1b2c facade defaced")
         self.assertEqual(self.label(request="trial-d8-kimi"), "trial kimi")
         self.assertEqual(self.label(request="trial-d9-kimi"), "trial d9 kimi")
 
     def test_role_from_an_act_as_title_when_the_request_name_leaves_nothing(self):
         self.assertEqual(self.label("Act as the review sub-agent for this task.", "brigade-kit-d7-0a1b2c3"), "review")
 
+    def test_request_name_whose_every_part_the_store_explains_gives_all_its_words_when_no_title_names_a_role(self):
+        store = store_of(("queue", "", ()), ("review", "", ()), name="queue", slug=("queue",))
+        for request, label in (("queue", "queue"), ("review", "review"), ("queue-review", "queue review"), ("brigade-queue-review-0a1b2c3", "brigade queue review")):
+            with self.subTest(request):
+                thread = delegated(COORDINATOR, request)
+                self.assertEqual(MOD["label_of"](agent(thread, parent=COORDINATOR), store, "queue", MOD["Privacy"]({thread})), label)
+        self.assertEqual(self.label(request="brigade-kit-d7"), "brigade kit d7")
+
     def test_thread_with_no_usable_title_or_request_reads_sub_agent_or_agent(self):
         self.assertEqual(self.label("123e4567-e89b-12d3-a456-426614174000", parent=worker(2)), "sub-agent")
         self.assertEqual(self.label("You are the helper.", parent=None), "agent")
 
-    def test_text_keeps_the_first_line_and_drops_each_word_that_holds_a_slash_a_backslash_a_leading_tilde_a_percent_escape_or_an_id_shape(self):
-        text = MOD["Privacy"](()).text
-        self.assertEqual(text("Fix the queue\nsecond line"), "Fix the queue")
-        self.assertEqual(text("see `/pathmarker/a b` ~/pathmarker (a/b/c) C:\\pathmarker\\x file:///pathmarker src/a.py private/file.txt ~pathmarker and/or"), "see b`")
-        self.assertEqual(text("at 0a1b2c3 and 123e4567-e89b-12d3-a456-426614174000 and 123456 and id=mcp%3Ax and 50%2f and acct_secretXYZ and ses_edd6ae1"), "at and and and and and and")
-        self.assertEqual(text("defaced facade 12345 thread: one 100% spec_review MAX_BYTES t3_thread_send ~ a_b2c3d4 a_b2c3 a_bcdefg"), "defaced facade 12345 thread: one 100% spec_review MAX_BYTES t3_thread_send a_b2c3 a_bcdefg")
-        self.assertEqual(text("link https://example.test/o/r/pull/7 gone"), "link gone")
-        self.assertEqual(text(""), "")
 
-    def test_text_drops_a_word_that_holds_a_colon_or_an_at_sign_between_two_characters(self):
-        text = MOD["Privacy"](()).text
-        self.assertEqual(text("mail acct-homemarker@example.test and <acct-homemarker@example.test> a@b user@host now"), "mail and now")
-        self.assertEqual(text("mcp:x node:y task:alpha-secret prefix=mcp:alpha-secret 12:30 D7:fix"), "")
-        self.assertEqual(text("@handle @example.test D7: fix: :x x: stay"), "@handle @example.test D7: fix: :x x: stay")
+UUID_TEXT = "123e4567-e89b-12d3-a456-426614174000"
+ORDINARY = ("queue", "code", "review", "src", "private auditor", "451237", "D7", "pstack-t3", "gpt-6.1-sol", "claude-sonnet-4-5-20250929", "kit-d7-audit-task", "0a1b2c3")
 
-    def test_text_removes_each_value_of_4_or_more_characters_it_was_given_wherever_it_is_and_in_its_percent_decoded_forms(self):
+
+class FilterTest(unittest.TestCase):
+    """Privacy.clean on one string. The identifiers and paths are the ones each test gives."""
+
+    def clean(self, text, identifiers=(), paths=()):
+        return MOD["Privacy"](identifiers, paths).clean(text)
+
+    def test_clean_removes_each_word_that_holds_an_identifier_it_was_given_in_any_case_as_written_and_percent_encoded_once_and_twice(self):
         child = delegated(COORDINATOR, "kit-d7-audit")
-        text = MOD["Privacy"]({child, "kit-d7-audit", "abc", "two words", "acct"}).text
-        self.assertEqual(text(f"x{child}y and pre{unquote(child)}post"), "x y and pre post")
-        self.assertEqual(text("the kit-d7-audit-2 and xkit-d7-auditx and two words and abc acct1 KIT-D7-AUDIT"), "the -2 and x x and and abc 1 KIT-D7-AUDIT")
-        self.assertEqual(text(quote(child, safe="") + " " + child.replace("%3A", "%3a") + " end"), "end")
+        ids = {child, COORDINATOR, "sess_Ab12Cd34Ef56", "x y_secret1 z"}
+        for value in (child, unquote(child), unquote(unquote(child)), COORDINATOR, "sess_Ab12Cd34Ef56", "x y_secret1 z"):
+            forms = (value, value.upper(), value.lower(), value.swapcase(), quote(value, safe=""), quote(quote(value, safe=""), safe=""), quote(value, safe="").lower(),
+                     value.replace("-", "%2D").replace("_", "%5f"), quote(value))
+            for form in forms:
+                with self.subTest(form):
+                    self.assertEqual((self.clean(f"a {form} b", ids), self.clean(f"a pre{form}post b", ids), self.clean(f"a (id={form}), b", ids)), ("a b", "a b", "a b"))
 
-    def test_text_removes_a_value_that_dropping_a_word_or_joining_spaces_would_leave(self):
-        text = MOD["Privacy"]({"two words", "kit-d7-audit"}).text
-        self.assertEqual(text("say two   words and two a/b words and kit-d7-kit-d7-audit-audit"), "say and and kit-d7- -audit")
+    def test_clean_keeps_an_identifier_that_reads_as_ordinary_words_and_every_ordinary_word(self):
+        text = "Fix the queue code review in src for private auditor 451237 on D7 of pstack-t3 with gpt-6.1-sol and claude-sonnet-4-5-20250929 by kit-d7-audit-task at 0a1b2c3"
+        self.assertEqual(self.clean(text, ORDINARY), text)
+        self.assertEqual([value for value in ORDINARY if not MOD["ordinary"](value)], [])
+        structured = (COORDINATOR, worker(1), native(1), "sess_Ab12Cd34Ef56", "0123456789abcdef0", "a" * 49, "two  spaces", "queue/report", "queue:report", "-queue", "queue-")
+        self.assertEqual([value for value in structured if MOD["ordinary"](value)], [])
+        self.assertEqual(self.clean("the 0123456789abcdef0 run and abc", {"0123456789abcdef0", "abc"}), "the run and abc")
 
-    def test_text_removes_the_longest_value_that_starts_at_a_place(self):
-        text = MOD["Privacy"]({worker(1), worker(10)}).text
-        self.assertEqual(text(f"a {worker(10)} b {worker(1)} c {worker(1)}7"), "a b c 7")
+    def test_clean_removes_each_word_that_holds_a_path_it_was_given_and_a_path_below_it(self):
+        paths = {"/srv/pathmarker state/proj", "/home/homemarker"}
+        self.assertEqual(self.clean("read /srv/pathmarker state/proj and /SRV/PATHMARKER STATE/PROJ/kit/x.md and x=/home/homemarker/.t3 end", paths=paths), "read and and end")
+        self.assertEqual(self.clean("in %2Fsrv%2Fpathmarker%20state%2Fproj and %252Fhome%252Fhomemarker%252Fa and pre/home/homemarkerpost end", paths=paths), "in and and end")
 
-    def test_model_is_the_name_after_one_provider_prefix_when_it_is_lower_case_letters_digits_dots_and_hyphens_and_any_other_reads_other_model(self):
-        model = MOD["Privacy"]({"model-secret", worker(1)}).model
-        kept = ("model-a", "gpt-6.1-sol", "claude-sonnet-4-5-20250929", "default", "k3", "a" * 48)
+    def test_clean_removes_a_word_that_holds_a_uuid_or_one_of_t3s_id_words_before_a_colon_and_a_letter_digit_underscore_or_percent_sign(self):
+        self.assertEqual(self.clean(f"at {UUID_TEXT} and x{UUID_TEXT.upper()}y and {quote(UUID_TEXT)} end"), "at and and end")
+        for word in MOD["T3_KINDS"]:
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"a {word}:alpha b {word.upper()}:1 c prefix={word}:x d {word}%3Aalpha e {word}%253A_x f x{word}:%41 g"), "a b c d e f g")
+                self.assertEqual(self.clean(f"the {word}: one and {word} :x and {word}:) end"), f"the {word}: one and {word} :x and {word}:) end")
+        self.assertEqual(self.clean("12:30 D7:fix feature:x key:value a::b Re:plan"), "12:30 D7:fix feature:x key:value a::b Re:plan")
+
+    def test_clean_removes_a_word_that_holds_an_email_address_and_keeps_an_at_sign_with_no_address_around_it(self):
+        self.assertEqual(self.clean("mail acct-homemarker@example.test and <a.b@c.org>, x=USER@EXAMPLE.TEST and user%40example.test now"), "mail and and now")
+        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_an_absolute_path_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
+        gone = ("/pathmarker/notes.md", "/pathmarker", "(/pathmarker/a)", "x=/pathmarker", "a:/pathmarker", "~/pathmarker", "~user/pathmarker", "$HOME/pathmarker", "${HOME}/pathmarker", "~\\pathmarker",
+                "C:\\Users\\private\\file.txt", "c:/Users/private", "\\\\server\\share", "file:///home/private/secret", "file:/home/private/secret", "FILE:C:/x", "x=file:~/a", "file:secret.txt",
+                "%2Fpathmarker%2Fnotes.md", "%252Fpathmarker", "</pathmarker>", ">/pathmarker")
+        for word in gone:
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"see {word} now"), "see now")
+        kept = "see src/a.py and/or docs/guide.md with opencode-go/model at https://example.test/o/r/pull/7 for I/O 24/7 +/- ~ ~5 a\\b Makefile:12 profile:x file: x 1/2 ./a ../b now"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_a_path_after_a_quotation_mark_up_to_the_next_such_mark_and_any_other_through_each_next_word_with_a_slash(self):
+        self.assertEqual(self.clean('see "/srv/private dir/secret file.txt" and `~/a b` and \'C:\\a b\\c d\' now'), "see and and now")
+        self.assertEqual(self.clean("see /srv/private dir/secret file.txt now"), "see file.txt now")
+        self.assertEqual(self.clean("see /srv/a then b/c d/e and f/g"), "see then b/c d/e and f/g")
+
+    def test_clean_writes_each_control_character_as_a_space_before_it_looks_and_drops_a_character_utf8_cannot_hold(self):
+        ids = {"two_words here"}
+        for character in ("\x00", "\x1b", "\x7f", "\x80", "\t", "\n", "\u2028"):
+            with self.subTest(repr(character)):
+                self.assertEqual(self.clean(f"a two_words{character}here b", ids), "a b")
+                self.assertEqual(self.clean(f"a{character}b"), "a b")
+        self.assertEqual(self.clean("a two_wo\udc80rds here b mcp\ud800:x", ids), "a b")
+
+    def test_clean_removes_text_that_is_private_only_as_the_document_writes_it(self):
+        self.assertEqual(self.clean("a <private_thread9 b", {"lt;private_thread9"}), "a b")
+        self.assertEqual(self.clean('a "x b', {"quot;x"}), "a b")
+        self.assertEqual(MOD["entities"](self.clean("R&D <b> \"q\" a\\b")), "R&amp;D &lt;b&gt; &quot;q&quot; a&#92;b")
+
+    def test_clean_repeats_until_no_word_holds_private_text_keeps_the_spaces_before_the_first_word_and_gives_an_empty_text_after_8_passes(self):
+        ids = {"left_1 right_2"}
+        self.assertEqual(self.clean("  D7 worker   mcp:x   running for 5m"), "  D7 worker   running for 5m")
+        self.assertEqual(self.clean("  mcp:x worker   node:y"), "  worker")
+        self.assertEqual(self.clean("say left_1 /pathmarker/a right_2 end", ids), "say end")
+        nested = " ".join(["left_1"] * 3 + ["/pathmarker/a"] + ["right_2"] * 3)
+        self.assertEqual(self.clean(f"say {nested} end", ids), "say end")
+        deep = " ".join(["left_1"] * 9 + ["/pathmarker/a"] + ["right_2"] * 9)
+        self.assertEqual(self.clean(f"say {deep} end", ids), "")
+        self.assertEqual(self.clean(""), "")
+
+    def test_no_string_clean_returns_holds_private_text_as_written_or_as_the_document_writes_it(self):
+        child = delegated(COORDINATOR, "kit-d7-audit")
+        privacy = MOD["Privacy"]({child, COORDINATOR, "sess_Ab12Cd34Ef56", "lt;private_thread9"}, {"/srv/pathmarker state/proj"})
+        pieces = ("queue", "D7", child, quote(child, safe=""), COORDINATOR.upper(), "<private_thread9", "/srv/pathmarker", "state/proj/x", "a@b.co", UUID_TEXT, "node:x", "%2Fa%2Fb",
+                  "file:x", "\x00", "&", "\"", "~/a", "sess_Ab12Cd34Ef56", "%", "3A", "mcp", ":", "x", "src/a.py", "'", "C:\\a")
+        state = 7
+        for _ in range(400):
+            words = []
+            for _ in range(6):
+                state = state * 1103515245 + 12345 & 0x7FFFFFFF
+                words.append(pieces[state % len(pieces)] + ("" if state & 64 else " "))
+            cleaned = privacy.clean("".join(words))
+            with self.subTest(cleaned):
+                self.assertEqual((privacy.private(cleaned), privacy.clean(cleaned), MOD["UNPRINTED"].search(cleaned)), ([], cleaned, None))
+
+    def test_unescaped_equals_urllib_unquote_and_names_the_source_span_of_each_character(self):
+        for text in ("", "plain", "a%20b", "%E2%82%AC5", "%e2%82%ac", "%zz%4", "100%", "%41%42C%44", "%C3%28", "caf%C3%A9 %F0%9D%94%B8", "%2541"):
+            with self.subTest(text):
+                self.assertEqual(MOD["unescaped"](text)[0], unquote(text))
+        self.assertEqual(MOD["unescaped"]("a%41%42c"), ("aABc", [(0, 1), (1, 7), (1, 7), (7, 8)]))
+
+    def test_field_is_the_first_line_with_single_spaces_as_clean_leaves_it(self):
+        field = MOD["Privacy"]({"two_words here"}).field
+        self.assertEqual(field("  Fix   the queue \n second line"), "Fix the queue")
+        self.assertEqual(field("a two_words    here b and /pathmarker/x c"), "a b and c")
+        self.assertEqual(field(""), "")
+
+    def test_model_is_the_name_after_one_provider_prefix_cut_to_48_characters_and_other_model_when_nothing_is_left(self):
+        model = MOD["Privacy"]({worker(1)}).model
+        kept = ("model-a", "gpt-6.1-sol", "claude-sonnet-4-5-20250929", "default", "k3", "a" * 48, "Model-A", "model_a", "GPT 5 (high)", "opencode-go/deepseek-v4.1-flash", "vendor/model-b",
+                "queue", "code", "review", "src", "private auditor", "451237", "model-0a1b2c3", "модель")
         self.assertEqual([model(name) for name in kept], list(kept))
-        self.assertEqual((model("opencode/muse-spark-1.3-free"), model("claudeAgent/model-b")), ("muse-spark-1.3-free", "model-b"))
-        other = (*REVIEW_MODELS, *REVIEW_TEXTS, "file:/home/private/secret", "vendor/model-b", "opencode/sub/model-b", "Model-A", "model_a", "model a", "model-a\n", " model-a", "",
-                 "3-model", "model-", "model..a", "a" * 49, "model-0a1b2c3", "model-123456", "model-deadbeef01", "model-secret", "opencode/model-secret", "x-model-secret-y", worker(1),
-                 "model-20250929-1234567", "модель", "model-é")
+        self.assertEqual((model("opencode/muse-spark-1.3-free"), model("claudeAgent/model-b"), model(" model-a\nsecond"), model("a" * 49)), ("muse-spark-1.3-free", "model-b", "model-a", "a" * 47 + "…"))
+        other = ("mcp:alpha-secret", "node:alpha-secret", "run:alpha-secret", "user@example.test", "C:\\Users\\private\\file.txt", "file:/home/private/secret", "/pathmarker/model", worker(1), UUID_TEXT, "", " ")
         self.assertEqual([name for name in other if model(name) != "other model"], [])
 
     def test_link_is_the_https_pull_request_address_without_userinfo_query_or_fragment_a_blank_value_gives_neither_and_any_other_value_is_refused(self):
-        link = MOD["Privacy"]({"kit-d7-audit", worker(1)}).link
+        link = MOD["Privacy"]({"sess_Ab12Cd34Ef56", worker(1)}).link
         address = "https://git.example/Owner.x/re_po-1/pull/123456"
         for value in (address, "https://user:pw@git.example/Owner.x/re_po-1/pull/123456", address + "?x=mcp:alpha-secret", address + "#task:alpha-secret",
-                      "HTTPS://GIT.EXAMPLE/Owner.x/re_po-1/pull/123456", "https://git.example/Owner.x/re_po-1/pull/123456?"):
+                      "HTTPS://GIT.EXAMPLE/Owner.x/re_po-1/pull/123456", "https://git.example/Owner.x/re_po-1/pull/123456?", f"https://{quote(worker(1), safe='')}@git.example/Owner.x/re_po-1/pull/123456"):
             with self.subTest(value):
                 self.assertEqual(link(value), (address, ""))
+        for value in ("https://git.example/queue/code/pull/451237", "https://451237.example/review/src/pull/7", "https://git.example/kit-d7-audit/0a1b2c3/pull/" + "7" * 400):
+            with self.subTest(value):
+                self.assertEqual(link(value), (value, ""))
         self.assertEqual((link(""), link("  ")), (("", ""), ("", "")))
         refused = ("http://git.example/o/r/pull/7", "https://git.example:8443/o/r/pull/7", "https://git.example/o/r/pull/7/files", "https://git.example/o/r/pull/7/", "https://git.example/o/r/pull/",
                    "https://git.example/o/pull/7", "https://git.example/a/o/r/pull/7", "https://git.example/o/r/pulls/7", "https://git.example/o/r/pull/7 x", "https://git.example/o/r/pull/x7",
                    "https:///o/r/pull/7", "https://git_example/o/r/pull/7", "https://[::1]/o/r/pull/7", "https://[x/o/r/pull/7", "https://git.example:port/o/r/pull/7", "git.example/o/r/pull/7",
-                   "file:/home/private/secret", "private/file.txt", "https://git.example/kit-d7-audit/r/pull/7", "https://git.example/o/0a1b2c3/pull/7", "https://123456.example/o/r/pull/7",
-                   "https://git.example/o/acct_secretXYZ/pull/7", "https://git.example/o%2Fr/r/pull/7", "https://git.example/../r/pull/7", "https://git.example/o/./pull/7", "https://git.example/o/r/pull/7\\x", f"https://git.example/{worker(1)}/r/pull/7")
+                   "file:/home/private/secret", "private/file.txt", "https://git.example/o%2Fr/r/pull/7", "https://git.example/../r/pull/7", "https://git.example/o/./pull/7", "https://git.example/o/r/pull/7\\x",
+                   f"https://git.example/{worker(1)}/r/pull/7", f"https://git.example/o/{UUID_TEXT}/pull/7", "https://git.example/sess_Ab12Cd34Ef56/r/pull/7", "https://git.example/o/SESS_AB12CD34EF56/pull/7",
+                   f"https://{UUID_TEXT}.example/o/r/pull/7")
         self.assertEqual([value for value in refused if link(value) != ("", "refused")], [])
 
 
@@ -1053,7 +1164,7 @@ class FoldTest(ActivityCase):
         self.assertEqual((summary.status.value, summary.seconds, summary.open_seconds, summary.model, summary.provider), ("done", 180, None, "model-a", "Claude"))
         self.assertEqual([(span.x, span.w, span.status.value) for span in summary.spans], [(167, 11, "done"), (183, 3, "done"), (189, 3, "failed")])
         self.assertEqual((folded.fold, folded.totals, folded.legend), (1, unfolded.totals, unfolded.legend))
-        self.assertEqual(MOD["notes"](folded), ["3 merged or dropped work items with no agent running, queued, or waiting are each shown as one row."])
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["3 merged or dropped work items with no agent running, queued, or waiting are each shown as one row."])
 
     def test_summary_row_has_the_union_of_the_bars_that_are_not_failed_as_done_and_then_the_union_of_the_failed_bars(self):
         rows = [row("a", spans=((0, 10, "done"), (40, 10, "failed"), (100, 10, "stopped"))), row("b", spans=((5, 10, "unknown"), (45, 10, "failed"), (300, 5, "failed"))),
@@ -1077,7 +1188,7 @@ class FoldTest(ActivityCase):
             None: [(0, "o", 1), (1, "2 sub-agents", 2)]})
         self.assertEqual([(span.x, span.w, span.status.value) for span in folded.groups[0].rows[-1].spans], [(0, 10, "done"), (30, 5, "done"), (20, 5, "failed")])
         self.assertEqual(folded.fold, 1)
-        self.assertEqual(MOD["notes"](folded), ["9 sub-agents that are done or stopped are shown as 4 summary rows."])
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["9 sub-agents that are done or stopped are shown as 4 summary rows."])
         self.assertEqual(drawn(MOD["fold_quiet_subagents"](folded)), drawn(folded))
 
     def test_keep_finished_items_keeps_the_first_merged_or_dropped_units_with_no_row_running_queued_or_waiting_and_counts_the_rest(self):
@@ -1090,7 +1201,7 @@ class FoldTest(ActivityCase):
         folded = MOD["keep_finished_items"](3, unfolded)
         self.assertEqual(list(drawn(folded)), ["D7", "D1", "D6", "D2", "D5", "D8", "D9", None])
         self.assertEqual((folded.hidden.dropped_items, folded.hidden.dropped_agents, folded.fold), (2, 6, 1))
-        self.assertEqual(MOD["notes"](folded), [
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), [
             "2 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.",
             "2 merged or dropped work items with 6 agents are not shown. Use a larger --max-bytes to see more."])
         again = MOD["keep_finished_items"](1, folded)
@@ -1112,7 +1223,7 @@ class FoldTest(ActivityCase):
         folded = MOD["cap_everything"](page(*groups, items=[item("D1")]))
         self.assertEqual(list(drawn(folded)), ["D1", "D2", "D3", "D4", "D5", None])
         self.assertEqual((folded.hidden.cut_agents, folded.fold), (12, 1))
-        self.assertEqual(MOD["notes"](folded), [
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), [
             "15 sub-agents that are done or stopped are shown as 5 summary rows.",
             "12 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
 
@@ -1126,7 +1237,7 @@ class FoldTest(ActivityCase):
         hidden = folded.hidden
         self.assertEqual((hidden.dropped_items, hidden.dropped_agents, hidden.cut_agents, hidden.cut_in_flight, [each.id for each in folded.items]),
                          (1, 3, 2, 0, ["D1", "D2", "D3", "D4", "D5", "D6", "D8"]))
-        self.assertEqual(MOD["notes"](folded), [
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), [
             "1 merged or dropped work item with 3 agents is not shown. Use a larger --max-bytes to see more.",
             "2 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
 
@@ -1158,7 +1269,7 @@ class FoldTest(ActivityCase):
         folded = MOD["cap_everything"](page(group(items[10], row("worker")), items=items))
         self.assertEqual([each.id for each in folded.items], ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D11"])
         self.assertEqual(folded.hidden.cut_in_flight, 4)
-        self.assertEqual(MOD["notes"](folded), ["4 more work items in flight are not listed."])
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["4 more work items in flight are not listed."])
 
     def test_cap_everything_clips_strings_by_the_bytes_of_their_entity_form_and_drops_a_link_whose_entity_form_is_over_90_bytes(self):
         long = item("D" + "1" * 20, summary="<" * 30, pr="https://example.test/" + "x" * 70)
@@ -1175,7 +1286,7 @@ class FoldTest(ActivityCase):
         self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 27 + "…", "𝔸" * 8 + "…"))
         self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
         self.assertEqual([each.no_link for each in folded.items], ["cut", "", "cut", ""])
-        self.assertEqual(MOD["notes"](folded), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
+        self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
 
     def test_every_fold_on_the_busy_fixture_and_on_one_with_failed_agents_in_merged_units_keeps_the_agent_count_the_totals_and_the_legend(self):
         for build, totals, in_flight in ((busy, MOD["Totals"](5, 36, 364, 3), 8), (day, MOD["Totals"](8, 36, 364, 32), 6)):
@@ -1202,19 +1313,19 @@ class FoldTest(ActivityCase):
         for index, fold in enumerate(MOD["FOLDS"]):
             folded = fold(folded)
             on_page = MOD["items_of"](folded)
-            data = data_of(MOD["render_html"](folded))
+            data = data_of(MOD["render_html"](folded, CLEAN))
             counted = sum(int(note.split()[0]) for note in data["N"] if "pull request link" in note)
             with self.subTest(fold=index):
                 self.assertEqual((len(data["I"]), sum(bool(each[4]) for each in data["I"]) + counted), (len(on_page), len(on_page)))
-        self.assertEqual([note for note in MOD["notes"](folded) if "pull request link" in note], [
+        self.assertEqual([note for note in MOD["notes"](folded, MOD["items_of"](folded)) if "pull request link" in note], [
             "3 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "3 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."])
 
     def test_notes_say_no_agent_ran_for_an_empty_window_and_count_unknown_statuses_requests_and_other_threads(self):
-        self.assertEqual(MOD["notes"](page()), ["No agent or sub-agent of this coordinator ran in this window."])
+        self.assertEqual(MOD["notes"](page(), []), ["No agent or sub-agent of this coordinator ran in this window."])
         hidden = MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1, other_threads=1, unknown_status=1, by_request_name=1, unstarted=1)
         linked = page(group(item("D1", no_link="cut"), row("worker")), items=[item("D2", no_link="refused"), item("D3", pr=PR7)], hidden=hidden)
-        self.assertEqual(MOD["notes"](linked), [
+        self.assertEqual(MOD["notes"](linked, MOD["items_of"](linked)), [
             "1 merged or dropped work item with 1 agent is not shown. Use a larger --max-bytes to see more.",
             "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "1 more work item in flight is not listed.",
@@ -1225,7 +1336,7 @@ class FoldTest(ActivityCase):
             "1 agent is grouped by the name of the request that started it.",
             "1 other thread ran in T3 outside this coordinator."])
         several = MOD["Hidden"](other_threads=3, unknown_status=2, by_request_name=9)
-        self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=several)), [
+        self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=several), [item("D1")]), [
             "T3 gave 2 statuses this tool reads as unknown.",
             "9 agents are grouped by the name of the request that started them.",
             "3 other threads ran in T3 outside this coordinator."])
@@ -1401,10 +1512,10 @@ class DocumentTest(OutputCase):
         self.assertEqual([character for character in "\\<>" if character in raw], [])
         data = json.loads(raw)
         self.assertEqual((data["c"], data["I"][1][1], data["G"][0][1][1][1], data["M"]),
-                         (written, written, written, ["model-a", "other model"]))
+                         (written.strip(), written.strip(), written.strip(), ["model-a", "&lt;b&gt;&#92;&quot;model"]))
 
     def test_data_element_of_a_page_whose_strings_hold_markup_a_quote_a_backslash_a_tab_and_u2028_holds_no_backslash_or_angle_bracket(self):
-        raw = DATA.search(MOD["render_html"](hostile())).group(1)
+        raw = DATA.search(MOD["render_html"](hostile(), same)).group(1)
         self.assertEqual([character for character in "\\<>" if character in raw], [])
         data = json.loads(raw)
         self.assertEqual((data["c"], data["I"], data["G"][0][1][0][1], data["M"]),
@@ -1418,10 +1529,10 @@ class DocumentTest(OutputCase):
         self.assertEqual(MOD["entities"](" ~\xa0\u2027\u202a"), " ~\xa0\u2027\u202a")
 
     def test_encode_writes_each_string_value_as_entities_writes_it_and_leaves_numbers_null_and_keys(self):
-        self.assertEqual(MOD["encode"]({"<": ["</script>\t", 1, None, {"b": "\"\\"}]}), '{"<":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
+        self.assertEqual(MOD["encode"]({"<": ["</script>\t", 1, None, {"b": "\"\\"}]}, same), '{"<":["&lt;/script&gt; ",1,null,{"b":"&quot;&#92;"}]}')
 
     def test_encode_writes_a_string_in_a_tuple_as_entities_writes_it(self):
-        self.assertEqual(MOD["encode"]({"a": ("<",)}), '{"a":["&lt;"]}')
+        self.assertEqual(MOD["encode"]({"a": ("<",)}, same), '{"a":["&lt;"]}')
 
     def test_no_invented_id_or_path_is_in_the_document_or_the_text(self):
         for build in (failed_child, busy):
@@ -1494,6 +1605,84 @@ class DocumentTest(OutputCase):
         self.assertEqual(re.findall(r"@media[^{]*", style), ["@media(max-width:520px)"])
 
 
+def tagged(text):
+    return f"[{text}]"
+
+
+def named(fixture):
+    """A page whose every string from the store or from T3 holds one word in capitals that no other string of it holds."""
+    fixture.meta["restaurant"] = "NAMEWORD kit"
+    fixture.coordinator(model="coordinator-MODELWORD")
+    fixture.unit("IDWORD", "in-progress", "SUMWORD of the page", thread=worker(1), pr="https://git.example/OWNERWORD/r/pull/7")
+    fixture.unit("QUIETWORD", "queued", "IDLEWORD summary", pr="https://git.example/o/REPOWORD/pull/6")
+    fixture.thread(worker(1), title="D7 worker", model="worker-FIRSTWORD", turns=(("running", 40, None),))
+    child = delegated(worker(1), "helper-task")
+    fixture.thread(child, title="PARENTWORD helper", model="child-SECONDWORD", parent=worker(1), turns=(("running", 30, None),))
+    fixture.thread(native(1), title="LABELWORD reader", model="leaf-THIRDWORD", parent=child, delegation=("queued", 20, None))
+    fixture.thread(delegated(COORDINATOR, "loose-task"), title="LOOSEWORD agent", model="loose-FOURTHWORD", parent=COORDINATOR, turns=(("failed", 25, 24),))
+    return fixture
+
+
+WORDS = ("NAMEWORD", "MODELWORD", "IDWORD", "SUMWORD", "OWNERWORD", "QUIETWORD", "IDLEWORD", "REPOWORD", "FIRSTWORD", "PARENTWORD", "SECONDWORD", "LABELWORD", "THIRDWORD", "LOOSEWORD", "FOURTHWORD")
+
+
+class EmitTest(OutputCase):
+    """Every string a form emits is one the filter returned. These tests fail when a renderer emits a string another way."""
+
+    def pages(self):
+        for build in (empty, named, failed_child, queued_only, busy):
+            unfolded = page_of(build(Fixture(self.root / build.__name__)))
+            yield build.__name__, unfolded
+            yield build.__name__ + " capped", MOD["cap_everything"](unfolded)
+            yield build.__name__ + " shortened", MOD["shortened"](unfolded)
+
+    def test_every_string_of_the_data_element_is_one_clean_returned_and_the_rest_of_the_document_is_the_same_for_every_page(self):
+        shells = set()
+        for name, drawn_page in self.pages():
+            with self.subTest(name):
+                document = MOD["render_html"](drawn_page, tagged)
+                raw = DATA.search(document).group(1)
+                emitted, given = strings(list(json.loads(raw).values())), strings(list(MOD["wire"](drawn_page).values()))
+                self.assertEqual(emitted, [MOD["entities"](tagged(text)) for text in given])
+                self.assertEqual(document.count(raw), 1)
+                shells.add(re.sub(r"const H=[0-9]+;", "const H=0;", document.replace(raw, "")))
+        self.assertEqual(len(shells), 1)
+        shell = shells.pop()
+        self.assertEqual([word for word in WORDS if word in shell], [])
+
+    def test_every_plain_line_is_one_clean_returned_whole(self):
+        for name, drawn_page in self.pages():
+            with self.subTest(name):
+                lines = MOD["render_text"](drawn_page, same).split("\n")
+                self.assertEqual(MOD["render_text"](drawn_page, tagged).split("\n"), [tagged(line) for line in lines])
+                self.assertEqual((lines[0][:19], len(lines) > 2), ("Agent activity for ", True))
+
+    def test_each_word_of_the_named_page_is_in_both_forms(self):
+        fixture = named(self.fixture).write()
+        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD"]))
+
+    def test_run_gives_both_forms_the_filter_of_the_run(self):
+        fixture = named(self.fixture)
+        fixture.units[0]["summary"] = f"SUMWORD of {worker(1)} and {fixture.store} today"
+        fixture.write()
+        self.assertEqual(data_of(self.document(clock=fixture.now))["I"][0][1], "SUMWORD of and today")
+        self.assertIn("   working   SUMWORD of and today   ", self.out("--text", clock=fixture.now))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+    def test_renderer_draws_each_string_of_the_data_alone_in_a_text_or_an_attribute(self):
+        fixture = named(self.fixture).write()
+        document = self.document(clock=fixture.now)
+        built = RendererTest.render(self, document)
+        drawn_strings = [*built["texts"], *built["titles"], *(link[1] for link in built["links"])]
+        data = set(strings(list(data_of(document).values())))
+        self.assertEqual([text for text in drawn_strings if any(word in text for word in WORDS) and text not in data], [])
+        self.assertEqual([word for word in WORDS if not any(word in text for text in drawn_strings)], [])
+        self.assertEqual(built["texts"][built["texts"].index("Running now") + 1:built["texts"].index("Timeline")], [
+            "IDWORD", "worker", "worker-FIRSTWORD", "40m", "IDWORD", "PARENTWORD helper", "child-SECONDWORD", " · under ", "worker", "30m",
+            "Queued", "IDWORD", "LABELWORD reader", "leaf-THIRDWORD", " · under ", "PARENTWORD helper", "20m"])
+
+
 class SizeTest(OutputCase):
     def test_empty_window_is_at_most_the_fixed_budget_and_says_no_agent_ran(self):
         empty(self.fixture).write()
@@ -1526,7 +1715,7 @@ class SizeTest(OutputCase):
     def test_window_shaped_like_a_measured_day_is_over_12000_and_at_most_16000_bytes_and_the_last_fold_is_not_applied(self):
         unfolded = page_of(day(self.fixture))
         self.assertEqual((unfolded.totals, len(unfolded.items), sum(each.depth == 0 for one in unfolded.groups for each in one.rows)), (MOD["Totals"](8, 36, 364, 32), 6, 148))
-        fitted, document = MOD["fit"](unfolded, 15999)
+        fitted, document = MOD["fit"](unfolded, 15999, CLEAN)
         self.assertGreater(len(document.encode()), 12000)
         self.assertLess(len(document.encode()), 16000)
         self.assertLess(fitted.fold, len(MOD["FOLDS"]))
@@ -1584,10 +1773,10 @@ class SizeTest(OutputCase):
                 unfolded = page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide)
                 totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
                 largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604799.0), totals=totals, legend=legend))
-                self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest))), (6, [6] * 6, 8, 11))
+                self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 11))
                 self.assertEqual(MOD["wire"](largest)["w"][2], "167h 59m 59s")
-                sizes[status, character] = len(MOD["render_html"](largest).encode())
-        self.assertEqual([case for case, size in sizes.items() if size >= 16000], [])
+                sizes[status, character] = len(MOD["render_html"](largest, same).encode())
+        self.assertEqual({case: size for case, size in sizes.items() if size >= 16000}, {})
 
 
 class TextTest(OutputCase):
@@ -1623,7 +1812,7 @@ class TextTest(OutputCase):
         self.assertEqual((len(lines[9:18]), lines[18]), (9, "  and 27 more work items"))
         self.assertEqual((lines[19], len(lines[20:23]), lines[23]), ("Failed", 3, "Notes"))
         cut = MOD["render_text"](page(group(item("D1"), *[row(f"r{n}", status="running", open_seconds=5) for n in range(9)],
-                                              *[row(f"f{n}", status="failed") for n in range(5)]))).split("\n")
+                                              *[row(f"f{n}", status="failed") for n in range(5)])), CLEAN).split("\n")
         self.assertEqual((cut[10], cut[18]), ("  and 2 more running agents", "  and 1 more failed agent"))
 
     def render(self, build):
@@ -1718,30 +1907,32 @@ class RendererTest(OutputCase):
         document = self.document()
         built = self.render(document)
         texts = built["texts"]
-        for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "D7 worker", "model-a", "42m",
-                     "D7 architect runner 2", "model-b · under worker", "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator", "worker",
+        for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "model-a", "42m",
+                     "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator", "worker",
                      "architect runner 2", "spec_review", "review", "model-c", "why investigator", "Not tied to a work item", "Work items in flight",
                      "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
             self.assertIn(text, texts)
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
-        self.assertRegex(texts[-3], r"^As of \d+:\d\d [AP]M for kit\. Bars show turn or delegation intervals and may join across gaps\. Striped bars include running turns\. Outlined bars include queued turns\. Faded bars include stopped turns\.$")
+        self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")],
+                         ["D7", "worker", "model-a", "42m", "D7", "architect runner 2", "model-b", " · under ", "worker", "6m"])
+        self.assertRegex(texts[-5], r"^As of \d+:\d\d [AP]M for $")
+        self.assertEqual(texts[-4:-2], ["kit", ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns."])
         self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
         classes = built["classes"]
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
         self.assertEqual([bar for bar in built["bars"] if not re.fullmatch(r"min\([0-9]+(\.[0-9])?%,100% - 3px\) [0-9]+(\.[0-9])?%", " ".join(bar))], [])
-        self.assertEqual(built["titles"], ["coordinator · model-c · running · 15m", "worker · model-a · running · 63m", "architect runner 2 · model-b · running · 6m",
-                                           "spec_review · model-b · done · 60s", "review · model-c · failed · 3m", "worker · model-a · done · 5m", "why investigator · model-a · stopped · 2m"])
+        self.assertEqual(built["titles"], ["running · 15m", "coordinator", "model-c", "running · 63m", "worker", "model-a", "running · 6m", "architect runner 2", "model-b",
+                                           "done · 60s", "spec_review", "model-b", "failed · 3m", "review", "model-c", "done · 5m", "worker", "model-a", "stopped · 2m", "why investigator", "model-a"])
 
     def test_page_that_render_html_writes_is_drawn_with_markup_a_quote_a_backslash_and_text_that_reads_as_an_entity_as_that_text_and_a_tab_and_u2028_as_one_space(self):
-        built = self.render(MOD["render_html"](hostile()))
+        built = self.render(MOD["render_html"](hostile(), same))
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", built["texts"])
         self.assertEqual([text for text in built["texts"] if "onerror" in text or "&" in text],
-                         ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, "As of 3:00 AM for " + HOSTILE_DRAWN
-                          + ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running turns. Outlined bars include queued turns. Faded bars include stopped turns."])
-        self.assertEqual(built["titles"], [HOSTILE_DRAWN + " · model " + HOSTILE_DRAWN + " · done · 60s"])
+                         ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, HOSTILE_DRAWN])
+        self.assertEqual(built["titles"], ["done · 60s", HOSTILE_DRAWN, "model " + HOSTILE_DRAWN])
 
     def test_renderer_lists_a_queued_agent_under_queued_with_a_plain_mark_and_an_outlined_bar_and_draws_no_running_list(self):
         fixture = queued_only(self.fixture)
@@ -1750,9 +1941,9 @@ class RendererTest(OutputCase):
         built = self.render(self.document(clock=fixture.now))
         texts, classes = built["texts"], built["classes"]
         self.assertEqual([text for text in texts if text in ("Running now", "Queued", "Timeline")], ["Queued", "Timeline"])
-        self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7 worker", "model-a", "5m", "D7 spec_review", "model-a · under worker", "2m"])
+        self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7", "worker", "model-a", "5m", "D7", "spec_review", "model-a", " · under ", "worker", "2m"])
         self.assertEqual([classes.count(name) for name in ("mark", "mark pulse", "b q", "b run", "stat live")], [2, 0, 2, 0, 1])
-        self.assertEqual((texts[0], built["titles"][1:]), ("0", ["worker · model-a · queued · 0s", "spec_review · model-a · queued · 0s"]))
+        self.assertEqual((texts[0], built["titles"][3:]), ("0", ["queued · 0s", "worker", "model-a", "queued · 0s", "spec_review", "model-a"]))
 
     def test_renderer_puts_a_bar_that_starts_at_the_windows_end_3_pixels_inside_its_track(self):
         fixture = one_running(self.fixture)
@@ -1766,7 +1957,7 @@ class RendererTest(OutputCase):
         one_running(self.fixture).write()
         texts = self.render(self.document(), spoil=True)["texts"]
         self.assertEqual(texts[0], "This copy differs from what the tool wrote. Run the command again.")
-        self.assertIn("D7 worker", texts)
+        self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], ["D7", "worker", "model-a", "42m"])
 
     def test_renderer_draws_a_folded_page_and_an_empty_one_with_no_error(self):
         for build, heading in ((busy, "Running now"), (empty, "Timeline")):
@@ -1809,15 +2000,13 @@ class SkillTest(OutputCase):
         self.assertEqual([word for word in ("skip", "step 2 of") if word in section], [])
 
 
-REVIEW_MODELS = ("mcp:alpha-secret", "node:alpha-secret", "run:alpha-secret", "acct_secretXYZ", "user@example.test", "C:\\Users\\private\\file.txt")
-REVIEW_TEXTS = ("task:alpha-secret", "acct_secretXYZ", "private/file.txt", "prefix=mcp:alpha-secret", "id=mcp%3Aalpha-secret")
-REVIEW_VALUES = tuple(dict.fromkeys((*REVIEW_MODELS, *REVIEW_TEXTS, "file:/home/private/secret")))
-NEEDLES = ("secret", "user@", "example.test", "private", "Users", "file.txt")
 REQUEST = "kit-d7-audit-task"
-INSTANCE = "acct-homemarker-instance"
+ODD = "T3homemarker_Session9"
+BARE = "7ead0a2b-e89b-12d3-a456-426614174000"
 ADDRESS = "acct-homemarker@example.test"
-PLANTED = ("model", "title", "title in a sentence", "summary", "unit id", "provider", "instance id", "branch", "store name",
-           "pull request", "pull request path", "pull request query", "pull request fragment", "pull request userinfo")
+NEEDLES = (*MARKERS, "426614174000", "example.test", "secret")
+ROW_FIELDS = ("model", "title", "title in a sentence")
+LINK_FIELDS = ("pull request", "pull request owner", "pull request query", "pull request fragment", "pull request userinfo")
 
 
 def tree(directory):
@@ -1828,72 +2017,265 @@ def put(rows, index, column, value):
     rows[index] = (*rows[index][:column], value, *rows[index][column + 1:])
 
 
+def forms(value):
+    """value as written, in other cases, and percent-encoded once, twice, and in part."""
+    once = quote(value, safe="")
+    return tuple(dict.fromkeys((value, value.upper(), value.lower(), value.swapcase(), once, quote(once, safe=""), once.lower(), quote(value), value.replace("-", "%2D").replace("_", "%5f"))))
+
+
 class PrivacyTest(OutputCase):
+    """The contract: no T3 identifier the run read, no local path, no email address, and no request name as one string is in either form."""
+
     def staffed(self, name):
         fixture = self.fixture = Fixture(self.root / name)
         fixture.coordinator()
         fixture.unit("D7", "in-progress", "Activity page", thread=worker(1), pr="https://git.example/o/r/pull/7")
-        fixture.thread(worker(1), title="D7 worker", instance=INSTANCE, turns=(("running", 30, None),))
+        fixture.retired("D7", BARE)
+        fixture.thread(worker(1), title="D7 worker", turns=(("running", 30, None),))
+        fixture.thread(BARE, title="D7 first worker", turns=(("completed", 60, 50),))
         self.child = delegated(worker(1), REQUEST)
-        self.node = fixture.thread(self.child, title=f"auditor for {ADDRESS}", provider="codex", parent=worker(1), turns=(("completed", 25, 20),))
+        self.node = fixture.thread(self.child, title="Act as the audit sub-agent for this task.", provider="codex", parent=worker(1), turns=(("completed", 25, 20),))
+        fixture.thread(native(1), title="/root/spec_review", parent=self.child, delegation=("completed", 24, 23))
+        fixture.unit("D8", "in-review", "Second item", thread=ODD)
+        fixture.thread(ODD, title="D8 worker", turns=(("completed", 45, 40),))
         return fixture
 
-    def own_values(self, fixture):
-        child = self.child
-        return (COORDINATOR, worker(1), child, unquote(child), unquote(unquote(child)), quote(child, safe=""), quote(quote(child, safe=""), safe=""),
-                child.replace("%3A", "%3a"), self.node, REQUEST, INSTANCE, ADDRESS, str(fixture.store), str(fixture.base), str(fixture.database), str(fixture.home),
-                fixture.meta["projectRoot"], quote(str(fixture.store), safe=""), quote(quote(str(fixture.home), safe=""), safe=""))
+    def identifiers(self):
+        return (COORDINATOR, worker(1), BARE, ODD, self.child, unquote(self.child), self.node, native(1))
 
-    def plant(self, fixture, field, number, value):
-        part, unit = delegated(worker(1), f"kit-d7-part-{number}"), f"D{100 + number}"
+    def paths(self, fixture):
+        return (str(fixture.store), str(fixture.home), str(fixture.base), str(fixture.database), fixture.meta["projectRoot"], str(fixture.store / "dishes.tsv"), str(fixture.home / ".config" / "secret.json"))
+
+    def exact(self, fixture):
+        """Each identifier and path the run reads as written, and four of them in every case and encoding forms() gives."""
+        ids, paths = self.identifiers(), self.paths(fixture)
+        return tuple(dict.fromkeys((*ids, *paths, *(form for value in (ODD, self.child, *paths[:2]) for form in forms(value)))))
+
+    def shapes(self):
+        return ("mcp:alpha-secret", "thread:secret-1", "node:alpha-secret", "run:alpha-secret", "task:alpha-secret", "prefix=mcp:alpha-secret", "id=mcp%3Aalpha-secret", "context-transfer:secret",
+                "provider-thread:secret", "9f8e7d6c-e89b-12d3-a456-426614174000", "/srv/secret/notes.md", "/secret", "~/secret/notes.md", "~user/secret", "$HOME/secret", "C:\\Users\\secret\\file.txt",
+                "file:/home/secret/notes", "file:///srv/secret", "(/srv/secret)", "x=/srv/secret", "%2Fsrv%2Fsecret%2Fnotes.md", ADDRESS, ADDRESS.upper(), quote(ADDRESS, safe=""), f"<{ADDRESS}>")
+
+    def planted(self, fixture):
+        """Each value as the page may meet it: alone, and for an identifier or a path the run read also inside a longer word."""
+        return (*self.exact(fixture), *(f"pre{value}post" for value in self.exact(fixture)), *self.shapes())
+
+    def plant(self, fixture, field, number, values):
+        """One thread or one work item that holds the values in the field. A thread is running, failed, or queued, so the text form prints its row."""
+        part, unit, joined = delegated(worker(1), f"part-{number}"), f"D{100 + number}", " and ".join(values)
         link = f"https://git.example/o/r/pull/{100 + number}"
-        if field in ("model", "title", "title in a sentence", "provider", "instance id"):
-            how = {"model": {"model": value}, "title": {"title": value}, "title in a sentence": {"title": f"see {value} now"},
-                   "provider": {"provider": value}, "instance id": {"instance": value}}[field]
-            fixture.thread(part, parent=worker(1), turns=(("completed", 20, 10),), **{"title": f"part {number}", **how})
+        if field in ROW_FIELDS + ("provider", "instance id"):
+            how = {"model": {"model": joined}, "title": {"title": joined}, "title in a sentence": {"title": f"see {joined} now"}, "provider": {"provider": joined}, "instance id": {"instance": joined}}[field]
+            turn = ("running", 20, None) if number % 15 < 7 else ("failed", 20, 10) if number % 15 < 11 else ("queued", 20, None)
+            fixture.thread(part, parent=worker(1), turns=(turn,), **{"title": f"part {number}", **how})
         elif field == "store name":
-            fixture.meta["restaurant"] += f" {value}"
+            fixture.meta["restaurant"] += f" {joined}"
         elif field == "unit id":
-            fixture.unit(value, "in-progress", f"item {number}")
+            fixture.unit(joined, "in-progress", f"item {number}")
         elif field == "branch":
             fixture.unit(unit, "in-progress", f"item {number}")
-            fixture.units[-1]["branch"] = value
+            fixture.units[-1]["branch"] = joined
         else:
-            links = {"pull request": value, "pull request path": f"https://git.example/{value}", "pull request query": f"{link}?x={value}",
-                     "pull request fragment": f"{link}#{value}", "pull request userinfo": f"https://{quote(value, safe='')}@git.example/o/r/pull/{100 + number}"}
-            fixture.unit(unit, "in-progress", f"Fix {value} today" if field == "summary" else f"item {number}", pr=links.get(field, ""))
+            links = {"pull request": joined, "pull request owner": f"https://git.example/{joined}/r/pull/{100 + number}", "pull request query": f"{link}?x={joined}",
+                     "pull request fragment": f"{link}#{joined}", "pull request userinfo": f"https://{quote(joined, safe='')}@git.example/o/r/pull/{100 + number}"}
+            fixture.unit(unit, "in-progress", f"Fix {joined} today" if field == "summary" else f"item {number}", pr=links.get(field, ""))
 
-    def test_no_review_value_and_no_id_path_instance_or_address_of_the_fixture_planted_in_each_field_planted_names_is_in_the_document_or_the_text(self):
-        for field in PLANTED:
+    def found(self, output):
+        """The needles in the output as written, in lower case, and percent-decoded once and twice."""
+        read = [output, unquote(output), unquote(unquote(output))]
+        return [needle for needle in (*NEEDLES, self.temporary, REQUEST) if any(needle.lower() in text.lower() for text in read)]
+
+    def checked(self, fixture, field, slots, text=True):
+        """Plant one slot's values in each thread or work item, run both forms, and name each needle either holds."""
+        for number, values in enumerate(slots):
+            self.plant(fixture, field, number, values)
+        fixture.write()
+        document = self.document("--max-bytes", "500000")
+        data = data_of(document)
+        self.assertEqual(([item[0] for item in data["I"] if item[0] in ("D7", "D8")], [line[1] for line in data["G"][0][1][:2]]), (["D7", "D8"], ["earlier worker", "worker"]), field)
+        self.assertEqual((self.found(document), self.found(self.document()), self.found(self.out("--text")) if text else []), ([], [], []), field)
+
+    def test_no_identifier_the_run_read_no_path_and_no_address_in_a_model_or_a_title_is_in_the_document_or_the_text(self):
+        """The text form prints at most 7 running, 4 failed, and 4 queued rows, so each fixture holds 15 planted rows."""
+        for field in ROW_FIELDS:
+            for start in range(0, len(self.planted(self.staffed("count"))), 15):
+                with self.subTest(field, start=start):
+                    fixture = self.staffed(f"{field.replace(' ', '-')}-{start}")
+                    self.checked(fixture, field, [(value,) for value in self.planted(fixture)[start:start + 15]])
+
+    def test_no_identifier_the_run_read_no_path_and_no_address_in_a_summary_a_work_item_id_or_the_stores_name_is_in_the_document_or_the_text(self):
+        """The text form prints at most 9 work items and two have agents, so the values are spread over 7 planted items."""
+        for field in ("summary", "unit id", "store name"):
             with self.subTest(field):
                 fixture = self.staffed(field.replace(" ", "-"))
-                for number, value in enumerate((*REVIEW_VALUES, *self.own_values(fixture))):
-                    self.plant(fixture, field, number, value)
+                values = self.planted(fixture)
+                self.checked(fixture, field, [values[start::7] for start in range(7)])
+
+    def test_no_identifier_the_run_read_no_path_and_no_address_in_a_field_no_page_prints_is_in_the_document_or_the_text(self):
+        for field in ("provider", "instance id", "branch"):
+            with self.subTest(field):
+                fixture = self.staffed(field.replace(" ", "-"))
+                self.checked(fixture, field, [(value,) for value in self.planted(fixture)])
+
+    def test_no_identifier_the_run_read_no_path_and_no_address_in_a_pull_request_value_is_in_the_document_or_the_text(self):
+        """Every value is planted for the document. The text form prints 7 planted items, so it is checked with each identifier and path as written, 7 to a fixture."""
+        for field in LINK_FIELDS:
+            with self.subTest(field, form="document"):
+                fixture = self.staffed(field.replace(" ", "-"))
+                self.checked(fixture, field, [(value,) for value in self.planted(fixture)], text=False)
+            for start in range(0, 21, 7):
+                with self.subTest(field, start=start):
+                    fixture = self.staffed(f"{field.replace(' ', '-')}-{start}")
+                    core = (*self.identifiers(), *self.paths(fixture), ADDRESS, "mcp:alpha-secret", "/srv/secret/notes.md", "file:/home/secret/notes", "~/secret", "9f8e7d6c-e89b-12d3-a456-426614174000")
+                    self.assertEqual(len(core), 21)
+                    self.checked(fixture, field, [(value,) for value in core[start:start + 7]])
+
+    def test_every_planted_value_is_private_text_and_the_fixture_reads_each_identifier_it_plants(self):
+        fixture = self.staffed("values")
+        store, t3, _ = fixture.write().read()
+        privacy = MOD["privacy_of"](store, t3, (fixture.store, fixture.database, fixture.base, fixture.home))
+        self.assertEqual([value for value in self.identifiers() if value not in {*t3.ids, *store.coordinators, unquote(self.child)}], [])
+        self.assertEqual([value for value in self.planted(fixture) if privacy.clean(f"a {value} b") != "a b"], [])
+        self.assertEqual([value for value in self.planted(fixture) if not self.found(value)], [])
+
+    def test_request_name_reaches_a_page_only_as_separate_words_whatever_the_title_is(self):
+        titles = ("", "Act as the audit sub-agent for this task.", "You are the auditor.", "x" * 61, REQUEST, f"see {REQUEST}", f"{REQUEST.upper()}: part 2", f"Read /pathmarker/{REQUEST}.md", "auditor")
+        labels = ("audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "audit task", "auditor")
+        for number, (title, label) in enumerate(zip(titles, labels)):
+            with self.subTest(title):
+                fixture = self.staffed(f"request-{number}")
+                put(fixture.threads, 3, 1, title)
                 fixture.write()
-                for form, output in (("document", self.document("--max-bytes", "500000")), ("text", self.out("--text"))):
-                    found = [needle for needle in (*NEEDLES, *MARKERS, self.temporary, REQUEST) if needle in output]
-                    self.assertEqual(found, [], f"{field}, {form}")
+                document, text = self.document(), self.out("--text")
+                self.assertEqual((self.found(document), self.found(text), data_of(document)["G"][0][1][2][1]), ([], [], label))
+
+    def test_identifier_with_a_space_is_in_neither_form_when_two_fields_or_a_control_character_would_spell_it(self):
+        """The plain form joins a work item's id and a row's label into one line. The document draws them in two elements."""
+        spaced = "left_homemarker right_homemarker"
+        for number, between in enumerate((" ", "\x00", "\x1b", "\x7f", "\x80", "%20", "%2520")):
+            with self.subTest(between):
+                fixture = self.staffed(f"spaced-{number}")
+                fixture.unit("left_homemarker", "in-progress", f"see left_homemarker{between}right_homemarker now", thread=spaced)
+                fixture.thread(spaced, title="right_homemarker", model="left_homemarker", turns=(("running", 9, None),))
+                fixture.thread(delegated(spaced, "helper-task"), title="right_homemarker", model="right_homemarker", parent=spaced, turns=(("running", 8, None),))
+                # read_store refuses a name that holds a NUL character.
+                fixture.meta["restaurant"] = f"left_homemarker{between.replace(chr(0), chr(27))}right_homemarker kit"
+                fixture.write()
+                document, text = self.document(), self.out("--text")
+                for output in (document, text):
+                    read = (output, unquote(output), unquote(unquote(output)))
+                    self.assertEqual([form for form in read if re.search(r"left_homemarker[\s\x00-\x1f\x7f-\x9f]+right_homemarker", form)], [])
+                data = data_of(document)
+                self.assertEqual((data["c"], [item[:2] for item in data["I"] if "left" in item[0]], [line[1] for index, lines in data["G"] for line in lines if "left" in data["I"][index][0]]),
+                                 ("kit", [["left_homemarker", "see now"]], ["worker", "right_homemarker"]))
+                self.assertEqual(text.split("\n")[4:6], ["  left_homemarker worker   left_homemarker   running for 9m", "  right_homemarker   running for 8m   under worker"])
+                self.assertIn("  left_homemarker   working   see now   1 agent, 1 sub-agent, 17m at work", text.split("\n"))
+
+    def test_out_file_named_in_a_summary_is_not_in_the_file_it_names(self):
+        fixture = self.staffed("out")
+        target = fixture.root / "pathmarker out" / "page.html"
+        target.parent.mkdir(parents=True)
+        fixture.unit("D9", "in-progress", f"Wrote {target} and {quote(str(target), safe='')} today")
+        fixture.write()
+        for form in ((), ("--text",)):
+            with self.subTest(form):
+                self.out(*form, "--out", str(target))
+                written = target.read_text()
+                self.assertEqual((self.found(written), "Wrote and today" in written), ([], True))
+
+
+def ordinary(fixture):
+    """A store, its agents, and their models named with ordinary words. Two workers' thread ids and every provider instance id are such words too."""
+    fixture.meta["restaurant"] = "private auditor"
+    fixture.coordinator(instance="queue")
+    fixture.unit("queue", "in-progress", "queue src report", thread="review", task="queue", pr="https://git.example/queue/code/pull/451237")
+    fixture.thread("review", title="queue worker", model="code", instance="private auditor", turns=(("running", 30, None),))
+    fixture.thread(delegated(COORDINATOR, "queue"), title="queue", model="queue", instance="451237", parent=COORDINATOR, turns=(("running", 20, None),))
+    fixture.unit("code", "in-review", "code review of the queue", thread="451237")
+    fixture.thread("451237", title="code worker", provider="codex", model="private auditor", instance="code", turns=(("completed", 50, 40),))
+    fixture.thread(delegated("451237", "code-review"), model="451237", parent="451237", turns=(("failed", 39, 38),))
+    fixture.thread(delegated("451237", "src"), title="src", model="review", parent="451237", turns=(("running", 10, None),))
+    fixture.unit("review", "queued", "review the src queue")
+    fixture.unit("src", "blocked", "src code")
+    fixture.unit("451237", "passed", "451237 private auditor", task="review")
+    fixture.thread(delegated(COORDINATOR, "review"), model="src", parent=COORDINATOR, turns=(("queued", 5, None),))
+    return fixture
+
+
+class OrdinaryWordsTest(OutputCase):
+    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_keeps_every_one_in_the_text(self):
+        fixture = ordinary(self.fixture).write()
+        self.assertEqual(self.out("--text", clock=fixture.now), "\n".join([
+            "Agent activity for private auditor, last 3h",
+            "3 running now, 2 agents, 4 sub-agents, 1 failed",
+            "Running now",
+            "  code src   review   running for 10m   under worker",
+            "  queue worker   code   running for 30m",
+            "  queue queue   queue   running for 20m",
+            "Queued",
+            "  451237 review   src   queued for 5m",
+            "Work items",
+            "  451237   passed review   451237 private auditor   1 sub-agent, 0s at work",
+            "  code   in review   code review of the queue   1 agent, 2 sub-agents, 21m at work",
+            "  queue   working   queue src report   1 agent, 1 sub-agent, 50m at work   https://git.example/queue/code/pull/451237",
+            "  review   landing   review the src queue   no activity in this window",
+            "  src   blocked   src code   no activity in this window",
+            "Failed",
+            "  code code review   451237   60s at work",
+            ""]))
+
+    def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_keeps_every_one_in_the_document(self):
+        fixture = ordinary(self.fixture).write()
+        data = data_of(self.document(clock=fixture.now))
+        self.assertEqual((data["c"], data["M"], data["N"]), ("private auditor", ["model-a", "src", "private auditor", "451237", "review", "code", "queue"], []))
+        self.assertEqual(data["I"], [["code", "code review of the queue", "in review", "info", "", 1],
+                                     ["queue", "queue src report", "working", "go", "https://git.example/queue/code/pull/451237", 1],
+                                     ["review", "review the src queue", "landing", "warn", "", 1], ["src", "src code", "blocked", "bad", "", 1],
+                                     ["451237", "451237 private auditor", "passed review", "info", "", 1]])
+        self.assertEqual([[data["I"][index][0], [(line[1], data["M"][line[2]]) for line in lines]] for index, lines in data["G"]], [
+            ["451237", [("review", "src")]],
+            ["code", [("worker", "private auditor"), ("code review", "451237"), ("src", "review")]],
+            ["queue", [("worker", "code"), ("queue", "queue")]]])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+    def test_page_drawn_for_that_store_names_the_item_and_the_agent_of_each_running_and_queued_row(self):
+        fixture = ordinary(self.fixture).write()
+        texts = RendererTest.render(self, self.document(clock=fixture.now))["texts"]
+        self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], [
+            "code", "src", "review", " · under ", "worker", "10m", "queue", "worker", "code", "30m", "queue", "queue", "queue", "20m",
+            "Queued", "451237", "review", "src", "5m"])
+
+    def test_identifier_that_is_an_ordinary_word_is_not_in_the_filter_and_every_other_identifier_of_the_fixture_is(self):
+        fixture = ordinary(self.fixture)
+        store, t3, _ = fixture.write().read()
+        known = {form for found in MOD["privacy_of"](store, t3, (fixture.store, "relative")).index.values() for form in found}
+        child = delegated(COORDINATOR, "queue")
+        places = {os.path.abspath(path).lower() for path in (fixture.store, "relative", fixture.meta["projectRoot"])} | {os.path.realpath(path).lower() for path in (fixture.store, "relative", fixture.meta["projectRoot"])}
+        expected = {value.lower() for thread in (COORDINATOR, child, delegated(COORDINATOR, "review"), delegated("451237", "code-review"), delegated("451237", "src"))
+                    for value in (thread, unquote(thread), unquote(unquote(thread)))}
+        nodes = {node.lower() for node, *_ in fixture.delegations}
+        self.assertEqual(known, expected | nodes | places)
+        self.assertEqual([word for word in ("queue", "review", "451237", "private auditor", "code", "src") if word in known], [])
+
+
+class ReferenceTest(unittest.TestCase):
+    """The sentences the review of round 2 corrected, as the script's docstring and its generated reference now state them."""
+
+    def test_reference_states_the_filter_and_the_pull_request_rule_as_the_docstring_does_and_holds_no_sentence_of_the_filter_it_replaced(self):
+        reference = " ".join((ROOT / "docs/cli/activity.md").read_text().split())
+        stated = ("Every string a page emits passes one filter after its parts are joined.",
+                  "An identifier that reads as ordinary words is not private text.",
+                  "The filter removes a word for no other reason.",
+                  "Userinfo, a query, and a fragment are dropped.",
+                  "A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.",
+                  "The output and the newline after it take at most --max-bytes bytes.")
+        self.assertEqual([sentence for sentence in stated if sentence not in reference or sentence not in " ".join(MOD["__doc__"].split())], [])
+        replaced = ("4 characters or longer", "with any other value that is not blank", "the class Privacy", "6 or more digits", "the most bytes the HTML document")
+        self.assertEqual([words for words in replaced if words in reference], [])
+        self.assertIn("| `--max-bytes MAX_BYTES` | | | `16000` | the most bytes the output and the newline after it take, from 16000 to 500000 |", reference)
 
 
 class PrivateValuesTest(OutputCase):
-    def test_privacy_of_knows_the_ids_request_names_instances_addresses_and_absolute_paths_the_run_read_and_no_provider_name_of_the_table_or_relative_path(self):
-        fixture = self.fixture
-        fixture.meta["previousThread"] = "mcp:threadmarker-previous"
-        fixture.coordinator()
-        fixture.unit("D7", "in-progress", f"Ask {ADDRESS}", thread=worker(2), task="kit-d7-recorded-task")
-        fixture.retired("D7", worker(1))
-        fixture.thread(worker(2), title="D7 worker", instance=INSTANCE, turns=(("running", 30, None),))
-        child = delegated(worker(2), REQUEST)
-        node = fixture.thread(child, title="auditor <second@example.test>", provider="acct-homemarker-driver", instance="codex", parent=worker(2), turns=(("completed", 25, 20),))
-        other = delegated("mcp:threadmarker-other-project", "other-request")
-        fixture.thread(other, parent="mcp:threadmarker-other-project", turns=(("completed", 400, 390),))
-        store, t3, _ = fixture.write().read()
-        known = {value for found in MOD["privacy_of"](store, t3, (fixture.store, "relative")).index.values() for value in found}
-        expected = {COORDINATOR, "mcp:threadmarker-previous", worker(1), worker(2), child, unquote(child), node, REQUEST, "kit-d7-recorded-task", INSTANCE, "acct-homemarker-driver",
-                    ADDRESS, "second@example.test", fixture.meta["projectRoot"], str(fixture.store), os.path.realpath(fixture.store), os.path.abspath("relative"), os.path.realpath("relative"),
-                    other, unquote(other), "other-request", "mcp:threadmarker-other-project", fixture.delegations[-1][0]}
-        self.assertEqual(known, expected)
-
     def test_relative_at_and_out_leave_their_own_words_in_the_text_form_and_the_same_paths_written_in_full_are_removed(self):
         fixture = self.fixture
         fixture.store = fixture.store.with_name("queue")
@@ -1912,17 +2294,18 @@ class PrivateValuesTest(OutputCase):
             "Notes",
             "  No agent or sub-agent of this coordinator ran in this window."])
 
-    def test_document_and_text_keep_the_plain_model_and_the_pull_request_address_and_count_a_refused_link(self):
+    def test_document_and_text_keep_the_model_and_the_pull_request_address_and_count_a_refused_link(self):
         fixture = one_running(self.fixture)
         fixture.units[0]["pr"] = "https://user:pw@example.test/o/r/pull/7?x=mcp:alpha-secret#task:alpha-secret"
         fixture.units[1]["pr"] = "https://example.test/o/r/pull/6/files"
-        fixture.thread(delegated(worker(1), "kit-d7-part-1"), title="part 1", model="acct_secretXYZ", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.thread(delegated(worker(1), "kit-d7-part-1"), title="part 1", model="mcp:alpha-secret", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.thread(delegated(worker(1), "kit-d7-part-2"), title="part 2", provider="opencode", model="opencode/model-b-20260101", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.thread(delegated(worker(1), "kit-d7-part-3"), title="part 3", model="opencode-go/Model_C (high)", parent=worker(1), turns=(("completed", 20, 10),))
         fixture.write()
         data, text = data_of(self.document()), self.out("--text").split("\n")
         note = "1 pull request link is not shown. It is not an https://host/owner/repository/pull/number address, or it holds text this page removes."
-        self.assertEqual((data["M"], [item[4] for item in data["I"]], data["N"]), (["model-a", "other model", "model-b-20260101"], ["", PR7], [note]))
-        self.assertEqual([line for line in text if "   working   " in line or "D6" in line], ["  D7   working   Agent activity page   1 agent, 2 sub-agents, 83m at work   " + PR7,
+        self.assertEqual((data["M"], [item[4] for item in data["I"]], data["N"]), (["model-a", "other model", "model-b-20260101", "opencode-go/Model_C (high)"], ["", PR7], [note]))
+        self.assertEqual([line for line in text if "   working   " in line or "D6" in line], ["  D7   working   Agent activity page   1 agent, 3 sub-agents, 1h 33m at work   " + PR7,
                                                                                       "  D6   landing   Queue fix   no activity in this window"])
         self.assertEqual(text[-2:], ["  " + note, ""])
 
@@ -2079,6 +2462,76 @@ class RowShapeTest(OutputCase):
         self.assertEqual(data["N"], ["T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown."])
         self.assertIn("  T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown.", self.out("--text", clock=fixture.now).split("\n"))
 
+    def test_sub_agent_rows_that_make_a_thread_its_own_parent_or_ancestor_exit_3_in_both_forms(self):
+        def looped(*pairs, started):
+            def spoil(fixture):
+                fixture.thread(worker(2), title="second worker", turns=(("running", 4, None),))
+                fixture.thread("mcp:threadmarker-other-project", turns=(("running", 3, None),))
+                fixture.turns.append((worker(1), "running", fixture.stamp(5), None))
+                for number, (parent, child) in enumerate(pairs):
+                    fixture.delegations.append((f"node:nodemarker-loop-{number}", parent, child, "running", fixture.stamp(6) if started else None, None))
+            return spoil
+
+        other = "mcp:threadmarker-other-project"
+        cases = {"self": ((worker(1), worker(1)),), "two": ((worker(1), worker(2)), (worker(2), worker(1))), "three": ((worker(1), worker(2)), (worker(2), other), (other, worker(1))),
+                 "outside": ((other, other),), "child": ((delegated(worker(1), "kit-d7-part"), worker(1)),)}
+        for name, pairs in cases.items():
+            for started in (False, True):
+                with self.subTest(name, started=started):
+                    self.staffed(f"{name}-{started}", looped(*pairs, started=started))
+                    line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
+                    self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
+
+    def test_sub_agent_rows_with_no_start_time_that_make_no_loop_are_read_and_the_running_worker_is_counted(self):
+        def chained(fixture):
+            fixture.thread(worker(2), title="second worker", turns=(("running", 4, None),))
+            fixture.turns.append((worker(1), "running", fixture.stamp(5), None))
+            fixture.delegations.append(("node:nodemarker-chain", worker(1), worker(2), "running", None, None))
+
+        fixture = self.staffed("chain", chained)
+        data = data_of(self.document(clock=fixture.now))
+        self.assertEqual((data["n"], [line[:2] for line in data["G"][0][1]], data["N"]), ([2, 1, 2, 0], [[0, "worker"], [1, "part"], [1, "second worker"]], []))
+        self.assertEqual(self.out("--text", clock=fixture.now).split("\n")[1], "2 running now, 1 agent, 2 sub-agents, 0 failed")
+
+    def test_no_count_is_negative_and_a_page_with_a_running_agent_never_says_no_agent_ran_for_150_random_sets_of_sub_agent_rows(self):
+        """Each set either makes a thread its own ancestor, which is refused, or gives a page whose every count is at least 0 before and after each fold."""
+        randomly = random.Random(125)
+        threads = (COORDINATOR, worker(1), worker(2), native(1), native(2), "mcp:threadmarker-other-project")
+        outcomes = {"refused": 0, "running": 0, "quiet": 0}
+        for number in range(150):
+            fixture = Fixture(self.root / f"random-{number}")
+            fixture.unit("D7", thread=worker(1))
+            fixture.unit("D8", "merged", thread=worker(2))
+            for thread in threads:
+                turns = [(randomly.choice(("running", "queued", "completed", "failed", "interrupted")), start, end)
+                         for start, end in ((randomly.randint(20, 170), randomly.randint(5, 19)),) * randomly.randint(0, 2)]
+                fixture.thread(thread, turns=tuple((status, start, None if status in ("running", "queued") else end) for status, start, end in turns))
+            for index in range(randomly.randint(0, 7)):
+                parent, child = randomly.choice(threads), randomly.choice(threads + (None,))
+                start = randomly.choice((None, randomly.randint(20, 170)))
+                fixture.delegations.append((f"node:nodemarker-{number}-{index}", parent, child, randomly.choice(("running", "completed", "failed")), fixture.stamp(start), None))
+            try:
+                store, t3, window = fixture.write().read()
+            except MOD["SourceError"] as error:
+                self.assertEqual(str(error), f"T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}")
+                outcomes["refused"] += 1
+                continue
+            privacy = MOD["privacy_of"](store, t3)
+            page = MOD["build_page"](store, t3, window, privacy)
+            running = [thread for thread, one in t3.agents.items() if thread != COORDINATOR and any(turn.status.value == "running" and turn.end is None for turn in MOD["stretches"](one))]
+            outcomes["running" if running else "quiet"] += 1
+            for fold, folded in enumerate([page, *(page := step(page) for step in MOD["FOLDS"])]):
+                with self.subTest(number, fold=fold):
+                    counts = [*vars(folded.totals).values(), *vars(folded.hidden).values(), *(count for one in folded.groups for count in (one.agents, one.subagents)),
+                              *(each.stands_for for one in folded.groups for each in one.rows), *(each.seconds for one in folded.groups for each in one.rows)]
+                    self.assertEqual([count for count in counts if count < 0], [])
+                    said = MOD["notes"](folded, MOD["items_of"](folded))
+                    empty_note = "No agent or sub-agent of this coordinator ran in this window." in said
+                    self.assertEqual((folded.totals.running, empty_note), (len(running), False) if running else (0, empty_note))
+                    self.assertIsNone(re.search(r"-[0-9]", MOD["render_text"](folded, privacy.clean).split("\n")[1]))
+                    self.assertEqual(data_of(MOD["render_html"](folded, privacy.clean))["n"], list(vars(folded.totals).values()))
+        self.assertEqual([name for name, times in outcomes.items() if times < 20], [])
+
     def test_sqlite_error_that_quotes_a_value_exits_3_without_the_value(self):
         fixture = self.staffed("undecodable")
         connection = sqlite3.connect(fixture.database)
@@ -2142,6 +2595,76 @@ class BudgetTest(OutputCase):
         under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1), clock=fixture.now)
         self.assertLess(len(under), len(whole))
         self.assertLessEqual(len(fixture.stdout_bytes(clock=fixture.now)), 16000)
+
+    def long_values(self):
+        """A store name, a summary, a work item id, a pull request number, a title, and a model that are each valid and thousands of characters long."""
+        fixture = one_running(self.fixture)
+        fixture.meta["restaurant"] = "name " * 10000
+        fixture.units[0].update(summary="word " * 10000, pr="https://git.example/o/r/pull/" + "7" * 20000)
+        fixture.unit("D" + "9" * 5000, "in-progress", "long id", pr="https://git.example/o/r/pull/8")
+        fixture.thread(delegated(worker(1), "helper-task"), title="t" * 60, model="m" * 30000, parent=worker(1), turns=(("failed", 20, 10),))
+        return fixture.write()
+
+    def test_stdout_of_the_text_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it_where_it_marks_each_cut_and_counts_the_link(self):
+        fixture = self.long_values()
+        whole = fixture.stdout_bytes("--text", "--max-bytes", "500000", clock=fixture.now)
+        self.assertEqual((len(whole), whole.endswith(b" at work\n")), (125520, True))
+        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", str(len(whole)), clock=fixture.now), whole)
+        under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertEqual(under.decode().split("\n"), [
+            "Agent activity for name name name name name name nam…, last 3h",
+            "1 running now, 1 agent, 1 sub-agent, 1 failed",
+            "Running now",
+            "  D7 worker   model-a   running for 42m",
+            "Work items",
+            "  D7   working   word word word word word word wor…   1 agent, 1 sub-agent, 73m at work",
+            "  D6   landing   Queue fix   no activity in this window   " + PR6,
+            "  D99999999…   working   long id   no activity in this window   https://git.example/o/r/pull/8",
+            "Failed",
+            "  D7 " + "t" * 17 + "…   " + "m" * 27 + "…   10m at work",
+            "Notes",
+            "  1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            ""])
+        self.assertEqual(fixture.stdout_bytes("--text", clock=fixture.now), under)
+        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", "16000", clock=fixture.now), under)
+
+    def test_stdout_of_the_html_form_with_very_long_values_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
+        fixture = self.long_values()
+        whole = fixture.stdout_bytes("--max-bytes", "500000", clock=fixture.now)
+        self.assertTrue(125000 < len(whole) <= 500000 and whole.endswith(b"</script>\n"), len(whole))
+        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole)), clock=fixture.now), whole)
+        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertLess(len(under), 16000)
+        self.assertEqual(fixture.stdout_bytes(clock=fixture.now), under)
+        data = data_of(under.decode()[:-1])
+        self.assertEqual((data["c"], [item[:2] + item[4:5] for item in data["I"]], data["M"], data["N"]), (
+            "name name name name name name nam…", [["D6", "Queue fix", PR6], ["D7", "word word word word word word wor…", ""], ["D99999999…", "long id", "https://git.example/o/r/pull/8"]],
+            ["model-a", "m" * 27 + "…"], ["1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more."]))
+
+    def test_largest_plain_form_of_a_shortened_page_is_under_8000_bytes_with_every_list_full_every_note_and_every_string_over_its_byte_limit(self):
+        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
+        hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
+        sizes = {}
+        for character in ("s", "<", '"', "𝕏"):
+            wide = character * 400
+
+            def big(number, no_link=""):
+                return item(str(number) + wide, summary=str(number) + wide, pr="https://example.test/" + "x" * 69, no_link=no_link)
+
+            def rows(prefix, status):
+                return [replace(row(prefix + str(n) + wide, depth=min(n, 2), status=status, open_seconds=None if status == "failed" else 604800, stands_for=99999, model=str(n) + wide),
+                                seconds=604800) for n in range(12)]
+
+            groups = [replace(group(big(number, "refused" if number % 2 else "cut"), *rows("a", "running"), *rows("b", "queued"), *rows("c", "failed")), agents=9999999, subagents=9999999)
+                      for number in range(12)]
+            groups.append(replace(group(None, *rows("d", "failed")), agents=9999999, subagents=9999999))
+            unfolded = replace(page(*groups, items=[big(number) for number in range(100, 140)], hidden=hidden, name=wide),
+                               window=MOD["Window"](1790000000.0, 1790604799.0), totals=MOD["Totals"](9999999, 9999999, 9999999, 9999999))
+            lines = MOD["render_text"](MOD["shortened"](unfolded), same).split("\n")
+            self.assertEqual(([lines.index(heading) for heading in ("Running now", "Queued", "Work items", "Failed", "Notes")], len(lines)), ([2, 11, 17, 29, 35], 47))
+            self.assertEqual((lines[10], lines[16], lines[27], lines[34]), ("  and 137 more running agents", "  and 140 more queued agents", "  and 43 more work items", "  and 152 more failed agents"))
+            sizes[character] = len("\n".join(lines).encode())
+        self.assertEqual({character: size for character, size in sizes.items() if size >= 8000}, {})
 
     def test_stdout_is_utf8_under_a_locale_that_is_not(self):
         fixture = one_running(self.fixture)

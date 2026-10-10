@@ -251,7 +251,7 @@ A --text          # plain lines instead of the HTML document
 4. When `html_preview` or `html_render` is missing, or `html_render` fails, send the stdout of `A --text` as the reply.
 5. On exit status 1 or 3 the script prints one line on stderr and nothing on stdout. Status 3 means it could not use T3 Code's database. Send that line as the reply. Status 1 names a fault in the arguments or the store.
 
-The page names work items by id at every reporting level.
+The page names work items by id at every reporting level. Every string of the document and of the text form passes the script's filter, which removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. `A --help` states what it reads as each.
 
 ## Executive chef's view
 
