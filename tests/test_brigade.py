@@ -4958,6 +4958,19 @@ class BrigadeTest(unittest.TestCase):
                          "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
         self.assertEqual(self.tables(), before)
 
+    def test_from_report_prints_a_line_that_is_only_a_list_marker_as_a_list_item_with_no_text_and_adds_nothing(self):
+        self.fired_bug_fix()
+        before = self.tables()
+        for marker in ("-", "*", "1."):
+            with self.subTest(marker=marker):
+                self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{marker}\n"),
+                                 "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
+                self.assertEqual(self.tables(), before)
+
+    def test_from_report_files_a_line_that_is_only_three_hyphens_as_a_follow_up(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n---\n"), "T2 added from perf/reports/D1.md#1: ---")
+
     def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [

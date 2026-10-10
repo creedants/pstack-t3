@@ -889,7 +889,7 @@ def follow_ups(text):
         elif not line.strip():
             blank = plain
         else:
-            marker = plain and re.match(r"(?:[-*+]|\d+[.)])\s+", line)
+            marker = plain and re.match(r"(?:[-*+]|\d+[.)])(?:\s+|$)", line)
             if marker or block is None or plain and blank and not line[0].isspace():
                 block = ("item" if marker else "para", [])
                 sections[-1].append(block)
