@@ -356,19 +356,19 @@ class Restaurant:
         data = self.snapshot(table)
         if data is None:
             return []
-        try:
-            text = data.decode()
-        except UnicodeDecodeError as error:
-            number = data[:error.start].count(b"\n") + 1
-            raise BrigadeError(f"{table} line {number} is malformed; fix or remove it") from error
         rows = []
-        # The last element is the text after the final newline: empty, or the tail of a killed append.
-        for number, line in enumerate(text.split("\n")[1:-1], start=2):
-            row = parse_row(table, line)
+        # The last element is the bytes after the final newline: empty, or the tail of a killed append.
+        for number, line in enumerate(data.split(b"\n")[:-1], start=1):
+            try:
+                text = line.decode()
+            except UnicodeDecodeError:
+                text = None
+            # Line 1 is the header.
+            row = text if number == 1 or text is None else parse_row(table, text)
             if row is None:
                 raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
             rows.append(row)
-        return rows
+        return rows[1:]
 
     def save_rows(self, table, rows):
         header = TABLES[table]

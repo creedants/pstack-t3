@@ -4379,6 +4379,21 @@ class HandoffTest(StoresTest):
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False),
                          "brigade: rail.tsv line 3 is malformed; fix or remove it")
 
+    def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
+        self.open("core")
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        rail = self.dir("core") / "rail.tsv"
+        complete = rail.read_bytes()
+        rail.write_bytes(complete + "T9\t2026-10-10T00:00:00+00:00\twaiting\tuser\t\tcafé".encode()[:-1])
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "b"), "T2")
+        after = rail.read_bytes()
+        self.assertEqual(after[:len(complete)], complete)
+        added = after[len(complete):].decode()
+        self.assertEqual((added.count("\n"), added[-1]), (1, "\n"))
+        fields = added[:-1].split("\t")
+        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b"])
+
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock
         self.open("core")
