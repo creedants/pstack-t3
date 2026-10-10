@@ -83,7 +83,7 @@ class Fixture:
     def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None):
         """Add a thread with its turns, each (status, start, end). A thread with a parent also gets a delegation.
 
-        The delegation runs from the first turn's start to the last turn's end unless `delegation` gives (status, start, end).
+        Unless `delegation` gives (status, start, end), it runs from the first turn's start to the last turn's end with the last turn's status.
         Returns the delegation's sub-agent id, or None.
         """
         self.threads.append((ident, title, provider, json.dumps({"modelSelection": {"model": model}}) if payload is None else payload))
@@ -92,7 +92,7 @@ class Fixture:
             return None
         if delegation is None:
             end = turns[-1][2] if turns else None
-            delegation = ("running" if end is None else "completed", turns[0][1] if turns else 30, end)
+            delegation = (turns[-1][0] if turns and end is not None else "running", turns[0][1] if turns else 30, end)
         node = f"node:delegated-task:nodemarker-{len(self.delegations)}"
         self.delegations.append((node, parent, ident, delegation[0], self.stamp(delegation[1]), self.stamp(delegation[2])))
         return node
@@ -798,6 +798,201 @@ class LabelTest(unittest.TestCase):
     def test_model_name_is_the_text_after_the_last_slash(self):
         self.assertEqual(MOD["model_name"]("vendor/sub/model-b-20260101"), "model-b-20260101")
         self.assertEqual(MOD["model_name"]("model-a"), "model-a")
+
+
+def populate(fixture, units, agents, running=0, failed=0, heavy=False):
+    """A coordinator, `units` work items with the last quarter in flight, and `agents` agents spread over them.
+
+    Each item has a worker, children of the worker with written titles, review children of the coordinator, and
+    sub-agents of a provider under the worker's children. `running` agents have an open turn and `failed` agents
+    failed, all in the in-flight items. With heavy, summaries, titles, models, and links are long and hold four-byte characters.
+    """
+    fixture.coordinator(turns=(("completed", 170, 160), ("running", 5, None)))
+    states = ("in-progress", "in-review", "passed", "queued", "sent-back", "blocked")
+    wide = "𝔸𝔹ℂ𝔻 " * 10 if heavy else ""
+    model = "vendor/model-" + "𝕏" * 30 if heavy else "model-a"
+    for index in range(units):
+        number, live = index + 1, index >= units - max(1, units // 4)
+        link = f"https://example.test/o/r/pull/{number}" + ("/long-path" * 12 if heavy and number % 2 else "")
+        fixture.unit(f"D{number}", states[index % 6] if live else ("merged", "dropped")[index % 5 == 0], f"{wide}summary of item {number}", thread=worker(number), pr=link)
+        base, child = 170 - index * 160 / units, None
+        for position in range(agents // units + (index < agents % units)):
+            start = max(2.0, base - position * 0.15)
+            status, end = "completed", start - 1
+            if live and running:
+                status, end, running = "running", None, running - 1
+            elif live and failed:
+                status, failed = "failed", failed - 1
+            turns = ((status, start, end),)
+            provider = ("claudeAgent", "codex", "grok", "opencode", "cursor")[position % 5]
+            if position == 0:
+                fixture.thread(worker(number), title=f"D{number} worker pathmarker", provider=provider, model=model, turns=turns)
+            elif position % 3 == 1:
+                child = delegated(worker(number), f"how-explorer-{position}")
+                fixture.thread(child, title=f"{wide}how explorer: part {position}", provider=provider, model=model, parent=worker(number), turns=turns)
+            elif position % 3 == 2:
+                request = f"brigade-kit-d{number}-verify-{position}-0a1b2c3"
+                fixture.thread(delegated(COORDINATOR, request), title="Act as the review sub-agent for this task.", provider=provider, model=model, parent=COORDINATOR, turns=turns)
+            else:
+                fixture.thread(f"{native(number)}-{position}", title="/root/spec_review", provider=provider, model=model, parent=child, delegation=(status, start, end))
+    return fixture
+
+
+def row(label, depth=0, status="done", spans=((0, 10, "done"),), open_seconds=None, stands_for=1, model="model-a"):
+    bars = tuple(MOD["Span"](x, w, MOD["Status"](kind)) for x, w, kind in spans)
+    return MOD["Row"](depth, label, model, "Claude", MOD["Status"](status), 60, bars, open_seconds, stands_for)
+
+
+def item(ident, in_flight=True, summary="summary", pr=""):
+    return MOD["Item"](ident, summary, "working" if in_flight else "merged", "go" if in_flight else "", pr, in_flight)
+
+
+def group(of, *rows):
+    return MOD["Group"](of, tuple(rows), len(rows), 0)
+
+
+def page(*groups, items=(), coordinator=None, hidden=None, name="kit"):
+    rows = [each for one in groups for each in one.rows]
+    totals = MOD["Totals"](sum(each.open_seconds is not None for each in rows), sum(each.stands_for for each in rows), 0, 0)
+    return MOD["Page"](name, MOD["Window"](0.0, 10800.0), totals, (("Claude", totals.agents),), coordinator, tuple(groups), tuple(items), hidden or MOD["Hidden"]())
+
+
+def drawn(folded):
+    """Each group's rows as (depth, label, stands_for), keyed by the work item's id."""
+    return {one.item.id if one.item else None: [(each.depth, each.label, each.stands_for) for each in one.rows] for one in folded.groups}
+
+
+class FoldTest(ActivityCase):
+    def family(self, number, state, children, last=("completed", "completed")):
+        """A unit with a worker and `children` children of it. `last` gives the last child's turn status and its delegation's status. A running delegation is open."""
+        fixture = self.fixture
+        fixture.unit(f"D{number}", state, thread=worker(number))
+        start = 170 - number * 10
+        fixture.thread(worker(number), turns=(("completed", start, start - 2),))
+        for position in range(children):
+            turn, delegation = last if position == children - 1 else ("completed", "completed")
+            end = start - 3.5 - position
+            fixture.thread(delegated(worker(number), f"part-{position}"), title=f"part {position}", parent=worker(number),
+                           turns=((turn, start - 3 - position, end),), delegation=(delegation, start - 3 - position, None if delegation == "running" else end))
+
+    def test_step_1_folds_two_or_more_quiet_rows_under_a_quiet_row_into_one_summary_row(self):
+        self.family(1, "merged", 3, last=("cancelled", "cancelled"))
+        self.family(2, "in-progress", 2, last=("failed", "failed"))
+        self.family(3, "merged", 1)
+        unfolded = page_of(self.fixture)
+        folded = MOD["fold_finished_subagents"](unfolded)
+        self.assertEqual(drawn(folded), {
+            "D3": [(0, "worker", 1), (1, "part 0", 1)],
+            "D2": [(0, "worker", 1), (1, "part 0", 1), (1, "part 1", 1)],
+            "D1": [(0, "worker", 1), (1, "3 sub-agents", 3)]})
+        summary = folded.groups[2].rows[1]
+        self.assertEqual((summary.status.value, summary.seconds, summary.open_seconds, summary.model, summary.provider), ("done", 90, None, "model-a", "Claude"))
+        self.assertEqual([(span.x, span.w, span.status.value) for span in summary.spans], [(128, 3, "done"), (133, 3, "done"), (139, 3, "done")])
+        self.assertEqual((folded.fold, folded.totals, folded.legend), (1, unfolded.totals, unfolded.legend))
+        self.assertEqual(MOD["notes"](folded), ["3 sub-agents that are done or stopped are shown as 1 summary row."])
+        self.assertEqual(drawn(MOD["fold_finished_subagents"](folded)), drawn(folded))
+
+    def test_step_2_folds_a_merged_or_dropped_unit_whose_rows_are_all_quiet_into_one_row(self):
+        self.family(1, "merged", 3)
+        self.family(2, "dropped", 1)
+        self.family(3, "merged", 2, last=("completed", "running"))
+        self.family(4, "in-review", 2)
+        self.family(5, "merged", 0)
+        folded = MOD["fold_quiet_items"](MOD["fold_finished_subagents"](page_of(self.fixture)))
+        self.assertEqual(drawn(folded), {
+            "D5": [(0, "worker", 1)],
+            "D4": [(0, "worker", 1), (1, "2 sub-agents", 2)],
+            "D3": [(0, "worker", 1), (1, "part 0", 1), (1, "part 1", 1)],
+            "D2": [(0, "1 agent, 1 sub-agent", 2)],
+            "D1": [(0, "1 agent, 3 sub-agents", 4)]})
+        self.assertEqual(folded.groups[4].item, MOD["Item"]("D1", "", "merged", "", "", False))
+        self.assertEqual(MOD["notes"](folded), [
+            "2 sub-agents that are done or stopped are shown as 1 summary row.",
+            "2 merged or dropped work items whose agents are all done or stopped are each shown as one row."])
+
+    def test_step_3_keeps_the_6_latest_quiet_merged_or_dropped_units_and_counts_the_rest(self):
+        for number in range(1, 9):
+            self.family(number, "merged", 1 if number == 1 else 0)
+        self.family(9, "in-progress", 0)
+        self.family(10, "merged", 1, last=("failed", "failed"))
+        folded = MOD["drop_old_items"](page_of(self.fixture))
+        self.assertEqual(list(drawn(folded)), ["D10", "D9", "D8", "D7", "D6", "D5", "D4", "D3"])
+        self.assertEqual((folded.hidden.dropped_items, folded.hidden.dropped_agents, folded.fold), (2, 3, 1))
+        self.assertEqual(MOD["notes"](folded), ["2 merged or dropped work items with 3 agents are not shown. Use a larger --max-bytes to see more."])
+
+    def test_step_4_keeps_6_groups_with_those_that_have_a_running_row_first(self):
+        groups = [group(item(f"D{number}"), row("worker"), row("helper", depth=1, stands_for=3)) for number in range(1, 9)]
+        groups.append(group(None, row("stray", status="running", open_seconds=5)))
+        folded = MOD["cap_everything"](page(*groups, items=[item("D1")]))
+        self.assertEqual(list(drawn(folded)), ["D1", "D2", "D3", "D4", "D5", None])
+        self.assertEqual((folded.hidden.cut_agents, folded.fold), (12, 1))
+        self.assertEqual(MOD["notes"](folded), [
+            "15 sub-agents that are done or stopped are shown as 5 summary rows.",
+            "12 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
+
+    def test_step_4_keeps_6_rows_a_group_with_running_and_failed_rows_first_and_moves_a_row_up_when_its_parent_is_cut(self):
+        rows = [row("a"), row("b", depth=1), row("c", depth=2, status="running", open_seconds=9), row("d", depth=2)]
+        rows += [row(label, status="failed") for label in "efghi"] + [row("j")]
+        folded = MOD["cap_everything"](page(group(item("D1"), *rows)))
+        self.assertEqual(drawn(folded), {"D1": [(0, "c", 1), (0, "e", 1), (0, "f", 1), (0, "g", 1), (0, "h", 1), (0, "i", 1)]})
+        self.assertEqual(folded.hidden.cut_agents, 4)
+        kept = MOD["cap_everything"](page(group(item("D1"), row("a"), row("b", depth=1), row("c", depth=2, status="running", open_seconds=9))))
+        self.assertEqual(drawn(kept), {"D1": [(0, "a", 1), (1, "b", 1), (2, "c", 1)]})
+
+    def test_step_4_joins_the_nearest_bars_until_4_are_left_on_a_row_and_8_on_the_coordinators(self):
+        spans = ((0, 10, "done"), (12, 10, "failed"), (100, 10, "done"), (115, 10, "stopped"), (300, 10, "done"), (500, 10, "running"), (700, 10, "done"))
+        folded = MOD["cap_everything"](page(group(item("D1"), row("a", spans=spans)), coordinator=row("coordinator", spans=spans + ((900, 5, "done"), (906, 5, "done")))))
+        self.assertEqual([(span.x, span.w, span.status.value) for span in folded.groups[0].rows[0].spans],
+                         [(0, 125, "failed"), (300, 10, "done"), (500, 10, "running"), (700, 10, "done")])
+        self.assertEqual([(span.x, span.w) for span in folded.coordinator.spans],
+                         [(0, 10), (12, 10), (100, 10), (115, 10), (300, 10), (500, 10), (700, 10), (900, 11)])
+
+    def test_step_4_lists_8_in_flight_items_with_those_of_a_group_on_the_page_first(self):
+        items = [item(f"D{number}") for number in range(1, 13)]
+        folded = MOD["cap_everything"](page(group(items[10], row("worker")), items=items))
+        self.assertEqual([each.id for each in folded.items], ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D11"])
+        self.assertEqual(folded.hidden.cut_in_flight, 4)
+        self.assertEqual(MOD["notes"](folded), ["4 more work items in flight are not listed."])
+
+    def test_step_4_clips_strings_by_their_encoded_bytes_and_drops_a_link_over_90_bytes(self):
+        long = item("D" + "1" * 20, summary="<" * 30, pr="https://example.test/" + "x" * 70)
+        short = item("D2", summary="𝔸" * 30, pr="https://example.test/" + "x" * 69)
+        folded = MOD["cap_everything"](page(group(long, row("é" * 30, model="m" * 40)), group(short, row("worker")), items=[long, short], name="𝔸" * 20))
+        first, second = folded.groups[0], folded.groups[1]
+        self.assertEqual((first.item.id, first.item.summary, first.item.pr), ("D" + "1" * 8 + "…", "<" * 5 + "…", ""))
+        self.assertEqual((second.item.summary, second.item.pr), ("𝔸" * 8 + "…", "https://example.test/" + "x" * 69))
+        self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 27 + "…", "𝔸" * 8 + "…"))
+        self.assertEqual(folded.items, (first.item, second.item))
+
+    def test_every_fold_step_on_the_busy_fixture_keeps_the_agent_count_the_totals_and_the_legend(self):
+        unfolded = folded = page_of(populate(self.fixture, units=36, agents=400, running=5, failed=3))
+        self.assertEqual((unfolded.totals, sum(each.stands_for for one in unfolded.groups for each in one.rows)), (MOD["Totals"](5, 36, 364, 3), 400))
+        shown = []
+        for step in MOD["FOLDS"]:
+            folded = step(folded)
+            rows = [each for one in folded.groups for each in one.rows]
+            shown.append(len(rows))
+            with self.subTest(step.__name__):
+                self.assertEqual(sum(each.stands_for for each in rows) + folded.hidden.dropped_agents + folded.hidden.cut_agents, 400)
+                self.assertEqual((folded.totals, folded.legend), (unfolded.totals, unfolded.legend))
+        self.assertEqual(shown, sorted(shown, reverse=True))
+        self.assertEqual((folded.fold, len(folded.groups), len(folded.items), shown[-1] < shown[0]), (4, 6, 8, True))
+
+    def test_notes_say_no_agent_ran_for_an_empty_window_and_count_unread_statuses_requests_and_other_threads(self):
+        self.assertEqual(MOD["notes"](page()), ["No agent or sub-agent of this coordinator ran in this window."])
+        hidden = MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1, other_threads=1, unknown_status=1, by_request_name=1)
+        self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=hidden)), [
+            "1 merged or dropped work item with 1 agent is not shown. Use a larger --max-bytes to see more.",
+            "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "1 more work item in flight is not listed.",
+            "T3 gave 1 status this tool cannot read.",
+            "1 agent is grouped by the name of the request that started it.",
+            "1 other thread ran in T3 outside this coordinator."])
+        several = MOD["Hidden"](other_threads=3, unknown_status=2, by_request_name=9)
+        self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=several)), [
+            "T3 gave 2 statuses this tool cannot read.",
+            "9 agents are grouped by the name of the request that started them.",
+            "3 other threads ran in T3 outside this coordinator."])
 
 
 if __name__ == "__main__":

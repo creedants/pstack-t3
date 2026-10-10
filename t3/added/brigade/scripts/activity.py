@@ -931,5 +931,226 @@ def build_page(store, t3, window):
     return Page(scrub(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
 
+KEPT_ITEMS = 6
+MAX_GROUPS = 6
+MAX_ROWS = 6
+MAX_SPANS = 4
+COORDINATOR_SPANS = 8
+MAX_STRIP = 8
+NAME_BYTES = 36
+ID_BYTES = 12
+LABEL_BYTES = 20
+SUMMARY_BYTES = 36
+MODEL_BYTES = 30
+LINK_BYTES = 90
+# Which status a bar keeps when cap_everything joins two bars, strongest first.
+JOINED = (Status.RUNNING, Status.FAILED, Status.UNKNOWN, Status.STOPPED, Status.DONE)
+
+
+def encode(data):
+    """Compact JSON that cannot end a script element: `<`, `>`, `&`, U+2028, and U+2029 are written as \\u escapes."""
+    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    for character in "<>&  ":
+        text = text.replace(character, f"\\u{ord(character):04x}")
+    return text
+
+
+def clip(text, limit):
+    """text, cut to end in an ellipsis when its encode() form without the quotes is over limit UTF-8 bytes."""
+    def size(value):
+        return len(encode(value).encode()) - 2
+
+    if size(text) <= limit:
+        return text
+    kept = min(len(text), limit)
+    while kept and size(text[:kept] + "…") > limit:
+        kept -= 1
+    return text[:kept] + "…"
+
+
+def count(number, noun):
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+def people(agents, subagents):
+    """Such as `1 agent, 9 sub-agents`. A zero count is left out."""
+    return ", ".join(count(number, noun) for number, noun in ((agents, "agent"), (subagents, "sub-agent")) if number)
+
+
+def quiet(rows):
+    return all(row.status in QUIET for row in rows)
+
+
+def summary(rows, depth, label):
+    """One row that stands for rows. Its bars are the union of theirs and read DONE. It keeps a model or provider only when every row has the same one."""
+    bars = []
+    for span in sorted((span for row in rows for span in row.spans), key=lambda span: span.x):
+        if bars and span.x <= bars[-1].x + bars[-1].w:
+            bars[-1] = Span(bars[-1].x, max(bars[-1].x + bars[-1].w, span.x + span.w) - bars[-1].x, Status.DONE)
+        else:
+            bars.append(Span(span.x, span.w, Status.DONE))
+    models, providers = {row.model for row in rows}, {row.provider for row in rows}
+    return Row(depth, label, models.pop() if len(models) == 1 else "", providers.pop() if len(providers) == 1 else "", Status.DONE,
+               sum(row.seconds for row in rows), tuple(bars), None, sum(row.stands_for for row in rows))
+
+
+def families(rows):
+    """rows split into runs that each start at a row of depth 0."""
+    runs = []
+    for row in rows:
+        if row.depth == 0 or not runs:
+            runs.append([])
+        runs[-1].append(row)
+    return runs
+
+
+def fold_finished_subagents(page):
+    """Step 1. Under a row of depth 0 with 2 or more rows below it, all DONE or STOPPED like the row itself, one summary row replaces the rows below."""
+    groups = []
+    for group in page.groups:
+        rows = []
+        for top, *below in families(group.rows):
+            if len(below) >= 2 and quiet([top, *below]):
+                below = [summary(below, 1, count(sum(row.stands_for for row in below), "sub-agent"))]
+            rows += [top, *below]
+        groups.append(replace(group, rows=tuple(rows)))
+    return replace(page, groups=tuple(groups), fold=page.fold + 1)
+
+
+def finished(group):
+    return group.item is not None and not group.item.in_flight and quiet(group.rows)
+
+
+def fold_quiet_items(page):
+    """Step 2. A group of 2 or more rows, all DONE or STOPPED, whose work item is merged or dropped becomes one summary row."""
+    groups = tuple(
+        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and len(group.rows) >= 2 else group
+        for group in page.groups)
+    return replace(page, groups=groups, fold=page.fold + 1)
+
+
+def drop_old_items(page):
+    """Step 3. Of the groups whose work item is merged or dropped and whose rows are all DONE or STOPPED, the first KEPT_ITEMS in page order stay."""
+    groups, seen, items, agents = [], 0, 0, 0
+    for group in page.groups:
+        seen += finished(group)
+        if finished(group) and seen > KEPT_ITEMS:
+            items, agents = items + 1, agents + sum(row.stands_for for row in group.rows)
+        else:
+            groups.append(group)
+    hidden = replace(page.hidden, dropped_items=page.hidden.dropped_items + items, dropped_agents=page.hidden.dropped_agents + agents)
+    return replace(page, groups=tuple(groups), hidden=hidden, fold=page.fold + 1)
+
+
+def first(values, limit, urgent):
+    """The limit values to keep, in their own order: the urgent ones are chosen first, then the earliest."""
+    chosen = set(sorted(range(len(values)), key=lambda index: (not urgent(values[index]), index))[:limit])
+    return [index in chosen for index in range(len(values))]
+
+
+def joined(spans, limit):
+    """spans with the two neighbors nearest each other joined until at most limit are left."""
+    spans = list(spans)
+    while len(spans) > limit:
+        at = min(range(len(spans) - 1), key=lambda index: spans[index + 1].x - spans[index].x - spans[index].w)
+        left, right = spans[at], spans[at + 1]
+        status = min(left.status, right.status, key=JOINED.index)
+        spans[at:at + 2] = [Span(left.x, max(left.x + left.w, right.x + right.w) - left.x, status)]
+    return tuple(spans)
+
+
+def cap_everything(page):
+    """Step 4. Its output has a size limit whatever the input.
+
+    At most MAX_GROUPS groups stay, those with a running row first. At most MAX_ROWS rows a group stay, running and failed rows first.
+    A row whose parent row was cut moves up a depth. At most MAX_SPANS bars a row and COORDINATOR_SPANS on the coordinator's row stay.
+    At most MAX_STRIP in-flight items stay, those of a group still on the page first.
+    The coordinator's name, ids, labels, summaries, and model names are clipped, and a link over LINK_BYTES bytes is dropped.
+    """
+    def shown(item):
+        link = item.pr if len(item.pr.encode()) <= LINK_BYTES else ""
+        return replace(item, id=clip(item.id, ID_BYTES), summary=clip(item.summary, SUMMARY_BYTES), pr=link)
+
+    def narrow(row, depth, limit):
+        return replace(row, depth=depth, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=joined(row.spans, limit))
+
+    def running(row):
+        return row.open_seconds is not None
+
+    groups, cut = [], 0
+    stays = first(page.groups, MAX_GROUPS, lambda group: any(running(row) for row in group.rows))
+    for group, stay in zip(page.groups, stays):
+        keeps = first(group.rows, MAX_ROWS if stay else 0, lambda row: running(row) or row.status is Status.FAILED)
+        rows, above = [], []
+        for row, keep in zip(group.rows, keeps):
+            del above[row.depth:]
+            if keep:
+                rows.append(narrow(row, sum(above), MAX_SPANS))
+            else:
+                cut += row.stands_for
+            above.append(keep)
+        if stay:
+            groups.append(replace(group, item=shown(group.item) if group.item else None, rows=tuple(rows)))
+    drawn = [group.item for group in groups]
+    listed = first(page.items, MAX_STRIP, lambda item: shown(item) in drawn)
+    items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
+    hidden = replace(page.hidden, cut_agents=page.hidden.cut_agents + cut, cut_in_flight=page.hidden.cut_in_flight + len(page.items) - len(items))
+    coordinator = narrow(page.coordinator, 0, COORDINATOR_SPANS) if page.coordinator else None
+    return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
+
+
+# Applied in order, each to the result of the one before, until the document fits.
+FOLDS = (fold_finished_subagents, fold_quiet_items, drop_old_items, cap_everything)
+
+
+def fit(page, budget):
+    """(page, document) for the first of page and its folds whose document is at most budget bytes, or for the last fold."""
+    document = render_html(page)
+    for fold in FOLDS:
+        if len(document.encode()) <= budget:
+            break
+        page = fold(page)
+        document = render_html(page)
+    return page, document
+
+
+def say(number, one, several, **values):
+    return (one if number == 1 else several).format(n=number, **values)
+
+
+def notes(page):
+    """One sentence for each thing the page does not draw as its own row, in a fixed order."""
+    rows = [row for group in page.groups for row in group.rows]
+    # A summary row below a row of depth 0 came from fold_finished_subagents. A summary row of depth 0 came from fold_quiet_items.
+    below = [row.stands_for for row in rows if row.stands_for > 1 and row.depth]
+    whole = [row for row in rows if row.stands_for > 1 and not row.depth]
+    hidden, lines = page.hidden, []
+    if not page.totals.agents + page.totals.subagents:
+        lines.append("No agent or sub-agent of this coordinator ran in this window.")
+    if below:
+        lines.append(say(len(below), "{agents} sub-agents that are done or stopped are shown as 1 summary row.",
+                         "{agents} sub-agents that are done or stopped are shown as {n} summary rows.", agents=sum(below)))
+    if whole:
+        lines.append(say(len(whole), "1 merged or dropped work item whose agents are all done or stopped is shown as one row.",
+                         "{n} merged or dropped work items whose agents are all done or stopped are each shown as one row."))
+    if hidden.dropped_items:
+        lines.append(say(hidden.dropped_items, "1 merged or dropped work item with {agents} is not shown. Use a larger --max-bytes to see more.",
+                         "{n} merged or dropped work items with {agents} are not shown. Use a larger --max-bytes to see more.",
+                         agents=count(hidden.dropped_agents, "agent")))
+    if hidden.cut_agents:
+        lines.append(say(hidden.cut_agents, "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+                         "{n} more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."))
+    if hidden.cut_in_flight:
+        lines.append(say(hidden.cut_in_flight, "1 more work item in flight is not listed.", "{n} more work items in flight are not listed."))
+    if hidden.unknown_status:
+        lines.append(say(hidden.unknown_status, "T3 gave 1 status this tool cannot read.", "T3 gave {n} statuses this tool cannot read."))
+    if hidden.by_request_name:
+        lines.append(say(hidden.by_request_name, "1 agent is grouped by the name of the request that started it.",
+                         "{n} agents are grouped by the name of the request that started them."))
+    if hidden.other_threads:
+        lines.append(say(hidden.other_threads, "1 other thread ran in T3 outside this coordinator.", "{n} other threads ran in T3 outside this coordinator."))
+    return lines
+
+
 if __name__ == "__main__":
     sys.exit(main())
