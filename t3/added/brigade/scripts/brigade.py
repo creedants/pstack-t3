@@ -37,12 +37,13 @@ OPEN_RUN_MINUTES = 10
 TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
-    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note"),
+    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
+ADDED_COLUMNS = {"pass.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
@@ -54,6 +55,7 @@ RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 NOTHING_HANDED = "nothing handed to you"
 SNAPSHOT_CHUNK = 1 << 16
+REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -162,12 +164,16 @@ def is_timestamp(value):
 
 
 def parse_row(table, line):
-    """One complete line of a table as a row, or None when its field count or timestamp is wrong."""
+    """One complete line of a table as a row, or None when its field count or timestamp is wrong.
+
+    A row written before a table gained its `ADDED_COLUMNS` is read padded and never rewritten.
+    """
     header = TABLES[table]
     fields = line.split("\t")
-    if len(fields) != len(header) or not is_timestamp(fields[header.index("at")]):
+    missing = len(header) - len(fields)
+    if not 0 <= missing <= ADDED_COLUMNS.get(table, 0) or not is_timestamp(fields[header.index("at")]):
         return None
-    return dict(zip(header, fields))
+    return dict(zip(header, fields + [""] * missing))
 
 
 def read_chunk(fd):
@@ -800,9 +806,18 @@ def cross_family(row):
     return model_family(row["author"]) != model_family(row["verifier"]) and not row["note"].startswith("same model family")
 
 
+def item_verdicts(rows, dish_id):
+    """The rows that carry the item's verdict. A panel member's row is on record and decides nothing."""
+    return [row for row in rows if row["dish"] == dish_id and not row["member"]]
+
+
+def send_backs(rows, dish_id):
+    return [row for row in item_verdicts(rows, dish_id) if row["verdict"] == "send-back"]
+
+
 def latest_verdict(restaurant, dish_id, sha):
     restaurant.find("dishes.tsv", dish_id)
-    verdicts = [row for row in restaurant.rows("pass.tsv") if row["dish"] == dish_id and row["sha"] == sha]
+    verdicts = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id) if row["sha"] == sha]
     return verdicts[-1] if verdicts else None
 
 
@@ -820,7 +835,19 @@ def pass_check(restaurant, dish_id, sha):
     return True, f"{dish_id} at {sha} passed review by {latest['verifier']}"
 
 
-def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False):
+def review_report(restaurant, dish_id, report):
+    name = Path(report).name
+    match = REVIEW_FILE.fullmatch(name)
+    if not match or match.group(1) != dish_id:
+        raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
+    if not (restaurant.dir / "reports" / name).exists():
+        raise BrigadeError(f"reports/{name} does not exist; write the review report first")
+    return name
+
+
+def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
+                member=False, late=False):
+    _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
     if model_family(author) == model_family(verifier) and not same_family:
@@ -828,9 +855,15 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
         note = clean(f"same model family; {note}")
+    if report:
+        report = review_report(restaurant, dish_id, report)
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
-                                   "author": author, "verifier": verifier, "note": note})
-    return restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+                                   "author": author, "verifier": verifier, "note": note, "report": report,
+                                   "member": "yes" if member else ""})
+    if member or late:
+        return f"{dish_id}: {'member' if member else 'late'} {verdict} on record; {dish_id} stays {dish['state']}"
+    row = restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+    return f"{dish_id} {row['state']}"
 
 
 def report(restaurant, write=True):
@@ -1261,8 +1294,8 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
 def mode_inputs(restaurant, dish, paths, thread):
     meta = restaurant.meta
     events = restaurant.rows("log.tsv")
-    send_backs = sum(row["dish"] == dish["id"] and row["verdict"] == "send-back" for row in restaurant.rows("pass.tsv"))
-    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, send_backs,
+    sent_back = len(send_backs(restaurant.rows("pass.tsv"), dish["id"]))
+    return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, sent_back,
                       meta.get("mode") if meta.get("mode") in MODES else None, latest_mode_note(events, dish["id"]),
                       dish, thread, meta.get("generation"))
 
@@ -1321,7 +1354,8 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     land = LAND
     report = restaurant.dir / "reports" / f"{ident}.md"
-    findings = restaurant.dir / "reports" / f"{ident}-review.md"
+    sent_back = send_backs(restaurant.rows("pass.tsv"), ident)
+    findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
@@ -2044,6 +2078,12 @@ def parser():
     a.add_argument("--verifier", required=True, help="provider/model of the reviewer")
     a.add_argument("--note", default="")
     a.add_argument("--same-family", action="store_true", help="allow it when no other family is runnable")
+    a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
+    kind = a.add_mutually_exclusive_group()
+    kind.add_argument("--member", action="store_true",
+                      help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
+    kind.add_argument("--late", action="store_true",
+                      help="a round found unrecorded after the dish moved on; the dish is left as it is")
     a = t.add_parser("check")
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
@@ -2387,9 +2427,8 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "pass":
         if args.action == "record":
-            row = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                              args.note, args.same_family)
-            return f"{args.dish} {row['state']}"
+            return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
+                               args.note, args.same_family, args.report, args.member, args.late)
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:

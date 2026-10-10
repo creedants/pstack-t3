@@ -399,6 +399,103 @@ class BrigadeTest(unittest.TestCase):
         self.record("abc", "pass")
         self.assertEqual(self.check_json("def"), (1, "", "brigade: D1 has no review verdict for def"))
 
+    def pass_rows(self):
+        return [line.split("\t") for line in (self.at / "pass.tsv").read_text().splitlines()[1:]]
+
+    def review_file(self, name, body="findings\n"):
+        path = self.at / "reports" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(body)
+        return path
+
+    def dish_fields(self, *keys):
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        return tuple(row[key] for key in keys)
+
+    def test_a_pass_table_holds_rows_written_before_and_after_the_report_and_member_columns(self):
+        self.fired_bug_fix()
+        stamp = "2026-10-08T00:00:00+00:00"
+        old = f"{stamp}\tD1\t\tabc\tpass\t{CLAUDE}\t{CODEX}\told row"
+        table = self.at / "pass.tsv"
+        table.write_text("at\tdish\tpr\tsha\tverdict\tauthor\tverifier\tnote\n" + old + "\n"
+                         + f"{stamp}\tD1\t\tdef\tsend-back\t{CLAUDE}\t{CODEX}\tnew row\tD1-review-2.md\t\n")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc"), f"D1 at abc passed review by {CODEX}")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "def", ok=False),
+                         "brigade: D1 at def: send-back (new row)")
+        self.record("ghi", "pass")
+        self.assertEqual(table.read_text().splitlines()[1], old)
+        self.assertEqual(self.pass_rows()[2][3:], ["ghi", "pass", CLAUDE, CODEX, "", "", ""])
+        for fields, line in ((old.split("\t")[:7], 5), ([*old.split("\t"), "r.md", "", "extra"], 5)):
+            table.write_text(table.read_text() + "\t".join(fields) + "\n")
+            self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
+                             f"brigade: pass.tsv line {line} is malformed; fix or remove it")
+            table.write_text("\n".join(table.read_text().splitlines()[:-1]) + "\n")
+
+    def test_pass_record_stores_the_bare_name_of_an_existing_review_report(self):
+        self.fired_bug_fix()
+        path = self.review_file("D1-review-1.md")
+        self.review_file("D1-review.md")
+        self.review_file("D1-review-2-panel-1.md")
+        self.record("abc", "send-back", "--report", str(path))
+        self.record("abc", "send-back", "--report", "reports/D1-review.md")
+        self.record("abc", "send-back", "--report", "D1-review-2-panel-1.md")
+        self.assertEqual([row[8] for row in self.pass_rows()], ["D1-review-1.md", "D1-review.md", "D1-review-2-panel-1.md"])
+        before = (self.at / "pass.tsv").read_bytes()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.brigade(*record, "--report", "D1-review-9.md", ok=False),
+                         "brigade: reports/D1-review-9.md does not exist; write the review report first")
+        self.review_file("D2-review-1.md")
+        self.review_file("D1.md")
+        self.review_file("D11-review.md")
+        for name in ("D2-review-1.md", "D1.md", "D11-review.md"):
+            self.assertEqual(self.brigade(*record, "--report", name, ok=False),
+                             f"brigade: {name} is not a review report of D1; name a file like reports/D1-review-1.md")
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+        self.assertEqual(self.dish_fields("state"), ("sent-back",))
+
+    def test_a_member_send_back_recorded_before_the_passing_rows_changes_no_verdict(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/9", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--note", "nit", "--member"),
+                         "D1: member send-back on record; D1 stays in-progress")
+        self.assertEqual(self.dish_fields("state", "pr", "sha"), ("in-progress", "", ""))
+        self.assertEqual(self.check_json("abc"), (1, "", "brigade: D1 has no review verdict for abc"))
+        self.record("abc", "pass")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc"), f"D1 at abc passed review by {CODEX}")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"verdict": "pass", "author": CLAUDE, "verifier": CODEX, "note": "", "crossFamily": True})
+        self.assertEqual([row[4:] for row in self.pass_rows()],
+                         [["send-back", CLAUDE, "grok/grok-4.7", "nit", "", "yes"], ["pass", CLAUDE, CODEX, "", "", ""]])
+
+    def test_a_member_send_back_recorded_after_the_passing_rows_changes_no_verdict(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/9", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--note", "nit", "--member"),
+                         "D1: member send-back on record; D1 stays passed")
+        self.assertEqual(self.dish_fields("state", "pr", "sha"), ("passed", "", "abc"))
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc"), f"D1 at abc passed review by {CODEX}")
+        code, out, err = self.check_json("abc")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"verdict": "pass", "author": CLAUDE, "verifier": CODEX, "note": "", "crossFamily": True})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
+
+    def test_a_member_row_follows_the_family_rule_and_takes_no_late_flag(self):
+        self.fired_bug_fix()
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        self.assertIn("same model family", self.brigade(*member, "--verifier", "cursor/claude-sonnet-5-5", ok=False))
+        self.assertIn("not allowed with argument", self.brigade(*member, "--verifier", CODEX, "--late", ok=False))
+        self.assertEqual(self.pass_rows(), [])
+
+    def test_pass_record_for_an_unknown_item_leaves_no_row(self):
+        self.fired_bug_fix()
+        for flags in ((), ("--member",), ("--late",)):
+            self.assertEqual(self.brigade("pass", "record", "D9", "--sha", "abc", "--verdict", "pass",
+                                          "--author", CLAUDE, "--verifier", CODEX, *flags, ok=False),
+                             "brigade: no D9 in dishes.tsv")
+        self.assertEqual(self.pass_rows(), [])
+
     def test_report_lists_only_what_changed_since_the_last_report(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "Startup is slow")
@@ -2629,6 +2726,44 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("Mode: light\nMode source: restaurant.json\nAttempt: fix\n", self.brigade(*self.BRIEF))
         self.assertEqual(self.mode_rows(), [])
 
+    def test_member_send_backs_do_not_move_the_item_to_full(self):
+        self.coordinator()
+        self.record("a1", "send-back")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.record("a2", "send-back", "--member", verifier="grok/grok-4.7")
+        self.record("a2", "send-back", "--member", verifier="opencode/kimi-k3")
+        self.assertIn("Mode: light\nMode source: restaurant.json\nAttempt: fix\n", self.brigade(*self.BRIEF))
+        self.assertEqual(self.mode_rows(), [])
+
+    def test_a_late_send_back_counts_and_leaves_the_fix_attempt_running(self):
+        self.coordinator()
+        self.record("a2", "send-back")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/1", "--sha", "a1", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--note", "round 1", "--late"),
+                         "D1: late send-back on record; D1 stays in-progress")
+        self.assertEqual(self.dish_fields("state", "pr", "sha", "thread"), ("in-progress", "", "a2", ""))
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "a1", ok=False),
+                         "brigade: D1 at a1: send-back (round 1)")
+        self.assertEqual(self.pass_rows()[1][3:], ["a1", "send-back", CLAUDE, CODEX, "round 1", "", ""])
+        self.assertIn("Mode: full\nMode source: escalated: second send-back\nAttempt: fix\n", self.brigade(*self.BRIEF))
+
+    def test_a_fix_brief_names_the_report_of_the_latest_send_back(self):
+        self.coordinator()
+        first, second, panel = (self.review_file(f"D1-review-{name}.md") for name in ("1", "2", "2-panel-2"))
+        line = "- A reviewer sent an earlier attempt back. Its findings: "
+        self.record("a1", "send-back", "--report", first.name)
+        self.assertIn(f"{line}{first}\n", self.brigade(*self.BRIEF))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.record("a2", "send-back", "--report", second.name)
+        self.record("a2", "send-back", "--member", "--report", panel.name, verifier="grok/grok-4.7")
+        self.assertIn(f"{line}{second}\n", self.brigade(*self.BRIEF))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.record("a3", "send-back")
+        self.assertNotIn(line, self.brigade(*self.BRIEF))
+        plain = self.review_file("D1-review.md")
+        self.assertIn(f"{line}{plain}\n", self.brigade(*self.BRIEF))
+
     def test_a_queue_bounce_briefs_a_bounce_attempt(self):
         self.coordinator(station="bug-fix")
         self.record("a1", "pass")
@@ -4009,20 +4144,27 @@ class UsageLimitDocTest(unittest.TestCase):
             "keep the dish in review until every one is terminal, then apply the printed rule per "
             "[Failure handling](../pstack-runtime/SKILL.md#failure-handling)."
         )
+        rows = (
+            "Run `$B pass record` once for each member that returned a verdict, "
+            "with that member's seat as `--verifier` and its file as `--report`."
+        )
         passes = (
-            "When the rule passes, run `$B pass record` with `--verdict pass` once for each member that passed, "
-            "with that member's seat as `--verifier`, and record no row for the others."
+            "When the rule passes, record each passing member's `pass` with no other flag "
+            "and every other member with `--member`."
         )
         resumed = "When `--resume` prints `panel`, run the panel the same way."
         for phrase in (
             panel,
-            "`<restaurant dir>/reports/<dish>-review-panel-<n>.md`",
+            "`<restaurant dir>/reports/<dish>-review-<k>-panel-<n>.md`",
+            rows,
             passes,
-            "copy its findings into `<restaurant dir>/reports/<dish>-review.md`",
-            "When fewer than two pass and none reproduces a blocker, record no row, and the dish stays in review as on `park`.",
+            "record that member's `send-back` with no other flag and every other member with `--member`",
+            "When fewer than two pass and none reproduces a blocker, record every member with `--member`, "
+            "and the dish stays in review as on `park`.",
             resumed,
         ):
             self.assertIn(phrase, bullet)
+        self.assertNotIn("copy its findings", bullet)
         self.assertLess(bullet.index(relaunch), bullet.index(panel))
         self.assertLess(bullet.index(panel), bullet.index("On `park`"))
         self.assertLess(bullet.index("When `--resume` prints `relaunch` for `verifiers`"), bullet.index(resumed))
