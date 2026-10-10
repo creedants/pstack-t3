@@ -217,6 +217,7 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+        self._dry = False
 
     def fence(self):
         """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
@@ -245,6 +246,8 @@ class Restaurant:
         It is reentrant within one Restaurant, so a command can hold it around
         its reads and writes while each write also takes it.
         """
+        if self._dry:
+            raise BrigadeError("a dry run takes no lock and writes nothing")
         if self._lock_depth == 0:
             fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX)
@@ -269,7 +272,7 @@ class Restaurant:
         Reading another store while holding a lock raises, so the caller reads that store first.
         No process holds two stores' locks.
         """
-        if self.dir.resolve() in HELD_LOCKS:
+        if self._dry or self.dir.resolve() in HELD_LOCKS:
             yield
             return
         if HELD_LOCKS:
@@ -300,7 +303,9 @@ class Restaurant:
                     chunks.append(chunk)
             finally:
                 os.close(fd)
-        return b"".join(chunks)
+        data = b"".join(chunks)
+        # A dry run holds no writer still, so its last line can be half of an append.
+        return data[:data.rfind(b"\n") + 1] if self._dry else data
 
     @contextmanager
     def checked(self):
@@ -312,6 +317,21 @@ class Restaurant:
             for table in TABLES:
                 self.rows(table)
             yield
+
+    @contextmanager
+    def dry(self):
+        """One dry run's checks, run against tables that all parse. It takes no lock, so it creates no restaurant.lock.
+
+        A rewrite replaces a table whole and snapshot keeps only finished lines, so a read beside a writer still parses.
+        Every write takes the lock, and the lock refuses a dry run.
+        """
+        self._dry = True
+        try:
+            for table in TABLES:
+                self.rows(table)
+            yield
+        finally:
+            self._dry = False
 
     @contextmanager
     def guarded(self):
@@ -638,16 +658,22 @@ def append_ticket(restaurant, summary, source, ref):
 def item_report(restaurant, report):
     """The bare name of an item report under this store's reports/.
 
-    Its content is read, so a path that names a file elsewhere is refused instead of re-anchored as review_report does.
+    Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
+    A path that names a file elsewhere is refused instead of re-anchored as review_report does, and so is a symbolic link.
     """
     name = Path(report).name
     if not ITEM_REPORT.fullmatch(name):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
     path = restaurant.dir / "reports" / name
-    if report not in (name, f"reports/{name}") and Path(report).resolve() != path.resolve():
+    home = restaurant.dir.resolve() / "reports" / name
+    if report not in (name, f"reports/{name}") and Path(report).parent.resolve() != home.parent:
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
+    if path.is_symlink():
+        raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
     if not path.is_file():
         raise BrigadeError(f"reports/{name} does not exist; nothing added")
+    if path.resolve() != home:
+        raise BrigadeError(f"reports/{name} resolves outside this store's reports/; nothing added")
     return name
 
 
@@ -662,13 +688,38 @@ class FollowUps:
     asides: tuple
 
 
+NEEDED = r"(?:\s+(?:needed|required|necessary))"
+# Each line is one whole sentence that says no work is needed. The comment beside it is a sentence it matches.
+NO_WORK = re.compile("|".join((
+    rf"(?:\w[\w /&-]*:\s*)?none{NEEDED}?(?:\s+(?:for|in|on|here|this|beyond|outside)\b.*)?",  # Docs: none for this lease
+    rf"nothing(?:\s+(?:else|more|further))?(?:\s+(?:is|are))?{NEEDED}?",  # Nothing else is needed
+    rf"no(?:\s+(?!(?:is|are|was|were)\b)[^\s,;]+){{1,8}}?(?:\s+(?:is|are))?{NEEDED}",  # No README edit is needed
+    r"(?:n/a|not\s+applicable)\b.*",  # Not applicable to this lease
+)), re.I)
+NEEDS_NO_EDIT = re.compile(
+    r".*\b(?:needs?\s+no\s+(?:edit|change|update)s?|no\s+(?:edit|change|update)s?\s+(?:is|are)\s+needed)", re.I)
+
+
+def says_no_work(text):
+    """True for a block that only says no work is needed, such as `None for this lease.` or `No README edit is needed.`
+
+    Its first sentence is that verdict from its first word to its last, and what follows is the reason.
+    A block of one sentence that ends in `needs no edit` says the same. A verdict anywhere else leaves a follow-up.
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", re.sub(r"[*`]", "", text).strip())
+    first = sentences[0].rstrip(".!?")
+    return bool(NO_WORK.fullmatch(first) or len(sentences) == 1 and NEEDS_NO_EDIT.fullmatch(first))
+
+
 def follow_ups(text):
     """Every follow-ups section of a report, or None when no heading says follow-ups.
 
     A top-level list item or a paragraph is one block, and the indented lines, nested bullets, and fenced code under it
-    are part of it. When a list is present its items are the follow-ups and the prose beside it is not.
+    are part of it. Each block is a follow-up, with three exceptions that are asides. A block that says no work is
+    needed is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph below
+    its section's last list item, which closes the section.
     """
-    blocks, level, found, fenced, blank, block = [], 0, False, False, True, None
+    sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
         fence = line.strip().startswith("```")
         plain = not fence and not fenced
@@ -677,7 +728,8 @@ def follow_ups(text):
         if heading:
             depth = len(heading.group(1))
             if re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I):
-                level, found = depth, True
+                level = depth
+                sections.append([])
             elif depth <= level:
                 level = 0
             block, blank = None, True
@@ -689,23 +741,26 @@ def follow_ups(text):
             marker = plain and re.match(r"(?:[-*+]|\d+[.)])\s+", line)
             if marker or block is None or plain and blank and not line[0].isspace():
                 block = ("item" if marker else "para", [])
-                blocks.append(block)
+                sections[-1].append(block)
             block[1].append(line[marker.end():] if marker else line)
             blank = False
-    if not found:
+    if not sections:
         return None
-    blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
-    blocks = [(kind, text) for kind, text in blocks if text]
-    says_none = [bool(re.match(r"\W*none\b", text, re.I)) for _, text in blocks]
-    listed = any(kind == "item" and not none for (kind, _), none in zip(blocks, says_none))
     items, asides = [], []
-    for (kind, text), none in zip(blocks, says_none):
-        if none:
-            asides.append(("says none", text))
-        elif listed and kind == "para":
-            asides.append(("prose beside the list", text))
-        else:
-            items.append(text)
+    for blocks in sections:
+        blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
+        blocks = [(kind, text) for kind, text in blocks if text]
+        kinds = [kind for kind, _ in blocks] + ["end"]
+        last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
+        for index, (kind, text) in enumerate(blocks):
+            if says_no_work(text):
+                asides.append(("says no work is needed", text))
+            elif kind == "para" and kinds[index + 1] == "item":
+                asides.append(("prose that introduces a list", text))
+            elif kind == "para" and index > last:
+                asides.append(("prose after the last list item", text))
+            else:
+                items.append(text)
     return FollowUps(tuple(items), tuple(asides))
 
 
@@ -722,8 +777,9 @@ def file_follow_ups(restaurant, name, found, write):
     restaurant.find("dishes.tsv", name[:-3])
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
+    aside = [f"not filed, {reason}: {text}" for reason, text in found.asides]
     if not found.items:
-        return f"reports/{name} lists no follow-ups; nothing added"
+        return "\n".join([f"reports/{name} lists no follow-ups; nothing added", *aside])
     holders = {}
     for row in sorted(restaurant.rows("rail.tsv"), key=lambda row: row["state"] not in LIVE_TICKET_STATES):
         holders.setdefault(same_text(row["summary"]), f"{row['id']} ({row['state']})")
@@ -740,8 +796,7 @@ def file_follow_ups(restaurant, name, found, write):
         else:
             holders[key] = f"#{number} above"
             lines.append(f"would add from {ref}: {text}")
-    lines.extend(f"not filed, {reason}: {text}" for reason, text in found.asides)
-    return "\n".join(lines)
+    return "\n".join(lines + aside)
 
 
 def sibling_named(restaurant, to):
@@ -2225,7 +2280,7 @@ def parser():
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
                      help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it")
-    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add and write nothing")
+    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it takes no lock and creates or changes no file")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
@@ -2513,7 +2568,7 @@ def run(argv):
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
         except UnicodeDecodeError as error:
             raise BrigadeError(f"reports/{name} is not UTF-8 text; nothing added") from error
-        with restaurant.checked():
+        with restaurant.dry() if args.dry_run else restaurant.checked():
             return file_follow_ups(restaurant, name, found, not args.dry_run)
     if args.command == "ticket" and args.action == "add" and args.dry_run:
         raise BrigadeError("--dry-run needs --from-report")

@@ -79,7 +79,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
 | `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it |
-| `--dry-run` |  |  |  | with --from-report: print what it would add and write nothing |
+| `--dry-run` |  |  |  | with --from-report: print what it would add; it takes no lock and creates or changes no file |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |

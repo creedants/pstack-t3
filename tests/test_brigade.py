@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import runpy
@@ -331,6 +332,65 @@ Kept in the store.
 
 - The rule as implemented.
 """
+PROSE_ABOVE_A_LEAD_IN = """## Follow-ups
+
+**`README.md`.** Replace the `**Known limits.**` bullet (line 284), which still says "Nothing deletes it or moves it back", with these two bullets:
+
+```markdown
+- **Interrupted runs are recovered.** Every later install or uninstall looks in those directories.
+- **Known limits.** Nothing returns or deletes it, so delete it by hand.
+```
+
+**`docs/guide.md`.** Replace the first bullet under "Known limits." (line 359) with this bullet, and keep the two bullets after it:
+
+```markdown
+- An entry in a `.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand.
+```
+
+Other follow-ups:
+
+- **Type the `side` that `holder_parents` yields**, from the comment review.
+- **No test covers a skills directory inside the checkout**, which the sweep skips because `layout` refuses it.
+
+Scratch files for this run are under `/tmp/d105-repro/`: `repro.py`, `before.txt`, and `full-suite.txt`.
+"""
+A_LIST_THEN_A_PROSE_SECTION = """## Follow-ups
+
+1. `docs/light-mode.md`, in its review-file table, still describes one `<item>-review.md` file per item.
+
+## Round 2
+
+### Follow-ups
+
+Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.
+
+`integration.head()` is still read inside two transactions.
+"""
+NO_WORK = """## Follow-ups
+
+1. **Docs.** `README.md` and `docs/guide.md` do not mention the `recovered`, `removed`, and `left` lines.
+2. No README or `docs/guide.md` edit is needed.
+3. **No README or `docs/guide.md` edit is needed.**
+4. **No README or guide edit needed.** Neither file names these tools.
+5. `docs/guide.md` has no sentence about syncing upstream, so it needs no edit.
+6. Docs: none. No README or guide names the changed sentences.
+7. None required. The `changes/pstack-t3%2Fd57.md` fragment from the previous attempt still describes the change and was left as is.
+8. Not applicable. This lease holds no docs.
+"""
+WORK_THAT_NAMES_NO_WORK = [
+    "**No test covers a skills directory inside the checkout**, which the sweep now skips because `layout` refuses it.",
+    "Docs. `README.md` and `docs/guide.md` do not name owner `queue` reports, so they need no change. The batched docs "
+    "change could add a note to `docs/live-runs.md` that owners now use `auto`.",
+    "`scripts/install.py` HARNESSES has no Muse entry. No Muse skills directory was confirmed, so nothing was added.",
+    "The README roadmap and `docs/guide.md` do not name the script. No doc edit is needed unless the guide's release "
+    "paragraph is touched.",
+    "**Configure `escalate`.** The design lists `scripts/install.py` for this repository. None is set, so the trial ran "
+    "light.",
+    "None of the tests cover the retry path.",
+    "Nothing in this change explains the release of lease L2.",
+    "No lock is taken by `status`, though one is required.",
+    "Decide whether `pass record --report` should refuse a path outside `reports/`, so it needs no second check.",
+]
 
 
 class BrigadeTest(unittest.TestCase):
@@ -546,6 +606,9 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
         self.assertEqual(self.dish_fields("state"), ("sent-back",))
 
+    def store_files(self):
+        return {str(path.relative_to(self.at)): path.read_bytes() for path in sorted(self.at.rglob("*")) if path.is_file()}
+
     def follow_ups_in(self, body, *extra, name="D1.md", ok=True, owner=True):
         self.review_file(name, body)
         return self.brigade("ticket", "add", "--from-report", f"reports/{name}", *extra, ok=ok, owner=owner)
@@ -589,9 +652,59 @@ class BrigadeTest(unittest.TestCase):
             "code-delegate line with the same missing step 5 pointer. It was outside the lease.",
             "would add from perf/reports/D1.md#2: **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only "
             "the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.",
-            "would add from perf/reports/D1.md#3: No README or `docs/guide.md` edit is needed.",
-            "not filed, prose beside the list: Scratch is under `~/.cache/d87`.",
+            "not filed, says no work is needed: No README or `docs/guide.md` edit is needed.",
+            "not filed, prose after the last list item: Scratch is under `~/.cache/d87`.",
         ])
+
+    def test_from_report_files_prose_that_neither_introduces_a_list_nor_follows_the_last_item(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(PROSE_ABOVE_A_LEAD_IN, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **`README.md`.** Replace the `**Known limits.**` bullet (line 284), "
+            "which still says \"Nothing deletes it or moves it back\", with these two bullets: ```markdown "
+            "- **Interrupted runs are recovered.** Every later install or uninstall looks in those directories. "
+            "- **Known limits.** Nothing returns or deletes it, so delete it by hand. ```",
+            "would add from perf/reports/D1.md#2: **`docs/guide.md`.** Replace the first bullet under \"Known limits.\" "
+            "(line 359) with this bullet, and keep the two bullets after it: ```markdown - An entry in a "
+            "`.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand. ```",
+            "would add from perf/reports/D1.md#3: **Type the `side` that `holder_parents` yields**, from the comment review.",
+            "would add from perf/reports/D1.md#4: **No test covers a skills directory inside the checkout**, which the "
+            "sweep skips because `layout` refuses it.",
+            "not filed, prose that introduces a list: Other follow-ups:",
+            "not filed, prose after the last list item: Scratch files for this run are under `/tmp/d105-repro/`: "
+            "`repro.py`, `before.txt`, and `full-suite.txt`.",
+        ])
+
+    def test_from_report_files_the_prose_of_a_section_with_no_list_beside_a_section_with_one(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(A_LIST_THEN_A_PROSE_SECTION, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: `docs/light-mode.md`, in its review-file table, still describes one "
+            "`<item>-review.md` file per item.",
+            "would add from perf/reports/D1.md#2: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
+            "would add from perf/reports/D1.md#3: `integration.head()` is still read inside two transactions.",
+        ])
+
+    def test_from_report_does_not_file_an_item_that_only_says_no_work_is_needed(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in(NO_WORK, "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: **Docs.** `README.md` and `docs/guide.md` do not mention the "
+            "`recovered`, `removed`, and `left` lines.",
+            "not filed, says no work is needed: No README or `docs/guide.md` edit is needed.",
+            "not filed, says no work is needed: **No README or `docs/guide.md` edit is needed.**",
+            "not filed, says no work is needed: **No README or guide edit needed.** Neither file names these tools.",
+            "not filed, says no work is needed: `docs/guide.md` has no sentence about syncing upstream, so it needs no "
+            "edit.",
+            "not filed, says no work is needed: Docs: none. No README or guide names the changed sentences.",
+            "not filed, says no work is needed: None required. The `changes/pstack-t3%2Fd57.md` fragment from the previous "
+            "attempt still describes the change and was left as is.",
+            "not filed, says no work is needed: Not applicable. This lease holds no docs.",
+        ])
+
+    def test_from_report_files_a_follow_up_that_names_no_work_beside_its_task(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n" + "".join(f"- {text}\n" for text in WORK_THAT_NAMES_NO_WORK)
+        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
+            f"would add from perf/reports/D1.md#{number}: {text}"
+            for number, text in enumerate(WORK_THAT_NAMES_NO_WORK, 1)])
 
     def test_from_report_folds_nested_bullets_and_an_indented_paragraph_into_their_item(self):
         self.fired_bug_fix()
@@ -627,17 +740,20 @@ class BrigadeTest(unittest.TestCase):
     def test_from_report_adds_nothing_for_a_section_that_says_none_or_a_report_without_one(self):
         self.fired_bug_fix()
         before = (self.at / "rail.tsv").read_bytes()
-        for body in ("## Follow-ups\n\nNone.\n",
-                     "## Follow-ups\n\nNone for this lease. A contract remote whose single push URL is not a GitHub URL "
-                     "never settles a failed delete from the forge.\n"):
-            self.assertEqual(self.follow_ups_in(body), "reports/D1.md lists no follow-ups; nothing added")
+        for text in ("None.", "None for this lease. A contract remote whose single push URL is not a GitHub URL "
+                     "never settles a failed delete from the forge."):
+            self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{text}\n").splitlines(), [
+                "reports/D1.md lists no follow-ups; nothing added",
+                f"not filed, says no work is needed: {text}",
+            ])
         self.assertEqual(self.follow_ups_in("# D1 report\n\nStatus: done\n\n## Deviations\n\n- None.\n"),
                          "reports/D1.md has no follow-ups section; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
         self.assertEqual(self.follow_ups_in(NONE_BESIDE_AN_ITEM).splitlines(), [
             "T2 added from perf/reports/D1.md#1: The skill still says to run the printed line and does not spell "
             "`--name=value`.",
-            "not filed, says none: None for `README.md` or `docs/guide.md`. They do not name this printed line.",
+            "not filed, says no work is needed: None for `README.md` or `docs/guide.md`. They do not name this "
+            "printed line.",
         ])
 
     def test_from_report_reads_every_form_of_the_heading(self):
@@ -654,8 +770,8 @@ class BrigadeTest(unittest.TestCase):
             "empty value, because `--pr` defaults to `\"\"`.",
             "would add from perf/reports/D1.md#2: `--same-family` is not checked. It writes the `same model family;` note "
             "even when the families differ.",
-            "not filed, prose beside the list: The explainer found these in `brigade.py`. All are outside L81, so I did "
-            "not fix them.",
+            "not filed, prose that introduces a list: The explainer found these in `brigade.py`. All are outside L81, "
+            "so I did not fix them.",
         ])
 
     def test_from_report_numbers_the_items_of_two_sections_as_one_list(self):
@@ -678,6 +794,41 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.follow_ups_in(BULLETS, ok=False, owner=False),
                          "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
         self.assertEqual([(self.at / name).read_bytes() for name in ("rail.tsv", "log.tsv")], tables)
+
+    def test_from_report_dry_run_takes_no_lock_and_creates_or_changes_no_file(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", BULLETS)
+        dry_run = [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                   "ticket", "add", "--from-report", "reports/D1.md", "--dry-run"]
+        (self.at / "restaurant.lock").unlink()
+        before = self.store_files()
+        result = subprocess.run(dry_run, capture_output=True, text=True)
+        self.assertEqual([line.split(":")[0] for line in result.stdout.splitlines()],
+                         [f"would add from perf/reports/D1.md#{number}" for number in (1, 2, 3)], result.stderr)
+        self.assertEqual(self.store_files(), before)
+        self.assertNotIn("restaurant.lock", before)
+        held = os.open(self.at / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        self.addCleanup(os.close, held)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        result = subprocess.run(dry_run, capture_output=True, text=True, timeout=60)
+        self.assertEqual(len(result.stdout.splitlines()), 3, result.stderr)
+
+    def test_from_report_changes_the_files_a_hand_written_ticket_changes(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", BULLETS)
+
+        def changed_by(*command):
+            before = self.store_files()
+            self.brigade(*command)
+            after = self.store_files()
+            return before, sorted(name for name in after if after[name] != before.get(name))
+
+        _, by_hand = changed_by("ticket", "add", "--summary", "by hand")
+        before, from_report = changed_by("ticket", "add", "--from-report", "reports/D1.md")
+        self.assertEqual(from_report, ["log.tsv", "rail.tsv", "restaurant.json"])
+        self.assertEqual(from_report, by_hand)
+        old, new = json.loads(before["restaurant.json"]), json.loads((self.at / "restaurant.json").read_text())
+        self.assertEqual([key for key in new if new[key] != old.get(key)], ["lastActivityAt"])
 
     def test_from_report_skips_text_a_ticket_already_holds_whatever_its_spacing_and_case(self):
         self.fired_bug_fix()
@@ -735,6 +886,35 @@ class BrigadeTest(unittest.TestCase):
         (self.at / "reports" / "D1.md").write_bytes(b"## Follow-ups\n\n- caf\xe9\n")
         self.assertEqual(self.brigade(*add, "reports/D1.md", ok=False),
                          "brigade: reports/D1.md is not UTF-8 text; nothing added")
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_refuses_a_symbolic_link_and_a_file_that_resolves_outside_reports(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n- Outside file was read.\n"
+        report = self.at / "reports" / "D1.md"
+        outside = Path(self.temporary.name) / "outside"
+        (outside / "reports").mkdir(parents=True)
+        (outside / "D1.md").write_text(body)
+        (outside / "reports" / "D1.md").write_text(body)
+        notes = self.review_file("notes.md", body)
+        before = (self.at / "rail.tsv").read_bytes()
+        add = ("ticket", "add", "--from-report")
+        for target in (outside / "D1.md", notes):
+            report.symlink_to(target)
+            for spelling in ("D1.md", "reports/D1.md", str(report)):
+                for extra in ((), ("--dry-run",)):
+                    self.assertEqual(self.brigade(*add, spelling, *extra, ok=False),
+                                     "brigade: reports/D1.md is a symbolic link; nothing added")
+            for elsewhere in (outside / "D1.md", self.at / "reports" / ".." / ".." / ".." / ".." / "outside" / "D1.md"):
+                self.assertEqual(self.brigade(*add, str(elsewhere), "--dry-run", ok=False),
+                                 f"brigade: {elsewhere} is outside this store's reports/; name reports/D1.md")
+            report.unlink()
+        notes.unlink()
+        (self.at / "reports").rmdir()
+        (self.at / "reports").symlink_to(outside / "reports")
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade(*add, "reports/D1.md", *extra, ok=False),
+                             "brigade: reports/D1.md resolves outside this store's reports/; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
     def test_from_report_refuses_the_flags_of_a_hand_written_ticket(self):
@@ -1097,7 +1277,7 @@ class BrigadeTest(unittest.TestCase):
                          "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
         self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\nNone.\n")
         self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
-                         "reports/D1.md lists no follow-ups; nothing added")
+                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, says no work is needed: None.")
 
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
