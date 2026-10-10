@@ -68,7 +68,7 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, or take tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`.
 
 ## brigade.py ticket add
 
@@ -135,6 +135,18 @@ brigade.py [flags] ticket take
 ```
 
 file every ticket a sibling handed to this coordinator
+
+## brigade.py ticket paths
+
+```text
+brigade.py [flags] ticket paths [--dry-run]
+```
+
+record the tracked paths each waiting ticket's summary quotes, on tickets that record none
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--dry-run` |  |  |  | print what it would record; it changes no table |
 
 ## brigade.py fire
 

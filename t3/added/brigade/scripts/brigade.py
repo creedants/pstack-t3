@@ -10,6 +10,7 @@ Kitchen words name files and commands. Output is plain engineering prose.
 
 import argparse
 import fcntl
+import fnmatch
 import functools
 import json
 import os
@@ -25,7 +26,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TICKET_STATES = ("waiting", "assigned", "moved", "done", "dropped")
 LIVE_TICKET_STATES = ("waiting", "assigned")
@@ -572,6 +573,72 @@ def ticket_paths(text):
     return tuple(sorted(found))
 
 
+@dataclass(frozen=True)
+class Tracked:
+    """The repository's tracked files and every directory above one."""
+    files: frozenset
+    directories: frozenset
+
+
+def tracked_paths(project_root):
+    """Tracked, from one `git -C <root> ls-files -z`. None when git fails, such as outside a repository.
+
+    A subprocess, so every caller runs it before Restaurant.checked.
+    """
+    try:
+        result = subprocess.run(["git", "-C", str(project_root), "ls-files", "-z"], capture_output=True, text=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    files = frozenset(name for name in result.stdout.split("\0") if name)
+    directories = frozenset(str(above) for name in files for above in PurePosixPath(name).parents if str(above) != ".")
+    return Tracked(files, directories)
+
+
+def quoted_paths(text, tracked):
+    """The paths a ticket's text quotes, as a sorted tuple with no repeats. Pure. tracked None gives ().
+
+    A quote is a backtick span on one line, without one trailing `:<line>` or `:<line>-<line>`.
+    A span with none of `*`, `?`, and `[` counts when it is a tracked file or a directory above one.
+    A span with one of them counts when it matches a tracked file, as the components before its first one with a mark.
+    """
+    if tracked is None:
+        return ()
+    found = set()
+    for span in re.findall(r"`([^`\n]+)`", text):
+        span = re.sub(r":\d+(?:-\d+)?$", "", span.strip())
+        if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
+            continue
+        parts = posixpath.normpath(span).split("/")
+        marked = next((index for index, part in enumerate(parts) if re.search(r"[*?\[]", part)), None)
+        span = "/".join(parts)
+        if marked is None:
+            if span != "." and (span in tracked.files or span in tracked.directories):
+                found.add(span)
+        elif marked and fnmatch.filter(tracked.files, span):
+            found.add("/".join(parts[:marked]))
+    return tuple(sorted(found))
+
+
+def record_paths(restaurant, tracked, write):
+    """One line per waiting ticket that records no paths. With write, each gets the quoted_paths of its summary."""
+    rows = restaurant.rows("rail.tsv")
+    lines, recorded = [], False
+    for row in rows:
+        if row["state"] != "waiting" or paths_of(row):
+            continue
+        paths = ",".join(quoted_paths(row["summary"], tracked))
+        if paths:
+            lines.append(f"{row['id']} {'paths' if write else 'would record'} {paths}")
+            row["paths"], recorded = paths, True
+        else:
+            lines.append(f"{row['id']} quotes no tracked path")
+    if write and recorded:
+        restaurant.save_rows("rail.tsv", rows)
+    return "\n".join(lines) or "every waiting ticket records paths"
+
+
 def set_intake(restaurant, sources):
     meta = restaurant.meta
     refuse_owned_intake(restaurant.dir, meta.get("projectRoot"), sources)
@@ -842,11 +909,12 @@ def same_text(value):
     return " ".join(value.split()).casefold()
 
 
-def file_follow_ups(restaurant, name, found, write):
+def file_follow_ups(restaurant, name, found, write, tracked):
     """One waiting ticket per follow-up whose text no ticket of this store holds, in any state.
 
     A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
     The ref ends in a position, which is not an identity, so the text is the only key and refuse_live_ref is not asked.
+    Each ticket records the quoted_paths of its text.
     """
     restaurant.find("dishes.tsv", name[:-3])
     if found is None:
@@ -864,7 +932,7 @@ def file_follow_ups(restaurant, name, found, write):
         if key in holders:
             lines.append(f"skipped {ref}, same text as {holders[key]}: {text}")
         elif write:
-            ident = append_ticket(restaurant, text, "report", ref)
+            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked))
             holders[key] = f"{ident} (waiting)"
             lines.append(f"{ident} added from {ref}: {text}")
         else:
@@ -2418,6 +2486,8 @@ def parser():
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
+    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none")
+    a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
     p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
@@ -2695,8 +2765,16 @@ def run(argv):
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
         except UnicodeDecodeError as error:
             raise BrigadeError(f"reports/{name} is not UTF-8 text; nothing added") from error
+        tracked = tracked_paths(restaurant.meta["projectRoot"])
         with restaurant.checked():
-            return file_follow_ups(restaurant, name, found, not args.dry_run)
+            return file_follow_ups(restaurant, name, found, not args.dry_run, tracked)
+    if args.command == "ticket" and args.action == "paths":
+        project = restaurant.meta["projectRoot"]
+        tracked = tracked_paths(project)
+        if tracked is None:
+            raise BrigadeError(f"cannot list tracked files in {project}")
+        with restaurant.checked():
+            return record_paths(restaurant, tracked, not args.dry_run)
     if args.command == "ticket" and args.action == "add" and args.dry_run:
         raise BrigadeError("--dry-run needs --from-report")
     if args.command == "ticket" and args.action in ("add", "set") and args.paths is not None:
