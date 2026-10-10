@@ -83,6 +83,7 @@ The default answer is `$poteto-mode`, which runs most of the others when its ste
 | Vet a performance number before reporting or acting on it | [`$benchmark-checklist`](../benchmark-checklist/SKILL.md) |
 | Run a large or cross-cutting change, or one to review after stepping away | [`$figure-it-out`](../figure-it-out/SKILL.md) |
 | Give a project or focus area a standing coordinator | [`$brigade`](../brigade/SKILL.md) |
+| Run one executive admin over the coordinators on one repository | [`$brigade-admin`](../brigade-admin/SKILL.md) |
 | Keep a decision log during a run, and review it afterward | [`$show-me-your-work`](../show-me-your-work/SKILL.md) |
 | Pick a model for each role and a reasoning budget | [`$setup-pstack`](../setup-pstack/SKILL.md) |
 | See how a skill delegates, picks models, isolates work, and schedules | [`$pstack-runtime`](../pstack-runtime/SKILL.md) |
