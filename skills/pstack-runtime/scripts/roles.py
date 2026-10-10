@@ -53,6 +53,7 @@ SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
 CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
 DRIVER_RUNTIME_MODES = {"muse": frozenset({"approval-required", "full-access"})}
+RUNTIME_MODE_GAP = "runtimeModeGap"
 FAST_GROK_OPTIONS = frozenset({"fastMode"})  # the user never runs a Grok model in its fast variant
 HAIKU_BRIEF = (
     "Keep working until everything the user asked for is done, and only stop to ask when you can't go on without the user or before a risky step. When the work the user asked for is done and checked, stop and report. Don't add new features, docs, or refactors that weren't asked for. If you think one would help, mention it at the end instead of doing it.",
@@ -616,11 +617,8 @@ def for_runtime_mode(catalog, mode):
         driver = provider.get("driverKind")
         modes = DRIVER_RUNTIME_MODES.get(driver)
         if modes is not None and mode not in modes and runnable(provider):
-            provider = {
-                **provider,
-                "canRunChildTask": False,
-                "constraints": [f"the {driver} driver lacks runtime mode {mode}"],
-            }
+            reason = f"the {driver} driver lacks runtime mode {mode}"
+            provider = {**provider, "canRunChildTask": False, "constraints": [reason], RUNTIME_MODE_GAP: reason}
         providers.append(provider)
     return {**catalog, "providers": providers}
 
@@ -754,6 +752,7 @@ def _verifier_seats(catalog, role="verifiers"):
     parent_provider = providers_by_id(catalog).get(parent) if parent else None
     parent_runs = runnable(parent_provider) if parent else False
     parent_excluded = bool(parent_model) and excluded_id(parent_model)
+    gap = (parent_provider or {}).get(RUNTIME_MODE_GAP)
     blocked = parent_excluded
     seats, families, notes = [], set(), []
     if parent_runs and parent_model and not blocked:
@@ -766,6 +765,8 @@ def _verifier_seats(catalog, role="verifiers"):
             f"skipped inherit of {parent}/{parent_model}: "
             f"{reason}, and {EXCLUDED_RULE}"
         )
+    elif parent_model and gap:
+        notes.append(f"skipped inherit of {parent}/{parent_model}: {parent} is not runnable ({gap})")
     for provider in catalog["providers"]:
         if not runnable(provider):
             continue
@@ -835,11 +836,18 @@ def _resolve_inherit(catalog, budget, name):
     A Grok parent that declares boolean fastMode becomes an explicit seat with
     fastMode false or is refused when its provider cannot run that seat.
     That note reads inherit made explicit as <provider>/<model> so fastMode stays false.
+    A parent whose provider carries RUNTIME_MODE_GAP is refused.
     """
     parent = inherit_parent(catalog)
     if parent is None:
         return INHERIT, []
     provider = providers_by_id(catalog).get(parent.provider)
+    gap = (provider or {}).get(RUNTIME_MODE_GAP)
+    if gap:
+        raise RolesError(
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: "
+            f"{parent.provider} is not runnable ({gap})"
+        )
     parent_seat = {"providerInstanceId": parent.provider, "model": parent.model}
     if excluded_id(parent.model):
         model = _first_pickable(provider) if runnable(provider) else None
@@ -1284,6 +1292,7 @@ def command_backup(args):
     if args.catalog == "-":
         raise RolesError("--catalog - is refused because stdin carries the error text")
     given_parent(args)
+    mode = given_runtime_mode(args)
     if args.provider == INHERIT:
         raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configuration")
     if args.role not in ROLES:
@@ -1300,6 +1309,7 @@ def command_backup(args):
     _catalog_path, catalog = load_show_catalog(args)
     if catalog is None:
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
+    catalog = for_runtime_mode(catalog, mode)
     options = parse_applied_options(args.options) if args.options else {}
     failed = {"provider": args.provider, "model": args.model, "options": options}
     review_backups = configured_seats(config, PANEL_BACKUP_ROLE) if PANEL_BACKUP_ROLE in config["roles"] else None
@@ -1886,11 +1896,6 @@ def main(argv=None):
         action="store_true",
         help="resolve skill tests for a child that launches seats (requires --catalog, --parent, and --role \"skill tests\")",
     )
-    sub.choices["show"].add_argument(
-        "--runtime-mode",
-        help="this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose "
-             "driverKind is muse counts as not runnable under a mode other than approval-required and full-access",
-    )
     write = sub.choices["write"]
     write.add_argument("--budget", choices=list(BUDGETS))
     write.add_argument("--mode", choices=MODES)
@@ -1931,6 +1936,12 @@ def main(argv=None):
     )
     backup.add_argument("--out", action="append", default=None, help="provider already out. Repeat for each")
     backup.add_argument("--resume", action="store_true", help="after a parked item's reset, print the seat to launch")
+    for command in (sub.choices["show"], backup):
+        command.add_argument(
+            "--runtime-mode",
+            help="this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose "
+                 "driverKind is muse counts as not runnable under a mode other than approval-required and full-access",
+        )
     for command in (sub.choices["show"], mode, backup):
         command.add_argument("--brief-mode", choices=MODES,
                              help="brief mode; overrides session, coordinator, project, and user modes")

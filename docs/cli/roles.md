@@ -106,7 +106,7 @@ roles.py check-brief brief
 ## roles.py backup
 
 ```text
-roles.py backup [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] [--catalog CATALOG] [--parent PARENT] --role ROLE --provider PROVIDER --model MODEL [--options OPTIONS] [--author AUTHOR] [--out OUT] [--resume] [--brief-mode BRIEF_MODE] [--session-mode SESSION_MODE] [--coordinator-mode COORDINATOR_MODE]
+roles.py backup [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] [--catalog CATALOG] [--parent PARENT] --role ROLE --provider PROVIDER --model MODEL [--options OPTIONS] [--author AUTHOR] [--out OUT] [--resume] [--runtime-mode RUNTIME_MODE] [--brief-mode BRIEF_MODE] [--session-mode SESSION_MODE] [--coordinator-mode COORDINATOR_MODE]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -123,6 +123,7 @@ roles.py backup [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] 
 | `--author AUTHOR` (repeatable) |  |  |  | author model, or provider/model. Repeat for each model that wrote the diff. Required for a reviewer role |
 | `--out OUT` (repeatable) |  |  |  | provider already out. Repeat for each |
 | `--resume` |  |  |  | after a parked item's reset, print the seat to launch |
+| `--runtime-mode RUNTIME_MODE` |  |  |  | this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose driverKind is muse counts as not runnable under a mode other than approval-required and full-access |
 | `--brief-mode BRIEF_MODE` |  | `full`, `light` |  | brief mode; overrides session, coordinator, project, and user modes |
 | `--session-mode SESSION_MODE` |  | `full`, `light` |  | session mode; used after brief and before coordinator, project, and user modes |
 | `--coordinator-mode COORDINATOR_MODE` |  | `full`, `light` |  | coordinator mode; used after brief and session, before project and user modes |
