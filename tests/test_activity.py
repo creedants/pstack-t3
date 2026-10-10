@@ -748,6 +748,39 @@ class PageTest(ActivityCase):
         self.assertEqual(page.legend, (("Other", 3), ("Claude", 1), ("Codex", 1), ("Cursor", 1), ("Grok", 1), ("OpenCode", 1)))
         self.assertEqual(sorted({row.provider for row in page.groups[0].rows}), ["Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"])
 
+    def test_parent_with_no_turn_in_the_window_has_a_row_with_no_bar_and_only_its_child_is_counted(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), provider="codex", turns=(("completed", 900, 890),))
+        fixture.thread(delegated(worker(1), "helper"), title="helper", parent=worker(1), turns=(("failed", 20, 10),))
+        page = page_of(fixture)
+        parent, child = page.groups[0].rows
+        self.assertEqual((parent.depth, parent.label, parent.status.value, parent.seconds, parent.spans, parent.stands_for), (0, "worker", "done", 0, (), 0))
+        self.assertEqual((child.depth, child.label, [(span.x, span.w) for span in child.spans], child.stands_for), (1, "helper", [(889, 55)], 1))
+        self.assertEqual((page.totals, page.legend), (MOD["Totals"](running=0, agents=0, subagents=1, failed=1), (("Claude", 1),)))
+        self.assertEqual((page.groups[0].agents, page.groups[0].subagents), (0, 1))
+        self.assertEqual([line[6:] for line in MOD["wire"](page)["G"][0][1]], [[[], 0], [[889, 55, 2]]])
+        self.assertIn("  D7   working   1 sub-agent, 10m at work", MOD["render_text"](page).split("\n"))
+
+    def test_parent_with_no_turn_in_the_window_is_not_counted_as_grouped_by_request_name(self):
+        fixture = self.fixture
+        fixture.unit("D7")
+        review = delegated(COORDINATOR, "brigade-kit-d7-verify")
+        fixture.thread(review, parent=COORDINATOR, turns=(("completed", 900, 890),))
+        fixture.thread(delegated(review, "reader"), title="reader", parent=review, turns=(("completed", 20, 10),))
+        page = page_of(fixture)
+        self.assertEqual((drawn(page), page.hidden.by_request_name), ({"D7": [(0, "review", 0), (1, "reader", 1)]}, 0))
+
+    def test_ancestor_with_no_turn_in_the_window_has_no_row_in_a_group_that_holds_none_of_its_descendants(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 900, 890),))
+        node = fixture.thread(delegated(worker(1), "helper"), title="helper", parent=worker(1), turns=(("completed", 20, 10),))
+        fixture.unit("D8", task=node)
+        page = page_of(fixture)
+        self.assertEqual((labels(page), page.totals), ({"D8": [(0, "helper")]}, MOD["Totals"](running=0, agents=0, subagents=1, failed=0)))
+
     def test_store_with_no_recorded_thread_shows_workers_and_their_children_and_no_coordinator_row(self):
         fixture = self.fixture
         fixture.meta.pop("thread")

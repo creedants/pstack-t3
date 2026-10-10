@@ -188,6 +188,7 @@ class Agent:
 
     `delegation` is set when it touches the window and the thread has a turn in the window or has never had a turn.
     A provider's own sub-agent has a delegation and no turns.
+    An agent with a turn or a delegation here ran in the window.
     An ancestor kept so its child has a parent row has neither.
     """
 
@@ -247,7 +248,8 @@ class Row:
     `depth` is 0 for a row with no parent row in its group, and 1 or 2 below one.
     `seconds` is the time spent in turns inside the window.
     `open_seconds` is how long the open turn has run, counted from its start. It is None when `status` is not in OPEN, and on the coordinator's row.
-    `stands_for` is 1 for one agent. A summary row stands for 2 or more.
+    `stands_for` is 1 for an agent that ran in the window. It is 0 for an ancestor that did not, which has a row so that its child has a parent row.
+    A summary row's is the sum over the rows it replaced, which is 2 or more.
     """
 
     depth: int
@@ -277,7 +279,7 @@ class Item:
 class Group:
     """A work item and its rows in tree order. `item` is None for the agents tied to no work item.
 
-    `agents` and `subagents` count the group's threads without and with a parent. No fold step changes them.
+    `agents` and `subagents` count the group's agents that ran in the window, without and with a parent. No fold step changes them.
     """
 
     item: Optional[Item]
@@ -290,8 +292,8 @@ class Group:
 class Totals:
     """The four numbers at the top. No fold step changes them, and the coordinator's own thread is in none.
 
-    `agents` counts threads with no parent, `subagents` counts threads with one, `running` counts
-    agents whose status is in OPEN, and `failed` counts agents whose status is FAILED.
+    `agents` counts the agents that ran in the window and have no parent, and `subagents` counts those that have one.
+    `running` counts agents whose status is in OPEN, and `failed` counts agents whose status is FAILED.
     """
 
     running: int
@@ -314,7 +316,7 @@ class Hidden:
     cut_in_flight: int = 0       # in-flight items cap_everything removed from the strip
     other_threads: int = 0
     unknown_status: int = 0
-    by_request_name: int = 0     # agents grouped with Evidence.REQUEST
+    by_request_name: int = 0     # agents that ran in the window and are grouped with Evidence.REQUEST
 
 
 @dataclass(frozen=True)
@@ -322,7 +324,7 @@ class Page:
     """Everything either renderer needs.
 
     `coordinator` is the coordinator's own row. It has no RUNNING span and is in no count.
-    `legend` holds each provider's name and its number of agents, most agents first. No fold step changes it.
+    `legend` holds each provider's name and its number of agents that ran in the window, most agents first. No fold step changes it.
     `items` holds the in-flight work items. A group's item can be a finished one.
     `fold` is how many fold steps were applied.
     """
@@ -882,6 +884,18 @@ def tree(agents):
     return order
 
 
+def with_parents(agents):
+    """The agents that ran in the window, and each one's ancestors among agents."""
+    by_thread = {agent.thread: agent for agent in agents}
+    kept = set()
+    for agent in agents:
+        thread = agent.thread if stretches(agent) else None
+        while thread in by_thread and thread not in kept:
+            kept.add(thread)
+            thread = by_thread[thread].parent
+    return [agent for agent in agents if agent.thread in kept]
+
+
 def item_of(unit):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     return Item(scrub(unit.id), scrub(unit.summary), word, tone, link_of(unit.pr), unit.state not in FINISHED_STATES)
@@ -890,6 +904,7 @@ def item_of(unit):
 def build_page(store, t3, window):
     """The unfolded Page.
 
+    A group holds the agents of one work item that ran in the window, and each one's ancestors among that item's agents.
     Groups whose agents have open work come first, then the latest activity first. The group tied to no work item is last.
     `items` is in order of the number in each id.
     The coordinators' turns make one row, and that row's RUNNING bars read DONE.
@@ -897,7 +912,7 @@ def build_page(store, t3, window):
     def row(agent, depth, label):
         turn = open_turn(agent)
         return Row(depth, label, model_name(agent.model), PROVIDERS.get(agent.provider, OTHER_PROVIDER)[0], status_of(agent),
-                   seconds_of(agent, window), spans_of(agent, window), int(window.end - turn.start) if turn else None)
+                   seconds_of(agent, window), spans_of(agent, window), int(window.end - turn.start) if turn else None, 1 if stretches(agent) else 0)
 
     def order(entry):
         unit, agents = entry
@@ -909,12 +924,15 @@ def build_page(store, t3, window):
     members = {}
     for thread, assignment in placed.items():
         members.setdefault(assignment.unit, []).append(t3.agents[thread])
-    groups = []
-    for unit, agents in sorted(members.items(), key=order):
+    members = {unit: with_parents(agents) for unit, agents in members.items()}
+    groups, by_request = [], 0
+    for unit, agents in sorted(((unit, agents) for unit, agents in members.items() if agents), key=order):
         rows = tuple(row(agent, depth, label_of(agent, store, unit)) for agent, depth in tree(agents))
-        subagents = sum(agent.parent is not None for agent in agents)
-        groups.append(Group(item_of(units[unit]) if unit else None, rows, len(agents) - subagents, subagents))
-    everyone = [row for group in groups for row in group.rows]
+        active = [agent for agent in agents if stretches(agent)]
+        subagents = sum(agent.parent is not None for agent in active)
+        by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
+        groups.append(Group(item_of(units[unit]) if unit else None, rows, len(active) - subagents, subagents))
+    everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status in OPEN for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
     providers = [row.provider for row in everyone]
@@ -932,8 +950,7 @@ def build_page(store, t3, window):
         return (int(digits.group()) if digits else 0, unit.id)
 
     items = tuple(item_of(unit) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
-    hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status,
-                    by_request_name=sum(assignment.evidence is Evidence.REQUEST for assignment in placed.values()))
+    hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request)
     return Page(scrub(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
 
@@ -1011,12 +1028,12 @@ def families(rows):
 
 
 def fold_finished_subagents(page):
-    """Step 1. Under a row of depth 0 with 2 or more rows below it, all DONE or STOPPED like the row itself, one summary row replaces the rows below."""
+    """Step 1. Under a row of depth 0 that is DONE or STOPPED, the rows below become one summary row when all are DONE or STOPPED and they stand for 2 or more agents."""
     groups = []
     for group in page.groups:
         rows = []
         for top, *below in families(group.rows):
-            if len(below) >= 2 and quiet([top, *below]):
+            if sum(row.stands_for for row in below) >= 2 and quiet([top, *below]):
                 below = [summary(below, 1, count(sum(row.stands_for for row in below), "sub-agent"))]
             rows += [top, *below]
         groups.append(replace(group, rows=tuple(rows)))
@@ -1028,9 +1045,9 @@ def finished(group):
 
 
 def fold_quiet_items(page):
-    """Step 2. A group of 2 or more rows, all DONE or STOPPED, whose work item is merged or dropped becomes one summary row."""
+    """Step 2. A group whose work item is merged or dropped and whose rows are all DONE or STOPPED and stand for 2 or more agents becomes one summary row."""
     groups = tuple(
-        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and len(group.rows) >= 2 else group
+        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and group.agents + group.subagents >= 2 else group
         for group in page.groups)
     return replace(page, groups=groups, fold=page.fold + 1)
 
@@ -1361,7 +1378,7 @@ def wire(page):
     A row is [depth, label, model, provider, status, seconds, bars, stands_for, open_seconds].
     model indexes M and provider indexes P, and either is -1 for none.
     bars holds x, w, and an index into WIRE_BARS for each bar, flat.
-    A row with no open turn has no open_seconds, and when it also stands for one agent it has no stands_for.
+    A row with no open turn has no open_seconds, and when its stands_for is also 1 it has no stands_for.
     """
     models, providers = [], [name for name, _ in page.legend]
     colors = dict([*PROVIDERS.values(), OTHER_PROVIDER])
