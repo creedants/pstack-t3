@@ -4802,7 +4802,7 @@ class AdminTest(StoresTest):
         self.admin("request", "--to", "docs", "reports-to docs th-admin")
         self.admin("request", "--to", "docs", "from-user docs: add a FAQ")
         for printed in (self.brigade("docs", "status"), self.brigade("docs", "walk", "--repo", str(self.project)),
-                        self.brigade("docs", "close", "--dry-run")):
+                        self.brigade("docs", "close")):
             self.assertIn("requests from the executive admin: 2", printed)
             self.assertNotIn("requests from the user", printed)
 

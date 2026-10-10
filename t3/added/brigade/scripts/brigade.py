@@ -355,9 +355,9 @@ class Restaurant:
     def rows(self, table):
         """The rows of a table's finished lines after its header line. A table that does not exist has none.
 
-        A finished line ends in a newline. The bytes after the last newline are not a row and are never decoded.
+        A finished line ends in a newline. The bytes after the last newline are never decoded.
         A finished line that is not UTF-8, or that parse_row turns down, is refused as malformed.
-        The header line is decoded and never parsed.
+        A finished header line is decoded and never parsed.
         """
         data = self.snapshot(table)
         if data is None:
