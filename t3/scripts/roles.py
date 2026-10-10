@@ -52,6 +52,7 @@ LADDER = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5,
 SPECIAL = {"ultracode", "ultrathink"}
 INHERIT = "inherit"
 CANNOT_LAUNCH_SEATS = frozenset({"cursor"})   # its harness sends target.options as a JSON string, which T3 refuses
+DRIVER_RUNTIME_MODES = {"muse": frozenset({"approval-required", "full-access"})}
 FAST_GROK_OPTIONS = frozenset({"fastMode"})  # the user never runs a Grok model in its fast variant
 HAIKU_BRIEF = (
     "Keep working until everything the user asked for is done, and only stop to ask when you can't go on without the user or before a risky step. When the work the user asked for is done and checked, stop and report. Don't add new features, docs, or refactors that weren't asked for. If you think one would help, mention it at the end instead of doing it.",
@@ -461,6 +462,15 @@ def given_parent(args):
     return parse_parent(text)
 
 
+def given_runtime_mode(args):
+    text = getattr(args, "runtime_mode", None)
+    if text is None:
+        return None
+    if not text or any(char.isspace() for char in text):
+        raise RolesError(f"--runtime-mode {text!r}: expected runtimeMode from orchestrator_capabilities")
+    return text
+
+
 def parent_for(args, catalog, catalog_path):
     """--parent wins. A snapshot never supplies a parent. An explicit catalog file does."""
     given = given_parent(args)
@@ -595,6 +605,24 @@ def options_of(model):
 
 def runnable(provider):
     return bool(provider and provider.get("canRunChildTask") and models_of(provider))
+
+
+def for_runtime_mode(catalog, mode):
+    """Catalog copy in which a runnable provider cannot run children when DRIVER_RUNTIME_MODES lists its driver without the mode."""
+    if catalog is None or mode is None:
+        return catalog
+    providers = []
+    for provider in catalog.get("providers") or []:
+        driver = provider.get("driverKind")
+        modes = DRIVER_RUNTIME_MODES.get(driver)
+        if modes is not None and mode not in modes and runnable(provider):
+            provider = {
+                **provider,
+                "canRunChildTask": False,
+                "constraints": [f"the {driver} driver lacks runtime mode {mode}"],
+            }
+        providers.append(provider)
+    return {**catalog, "providers": providers}
 
 
 def find_model(provider, model_id):
@@ -1339,11 +1367,13 @@ def catalog_for_check(args, catalog, catalog_path):
 
 def command_show(args):
     given_parent(args)
+    mode = given_runtime_mode(args)
     config = merged_config(args.cwd, args.config, args.project_config)
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
     config["mode"] = decision
     catalog_path, catalog = load_show_catalog(args)
     parent, catalog = catalog_for_check(args, catalog, catalog_path)
+    catalog = for_runtime_mode(catalog, mode)
     launches = getattr(args, "launches_seats", False)
     if launches:
         roles = args.role or []
@@ -1855,6 +1885,11 @@ def main(argv=None):
         "--launches-seats",
         action="store_true",
         help="resolve skill tests for a child that launches seats (requires --catalog, --parent, and --role \"skill tests\")",
+    )
+    sub.choices["show"].add_argument(
+        "--runtime-mode",
+        help="this thread's runtimeMode from orchestrator_capabilities. With a catalog, a provider whose "
+             "driverKind is muse counts as not runnable under a mode other than approval-required and full-access",
     )
     write = sub.choices["write"]
     write.add_argument("--budget", choices=list(BUDGETS))
