@@ -1,4 +1,5 @@
 import os
+import pathlib
 import shlex
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -50,10 +52,12 @@ REAL_RUN = (
     "deleted changes/alpha.md\ndeleted changes/zeta.md\n" + STEPS
 )
 RELEASED = " M CHANGELOG.md\n D changes/alpha.md\n D changes/beta.md\n D changes/eta.md\n D changes/zeta.md\n"
+UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
 DIRTY = (
     "CHANGELOG.md or changes/ has uncommitted changes; commit them, "
-    "or run git restore CHANGELOG.md changes/ to undo an unfinished release:\n"
+    f"or run {UNDO} to undo an unfinished release:\n"
 )
+NOTHING_CHANGED = "; nothing changed, fix that and rerun"
 NOT_A_BULLET = "is not a bullet or a continuation line; fix the fragment, commit it, and rerun\n"
 
 
@@ -209,7 +213,7 @@ class RunTest(ReleaseCase):
         with history() as repo:
             self.assertEqual(run(repo, "0.3.0").returncode, 0)
             self.assert_refuses(repo, "0.3.0", DIRTY + RELEASED)
-            git(repo, "restore", "CHANGELOG.md", "changes/")
+            git(repo, *shlex.split(UNDO)[1:])
             self.assertEqual(git(repo, "status", "--porcelain"), "")
             self.assert_section(repo, SECTION)
             self.assertEqual(run(repo, "0.3.0").returncode, 0)
@@ -217,9 +221,34 @@ class RunTest(ReleaseCase):
             git(repo, "commit", "-q", "-m", "release 0.3.0")
             self.assert_refuses(repo, "0.3.0", "CHANGELOG.md already has a ## 0.3.0 heading; pick the next version\n")
 
-    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root deletes from a read-only directory")
-    def test_failed_delete_names_the_undo(self):
+    def test_printed_undo_restores_a_staged_release(self):
         with history() as repo:
+            before = state(repo)
+            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            git(repo, "add", "CHANGELOG.md", "changes/")
+            self.assertEqual(git(repo, "status", "--porcelain"), "M  CHANGELOG.md\nD  changes/alpha.md\n"
+                             "D  changes/beta.md\nD  changes/eta.md\nD  changes/zeta.md\n")
+            git(repo, *shlex.split(UNDO)[1:])
+            self.assertEqual(state(repo), before)
+
+    def test_printed_undo_restores_an_unstaged_release(self):
+        with history() as repo:
+            before = state(repo)
+            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            git(repo, *shlex.split(UNDO)[1:])
+            self.assertEqual(state(repo), before)
+
+    def test_changelog_keeps_its_file_mode(self):
+        with history() as repo:
+            (repo / "CHANGELOG.md").chmod(0o640)
+            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual((repo / "CHANGELOG.md").stat().st_mode & 0o777, 0o640)
+            self.assertEqual([path.name for path in repo.glob(".*.tmp")], [])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root deletes from a read-only directory")
+    def test_failed_first_delete_leaves_the_files_as_they_were(self):
+        with history() as repo:
+            before = state(repo)
             (repo / "changes").chmod(0o555)
             try:
                 result = run(repo, "0.3.0")
@@ -227,11 +256,94 @@ class RunTest(ReleaseCase):
                 (repo / "changes").chmod(0o755)
             self.assertEqual(result.returncode, 1)
             self.assertEqual(result.stderr[:17], "stopped partway: ")
-            self.assertEqual(result.stderr[-60:], "; run git restore CHANGELOG.md changes/ to undo, then rerun\n")
-            self.assertEqual(git(repo, "status", "--porcelain"), " M CHANGELOG.md\n")
-            git(repo, "restore", "CHANGELOG.md", "changes/")
+            self.assertEqual(result.stderr[-len(NOTHING_CHANGED) - 1:], NOTHING_CHANGED + "\n")
+            self.assertEqual(state(repo), before)
             self.assertEqual(git(repo, "status", "--porcelain"), "")
+            self.assertEqual(list(repo.glob(".*.tmp")), [])
             self.assert_section(repo, SECTION)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes into a read-only directory")
+    def test_failed_changelog_write_leaves_the_files_as_they_were(self):
+        with history() as repo:
+            before = state(repo)
+            repo.chmod(0o555)
+            try:
+                result = run(repo, "0.3.0")
+            finally:
+                repo.chmod(0o755)
+            self.assertEqual((result.returncode, result.stderr[:17]), (1, "stopped partway: "))
+            self.assertEqual(result.stderr[-len(NOTHING_CHANGED) - 1:], NOTHING_CHANGED + "\n")
+            self.assertEqual(state(repo), before)
+
+    def apply_failing_at(self, repo, fail, restore=None):
+        real_unlink, real_write, calls = pathlib.Path.unlink, release.write_file, []
+
+        def unlink(path, *args, **kwargs):
+            calls.append(path.name)
+            if len(calls) == fail:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_unlink(path, *args, **kwargs)
+
+        def write_file(path, data, mode):
+            if restore and path.parent.name == "changes":
+                raise OSError(28, "No space left on device", str(path))
+            return real_write(path, data, mode)
+
+        with mock.patch.object(release, "ROOT", repo):
+            cut = release.plan("0.3.0", "2026-10-09")
+            with mock.patch.object(pathlib.Path, "unlink", unlink), mock.patch.object(release, "write_file", write_file):
+                with self.assertRaises(SystemExit) as raised:
+                    release.apply(cut)
+        return str(raised.exception), calls
+
+    def test_failed_later_delete_puts_back_the_changelog_and_the_deleted_fragments(self):
+        with history() as repo:
+            before = state(repo)
+            message, calls = self.apply_failing_at(repo, fail=3)
+            self.assertEqual(calls, ["eta.md", "beta.md", "alpha.md"])
+            self.assertEqual(message[:17], "stopped partway: ")
+            self.assertEqual(message[-len(NOTHING_CHANGED):], NOTHING_CHANGED)
+            self.assertEqual(state(repo), before)
+            self.assertEqual(list(repo.glob(".*.tmp")) + list((repo / "changes").glob(".*.tmp")), [])
+
+    def test_failed_last_delete_puts_everything_back(self):
+        with history() as repo:
+            before = state(repo)
+            message, calls = self.apply_failing_at(repo, fail=4)
+            self.assertEqual(calls, ["eta.md", "beta.md", "alpha.md", "zeta.md"])
+            self.assertEqual(message[-len(NOTHING_CHANGED):], NOTHING_CHANGED)
+            self.assertEqual(state(repo), before)
+
+    def test_interrupt_puts_everything_back(self):
+        with history() as repo:
+            before = state(repo)
+            real_unlink, calls = pathlib.Path.unlink, []
+
+            def unlink(path, *args, **kwargs):
+                calls.append(path.name)
+                if len(calls) == 2:
+                    raise KeyboardInterrupt
+                return real_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(release, "ROOT", repo):
+                cut = release.plan("0.3.0", "2026-10-09")
+                with mock.patch.object(pathlib.Path, "unlink", unlink):
+                    with self.assertRaises(SystemExit) as raised:
+                        release.apply(cut)
+            self.assertEqual(str(raised.exception), "stopped partway: interrupted" + NOTHING_CHANGED)
+            self.assertEqual(state(repo), before)
+
+    def test_failed_put_back_names_each_file_and_the_undo(self):
+        with history() as repo:
+            message, _ = self.apply_failing_at(repo, fail=3, restore=True)
+            self.assertEqual(message[:17], "stopped partway: ")
+            self.assertIn("; could not put back changes/eta.md ([Errno 28] No space left on device: ", message)
+            self.assertIn(", changes/beta.md ([Errno 28]", message)
+            self.assertNotIn("CHANGELOG.md (", message)
+            self.assertEqual(message[-len(f"; run {UNDO} to undo, then rerun"):], f"; run {UNDO} to undo, then rerun")
+            self.assertEqual((repo / "CHANGELOG.md").read_text(), CHANGELOG)
+            git(repo, *shlex.split(UNDO)[1:])
+            self.assertEqual(git(repo, "status", "--porcelain"), "")
 
 
 class OrderTest(ReleaseCase):
@@ -404,6 +516,15 @@ class RefusalTest(ReleaseCase):
         with history() as repo:
             (repo / "notes.txt").write_text("unrelated\n")
             self.assert_section(repo, SECTION)
+
+    def test_refuses_a_symlinked_changelog(self):
+        with repository() as repo:
+            commit(repo, {"changes/a.md": "- a\n", "real.md": CHANGELOG}, day=2)
+            (repo / "CHANGELOG.md").unlink()
+            (repo / "CHANGELOG.md").symlink_to("real.md")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "link", date="2026-01-03T12:00:00+00:00")
+            self.assert_refuses(repo, "0.3.0", "CHANGELOG.md is a symlink; replace it with the file before you release\n")
 
     def test_refuses_existing_heading(self):
         with history() as repo:

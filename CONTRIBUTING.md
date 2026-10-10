@@ -61,11 +61,18 @@ To check the order by hand, read that log. Skip blank lines. Skip a path that is
 The script exits 1, names the fix, and changes nothing when one of these holds:
 
 - `CHANGELOG.md` or `changes/` has uncommitted changes.
+- `CHANGELOG.md` is missing or is a symlink.
 - `CHANGELOG.md` already has a `## X.Y.Z` heading, or the version is not above the latest heading.
 - `changes/` holds no fragments, or holds an entry that is not a `.md` file.
 - A fragment holds a line that is not a bullet or a continuation line.
 - The clone is shallow, or no commit added a fragment that sits in `changes/`.
 
-To undo a real run before you commit it, run `git restore CHANGELOG.md changes/`.
+The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. When a write or a delete fails, or you interrupt it, it puts `CHANGELOG.md` and every deleted fragment back, prints `nothing changed`, and exits 1. When it cannot put a file back, it names that file and prints the command below.
+
+To undo a finished run before you commit it, run this. It works whether or not you ran `git add`.
+
+```bash
+git restore --staged --worktree CHANGELOG.md changes/
+```
 
 Cut a release after each upstream sync and any user-facing fix.

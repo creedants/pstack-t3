@@ -4,6 +4,8 @@
 Orders the fragments by the commit that added each one, writes their bullets
 under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
+
+A run that fails or is interrupted puts CHANGELOG.md and every fragment back as it read them.
 """
 
 from __future__ import annotations
@@ -12,8 +14,11 @@ import argparse
 import datetime
 import os
 import re
+import signal
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +27,8 @@ VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
 # From 3.11 date.fromisoformat also takes 20261009. The pattern keeps 3.10 and 3.12 equal.
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-RESTORE_FROM_INDEX = "git restore CHANGELOG.md changes/"
+# --staged --worktree undoes a run whether or not `git add` already staged it.
+UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
 COMMIT = "\x01"
 # --no-renames lists a moved fragment as an add. -z stops git quoting a path.
 # --no-show-signature keeps log.showSignature from printing text ahead of the commit marker.
@@ -33,10 +39,18 @@ Version = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
+class Original:
+    path: Path
+    data: bytes
+    mode: int
+
+
+@dataclass(frozen=True)
 class Cut:
     section: str
     changelog: str
-    fragments: tuple[Path, ...]
+    before: Original
+    fragments: tuple[Original, ...]
 
 
 def git(*args: str) -> str:
@@ -121,18 +135,20 @@ def remaining_steps(version: str) -> list[str]:
     ]
 
 
-def read_utf8(path: Path) -> str:
+def read_utf8(path: Path) -> Original:
+    data = path.read_bytes()
     try:
-        return path.read_bytes().decode("utf-8")
+        data.decode("utf-8")
     except UnicodeDecodeError:
         sys.exit(f"{path.relative_to(ROOT).as_posix()} is not UTF-8; fix it")
+    return Original(path, data, stat.S_IMODE(path.stat().st_mode))
 
 
 def refuse_unfinished_release() -> None:
     dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/")
     if dirty:
         sys.exit("CHANGELOG.md or changes/ has uncommitted changes; commit them, "
-                 f"or run {RESTORE_FROM_INDEX} to undo an unfinished release:\n{dirty.rstrip()}")
+                 f"or run {UNDO} to undo an unfinished release:\n{dirty.rstrip()}")
 
 
 def plan(version_text: str, date_text: str | None) -> Cut:
@@ -149,9 +165,12 @@ def plan(version_text: str, date_text: str | None) -> Cut:
     refuse_unfinished_release()
 
     changelog_path = ROOT / "CHANGELOG.md"
+    if changelog_path.is_symlink():
+        sys.exit("CHANGELOG.md is a symlink; replace it with the file before you release")
     if not changelog_path.is_file():
         sys.exit("CHANGELOG.md is missing; this script adds a section to an existing changelog")
-    changelog = read_utf8(changelog_path)
+    before = read_utf8(changelog_path)
+    changelog = before.data.decode("utf-8")
     versions = released(changelog)
     if version in versions:
         sys.exit(f"CHANGELOG.md already has a ## {dotted(version)} heading; pick the next version")
@@ -166,9 +185,10 @@ def plan(version_text: str, date_text: str | None) -> Cut:
     for entry in entries:
         if entry.is_symlink() or not entry.is_file() or not entry.name.endswith(".md"):
             sys.exit(f"changes/{entry.name} is not a fragment; changes/ holds only .md files, so move or delete it")
+    originals = {entry.name: read_utf8(entry) for entry in entries}
     bullets = {}
     for entry in entries:
-        lines = read_utf8(entry).split("\n")
+        lines = originals[entry.name].data.decode("utf-8").split("\n")
         bullets[entry.name] = lines[:-1] if lines[-1] == "" else lines
         fault = bullet_fault(bullets[entry.name])
         if fault:
@@ -182,21 +202,52 @@ def plan(version_text: str, date_text: str | None) -> Cut:
     for entry in entries:
         if entry.name not in at:
             sys.exit(f"git log shows no commit that added changes/{entry.name}; commit the fragment and rerun")
-    fragments = tuple(sorted(entries, key=lambda entry: (at[entry.name], entry.name)))
+    ordered = sorted(entries, key=lambda entry: (at[entry.name], entry.name))
 
-    body = "".join(line + "\n" for entry in fragments for line in bullets[entry.name])
+    body = "".join(line + "\n" for entry in ordered for line in bullets[entry.name])
     section = f"## {dotted(version)} ({day.isoformat()})\n\n{body}"
-    return Cut(section=section, changelog=splice(changelog, section), fragments=fragments)
+    return Cut(section=section, changelog=splice(changelog, section), before=before,
+               fragments=tuple(originals[entry.name] for entry in ordered))
+
+
+def write_file(path: Path, data: bytes, mode: int) -> None:
+    """Replace path with data in one os.replace, so a reader sees the old file or the new one."""
+    handle, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "wb") as temp:
+            temp.write(data)
+        os.chmod(name, mode)
+        os.replace(name, path)
+    except BaseException:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+        raise
 
 
 def apply(cut: Cut) -> None:
+    """Write the changelog, then delete the fragments. A failure puts every file back."""
+    changelog = cut.changelog.encode("utf-8")
+    done: list[Original] = []
     try:
-        with open(ROOT / "CHANGELOG.md", "w", encoding="utf-8", newline="") as handle:
-            handle.write(cut.changelog)
-        for path in cut.fragments:
-            path.unlink()
-    except OSError as error:
-        sys.exit(f"stopped partway: {error}; run {RESTORE_FROM_INDEX} to undo, then rerun")
+        write_file(cut.before.path, changelog, cut.before.mode)
+        done.append(cut.before)
+        for fragment in cut.fragments:
+            fragment.path.unlink()
+            done.append(fragment)
+    except (OSError, KeyboardInterrupt) as error:
+        reason = "interrupted" if isinstance(error, KeyboardInterrupt) else str(error)
+        stuck = []
+        for original in done:
+            try:
+                write_file(original.path, original.data, original.mode)
+            except OSError as failure:
+                stuck.append(f"{original.path.relative_to(ROOT).as_posix()} ({failure})")
+        if stuck:
+            sys.exit(f"stopped partway: {reason}; could not put back {', '.join(stuck)}; "
+                     f"run {UNDO} to undo, then rerun")
+        sys.exit(f"stopped partway: {reason}; nothing changed, fix that and rerun")
 
 
 def main(argv=None):
@@ -207,12 +258,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     cut = plan(args.version, args.date)
     sys.stdout.write(cut.section)
+    sys.stdout.flush()
     if not args.dry_run:
         apply(cut)
     wrote, deleted = ("would write", "would delete") if args.dry_run else ("wrote", "deleted")
     print(f"\n{wrote} this section to CHANGELOG.md")
-    for path in cut.fragments:
-        print(f"{deleted} changes/{path.name}")
+    for fragment in cut.fragments:
+        print(f"{deleted} changes/{fragment.path.name}")
     if args.dry_run:
         print("nothing changed")
     print("this script never stages, commits, tags, or pushes. the remaining steps:")
@@ -222,4 +274,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), signal.default_int_handler)
     sys.exit(main())
