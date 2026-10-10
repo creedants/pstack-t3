@@ -1657,7 +1657,7 @@ def lease_refusals(meta, tickets, next_dish):
             asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
                                               with_fragment(",".join(ticket.paths), f"{prefix}/{next_dish.lower()}"))
         if asked[ticket.paths]:
-            refusals[ticket.id] = asked[ticket.paths][1]
+            refusals[ticket.id] = clean(asked[ticket.paths][1])
     return refusals
 
 

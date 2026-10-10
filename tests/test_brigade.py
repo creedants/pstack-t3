@@ -4941,6 +4941,13 @@ class BrigadeTest(unittest.TestCase):
             "  Fix srcx",
         ]))
 
+    def test_startable_prints_one_line_for_a_ticket_the_landing_queue_refuses_in_a_project_that_is_not_a_git_repository(self):
+        self.open()
+        self.filed("Fix a", "--paths", "src/a.py")
+        lines = self.brigade("startable").splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[2].startswith("T1 normal, 0m: blocked, waiting on the landing queue ("), lines[2])
+
     def test_startable_is_refused_in_the_executive_admin_store(self):
         self.open_admin()
         self.assertEqual(self.admin("startable", ok=False), "brigade: the executive admin routes work and never runs it")
