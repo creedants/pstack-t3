@@ -1171,6 +1171,43 @@ os.execv(real, [real, *args])
                                 capture_output=True, text=True, env=os.environ.copy())
         self.assertEqual(result.returncode, -9, result.stdout + result.stderr)
 
+    @contextlib.contextmanager
+    def land_dies_after_its_push_to(self, branch):
+        """Inside the block, the first git push to this branch completes and then kills the process that ran it."""
+        bindir = self.base / "kill-bin"
+        bindir.mkdir()
+        real = shutil.which("git")
+        marker = bindir / "armed"
+        marker.write_text("")
+        (bindir / "git").write_text(
+            "#!/bin/sh\n"
+            f"if [ \"$1\" = push ] && [ -e '{marker}' ]; then\n"
+            f"  case \"$*\" in *:refs/heads/{branch}) '{real}' \"$@\"; rm '{marker}'; kill -9 $PPID; exit 0;; esac\n"
+            "fi\n"
+            f"exec '{real}' \"$@\"\n")
+        (bindir / "git").chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ["PATH"]}):
+            yield
+
+    def entry_fields(self, ident, *names):
+        with self.raw_db() as db:
+            return db.execute(f"SELECT {', '.join(names)} FROM entry WHERE id = ?", (ident,)).fetchone()
+
+    def entry_table_without_onto(self, candidates):
+        """Rebuild the entry table without its onto column, and store these candidates by entry id."""
+        with self.raw_db() as db:
+            newer = db.execute("SELECT sql FROM sqlite_master WHERE name = 'entry'").fetchone()[0]
+            older = newer.replace(", onto TEXT NOT NULL DEFAULT ''", "")
+            self.assertNotEqual(older, newer)
+            kept = ", ".join(name for name in self.entry_columns() if name != "onto")
+            db.execute("ALTER TABLE entry RENAME TO entry_newer")
+            db.execute(older)
+            db.execute(f"INSERT INTO entry ({kept}) SELECT {kept} FROM entry_newer")
+            db.execute("DROP TABLE entry_newer")
+            for ident, candidate in candidates.items():
+                db.execute("UPDATE entry SET candidate = ? WHERE id = ?", (candidate, ident))
+            db.commit()
+
     def gh(self, *args):
         """Run the fake gh the way a person at GitHub would."""
         result = subprocess.run([os.environ["LAND_GH"], *args], capture_output=True, text=True)
@@ -2311,6 +2348,134 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
+    def test_merge_mode_bounces_a_failed_first_entry_alone_and_rebuilds_the_two_behind_it_without_its_change(self):
+        with self.fake_gh():
+            self.open_line(3)
+            self.checks(9, "failed")
+            self.checks(10, "passed")
+            self.checks(11, "passed")
+            self.assertEqual(self.absent_marker(), {"1": 1, "2": 1, "3": 1})
+            self.assertEqual(
+                self.land("land"),
+                "bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)\n"
+                "rebuilt E2 (r/D2) https://github.com/o/r/pull/10\n"
+                "rebuilt E3 (r/D3) https://github.com/o/r/pull/11")
+            self.assertEqual(self.merge_calls(), [])
+            self.assertEqual(self.origin_files("landing/e2"), ["a.txt", "two", "lib/x.py"])
+            self.assertEqual(self.origin_files("landing/e3"), ["a.txt", "two", "three"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "landing/e2"))
+            self.assertEqual(self.listed(), ["L1 active r/D1: a.txt", "L2 submitted r/D2: b.txt", "L3 submitted r/D3: lib/x.py"])
+            self.assertEqual(self.absent_marker(), {"2": 2, "3": 2})
+            self.assertEqual(self.land("status", "E2"),
+                             "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for required checks before merging")
+            self.checks(10, "passed")
+            self.checks(11, "passed")
+            self.assertEqual(self.land("land"), "landed E2 (r/D2), E3 (r/D3)")
+            self.assertEqual(self.origin_log(), ["w3", "w2", "init"])
+            self.assertEqual(self.origin_files("main"), ["a.txt", "two", "three"])
+
+    def test_merge_mode_lands_the_first_entry_bounces_a_failed_second_and_rebuilds_the_third_without_the_second(self):
+        with self.fake_gh():
+            self.open_line(3)
+            self.checks(9, "passed")
+            self.checks(10, "failed")
+            self.checks(11, "passed")
+            self.assertEqual(
+                self.land("land"),
+                "landed E1 (r/D1)\n"
+                "bounced E2 (r/D2): required checks failed on https://github.com/o/r/pull/10: test (3.12)\n"
+                "rebuilt E3 (r/D3) https://github.com/o/r/pull/11")
+            self.assertEqual(self.origin_log(), ["w1", "init"])
+            self.assertEqual(self.origin_files("landing/e3"), ["one", "b.txt", "three"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.merge_calls(), [
+                "pr merge https://github.com/o/r/pull/9 --auto --squash",
+                "pr merge https://github.com/o/r/pull/9 --squash",
+            ])
+
+    def test_merge_mode_bounces_an_entry_whose_rebuild_conflicts_with_trunk_and_rebuilds_the_entry_behind_it(self):
+        with self.fake_gh():
+            self.open_line(3)
+            self.checks(9, "passed")
+            self.checks(10, "pending")
+            self.checks(11, "pending")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+            self.commit_on_origin("outside", path="b.txt")
+            self.assertEqual(
+                self.land("land"),
+                "bounced E2 (r/D2): conflict with trunk\n"
+                "rebuilt E3 (r/D3) https://github.com/o/r/pull/11")
+            self.assertEqual(self.origin_files("landing/e3"), ["one", "outside", "three"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.listed(), ["L2 active r/D2: b.txt", "L3 submitted r/D3: lib/x.py"])
+            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertEqual(self.origin_log(), ["outside", "w1", "init"])
+
+    def test_merge_mode_merges_nothing_and_rebuilds_both_passed_entries_when_trunk_gained_an_outside_commit(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "passed")
+            self.checks(10, "passed")
+            self.commit_on_origin("outside")
+            self.assertEqual(
+                self.land("land"),
+                "rebuilt E1 (r/D1) https://github.com/o/r/pull/9\n"
+                "rebuilt E2 (r/D2) https://github.com/o/r/pull/10")
+            self.assertEqual(self.merge_calls(), [])
+            self.assertEqual(self.origin_log(), ["outside", "init"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e1^"), self.on_origin("rev-parse", "main"))
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "landing/e1"))
+            self.assertEqual(self.on_origin("show", "landing/e2:merged.txt"), "outside")
+            self.checks(9, "passed")
+            self.checks(10, "passed")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "outside", "init"])
+
+    def test_merge_mode_rebuilds_an_entry_again_after_a_run_killed_between_the_rebuild_push_and_its_row(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "failed")
+            before = self.entry_fields(2, "candidate", "onto")
+            with self.land_dies_after_its_push_to("landing/e2"):
+                self.killed_land()
+            self.assertEqual(self.land("status", "E1"),
+                             "E1 bounced (r/D1, w1). https://github.com/o/r/pull/9. "
+                             "required checks failed on https://github.com/o/r/pull/9: test (3.12)")
+            self.assertEqual(self.origin_files("landing/e2"), ["a.txt", "two", "lib/x.py"])
+            self.assertEqual(self.entry_fields(2, "candidate", "onto"), before)
+            self.assertEqual(self.land("land"), "rebuilt E2 (r/D2) https://github.com/o/r/pull/10")
+            self.assertEqual(self.entry_fields(2, "candidate", "onto"),
+                             (self.on_origin("rev-parse", "landing/e2"), self.on_origin("rev-parse", "main")))
+            self.assertEqual(self.origin_files("landing/e2"), ["a.txt", "two", "lib/x.py"])
+            self.assertEqual(self.land("status", "E2"),
+                             "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for required checks before merging")
+
+    def test_a_store_from_before_the_onto_column_keeps_its_first_entry_and_rebuilds_the_second_behind_it(self):
+        with self.fake_gh():
+            self.open_line(2)
+            self.checks(9, "pending")
+            first = self.on_origin("rev-parse", "landing/e1")
+            alone = sh("git", "rev-parse", "w2", cwd=self.work)
+            sh("git", "push", "-q", "--force", "origin", f"{alone}:refs/heads/landing/e2", cwd=self.work)
+            self.entry_table_without_onto({2: alone})
+            self.assertNotIn("onto", self.entry_columns())
+            self.assertEqual(self.origin_files("landing/e2"), ["a.txt", "two", "lib/x.py"])
+            log = self.record_pushes()
+            try:
+                self.assertEqual(self.land("land"), "rebuilt E2 (r/D2) https://github.com/o/r/pull/10")
+            finally:
+                self.stop_recording_pushes()
+            self.assertIn("onto", self.entry_columns())
+            self.assertEqual([line.rsplit(":", 1)[1] for line in log.read_text().splitlines()], ["refs/heads/landing/e2"])
+            self.assertEqual(self.on_origin("rev-parse", "landing/e1"), first)
+            self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), first)
+            self.assertEqual(self.origin_files("landing/e2"), ["one", "two", "lib/x.py"])
+            self.checks(9, "passed")
+            self.checks(10, "passed")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
+            self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
+
     def test_human_mode_builds_each_candidate_alone_on_trunk_and_lands_the_second_entry_before_the_first(self):
         with self.fake_gh():
             self.init(mode="human")
@@ -2540,13 +2705,13 @@ os.execv({real!r}, [{real!r}, *args])
             sh("git", "push", "-q", "--force", "origin", "HEAD:main", cwd=self.work)
             self.assertIn("queue paused: trunk no longer contains the last landed commit", self.land("land"))
 
-    def commit_on_origin(self, message):
-        """Simulate GitHub merging: push a new commit to origin main. Returns its SHA."""
+    def commit_on_origin(self, message, path="merged.txt"):
+        """Simulate GitHub merging: push a new commit to origin main that writes the message to path. Returns its SHA."""
         clone = self.base / "merger"
         if not clone.exists():
             sh("git", "clone", "-q", "origin.git", "merger", cwd=self.base)
         sh("git", "pull", "-q", "origin", "main", cwd=clone)
-        (clone / "merged.txt").write_text(message)
+        (clone / path).write_text(message)
         sha = self.commit(message, cwd=clone)
         sh("git", "push", "-q", "origin", "HEAD:main", cwd=clone)
         return sha

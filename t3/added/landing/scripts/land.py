@@ -1153,16 +1153,18 @@ def gh(*args, cwd):
     return subprocess.run([os.environ.get("LAND_GH", "gh"), *args], cwd=cwd, capture_output=True, text=True)
 
 
-Outcome = namedtuple("Outcome", "landed bounced opened adopted")
+Outcome = namedtuple("Outcome", "landed bounced opened adopted rebuilt")
 
 
 def build(store, integration, entry, onto, trunk, out):
-    """Replay one entry on onto, check it, push landing/e<n>, store the row, and open its PR.
+    """Replay one entry on onto, check it, push landing/e<n>, store the row, and open its PR when it has none.
 
     Returns the commit the next entry is built on. That is this entry's candidate, or onto when it has none.
-    The push comes before the row. A run killed between them leaves the entry queued, and the next run
-    builds it again. An empty replay settles as already in trunk only when onto holds trunk's tree. On any
-    other onto the entry is left as it is, because an entry that has not merged holds the change."""
+    An awaiting-merge entry is a rebuild. It keeps its PR, and its absent-check marker is dropped. A rebuild
+    that conflicts or fails bounces the entry and leaves its PR open. The push comes before the row. A run
+    killed between them leaves the row as it was, and the next run builds the entry again. An empty replay
+    settles as already in trunk only when onto holds trunk's tree. On any other onto the entry is left as
+    it is, because an entry that has not merged holds the change."""
     contract, ident = store.contract, entry["id"]
     integration.reset(onto)
     reason = integration.apply(entry)
@@ -1183,8 +1185,13 @@ def build(store, integration, entry, onto, trunk, out):
     push = git_push("--force", contract["remote"], f"{head}:refs/heads/{human_branch(entry)}", cwd=store.repo, check=False)
     if push.returncode != 0:
         raise Infrastructure("push failed: " + git_reason(push.stderr))
+    rebuilt = entry["state"] == "awaiting-merge"
     with store.tx() as db:
-        store.set_entry(db, ident, "awaiting-merge", candidate=head, onto=onto, pr="", note="")
+        forget_absent(db, ident)
+        store.set_entry(db, ident, "awaiting-merge", candidate=head, onto=onto, pr=entry["pr"] if rebuilt else "", note="")
+    if rebuilt:
+        out.rebuilt.append(ident)
+        return head
     ensure_pr(store, {**dict(entry), "candidate": head})
     out.opened.append(ident)
     if contract["mode"] == "merge":
@@ -1193,10 +1200,12 @@ def build(store, integration, entry, onto, trunk, out):
 
 
 def build_line(store, integration, out):
-    """Merge mode: build the unheld queued entries in id order, each on the tip of the line. Returns their ids."""
+    """Merge mode: build the stale entries by id, then the unheld queued entries, each on the tip of the line.
+
+    Returns the ids it built."""
     trunk = fetch_trunk(store)
-    tip = line_of(store, trunk).tip
-    todo = unheld_queued(store)
+    line = line_of(store, trunk)
+    tip, todo = line.tip, line.stale + unheld_queued(store)
     for entry in todo:
         tip = build(store, integration, entry, tip, trunk, out)
     return {entry["id"] for entry in todo}
@@ -1450,8 +1459,9 @@ def request_merge(store, ident, out):
     Only the first entry of the line merges or bounces. It merges when the read shows the
     candidate as the head and, after a fresh fetch, trunk holds the tree the candidate was
     built on. An entry behind the first keeps the pending and absent notes. On any other
-    read its note names the entry ahead of it. An entry outside the line is not read. A
-    head that is not the candidate waits in any position."""
+    read its note names the entry ahead of it. An entry outside the line is not read, and
+    build_line rebuilds it when it is stale. A head that is not the candidate waits in any
+    position."""
     entry = entry_row(store, ident)
     url = entry["pr"]
     line = line_of(store, trunk_commit(store)).entries
@@ -1873,7 +1883,7 @@ def land(store):
             return f"queue paused: {store.contract['paused']}"
         reconcile(store)
         integration = Integration(store)
-        out = Outcome([], [], [], [])
+        out = Outcome([], [], [], [], [])
         mode = store.contract["mode"]
         if mode in ("human", "merge"):
             if rewound(store, fetch_trunk(store)):
@@ -1912,16 +1922,16 @@ def land(store):
                 pause(store, f"{problem}. Run land.py mode merge --merge-method {suggestion}, then land.py resume")
             else:
                 pause(store, f"{problem}. Fix it, then run land.py resume")
-        return report(store, Outcome([], [], [], []))
+        return report(store, Outcome([], [], [], [], []))
     finally:
         handle.close()
 
 
 def report(store, out):
-    """The lines of one land run. An entry this run opened prints as opened only while it still awaits its merge."""
+    """The lines of one land run. An entry this run opened or rebuilt prints as such only while it still awaits its merge."""
     rows = {row["id"]: row for row in store.db.execute("SELECT * FROM entry")}
     landed, bounced, adopted = out.landed, out.bounced, out.adopted
-    opened = [i for i in out.opened if rows[i]["state"] == "awaiting-merge"]
+    opened, rebuilt = ([i for i in ids if rows[i]["state"] == "awaiting-merge"] for ids in (out.opened, out.rebuilt))
     lines = []
     if landed:
         parts = []
@@ -1936,6 +1946,7 @@ def report(store, out):
         lines.append(lead + ", ".join(f"{entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in opened))
     lines += [f"adopted {entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in adopted]
     lines += [f"bounced {entry_label(i)} ({rows[i]['holder']}): {rows[i]['note']}" for i in bounced]
+    lines += [f"rebuilt {entry_label(i)} ({rows[i]['holder']}) {rows[i]['pr']}" for i in rebuilt]
     held = held_holders(store.db)
     waiting = []
     for row in rows.values():
