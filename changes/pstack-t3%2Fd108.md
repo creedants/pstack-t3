@@ -1,0 +1,1 @@
+- The landing skill now states what the queue does with a pull request once, in a new "Pull request lifecycle" section. The mode table and the settle step link to it, so the skill is about 400 words shorter and no rule changed.
