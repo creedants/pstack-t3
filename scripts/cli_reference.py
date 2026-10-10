@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = (
+    "t3/added/brigade/scripts/activity.py",
     "t3/added/brigade/scripts/brigade.py",
     "t3/added/landing/scripts/land.py",
     "t3/scripts/roles.py",

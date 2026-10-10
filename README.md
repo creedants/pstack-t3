@@ -77,6 +77,8 @@ flowchart LR
 
 Every level sends the 18:00 report. A message from you gets at least one line, and a direct question gets an answer. A decision only you can make is raised once, with its options and a default, and other work continues around it. The [guide](docs/guide.md#reporting-levels) describes each level and how to change it.
 
+Ask the coordinator what its agents are doing and it shows one page with what is running now, a timeline of agents and sub-agents grouped by unit of work, and the units in flight. The [guide](docs/guide.md#reporting-levels) describes that page.
+
 ```
 $brigade open a standing coordinator for bridgekit focused on startup performance.
 ```
@@ -182,7 +184,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
-See [all 56 skills and every playbook](docs/skills.md). Every command and flag of `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
+See [all 56 skills and every playbook](docs/skills.md). Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
 
 ## How it works
 

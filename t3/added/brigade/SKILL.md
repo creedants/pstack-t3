@@ -232,6 +232,25 @@ Run on the liveness schedule, and at the start of any service while work is in p
 5. `D<n>: running Nm of Tm (thread <id>)`: `t3_thread_read` the worker thread. When `activeRunId` is null and the latest run in `recentRuns` completed more than 10 minutes ago, the worker is idle with its timebox still open and no report for the current attempt. The `running` line already means that, even when an earlier attempt's report file remains, because `watch` compares the report to this attempt's start. `brigade.py` reads only the store, the clock, and the landing queue, so this check needs the thread read. Send the worker one nudge with `t3_thread_send`, mode `"auto"`, `clientRequestId` `nudge-<dish>-<that run id>`, and the line `Your thread has been idle since <completedAt> with no report. Check each open child with task_status, handle a stalled one per the runtime's Delegation step 5, then finish the brief.` A worker idle again after that nudge goes to step 4 as if over its timebox. Otherwise the line means nothing new. Reply per Run a service step 9. When `$B status` prints `reports to <thread>`, end the turn with no assistant text at all, whatever the level. Otherwise, at `milestones` this is a routine wake, so end with no reply, or with a single line when the host requires text. At `digest`, end the turn with no reply text at all. At `every-turn`, send a short reply. A dish in `in-review` or `passed` is not this line.
 6. When `$B watch` prints "no work in progress", delete the liveness schedule with `delete_scheduled_task`, then run `$B set --schedule liveness=`. Delete it only on that line. A blocked ticket is not that line, so the schedule stays while one is waiting. Do not treat that line as a drained batch. A batch has drained when step 9 says it has. The drain summary is sent on the wake that first finds the batch drained. A review still pending means the batch has not drained. Do not send the drain summary while a review is pending. Reply per step 9.
 
+## Agent activity
+
+When the user asks what the agents are doing, or asks for activity or status as a picture, show the activity page. That request is a message from the user, so a reply is due at every reporting level. The script builds the page from this store and T3 Code's state database.
+
+```bash
+A() { python3 "<skills>/brigade/scripts/activity.py" --at "<restaurant dir>" "$@"; }
+A                 # one HTML document on stdout, for the last 3 hours
+A --hours 12      # the last 12 hours
+A --text          # plain lines instead of the HTML document
+```
+
+1. Run `A`. Its stdout is the whole document.
+2. Call `html_preview` with that document. When the preview shows a console error or a clipped or overlapping element, send the stdout of `A --text` and name the fault in the reply. Render only a page whose preview passes. Call `html_render` with the document unchanged and the title `Agent activity`, per steps 3 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports).
+3. When the preview shows `This copy differs from what the tool wrote`, the `html` argument is not the script's output. Run `A` again and call `html_preview` with its stdout.
+4. When `html_preview` or `html_render` is missing, or `html_render` fails, send the stdout of `A --text` as the reply.
+5. On exit status 1 or 3 the script prints one line on stderr and nothing on stdout. Status 3 means it could not use T3 Code's database. Send that line as the reply. Status 1 names a fault in the arguments or the store.
+
+The page names work items by id at every reporting level. Every string of the document and of the text form passes the script's filter, which removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. `A --help` states what it reads as each.
+
 ## Executive chef's view
 
 `python3 <skills>/brigade/scripts/brigade.py walk` groups every restaurant under its repository. Each repository gets one header with its landing queue's status line, or `no landing contract`. Under it, each restaurant gets its reporting level and counts, with the waiting tickets whose block still holds counted as blocked. A second line names its thread ID and the unreleased leases its dishes hold. Open decisions follow. `walk --repo <root>` prints one repository. A restaurant idle past 24 hours is marked, so a stalled head chef shows. `$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. A `restaurant.json` with no `reporting` field reads as `milestones`. `$B status` prints `mode <m>` when `restaurant.json` records one. `walk` adds `, mode <m>` after the reporting level.

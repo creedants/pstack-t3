@@ -129,7 +129,7 @@ The lead can also fork a thread, move an owner to another model, and publish a p
 
 - **Forks.** `t3_thread_fork` starts a separate read-only planning or investigation thread from another thread's context, and only when you asked for a separate thread. A fork never replaces a child agent or a review round. `t3_thread_merge_back` carries a fork's reasoning back to a related thread only when you authorized it.
 - **Owner model changes.** `t3_thread_configure` moves an idle launched owner to another model only when a playbook step already calls for it, such as Orchestrate's retry after a tool error. The owner keeps its history, gates, scope, and retry count, so it is never a fresh worker or a fresh reviewer. It is never used on a verifier or reviewer thread.
-- **Visual reports.** When a reply is already due and a table, a timeline, or a chart carries it better than prose, the lead publishes that part as a page with `html_preview` and `html_render`. Every decision that waits on you, every PR link, and the store and report paths stay in the reply text. A coordinator at `digest` renders no page.
+- **Visual reports.** When a reply is already due and a table, a timeline, or a chart carries it better than prose, the lead publishes that part as a page with `html_preview` and `html_render`. Every decision that waits on you, every PR link, and the store and report paths stay in the reply text. A coordinator at `digest` renders no page except the activity page you ask for.
 
 ## 7. Pick up where you left off
 
@@ -143,7 +143,7 @@ $recall what was I doing on the billing migration?
 
 A coordinator is a pinned T3 thread for one project or one focus area. It takes requests, hands each unit of work to a playbook, has another model family review the result, and lands what passes. It never writes code. For one finite program with a done condition, use `$poteto-mode`. Its Orchestrate playbook stops when that work is done.
 
-Every command and flag of `brigade.py`, `land.py`, and `roles.py`, with its choices and defaults, is in the [command-line reference](cli/README.md). This guide shows the commands you need and does not list every flag.
+Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py`, with its choices and defaults, is in the [command-line reference](cli/README.md). This guide shows the commands you need and does not list every flag.
 
 Type this in any thread.
 
@@ -187,6 +187,8 @@ Every level sends the scheduled 18:00 report. The 09:00 run is not a report. A m
 `brigade.py close` runs on the 18:00 report, on a reply that raises a decision for you, at the end of a turn begun by your message, and on the reply that closes the coordinator. At `digest` every reply runs it once, including the summary sent when a batch drains and a reply about a failure. At `every-turn` and `milestones` every other reply stays plain and does not run `close`. `close` writes that report and records its time. At `every-turn` and `milestones` the reply pastes the `close` output. At `digest` the coordinator runs `brigade.py close --to-file`, which writes the same report and prints only its path.
 
 A `digest` message is written for you, not for an engineer. It is a few plain sentences on what got done and what it means, what comes next, and anything you must decide. It carries no work or ticket IDs, SHAs, file paths, review-round counts, or tool names. Merged pull requests may follow as a short list of plain titles linked to each PR. Commits, IDs, and schedule times stay in the store and the full report. The last line names the path of the full report. The next report starts from that time, so it omits what this run already listed.
+
+Ask a coordinator what its agents are doing and it shows the activity page. [`activity.py`](cli/activity.md) builds that page from the coordinator's store and T3 Code's state database. The page shows what is running now, what is queued, a timeline of agents and sub-agents grouped by unit, and the units in flight with their state and pull request link. It covers the last 3 hours by default. When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover. A pull request link is shown only as an `https://host/owner/repository/pull/number` address. A note counts the work items the page shows without their link, for that reason or for size. Every string on the page passes one filter that removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. The [reference](cli/activity.md) states what it reads as each.
 
 The opener runs [`brigade.py open`](cli/brigade.md#brigadepy-open) with the project root, a name, and the reporting level. It prints `opened` or `exists`, then the store path `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/brigade/<project-slug>/<name-slug>/`. Each slug is the project directory name or the name you gave, in lowercase. Each run of characters other than a-z and 0-9 becomes one hyphen, and leading or trailing hyphens are dropped.
 
