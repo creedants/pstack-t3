@@ -32,6 +32,9 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
 MODES = ("full", "light")
+ROUND_BUDGET = 3
+ROUND_DECISIONS = ("known limits", "redesign", "drop")
+ROUND_PARKED = "keep parked"
 OPEN_RUN_MINUTES = 10
 
 TABLES = {
@@ -815,6 +818,28 @@ def send_backs(rows, dish_id):
     return [row for row in item_verdicts(rows, dish_id) if row["verdict"] == "send-back"]
 
 
+def round_debt(restaurant, dish_id):
+    """The item's send-backs since its last answered round decision. At ROUND_BUDGET it owes the next one."""
+    decided = max((row["at"] for row in restaurant.rows("86.tsv")
+                   if row["dish"] == dish_id and row["state"] == "answered" and option_key(row["answer"]) in ROUND_DECISIONS),
+                  default="")
+    return sum(row["at"] > decided for row in send_backs(restaurant.rows("pass.tsv"), dish_id))
+
+
+def round_decision(restaurant, dish_id):
+    """The question, options, and default of the decision an item owes at ROUND_BUDGET send-backs."""
+    debt = round_debt(restaurant, dish_id)
+    if debt < ROUND_BUDGET:
+        raise BrigadeError(f"{dish_id} has {debt} send-back{'' if debt == 1 else 's'} since its last round decision; "
+                           f"the decision opens at {ROUND_BUDGET}")
+    question = (f"{dish_id} was sent back {debt} times. Accept the remaining findings as known limits and land it, "
+                "send it through architect for a redesign, or drop it?")
+    report = send_backs(restaurant.rows("pass.tsv"), dish_id)[-1]["report"]
+    if report:
+        question += f" Findings: reports/{report}."
+    return question, ", ".join((*ROUND_DECISIONS, ROUND_PARKED)), ROUND_PARKED
+
+
 def latest_verdict(restaurant, dish_id, sha):
     restaurant.find("dishes.tsv", dish_id)
     verdicts = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id) if row["sha"] == sha]
@@ -863,6 +888,9 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     if member or late:
         return f"{dish_id}: {'member' if member else 'late'} {verdict} on record; {dish_id} stays {dish['state']}"
     row = restaurant.update("dishes.tsv", dish_id, "dish", state=VERDICTS[verdict], pr=pr, sha=sha)
+    debt = round_debt(restaurant, dish_id) if verdict == "send-back" else 0
+    if debt >= ROUND_BUDGET:
+        return f"{dish_id} {row['state']}; {debt} send-backs, decision pending"
     return f"{dish_id} {row['state']}"
 
 
@@ -1502,6 +1530,7 @@ def watch(restaurant):
         moment = datetime.now(timezone.utc)
         dishes = [dish for dish in restaurant.rows("dishes.tsv") if dish["state"] not in ("merged", "dropped")]
         decisions = open_item_decisions(restaurant.rows("86.tsv"))
+        debts = {dish["id"]: round_debt(restaurant, dish["id"]) for dish in dishes if dish["state"] == "sent-back"}
         for dish in dishes:
             if dish["state"] != "in-progress":
                 continue
@@ -1559,9 +1588,13 @@ def watch(restaurant):
             answered = answered and ok
             found += [line] if line else []
         found += [entry] if entry else []
+        pending = debts.get(dish["id"], 0) >= ROUND_BUDGET
+        if pending:
+            item_lines.append(f"{dish['id']}: {debts[dish['id']]} send-backs, decision pending")
         if decision:
             item_lines.append(f"{dish['id']}: open decision {decision['id']}: {decision['question']}; "
                               f"launch no worker or verifier until 86 answer {decision['id']}")
+        if decision or pending:
             item_lines += found
         else:
             item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
@@ -2112,10 +2145,12 @@ def parser():
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
     a = t.add_parser("add")
-    a.add_argument("--question", required=True)
-    a.add_argument("--options", required=True)
-    a.add_argument("--default", required=True)
+    a.add_argument("--question")
+    a.add_argument("--options")
+    a.add_argument("--default")
     a.add_argument("--dish", default="")
+    a.add_argument("--round-budget", action="store_true",
+                   help=f"with --dish: write the decision a dish owes at {ROUND_BUDGET} send-backs; takes no question, options, or default")
     a = t.add_parser("answer")
     a.add_argument("id")
     a.add_argument("--answer", required=True)
@@ -2404,6 +2439,11 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
+        if args.state == "in-progress" and current["state"] == "sent-back":
+            debt = round_debt(restaurant, args.id)
+            if debt >= ROUND_BUDGET:
+                raise BrigadeError(f"{args.id} has {debt} send-backs; no fix round until its decision is answered; "
+                                   f"run 86 add --dish {args.id} --round-budget")
         if args.state in COUNTED_STATES and current["state"] not in COUNTED_STATES:
             full = workers_full(restaurant)
             if full:
@@ -2461,9 +2501,18 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "86":
         if args.action == "add":
+            given = [value for value in (args.question, args.options, args.default) if value is not None]
+            if args.round_budget:
+                if given or not args.dish:
+                    raise BrigadeError("86 add --round-budget takes --dish and no --question, --options, or --default")
+                restaurant.find("dishes.tsv", args.dish)
+            elif len(given) < 3:
+                raise BrigadeError("86 add needs --question, --options, and --default")
             open_row = open_item_decisions(restaurant.rows("86.tsv")).get(args.dish)
             if open_row:
                 return open_row["id"]
+            if args.round_budget:
+                args.question, args.options, args.default = round_decision(restaurant, args.dish)
             # Validate the text the row will store, since the append turns tabs and newlines into spaces.
             question, options, default = clean(args.question), clean(args.options), clean(args.default)
             if args.dish:

@@ -1,0 +1,1 @@
+- `brigade.py pass record` puts every review round on record with `--report`, `--member`, and `--late`, `close` warns about a review report with no row, and after three send-backs `dish --state in-progress` refuses another fix round until `86 add --dish <id> --round-budget` is answered with known limits, redesign, or drop.
