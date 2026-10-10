@@ -1570,6 +1570,10 @@ def overlap(first, second):
     return any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in first for b in second)
 
 
+def paths_inside(paths, within):
+    return all(any(a == b or a.startswith(b + "/") for b in within) for a in paths)
+
+
 @dataclass(frozen=True)
 class Waiting:
     id: str
@@ -1612,9 +1616,8 @@ def plan(tickets, running, cap, level, answers, now):
             kind = "unknown"
         elif ticket.id in answers:
             kind, why = "blocked", answers[ticket.id]
-        elif low and len(shared) == 1 and priorities[shared[0]] != "low":
+        elif low and len(shared) == 1 and priorities[shared[0]] != "low" and paths_inside(ticket.paths, started[shared[0]]):
             kind, why = "rides", shared[0]
-            started[why] += ticket.paths
         elif shared:
             kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))
         elif ticket.priority not in allowed:
