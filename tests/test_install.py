@@ -4209,22 +4209,46 @@ class OwnershipTest(unittest.TestCase):
         self.assertFalse(owner.exists())
         self.assertEqual(os.listdir(skills), [])
 
-    def test_deleting_the_owner_file_doctor_names_leaves_that_checkouts_links_and_every_manifest_row_and_ends_the_line(self):
+    def test_after_the_owner_file_doctor_names_is_deleted_doctor_prints_no_line_for_it_and_this_checkouts_uninstall_leaves_that_checkouts_links_and_manifest_rows(self):
         a, swarm = self.installed_for_grok()
         away = self.away_owner()
         gone = self.home / "checkouts" / "gone"
         codex = self.harness_line("codex", "0/3 pstack-t3, 3 missing")
         grok = self.harness_line("grok", "3/3 pstack-t3")
         self.assertEqual(self.doctor(a, 1, "--harness", "codex,grok"), [codex, away, grok])
-        rows = read_legacy(self.home)
-        self.assertEqual(sorted(row["path"] for row in rows["links"] if row["checkout"] == str(gone)),
-                         [str(provider_link(self.home, "codex", name)) for name in NAMES])
+        rows = [row for row in read_legacy(self.home)["links"] if row["checkout"] == str(gone)]
+        self.assertEqual([row["path"] for row in rows], [str(provider_link(self.home, "codex", name)) for name in NAMES])
         owner_file(self.home, gone).unlink()
+        self.assertEqual(self.doctor(a, 1, "--harness", "codex,grok"), [codex, grok])
+        self.ok(run(self.home, a, "uninstall", "--harness", "codex,grok"), "removed 3 links, restored 0 entries")
         for name in NAMES:
             self.assertEqual(os.readlink(provider_link(self.home, "codex", name)), str(gone / "skills" / name))
         self.assertEqual(sorted(os.listdir(provider_link(self.home, "codex", "swarm").parent)), sorted(NAMES))
-        self.assertEqual(read_legacy(self.home), rows)
-        self.assertEqual(self.doctor(a, 1, "--harness", "codex,grok"), [codex, grok])
+        self.assertEqual(read_legacy(self.home)["links"], rows)
+
+    def test_doctor_prints_two_claims_that_name_no_harness_as_one_unindented_group_after_the_last_harness_and_before_an_unreadable_owner_file(self):
+        a, swarm = self.installed_for_grok()
+        owner = owner_file(self.home, a)
+        alpha = provider_link(self.home, "grok", "alpha")
+        data = read_owner(self.home, a)
+        for link in (alpha, swarm):
+            data["links"][str(link)] = {"harnesses": []}
+            link.unlink()
+            shutil.rmtree(a / "skills" / link.name)
+        owner.write_text(json.dumps(data, indent=2) + "\n")
+        other = owner_file(self.home, self.home / "checkouts" / "b")
+        other.write_text("{not json\n")
+        self.assertEqual(
+            self.doctor(a, 0, "--harness", "grok"),
+            [
+                self.harness_line("grok", "1/1 pstack-t3"),
+                "2 claims; install plans no link at the path of any of them, so no command clears them; "
+                f"to drop one, delete the entry named by its path from {owner}:",
+                f"  {alpha}: nothing is there",
+                f"  {swarm}: nothing is there",
+                f"{other} is not valid JSON; fix or move it and rerun (doctor read no checkout from it)",
+            ],
+        )
 
     def test_doctor_exits_1_on_a_fully_linked_home_whose_manifest_is_not_json(self):
         a, swarm = self.installed_for_grok()
