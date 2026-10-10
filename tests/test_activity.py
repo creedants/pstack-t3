@@ -736,7 +736,7 @@ class PageTest(ActivityCase):
         fixture.thread(worker(1), turns=(("completed", 90, 80),))
         fixture.thread(delegated(worker(1), "helper"), title="acct-homemarker@example.test notes", parent=worker(1), turns=(("completed", 70, 60),))
         page = page_of(fixture)
-        self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "notes")]}))
+        self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "helper")]}))
 
     def test_provider_names_come_from_the_table_and_any_other_driver_reads_other(self):
         fixture = self.fixture
@@ -777,9 +777,10 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(self.label("Act as the review sub-agent for this task.", "brigade-kit-d7-verify-0a1b2c3"), "review")
         self.assertEqual(self.label("You are a code delegate for item D7.", "architect-d7-runner-2"), "architect runner 2")
 
-    def test_title_over_48_characters_loses_to_the_request_name(self):
-        self.assertEqual(self.label("Read-only review. Do not edit, commit, push, or merge.", "brigade-kit-d7r2-fix"), "fix")
-        self.assertEqual(self.label("x" * 48, "brigade-kit-d7r2-fix"), "x" * 39 + "…")
+    def test_title_over_60_characters_loses_to_the_request_name(self):
+        self.assertEqual(self.label("Read-only review of the page. Do not edit, commit, push, or merge.", "brigade-kit-d7r2-fix"), "fix")
+        self.assertEqual(self.label("x" * 61, "brigade-kit-d7r2-fix"), "fix")
+        self.assertEqual(self.label("x" * 60, "brigade-kit-d7r2-fix"), "x" * 39 + "…")
 
     def test_leading_id_of_the_rows_own_unit_is_dropped_from_a_title(self):
         self.assertEqual(self.label("D7: rehearsal of the wake"), "rehearsal of the wake")
@@ -787,10 +788,15 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(self.label("D8: rehearsal"), "D8: rehearsal")
         self.assertEqual(self.label("D7: rehearsal", unit=None), "D7: rehearsal")
 
-    def test_title_that_is_one_path_gives_its_last_segment_and_any_other_path_is_dropped(self):
+    def test_title_that_is_one_path_gives_its_last_segment_only_when_that_holds_no_dot(self):
         self.assertEqual(self.label("/root/spec_review", parent=worker(2)), "spec_review")
         self.assertEqual(self.label("/pathmarker/notes.md", parent=worker(2)), "sub-agent")
-        self.assertEqual(self.label("Read /pathmarker/brief.md first", parent=worker(2)), "Read first")
+
+    def test_title_that_scrub_drops_a_part_from_loses_to_the_request_name(self):
+        self.assertEqual(self.label("Read the brief at /pathmarker/brief.md", "why-investigator"), "why investigator")
+        self.assertEqual(self.label("Fix 0a1b2c3 now", "brigade-kit-d7r2-fix"), "fix")
+        self.assertEqual(self.label("Read /pathmarker/brief.md first", parent=worker(2)), "sub-agent")
+        self.assertEqual(self.label("Read the brief first", "why-investigator"), "Read the brief first")
 
     def test_title_that_is_one_lower_case_word_with_a_hyphen_is_read_as_a_request_name(self):
         self.assertEqual(self.label("brigade-kit-d7-verify-2", "brigade-kit-d7-verify-0a1b2c3"), "review 2")
@@ -1147,7 +1153,7 @@ class DocumentTest(OutputCase):
         self.assertEqual([line[:5] + line[7:8] for line in data["G"][0][1]],
                          [[0, "worker", 1, 0, 0, 1], [1, "architect runner 2", 2, 1, 0, 1], [2, "spec_review", 2, 1, 3], [0, "review", 0, 2, 4]])
         self.assertEqual([[line[8] // 60 for line in lines if len(line) > 8] for _, lines in data["G"]], [[42, 6], [], []])
-        self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "Read the brief at", 3]])
+        self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "why investigator", 3]])
         self.assertEqual([[bars[2::3] for bars in (line[6] for line in lines)] for _, lines in data["G"]], [[[0, 1], [1], [0], [2]], [[0]], [[3]]])
         self.assertEqual((data["k"][:2], data["k"][3][2::3]), ([0, 0], [0, 0]))
         self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."])
@@ -1406,7 +1412,7 @@ class RendererTest(OutputCase):
         texts = built["texts"]
         for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "D7 worker", "model-a", "42m",
                      "D7 architect runner 2", "model-b · under worker", "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator ", "worker ",
-                     "architect runner 2 ", "spec_review ", "review ", "model-c", "Read the brief at ", "Not tied to a work item", "Work items in flight",
+                     "architect runner 2 ", "spec_review ", "review ", "model-c", "why investigator ", "Not tied to a work item", "Work items in flight",
                      "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
             self.assertIn(text, texts)

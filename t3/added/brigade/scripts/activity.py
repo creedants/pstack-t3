@@ -79,7 +79,7 @@ FINISHED_STATES = ("merged", "dropped")
 PROVIDERS = {"claudeAgent": ("Claude", 1), "codex": ("Codex", 2), "grok": ("Grok", 3), "opencode": ("OpenCode", 4), "cursor": ("Cursor", 5)}
 OTHER_PROVIDER = ("Other", 6)
 UNGROUPED = "Not tied to a work item"
-TITLE_CHARS = 48
+TITLE_CHARS = 60
 LABEL_CHARS = 40
 
 
@@ -778,7 +778,8 @@ def label_of(agent, store, unit):
     1. A unit's current worker is `worker`. An earlier one is `earlier worker`.
     2. The title's first line, when it is at most TITLE_CHARS characters and does not start with `Act as` or `You are`.
        A line that is one path-like part ending in a segment of letters, digits, `_`, and `-` gives that segment.
-       The line is scrubbed, and a leading `unit` with its `:` or space is dropped.
+       Any other line that scrub() drops a part from gives no text.
+       A leading `unit` with its `:` or space is dropped.
        What is left is read by words_of() when it is one lower-case word with a `-` in it, which is a request name used as a title.
     3. words_of() the request name.
     4. The role in a title that starts `Act as the <role> sub-agent`.
@@ -794,6 +795,8 @@ def label_of(agent, store, unit):
     if len(line) <= TITLE_CHARS and not line.startswith(("Act as", "You are")):
         tail = PATH_TAIL.fullmatch(line) if path_like(line) else None
         written = scrub(tail.group(1) if tail else line)
+        if not tail and len(written.split()) < len(line.split()):
+            written = ""
         if unit:
             written = re.sub(rf"^{re.escape(unit)}(?::\s*|\s+)", "", written)
         if SLUG.fullmatch(written):
