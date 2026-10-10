@@ -16,6 +16,7 @@ import sys
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import quote, unquote
@@ -105,6 +106,7 @@ T3_STATUS = {
     "cancelled": Status.STOPPED, "interrupted": Status.STOPPED, "rolled_back": Status.STOPPED,
 }
 OPEN = (Status.RUNNING, Status.QUEUED)
+LIVE = (*OPEN, Status.WAITING)
 QUIET = (Status.DONE, Status.STOPPED)
 
 
@@ -234,6 +236,7 @@ class Span:
     """One bar, in thousandths of the window. 0 <= x, 1 <= w, and x + w <= 1000.
 
     `status` is DONE, RUNNING, FAILED, STOPPED, or UNKNOWN.
+    A bar may overlap another bar of its row. The renderer draws a row's bars in order, so the later one is on top.
     """
 
     x: int
@@ -279,7 +282,7 @@ class Item:
 class Group:
     """A work item and its rows in tree order. `item` is None for the agents tied to no work item.
 
-    `agents` and `subagents` count the group's agents that ran in the window, without and with a parent. No fold step changes them.
+    `agents` and `subagents` count the group's agents that ran in the window, without and with a parent. No function in FOLDS changes them.
     """
 
     item: Optional[Item]
@@ -290,7 +293,7 @@ class Group:
 
 @dataclass(frozen=True)
 class Totals:
-    """The four numbers at the top. No fold step changes them, and the coordinator's own thread is in none.
+    """The four numbers at the top. No function in FOLDS changes them, and the coordinator's own thread is in none.
 
     `agents` counts the agents that ran in the window and have no parent, and `subagents` counts those that have one.
     `running` counts agents whose status is in OPEN, and `failed` counts agents whose status is FAILED.
@@ -310,7 +313,7 @@ class Hidden:
     `totals.agents + totals.subagents` on every page.
     """
 
-    dropped_items: int = 0       # merged or dropped work items drop_old_items removed
+    dropped_items: int = 0       # merged or dropped work items keep_finished_items removed
     dropped_agents: int = 0      # the agents of those items
     cut_agents: int = 0          # agents whose row cap_everything removed
     cut_in_flight: int = 0       # in-flight items cap_everything removed from the strip
@@ -324,9 +327,9 @@ class Page:
     """Everything either renderer needs.
 
     `coordinator` is the coordinator's own row. It has no RUNNING span and is in no count.
-    `legend` holds each provider's name and its number of agents that ran in the window, most agents first. No fold step changes it.
-    `items` holds the in-flight work items. A group's item can be a finished one.
-    `fold` is how many fold steps were applied.
+    `legend` holds each provider's name and its number of agents that ran in the window, most agents first. No function in FOLDS changes it.
+    `items` holds the in-flight work items. A group's item can be a merged or dropped one.
+    `fold` is how many functions in FOLDS were applied.
     """
 
     name: str
@@ -954,7 +957,7 @@ def build_page(store, t3, window):
     return Page(scrub(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
 
-KEPT_ITEMS = 6
+KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
 MAX_GROUPS = 6
 MAX_ROWS = 6
 MAX_SPANS = 4
@@ -1000,21 +1003,33 @@ def people(agents, subagents):
     return ", ".join(count(number, noun) for number, noun in ((agents, "agent"), (subagents, "sub-agent")) if number)
 
 
-def quiet(rows):
-    return all(row.status in QUIET for row in rows)
+def agents_in(rows):
+    return sum(row.stands_for for row in rows)
+
+
+def union(spans, status):
+    """spans as bars of one status in order of x, with bars that touch or overlap made one bar."""
+    bars = []
+    for span in sorted(spans, key=lambda span: span.x):
+        if bars and span.x <= bars[-1].x + bars[-1].w:
+            bars[-1] = Span(bars[-1].x, max(bars[-1].x + bars[-1].w, span.x + span.w) - bars[-1].x, status)
+        else:
+            bars.append(Span(span.x, span.w, status))
+    return bars
 
 
 def summary(rows, depth, label):
-    """One row that stands for rows. Its bars are the union of theirs and read DONE. It keeps a model or provider only when every row has the same one."""
-    bars = []
-    for span in sorted((span for row in rows for span in row.spans), key=lambda span: span.x):
-        if bars and span.x <= bars[-1].x + bars[-1].w:
-            bars[-1] = Span(bars[-1].x, max(bars[-1].x + bars[-1].w, span.x + span.w) - bars[-1].x, Status.DONE)
-        else:
-            bars.append(Span(span.x, span.w, Status.DONE))
+    """One row that stands for rows.
+
+    Its bars are the union of their bars that are not FAILED, which reads DONE, and then the union of their FAILED bars, which stays FAILED.
+    It keeps a model or provider only when every row has the same one.
+    """
+    spans = [span for row in rows for span in row.spans]
+    failed = [span for span in spans if span.status is Status.FAILED]
+    bars = union((span for span in spans if span.status is not Status.FAILED), Status.DONE) + union(failed, Status.FAILED)
     models, providers = {row.model for row in rows}, {row.provider for row in rows}
     return Row(depth, label, models.pop() if len(models) == 1 else "", providers.pop() if len(providers) == 1 else "", Status.DONE,
-               sum(row.seconds for row in rows), tuple(bars), None, sum(row.stands_for for row in rows))
+               sum(row.seconds for row in rows), tuple(bars), None, agents_in(rows))
 
 
 def families(rows):
@@ -1027,38 +1042,55 @@ def families(rows):
     return runs
 
 
-def fold_finished_subagents(page):
-    """Step 1. Under a row of depth 0 that is DONE or STOPPED, the rows below become one summary row when all are DONE or STOPPED and they stand for 2 or more agents."""
-    groups = []
-    for group in page.groups:
-        rows = []
-        for top, *below in families(group.rows):
-            if sum(row.stands_for for row in below) >= 2 and quiet([top, *below]):
-                below = [summary(below, 1, count(sum(row.stands_for for row in below), "sub-agent"))]
-            rows += [top, *below]
-        groups.append(replace(group, rows=tuple(rows)))
-    return replace(page, groups=tuple(groups), fold=page.fold + 1)
+def kept_rows(rows, keeps):
+    """The rows whose flag in keeps is set. Each one's depth becomes the number of its ancestor rows that stay."""
+    kept, above = [], []
+    for row, keep in zip(rows, keeps):
+        del above[row.depth:]
+        if keep:
+            kept.append(replace(row, depth=sum(above)))
+        above.append(keep)
+    return kept
 
 
 def finished(group):
-    return group.item is not None and not group.item.in_flight and quiet(group.rows)
+    """Whether the group's work item is merged or dropped and no row of the group is RUNNING, QUEUED, or WAITING."""
+    return group.item is not None and not group.item.in_flight and not any(row.status in LIVE for row in group.rows)
 
 
-def fold_quiet_items(page):
-    """Step 2. A group whose work item is merged or dropped and whose rows are all DONE or STOPPED and stand for 2 or more agents becomes one summary row."""
+def fold_finished_items(page):
+    """A finished() group whose rows stand for 2 or more agents becomes one summary row."""
     groups = tuple(
-        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and group.agents + group.subagents >= 2 else group
+        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and agents_in(group.rows) >= 2 else group
         for group in page.groups)
     return replace(page, groups=groups, fold=page.fold + 1)
 
 
-def drop_old_items(page):
-    """Step 3. Of the groups whose work item is merged or dropped and whose rows are all DONE or STOPPED, the first KEPT_ITEMS in page order stay."""
+def fold_quiet_subagents(page):
+    """Under each row of depth 0, the rows below it that are DONE or STOPPED become one summary row when they stand for 2 or more agents.
+
+    The other rows below it stay in their order, each at a depth equal to the number of its ancestor rows that stay. The summary row comes after them.
+    """
+    groups = []
+    for group in page.groups:
+        rows = []
+        for family in families(group.rows):
+            folds = [index > 0 and row.status in QUIET for index, row in enumerate(family)]
+            folded = [row for row, fold in zip(family, folds) if fold]
+            if agents_in(folded) >= 2:
+                family = [*kept_rows(family, [not fold for fold in folds]), summary(folded, 1, count(agents_in(folded), "sub-agent"))]
+            rows += family
+        groups.append(replace(group, rows=tuple(rows)))
+    return replace(page, groups=tuple(groups), fold=page.fold + 1)
+
+
+def keep_finished_items(limit, page):
+    """Of the finished() groups, the first limit in page order stay. The rest are dropped and counted in page.hidden."""
     groups, seen, items, agents = [], 0, 0, 0
     for group in page.groups:
         seen += finished(group)
-        if finished(group) and seen > KEPT_ITEMS:
-            items, agents = items + 1, agents + sum(row.stands_for for row in group.rows)
+        if finished(group) and seen > limit:
+            items, agents = items + 1, agents + agents_in(group.rows)
         else:
             groups.append(group)
     hidden = replace(page.hidden, dropped_items=page.hidden.dropped_items + items, dropped_agents=page.hidden.dropped_agents + agents)
@@ -1072,18 +1104,21 @@ def first(values, limit, urgent):
 
 
 def joined(spans, limit):
-    """spans with the two neighbors nearest each other joined until at most limit are left."""
-    spans = list(spans)
+    """spans in order of x, with the neighbor pair that has the smallest gap from the end of one to the start of the next joined until at most limit are left.
+
+    The FAILED bars are then moved after the others.
+    """
+    spans = sorted(spans, key=lambda span: span.x)
     while len(spans) > limit:
         at = min(range(len(spans) - 1), key=lambda index: spans[index + 1].x - spans[index].x - spans[index].w)
         left, right = spans[at], spans[at + 1]
         status = min(left.status, right.status, key=JOINED.index)
         spans[at:at + 2] = [Span(left.x, max(left.x + left.w, right.x + right.w) - left.x, status)]
-    return tuple(spans)
+    return tuple(sorted(spans, key=lambda span: span.status is Status.FAILED))
 
 
 def cap_everything(page):
-    """Step 4. Its output has a size limit whatever the input.
+    """Its output has a size limit whatever the input.
 
     At most MAX_GROUPS groups stay, those with a running row first. At most MAX_ROWS rows a group stay, running and failed rows first.
     A row's depth becomes the number of its ancestor rows that stay. At most MAX_SPANS bars a row and COORDINATOR_SPANS on the coordinator's row stay.
@@ -1094,8 +1129,8 @@ def cap_everything(page):
         link = item.pr if len(item.pr.encode()) <= LINK_BYTES else ""
         return replace(item, id=clip(item.id, ID_BYTES), summary=clip(item.summary, SUMMARY_BYTES), pr=link)
 
-    def narrow(row, depth, limit):
-        return replace(row, depth=depth, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=joined(row.spans, limit))
+    def narrow(row, limit):
+        return replace(row, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=joined(row.spans, limit))
 
     def running(row):
         return row.open_seconds is not None
@@ -1104,26 +1139,20 @@ def cap_everything(page):
     stays = first(page.groups, MAX_GROUPS, lambda group: any(running(row) for row in group.rows))
     for group, stay in zip(page.groups, stays):
         keeps = first(group.rows, MAX_ROWS if stay else 0, lambda row: running(row) or row.status is Status.FAILED)
-        rows, above = [], []
-        for row, keep in zip(group.rows, keeps):
-            del above[row.depth:]
-            if keep:
-                rows.append(narrow(row, sum(above), MAX_SPANS))
-            else:
-                cut += row.stands_for
-            above.append(keep)
+        rows = tuple(narrow(row, MAX_SPANS) for row in kept_rows(group.rows, keeps))
+        cut += agents_in(group.rows) - agents_in(rows)
         if stay:
-            groups.append(replace(group, item=shown(group.item) if group.item else None, rows=tuple(rows)))
+            groups.append(replace(group, item=shown(group.item) if group.item else None, rows=rows))
     drawn = [group.item for group in groups]
     listed = first(page.items, MAX_STRIP, lambda item: shown(item) in drawn)
     items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
     hidden = replace(page.hidden, cut_agents=page.hidden.cut_agents + cut, cut_in_flight=page.hidden.cut_in_flight + len(page.items) - len(items))
-    coordinator = narrow(page.coordinator, 0, COORDINATOR_SPANS) if page.coordinator else None
+    coordinator = narrow(page.coordinator, COORDINATOR_SPANS) if page.coordinator else None
     return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
 
 
 # Applied in order, each to the result of the one before, until the document fits.
-FOLDS = (fold_finished_subagents, fold_quiet_items, drop_old_items, cap_everything)
+FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_items, limit) for limit in KEPT_ITEMS), cap_everything)
 
 
 def fit(page, budget):
@@ -1144,7 +1173,7 @@ def say(number, one, several, **values):
 def notes(page):
     """One sentence for each thing the page does not draw as its own row, in a fixed order."""
     rows = [row for group in page.groups for row in group.rows]
-    # A summary row below a row of depth 0 came from fold_finished_subagents. A summary row of depth 0 came from fold_quiet_items.
+    # A summary row below a row of depth 0 came from fold_quiet_subagents. A summary row of depth 0 came from fold_finished_items.
     below = [row.stands_for for row in rows if row.stands_for > 1 and row.depth]
     whole = [row for row in rows if row.stands_for > 1 and not row.depth]
     hidden, lines = page.hidden, []
@@ -1154,8 +1183,8 @@ def notes(page):
         lines.append(say(len(below), "{agents} sub-agents that are done or stopped are shown as 1 summary row.",
                          "{agents} sub-agents that are done or stopped are shown as {n} summary rows.", agents=sum(below)))
     if whole:
-        lines.append(say(len(whole), "1 merged or dropped work item whose agents are all done or stopped is shown as one row.",
-                         "{n} merged or dropped work items whose agents are all done or stopped are each shown as one row."))
+        lines.append(say(len(whole), "1 merged or dropped work item with no agent running, queued, or waiting is shown as one row.",
+                         "{n} merged or dropped work items with no agent running, queued, or waiting are each shown as one row."))
     if hidden.dropped_items:
         lines.append(say(hidden.dropped_items, "1 merged or dropped work item with {agents} is not shown. Use a larger --max-bytes to see more.",
                          "{n} merged or dropped work items with {agents} are not shown. Use a larger --max-bytes to see more.",
