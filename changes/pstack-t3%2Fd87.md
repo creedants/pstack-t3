@@ -1,1 +1,0 @@
-- A parent treats a child whose final result is posted and idle for two minutes as stalled after one 120000 ms recheck. Delegation step 5 says the no-end-turn rule holds against the `delegate_task` tool text. The four poteto-mode code-delegate steps link Delegation step 5. Prompt caps sends a skill test whose child launches seats through `bounded-seat --launches-seats`.

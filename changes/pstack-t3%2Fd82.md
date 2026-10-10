@@ -1,1 +1,0 @@
-- The build keeps each source file's permission bits. It no longer forces `.sh`, `.py`, `.mjs`, and `orch.ts` to mode 755, so `brigade.py` and `land.py` stay 644, matching their sources. Callers run them with `python3`.

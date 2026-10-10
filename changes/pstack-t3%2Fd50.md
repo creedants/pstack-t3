@@ -1,1 +1,0 @@
-- `scripts/check.py` checks a catalog heredoc only between `<<'JSON'` and a closer line that is `JSON` and nothing else. It rejects an indented closer and a closer with trailing whitespace. `$interrogate`, `$arena`, `$architect`, and `$swarm` pass a large catalog in that quoted heredoc.
