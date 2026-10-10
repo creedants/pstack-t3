@@ -1,8 +1,10 @@
 # Light mode
 
-This is the design for a light mode in pstack-t3. Light mode is one setting, `full` or `light`. The user chooses it at start and can change it later. It cuts the model usage of poteto-mode playbooks and brigade coordinators and keeps the checks that catch real bugs.
+This is the design of the light mode setting in pstack-t3, which has shipped. Light mode is one setting, `full` or `light`. The user chooses it at start and can change it later. It cuts the model usage of poteto-mode playbooks and brigade coordinators and keeps the checks that catch real bugs.
 
 The intended readers are a user who runs low on a provider's usage budget, and the engineer who builds the changes below.
+
+**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. Change 6, the measured trial, is still running, so this document has no Results section and the `medium` cap on the gate review stays open to that decision. The sections below keep the design as it was written before those changes landed, including its line numbers and its census of that time.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item. brigade's commands and files keep their kitchen names only where they name a command or a file, such as `fire`, `dishes.tsv`, and `restaurant.json`.
 
@@ -425,6 +427,8 @@ Light mode keeps the round-1 review, and round 1 is where this repository caught
 7. **The admin relay after this design.** D64's relay gap was caught by a second reviewer that light mode drops. Coverage of the admin relay in light mode is the gate review at `medium`, rule 1 for any change that touches `brigade.py`, and the executing fresh-child test that drives the admin through one relayed reply.
 
 ## Changes
+
+Changes 1 to 5 landed in order as #81, #83, #84, #85, and #88. Change 6 is the running trial.
 
 Each change is one PR through the landing queue, with its own tests and its own changelog fragment. Each change that edits a skill's behavior needs the fresh-child tests [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) requires, run in `full` mode because the change itself is under review.
 

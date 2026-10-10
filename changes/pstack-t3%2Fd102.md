@@ -1,0 +1,1 @@
+- The landing skill, README, runtime, and light-mode design now describe the queue sending a submitted PR body unchanged, a resumed `review backups` member needing `--author`, the per-coordinator worker cap, and the light mode setting as shipped.
