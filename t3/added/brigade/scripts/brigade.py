@@ -151,6 +151,10 @@ class BrigadeError(Exception):
     pass
 
 
+class MalformedTable(BrigadeError):
+    """A finished line of a table does not parse. walk prints it for that store and goes on to the next."""
+
+
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -395,7 +399,7 @@ class Restaurant:
                 text = None
             row = text if header or text is None else parse_row(table, text)
             if row is None:
-                raise BrigadeError(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
+                raise MalformedTable(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
             if not header:
                 rows.append(row)
         return rows
@@ -2330,7 +2334,10 @@ def leases_for(listing, prefix):
 
 
 def walk(root, stale_hours=24, repo=None):
-    """Coordinators grouped by projectRoot. One land.py status and one lease list per root, outside any store lock."""
+    """Coordinators grouped by projectRoot, as (text, failures). One land.py status and one lease list per root, outside any store lock.
+
+    A store with a malformed table prints that message as its one line, and the message joins failures.
+    """
     wanted = str(Path(repo).resolve()) if repo is not None else None
     groups = {}
     for meta_path in sorted(root.glob("*/*/restaurant.json")):
@@ -2341,9 +2348,9 @@ def walk(root, stale_hours=24, repo=None):
         groups.setdefault(project, []).append(restaurant)
     if not groups:
         if wanted is not None:
-            return f"no restaurants for {wanted}"
-        return f"no restaurants under {root}"
-    lines = []
+            return f"no restaurants for {wanted}", []
+        return f"no restaurants under {root}", []
+    lines, failures = [], []
     for project in sorted(groups):
         # The executive admin comes first in its repository.
         coordinators = sorted(groups[project], key=lambda restaurant: (not is_admin(restaurant.meta),
@@ -2356,8 +2363,14 @@ def walk(root, stale_hours=24, repo=None):
             meta = restaurant.meta
             age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
             idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
-            counts = status_line(restaurant)
-            blocked = len(holding_blocks(restaurant))
+            try:
+                counts = status_line(restaurant)
+                blocked = len(holding_blocks(restaurant))
+                questions = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
+            except MalformedTable as error:
+                lines.append(f"  {meta['restaurant']}: {error}")
+                failures.append(str(error))
+                continue
             if blocked:
                 counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
             mode = f", mode {meta['mode']}" if meta.get("mode") else ""
@@ -2365,9 +2378,9 @@ def walk(root, stale_hours=24, repo=None):
             leases = leases_for(listing, holder_prefix(meta))
             lease_text = f", leases {', '.join(leases)}" if leases else ""
             lines.append(f"    thread {meta.get('thread') or 'not recorded'}{lease_text}")
-            for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
+            for question in questions:
                 lines.append(f"    {question['id']}: {question['question']}")
-    return "\n".join(lines)
+    return "\n".join(lines), failures
 
 
 REQUEST_NOTE = re.compile(r"^to (\S+): (.*)$")
@@ -2859,7 +2872,11 @@ def run(argv):
                 lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
         return "\n".join(lines)
     if args.command == "walk":
-        return walk(root, args.stale_hours, args.repo)
+        text, failures = walk(root, args.stale_hours, args.repo)
+        if failures:
+            print(text)
+            raise BrigadeError("\nbrigade: ".join(failures))
+        return text
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)

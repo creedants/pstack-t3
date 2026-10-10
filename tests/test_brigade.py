@@ -5345,6 +5345,40 @@ class HandoffTest(StoresTest):
                                     capture_output=True, text=True, cwd=cwd)
             self.assertEqual((result.returncode, result.stderr.strip()), (1, line), words)
 
+    def test_walk_prints_every_other_store_and_exits_1_when_one_store_has_a_malformed_table(self):
+        for name in ("core", "docs", "engine"):
+            self.open(name)
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        self.brigade("docs", "ticket", "add", "--summary", "b")
+        rail = self.dir("docs") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
+            f"{_shown_root(self.project)}: no landing contract",
+            "  core (reports milestones): waiting tickets: 1",
+            "    thread not recorded",
+            "  docs: app/docs/rail.tsv line 3 is malformed; fix or remove it",
+            "  engine (reports milestones): nothing on record",
+            "    thread not recorded",
+        ]) + "\n", "brigade: app/docs/rail.tsv line 3 is malformed; fix or remove it\n"))
+
+    def test_walk_names_each_malformed_table_on_stderr_when_two_stores_have_one(self):
+        for name in ("core", "docs", "engine"):
+            self.open(name)
+        rail = self.dir("core") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        verdicts = self.dir("engine") / "pass.tsv"
+        verdicts.write_text(verdicts.read_text() + "not a row\n")
+        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
+            f"{_shown_root(self.project)}: no landing contract",
+            "  core: app/core/rail.tsv line 2 is malformed; fix or remove it",
+            "  docs (reports milestones): nothing on record",
+            "    thread not recorded",
+            "  engine: app/engine/pass.tsv line 2 is malformed; fix or remove it",
+        ]) + "\n", "brigade: app/core/rail.tsv line 2 is malformed; fix or remove it\n"
+                   "brigade: app/engine/pass.tsv line 2 is malformed; fix or remove it\n"))
+
     def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
         self.open("core")
         self.brigade("core", "ticket", "add", "--summary", "a")
