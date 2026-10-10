@@ -3,6 +3,9 @@
 
 After syncing, `python3 scripts/build.py` lists every override whose upstream
 file changed. Re-port each one, then run `build.py --update-lock`.
+
+With --check, sync nothing. Print each path upstream changed since the pinned
+commit and what pstack-t3 does with that path, and write nothing in the checkout.
 """
 
 import argparse
@@ -12,14 +15,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Literal, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / "upstream.json"
 
+Change = Literal["changed", "added", "removed"]
+Handling = Literal["overridden", "dropped", "unchanged", "not-shipped"]
+
 STATUS = {"M": "changed", "T": "changed", "A": "added", "D": "removed"}
+HANDLING_TEXT = {
+    "overridden": "overridden by {t3_path}",
+    "dropped": "dropped by t3/removed.txt",
+    "unchanged": "ships unchanged",
+    "not-shipped": "not shipped",
+}
 # The copies that end build.render(), so they win over every other layer.
 # Skill-relative key -> file under t3/. render() also copies t3/agents/*.md.
 FIXED_COPIES = {
@@ -37,6 +49,28 @@ class Layers:
     added: frozenset[str]  # skill-relative keys under t3/added
     overrides: frozenset[str]  # skill-relative keys under t3/overrides
     removed: frozenset[str]  # t3/removed.txt entries, each a file or a directory
+
+
+@dataclass(frozen=True)
+class Entry:
+    path: str  # repository-relative, as upstream names it
+    change: Change  # what upstream did to the path
+    handling: Handling  # what pstack-t3 does with the path today
+    t3_path: str | None  # the t3 file to re-port, set exactly when handling is overridden
+
+
+@dataclass(frozen=True)
+class Report:
+    repository: str
+    ref: str
+    pinned: str
+    commit: str
+    version: str | None
+    changes: tuple[Entry, ...]  # sorted by path
+
+    @property
+    def up_to_date(self):
+        return self.commit == self.pinned
 
 
 def run(*command, cwd=None):
@@ -119,11 +153,61 @@ def upstream_changes(repository, ref, pinned, prefix):
     return commit, version if isinstance(version, str) else None, changes
 
 
+def quoted(text):
+    """Upstream picks these strings. One with a newline must not pass for a second row."""
+    return text if text.isprintable() and " " not in text else json.dumps(text)
+
+
+def render_text(report, prefix):
+    if report.up_to_date:
+        return f"up to date ({report.pinned[:12]})\n"
+    version = f" ({quoted(report.version)})" if report.version else ""
+    lines = [f"upstream {report.ref}: {report.pinned[:12]} -> {report.commit[:12]}{version}"]
+    for entry in report.changes:
+        handling = HANDLING_TEXT[entry.handling].format(t3_path=quoted(entry.t3_path or ""))
+        lines.append(f"{entry.change:<7}  {quoted(entry.path)}  {handling}")
+    if not report.changes:
+        lines.append(f"no changes under {prefix}/")
+    return "\n".join(lines) + "\n"
+
+
+def render_json(report):
+    fields = asdict(report)
+    changes = fields.pop("changes")
+    return json.dumps({**fields, "up_to_date": report.up_to_date, "changes": changes}, indent=2) + "\n"
+
+
+def check(args, meta):
+    repository = args.repository or meta["repository"]
+    try:
+        commit, version, changes = upstream_changes(repository, args.ref, meta["commit"], meta["path"])
+    except subprocess.CalledProcessError as error:
+        print(error.stderr.strip() or error, file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(error, file=sys.stderr)
+        return 1
+    layers = load_layers()
+    entries = (Entry(path, change, *classify(path, meta["path"], layers)) for change, path in changes)
+    report = Report(
+        repository, args.ref, meta["commit"], commit, version, tuple(sorted(entries, key=lambda entry: entry.path))
+    )
+    sys.stdout.write(render_json(report) if args.json else render_text(report, meta["path"]))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ref", default="main", help="upstream branch, tag, or commit")
+    parser.add_argument("--check", action="store_true", help="report what upstream changed since the pinned commit and sync nothing")
+    parser.add_argument("--json", action="store_true", help="with --check, print the report as one JSON object")
+    parser.add_argument("--repository", help="with --check, the upstream to read (default: the repository in upstream.json)")
     args = parser.parse_args()
+    if not args.check and (args.json or args.repository):
+        parser.error("--json and --repository need --check")
     meta = json.loads(UPSTREAM.read_text())
+    if args.check:
+        return check(args, meta)
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         checkout = Path(temporary) / "plugins"
         run("git", "clone", "--filter=blob:none", "--no-checkout", meta["repository"], str(checkout))
