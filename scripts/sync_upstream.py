@@ -53,7 +53,7 @@ DRY_RUN_DETAIL = {**MERGE_DETAIL, "clean": "would merge"}
 MERGE_FOOTER = """\
 t3/overrides.lock.json is not refreshed.
 A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.
-Review each merged override and re-port each override whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
+Once the merges are written, review each merged override and re-port each override whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
 """
 FIXED_COPIES = {
     "pstack-runtime/SKILL.md": "runtime.md",
@@ -274,16 +274,8 @@ def main():
     parser.add_argument("--check", action="store_true", help="report what upstream changed since the pinned commit and sync nothing")
     parser.add_argument("--json", action="store_true", help="with --check, print the report as one JSON object")
     parser.add_argument("--repository", help="with --check, the upstream to read (default: the repository in upstream.json)")
-    parser.add_argument(
-        "--merge",
-        action="store_true",
-        help="sync and, for each override whose upstream file changed, write a clean three-way merge of it or leave it as it is and name it",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="with --merge, print what the sync and the merges would do and write nothing in the checkout",
-    )
+    parser.add_argument("--merge", action="store_true", help="sync and apply the three-way merge described above")
+    parser.add_argument("--dry-run", action="store_true", help="with --merge, write nothing in the checkout")
     args = parser.parse_args()
     if not args.check and (args.json or args.repository):
         parser.error("--json and --repository need --check")
@@ -295,7 +287,6 @@ def main():
     if args.check:
         return check(args, meta)
     if args.merge:
-        # Importing build would otherwise leave scripts/__pycache__ in the checkout.
         sys.dont_write_bytecode = True
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         try:

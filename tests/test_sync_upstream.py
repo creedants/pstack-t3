@@ -98,7 +98,7 @@ NO_ROWS = "no override's upstream file changed"
 FOOTER = [
     "t3/overrides.lock.json is not refreshed.",
     "A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.",
-    "Review each merged override and re-port each override whose row says so. "
+    "Once the merges are written, review each merged override and re-port each override whose row says so. "
     "Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.",
 ]
 
@@ -545,10 +545,10 @@ class MergeTest(CheckoutCase):
         self.assertEqual(self.vendored("beta/new.md"), b"added\n")
 
     def test_a_changed_file_that_ships_unchanged_reaches_vendor_and_gets_no_row(self):
-        lines = self.merge({"pstack/skills/beta/old.md": "edited\n"})
+        lines = self.merge({"pstack/skills/beta/SKILL.md": "edited\n"})
         self.assertEqual(lines[0], NO_ROWS)
-        self.assertEqual([line for line in lines if "beta/old.md" in line], [])
-        self.assertEqual(self.vendored("beta/old.md"), b"edited\n")
+        self.assertEqual([line for line in lines if "beta/SKILL.md" in line], [])
+        self.assertEqual(self.vendored("beta/SKILL.md"), b"edited\n")
 
     def test_a_nul_byte_in_any_of_the_three_texts_leaves_the_override_and_names_it(self):
         nul = "one\0\ntwo\nthree\nfour\nfive\nsix\nseven\n"
