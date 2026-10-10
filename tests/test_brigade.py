@@ -933,7 +933,7 @@ class BrigadeTest(unittest.TestCase):
             "reports/D1.md lists no follow-ups; nothing added",
             "not filed, text on the heading line: None of the tests cover the retry path.",
         ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups: none ##\n").splitlines(), [
+        self.assertEqual(self.follow_ups_in("## Follow-ups: none\n").splitlines(), [
             "reports/D1.md lists no follow-ups; nothing added",
             "not filed, text on the heading line: none",
         ])

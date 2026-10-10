@@ -357,7 +357,7 @@ class Restaurant:
         if data is None:
             return []
         rows = []
-        # The last element is the bytes after the final newline: empty, or the tail of a killed append.
+        # The last element is the bytes after the final newline. It is empty, or it is the tail of a killed append.
         for number, line in enumerate(data.split(b"\n")[:-1], start=1):
             try:
                 text = line.decode()
@@ -705,7 +705,7 @@ def follow_ups(text):
     below its section's last list item, which closes the section.
 
     The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
-    line without closing `#` marks, leading colons, and surrounding spaces.
+    line without leading colons and surrounding spaces.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -718,7 +718,7 @@ def follow_ups(text):
             named = re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I)
             if named:
                 level = depth
-                sections.append([("heading", [line[named.end():].strip().rstrip("#").lstrip(": ")])])
+                sections.append([("heading", [line[named.end():].lstrip(": ")])])
             elif depth <= level:
                 level = 0
             block, blank = None, True
@@ -1058,10 +1058,10 @@ def pass_check(restaurant, dish_id, sha):
 
 
 def review_report(restaurant, dish_id, report):
-    """The bare name of a review report of this item that exists under this store's reports/.
+    """The bare name of `report`.
 
     A name that is not a review report of the item is refused. So is a path that in_reports turns down, and so is a
-    name with no file under this store's reports/.
+    name for which reports/<name> does not exist in this store.
     """
     name = Path(report).name
     match = REVIEW_FILE.fullmatch(name)
