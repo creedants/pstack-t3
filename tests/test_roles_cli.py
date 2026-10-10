@@ -4090,7 +4090,8 @@ def lacks_mode_note(mode, provider_id="muse"):
 
 
 class RuntimeModeCliTest(unittest.TestCase):
-    def show(self, role, roles_file=None, mode=None, provider=None, catalog_mode=None):
+    def show(self, role, roles_file=None, mode=None, provider=None, catalog_mode=None,
+             parent="claudeAgent/claude-opus-5-5"):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             catalog = json.loads(CATALOG.read_text())
@@ -4103,7 +4104,7 @@ class RuntimeModeCliTest(unittest.TestCase):
                 repo.put(repo.user, roles_file)
             flag = () if mode is None else ("--runtime-mode", mode)
             completed = repo.run(
-                "show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", role, *flag,
+                "show", "--catalog", str(path), "--parent", parent, "--role", role, *flag,
             )
             return completed, str(repo.user)
 
@@ -4213,6 +4214,78 @@ class RuntimeModeCliTest(unittest.TestCase):
                     self.assertEqual(completed.stdout, "")
                     self.assertIn("error: unrecognized arguments: --runtime-mode auto", completed.stderr)
                     self.assertFalse(repo.user.exists())
+
+    MUSE_PARENT = "muse/muse-spark-1"
+    WRITTEN_INHERIT = {"roles": {"judgment and prose": ["inherit"]}}
+
+    def assert_refused(self, role, roles_file):
+        completed, _user = self.show(role, roles_file=roles_file, mode="auto", parent=self.MUSE_PARENT)
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            f"error: role {role!r} cannot inherit muse/muse-spark-1: "
+            "muse is not runnable (the muse driver lacks runtime mode auto)\n",
+        )
+
+    def test_auto_refuses_a_written_inherit_on_a_muse_driver_parent(self):
+        self.assert_refused("judgment and prose", self.WRITTEN_INHERIT)
+
+    def test_auto_refuses_a_configured_muse_driver_seat_on_a_muse_driver_parent(self):
+        self.assert_refused("bug-fix", self.BUG_FIX)
+
+    def test_auto_refuses_a_panel_that_holds_inherit_on_a_muse_driver_parent(self):
+        opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        self.assert_refused("arena runners", {"roles": {"arena runners": ["inherit", opus]}})
+
+    def test_auto_notes_the_skipped_inherit_in_the_default_verifiers_panel_on_a_muse_driver_parent(self):
+        entry, _user = self.entry("verifiers", mode="auto", parent=self.MUSE_PARENT)
+        self.assertEqual(entry, {
+            "source": "default",
+            "seats": [
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "grok", "model": "grok-4.7"},
+            ],
+            "notes": [
+                "skipped inherit of muse/muse-spark-1: "
+                "muse is not runnable (the muse driver lacks runtime mode auto)"
+            ],
+        })
+
+    def test_supported_modes_and_a_catalog_file_mode_keep_a_written_inherit_on_a_muse_driver_parent(self):
+        cases = (
+            {"mode": "full-access"},
+            {"mode": "approval-required"},
+            {"catalog_mode": "auto"},
+        )
+        for case in cases:
+            with self.subTest(**case):
+                entry, user = self.entry(
+                    "judgment and prose", roles_file=self.WRITTEN_INHERIT, parent=self.MUSE_PARENT, **case,
+                )
+                self.assertEqual(entry, {"source": user, "seats": ["inherit"]})
+
+    def test_auto_keeps_a_written_inherit_on_a_claude_parent(self):
+        entry, user = self.entry("judgment and prose", roles_file=self.WRITTEN_INHERIT, mode="auto")
+        self.assertEqual(entry, {"source": user, "seats": ["inherit"]})
+
+    def test_full_access_starts_the_default_verifiers_panel_with_inherit_on_a_muse_driver_parent(self):
+        entry, _user = self.entry("verifiers", mode="full-access", parent=self.MUSE_PARENT)
+        self.assertEqual(entry["seats"][0], "inherit")
+        self.assertNotIn("notes", entry)
+
+    def test_validate_accepts_a_written_inherit_on_a_muse_driver_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog = json.loads(CATALOG.read_text())
+            catalog["providers"].append(muse_driver_provider())
+            path = repo.directory / "catalog.json"
+            repo.put(path, catalog)
+            repo.put(repo.user, self.WRITTEN_INHERIT)
+            completed = repo.run("validate", "--catalog", str(path), "--parent", self.MUSE_PARENT)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, "ok\n")
 
 
 class RuntimeModeBackupCliTest(unittest.TestCase):
