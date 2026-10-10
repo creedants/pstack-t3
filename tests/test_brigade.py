@@ -989,6 +989,21 @@ class BrigadeTest(unittest.TestCase):
         ])
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
+    def test_from_report_prints_a_deeper_heading_with_no_text_and_not_the_follow_ups_heading_with_no_text(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        for extra in ((), ("--dry-run",)):
+            self.assertEqual(self.follow_ups_in("## Follow-ups\n\n###\n", *extra).splitlines(), [
+                "reports/D1.md lists no follow-ups; nothing added",
+                "not filed, heading inside the section with no text",
+            ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nLead in.\n\n###   \n\n- fix a\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: fix a",
+            "not filed, prose that introduces a list: Lead in.",
+            "not filed, heading inside the section with no text",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
     def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in(LEAD_IN, "--dry-run").splitlines(), [
@@ -1286,9 +1301,15 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.close_run("--dry-run")[2],
                          "\n".join([self.no_row("D1-review-1.md"), self.no_row("D7-review.md", "D7")]))
 
-    def not_a_file(self, name, words):
-        return (f"brigade: warning: reports/{name} {words} and no review row names it; "
-                "make it a regular file in this store's reports/, or remove it")
+    def not_a_file(self, name, words, advice):
+        return f"brigade: warning: reports/{name} {words} and no review row of D1 names it; {advice}"
+
+    def a_link(self, name):
+        return self.not_a_file(name, "is a symbolic link", "remove the link and leave its target as it is")
+
+    def under_a_linked_reports(self, name):
+        return self.not_a_file(name, "resolves outside this store's reports/",
+                               "replace the symbolic link at reports/ with a directory and leave the link's target as it is")
 
     def linked(self, name, target):
         link = self.at / "reports" / name
@@ -1301,20 +1322,42 @@ class BrigadeTest(unittest.TestCase):
         code, before, err = self.close_run("--dry-run")
         self.assertEqual((code, err), (0, ""))
         self.linked("D1-review-7.md", "gone.md")
-        warning = ("brigade: warning: reports/D1-review-7.md is a symbolic link and no review row names it; "
-                   "make it a regular file in this store's reports/, or remove it")
+        warning = ("brigade: warning: reports/D1-review-7.md is a symbolic link and no review row of D1 names it; "
+                   "remove the link and leave its target as it is")
         self.assertEqual(self.close_run("--dry-run"), (0, before, warning))
         self.assertEqual(self.close_run(), (0, before, warning))
 
-    def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports(self):
+    def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports_and_following_its_advice_ends_each_warning(self):
         self.fired_bug_fix()
-        (Path(self.temporary.name) / "findings.md").write_text("findings\n")
-        self.linked("D1-review-7.md", "findings.md")
-        (self.at / "reports" / "D1-review-8.md").mkdir()
+        target = Path(self.temporary.name) / "findings.md"
+        target.write_text("findings\n")
+        link = self.linked("D1-review-7.md", "findings.md")
+        directory = self.at / "reports" / "D1-review-8.md"
+        directory.mkdir()
+        (directory / "notes.md").write_text("notes\n")
         self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join([
-            self.not_a_file("D1-review-7.md", "is a symbolic link"),
-            self.not_a_file("D1-review-8.md", "is not a regular file"),
+            self.a_link("D1-review-7.md"),
+            self.not_a_file("D1-review-8.md", "is not a regular file", "move it out of reports/"),
         ])))
+        link.unlink()
+        directory.rename(self.at / "D1-review-8.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.assertEqual(target.read_text(), "findings\n")
+        self.assertEqual((self.at / "D1-review-8.md" / "notes.md").read_text(), "notes\n")
+
+    def test_close_warns_about_a_dangling_link_that_only_a_row_of_another_item_names(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--summary", "t")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix t")
+        self.review_file("D2-review-1.md")
+        self.brigade("pass", "record", "D2", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+                     "--report", "D2-review-1.md")
+        table = self.at / "pass.tsv"
+        table.write_text(table.read_text().replace("D2-review-1.md", "D1-review-7.md"))
+        (self.at / "reports" / "D2-review-1.md").unlink()
+        self.assertEqual([(row[1], row[8]) for row in self.pass_rows()], [("D2", "D1-review-7.md")])
+        self.linked("D1-review-7.md", "gone.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-7.md")))
 
     def test_close_does_not_warn_about_a_dangling_link_a_row_names(self):
         self.fired_bug_fix()
@@ -1332,16 +1375,25 @@ class BrigadeTest(unittest.TestCase):
         os.utime(target, (stamp, stamp))
         self.linked("D1-review-1.md", "findings.md")
         self.record("abc", "send-back")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.not_a_file("D1-review-1.md", "is a symbolic link")))
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-1.md")))
 
-    def test_close_warns_about_a_review_report_under_a_linked_reports(self):
+    def test_close_advice_for_every_entry_under_a_linked_reports_leaves_the_files_outside_the_store_in_place(self):
         self.fired_bug_fix()
         outside = Path(self.temporary.name) / "outside" / "reports"
         outside.mkdir(parents=True)
         (outside / "D1-review-5.md").write_text("findings\n")
-        (self.at / "reports").symlink_to(outside)
-        self.assertEqual(self.close_run("--dry-run")[::2],
-                         (0, self.not_a_file("D1-review-5.md", "resolves outside this store's reports/")))
+        (outside / "D1-review-6.md").symlink_to(outside / "D1-review-5.md")
+        (outside / "D1-review-7.md").mkdir()
+        before = sorted(path.name for path in outside.iterdir())
+        reports = self.at / "reports"
+        reports.symlink_to(outside)
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join(
+            self.under_a_linked_reports(f"D1-review-{number}.md") for number in (5, 6, 7))))
+        reports.unlink()
+        reports.mkdir()
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.assertEqual(sorted(path.name for path in outside.iterdir()), before)
+        self.assertEqual((outside / "D1-review-5.md").read_text(), "findings\n")
 
     def test_close_ignores_a_file_that_is_not_a_review_report(self):
         self.fired_bug_fix()

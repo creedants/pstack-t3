@@ -660,6 +660,12 @@ NOT_A_REPORT = {
     "other": "is not a regular file",
     "elsewhere": "resolves outside this store's reports/",
 }
+# What `close` advises for an entry of each kind it warns about. Each value finishes the warning line.
+REPAIR = {
+    "link": "remove the link and leave its target as it is",
+    "other": "move it out of reports/",
+    "elsewhere": "replace the symbolic link at reports/ with a directory and leave the link's target as it is",
+}
 
 
 def report_entry(restaurant, name):
@@ -737,7 +743,7 @@ def follow_ups(text):
 
     The text of a heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too,
     whatever it says. It is the line after its opening `#` marks, without surrounding whitespace. Such a heading with no
-    text makes no aside. A paragraph with only such headings between it and a list item is directly above that item.
+    text is an aside with no text. A paragraph with only such headings between it and a list item is directly above that item.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -772,14 +778,14 @@ def follow_ups(text):
     items, asides = [], []
     for blocks in sections:
         blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
-        blocks = [(kind, text) for kind, text in blocks if text]
+        blocks = [(kind, text) for kind, text in blocks if text or kind == "subheading"]
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
             if kind == "heading":
                 asides.append(("text on the heading line", text))
             elif kind == "subheading":
-                asides.append(("heading inside the section", text))
+                asides.append(("heading inside the section" if text else "heading inside the section with no text", text))
             elif says_no_work(text):
                 asides.append(("says no work is needed", text))
             elif kind == "para" and next(below for below in kinds[index + 1:] if below != "subheading") == "item":
@@ -804,7 +810,7 @@ def file_follow_ups(restaurant, name, found, write):
     restaurant.find("dishes.tsv", name[:-3])
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
-    aside = [f"not filed, {reason}: {text}" for reason, text in found.asides]
+    aside = [f"not filed, {reason}: {text}" if text else f"not filed, {reason}" for reason, text in found.asides]
     if not found.items:
         return "\n".join([f"reports/{name} lists no follow-ups; nothing added", *aside])
     holders = {}
@@ -1146,7 +1152,7 @@ def unrecorded_reviews(restaurant):
 
     The kind is report_entry's. A row of the entry's dish that names it in `report` accounts for it, and nothing is read
     from that entry. A row that names no report cannot say which file it reviewed, so it accounts for every `file` of its
-    dish written at or before it, and for no entry of another kind.
+    dish written at or before it, and for no entry of another kind. An entry that report_entry calls `missing` is left out.
     """
     rows = restaurant.rows("pass.tsv")
     reports = restaurant.dir / "reports"
@@ -1162,7 +1168,8 @@ def unrecorded_reviews(restaurant):
         if kind == "file" and any(datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp() >= path.stat().st_mtime
                                   for row in mine if not row["report"]):
             continue
-        unrecorded.append((path.name, kind))
+        if kind != "missing":
+            unrecorded.append((path.name, kind))
     return unrecorded
 
 
@@ -2858,14 +2865,17 @@ def command(restaurant, args, contract=None, rails=None):
         if not args.dry_run and is_admin(restaurant.meta):
             log_rulings(restaurant)
         text, path = report(restaurant, write=not args.dry_run)
+        linked = (restaurant.dir / "reports").is_symlink()
         for name, kind in unrecorded_reviews(restaurant):
             dish = name.split("-")[0]
             if kind == "file":
                 print(f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
                       f"and --late when {dish} has moved past that round", file=sys.stderr)
             else:
-                print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row names it; "
-                      "make it a regular file in this store's reports/, or remove it", file=sys.stderr)
+                # Under a reports/ that is a symbolic link, an entry of every kind resolves outside this store's reports/.
+                kind = "elsewhere" if linked else kind
+                print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row of {dish} names it; {REPAIR[kind]}",
+                      file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text
