@@ -1,0 +1,4 @@
+- `brigade.py` skips a last row that was cut inside a multi-byte character instead of answering `<table> line <n> is malformed`.
+- `brigade.py pass record --report <path>` refuses a path that is not the bare file name, is not `reports/<name>`, and is not in a directory that resolves to the store's `reports/`.
+- `brigade.py ticket add --from-report` prints `not filed, text on the heading line: <text>` for text that follows the word on a follow-ups heading line, and never files it.
+- `brigade.py status`, `walk`, and `close` count pending requests under `requests from the executive admin`, which replaces `requests from the user`.

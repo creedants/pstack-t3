@@ -353,21 +353,27 @@ class Restaurant:
             return meta
 
     def rows(self, table):
+        """The rows of a table's finished lines after its header line. A table that does not exist has none.
+
+        A finished line ends in a newline. The bytes after the last newline are never decoded.
+        A finished line that is not UTF-8, or that parse_row turns down, is refused as malformed.
+        A finished header line is decoded and never parsed.
+        """
         data = self.snapshot(table)
         if data is None:
             return []
-        try:
-            text = data.decode()
-        except UnicodeDecodeError as error:
-            number = data[:error.start].count(b"\n") + 1
-            raise BrigadeError(f"{table} line {number} is malformed; fix or remove it") from error
         rows = []
-        # The last element is the text after the final newline: empty, or the tail of a killed append.
-        for number, line in enumerate(text.split("\n")[1:-1], start=2):
-            row = parse_row(table, line)
+        for number, line in enumerate(data.split(b"\n")[:-1], start=1):
+            header = number == 1
+            try:
+                text = line.decode()
+            except UnicodeDecodeError:
+                text = None
+            row = text if header or text is None else parse_row(table, text)
             if row is None:
                 raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
-            rows.append(row)
+            if not header:
+                rows.append(row)
         return rows
 
     def save_rows(self, table, rows):
@@ -642,11 +648,16 @@ def append_ticket(restaurant, summary, source, ref):
     return ident
 
 
+def in_reports(restaurant, report, name):
+    """True when report is the bare name, `reports/<name>`, or a path whose directory resolves to this store's reports/."""
+    return report in (name, f"reports/{name}") or Path(report).parent.resolve() == restaurant.dir.resolve() / "reports"
+
+
 def item_report(restaurant, report):
     """The bare name of an item report under this store's reports/.
 
     Its content is read, so the file must be a regular file that resolves to this store's reports/<name>.
-    A path that names a file elsewhere is refused instead of re-anchored as review_report does, and so is a symbolic link.
+    A path that in_reports turns down is refused, and so is a symbolic link.
     A `..` component is refused as written, before anything is resolved.
     """
     if ".." in Path(report).parts:
@@ -656,7 +667,7 @@ def item_report(restaurant, report):
         raise BrigadeError(f"{name} is not an item report; name a file like reports/D2.md")
     path = restaurant.dir / "reports" / name
     home = restaurant.dir.resolve() / "reports" / name
-    if report not in (name, f"reports/{name}") and Path(report).parent.resolve() != home.parent:
+    if not in_reports(restaurant, report, name):
         raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
     if path.is_symlink():
         raise BrigadeError(f"reports/{name} is a symbolic link; nothing added")
@@ -698,6 +709,9 @@ def follow_ups(text):
     are part of it. Each block is a follow-up, with three exceptions that are asides. A block that is one of NO_WORK
     and nothing more is one. So is a paragraph directly above a list item, which introduces the list, and a paragraph
     below its section's last list item, which closes the section.
+
+    The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
+    line without leading colons and surrounding whitespace.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -707,9 +721,10 @@ def follow_ups(text):
         heading = plain and re.match(r"(#{1,6})(\s|$)", line)
         if heading:
             depth = len(heading.group(1))
-            if re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I):
+            named = re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I)
+            if named:
                 level = depth
-                sections.append([])
+                sections.append([("heading", [re.sub(r"^[\s:]+", "", line[named.end():])])])
             elif depth <= level:
                 level = 0
             block, blank = None, True
@@ -733,7 +748,9 @@ def follow_ups(text):
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
-            if says_no_work(text):
+            if kind == "heading":
+                asides.append(("text on the heading line", text))
+            elif says_no_work(text):
                 asides.append(("says no work is needed", text))
             elif kind == "para" and kinds[index + 1] == "item":
                 asides.append(("prose that introduces a list", text))
@@ -944,7 +961,7 @@ def counts(restaurant):
         "merged": dishes.count("merged"),
         "decisions for you": len(questions),
         "handed to you": handed_count(restaurant),
-        "requests from the user": len(request_files(restaurant)[0]),
+        "requests from the executive admin": len(request_files(restaurant)[0]),
     }
 
 
@@ -1047,10 +1064,17 @@ def pass_check(restaurant, dish_id, sha):
 
 
 def review_report(restaurant, dish_id, report):
+    """The bare name of `report`.
+
+    A name that is not a review report of the item is refused. So is a path that in_reports turns down, and so is a
+    name for which reports/<name> does not exist in this store.
+    """
     name = Path(report).name
     match = REVIEW_FILE.fullmatch(name)
     if not match or match.group(1) != dish_id:
         raise BrigadeError(f"{name} is not a review report of {dish_id}; name a file like reports/{dish_id}-review-1.md")
+    if not in_reports(restaurant, report, name):
+        raise BrigadeError(f"{report} is outside this store's reports/; name reports/{name}")
     if not (restaurant.dir / "reports" / name).exists():
         raise BrigadeError(f"reports/{name} does not exist; write the review report first")
     return name

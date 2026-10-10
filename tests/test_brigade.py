@@ -753,6 +753,19 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
         self.assertEqual(self.dish_fields("state"), ("sent-back",))
 
+    def test_pass_record_refuses_a_report_path_outside_the_reports_directory_of_the_store(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md")
+        elsewhere = Path(self.temporary.name) / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "D1-review-1.md").write_text("another file\n")
+        before = (self.at / "pass.tsv").read_bytes()
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        for report in (str(elsewhere / "D1-review-1.md"), "no/such/dir/D1-review-1.md"):
+            self.assertEqual(self.brigade(*record, "--report", report, ok=False),
+                             f"brigade: {report} is outside this store's reports/; name reports/D1-review-1.md")
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+
     def store_files(self):
         """Every file of the store but restaurant.lock, which is empty and is not store data."""
         return {str(path.relative_to(self.at)): path.read_bytes() for path in sorted(self.at.rglob("*"))
@@ -904,12 +917,33 @@ class BrigadeTest(unittest.TestCase):
                          "reports/D1.md has no follow-ups section; nothing added")
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
-    def test_from_report_reads_every_form_of_the_heading(self):
+    def test_from_report_reads_five_heading_forms(self):
         self.fired_bug_fix()
-        for heading in ("## Follow-ups (outside lease L91)", "### Follow-ups", "## Follow-up",
-                        "## Follow-ups outside my lease", "## follow-ups"):
-            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run"),
-                             "would add from perf/reports/D1.md#1: One thing.", heading)
+        for heading, rest in (("## Follow-ups (outside lease L91)", ["(outside lease L91)"]), ("### Follow-ups", []),
+                              ("## Follow-up", []), ("## Follow-ups outside my lease", ["outside my lease"]),
+                              ("## follow-ups", [])):
+            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run").splitlines(),
+                             ["would add from perf/reports/D1.md#1: One thing.",
+                              *(f"not filed, text on the heading line: {text}" for text in rest)], heading)
+
+    def test_from_report_prints_text_on_the_heading_line_and_does_not_file_it(self):
+        self.fired_bug_fix()
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.follow_ups_in("## Follow-ups: None of the tests cover the retry path.\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, text on the heading line: None of the tests cover the retry path.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\t: none\n").splitlines(), [
+            "reports/D1.md lists no follow-ups; nothing added",
+            "not filed, text on the heading line: none",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+        self.assertEqual(self.follow_ups_in("## Follow-ups (outside lease L91)\n\n- One thing.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: One thing.",
+            "not filed, text on the heading line: (outside lease L91)",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- One thing.\n", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: One thing.")
 
     def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
         self.fired_bug_fix()
@@ -4379,6 +4413,21 @@ class HandoffTest(StoresTest):
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False),
                          "brigade: rail.tsv line 3 is malformed; fix or remove it")
 
+    def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
+        self.open("core")
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        rail = self.dir("core") / "rail.tsv"
+        complete = rail.read_bytes()
+        rail.write_bytes(complete + "T9\t2026-10-10T00:00:00+00:00\twaiting\tuser\t\tcafé".encode()[:-1])
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "b"), "T2")
+        after = rail.read_bytes()
+        self.assertEqual(after[:len(complete)], complete)
+        added = after[len(complete):].decode()
+        self.assertEqual((added.count("\n"), added[-1]), (1, "\n"))
+        fields = added[:-1].split("\t")
+        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b"])
+
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock
         self.open("core")
@@ -4736,16 +4785,26 @@ class AdminTest(StoresTest):
         # A failed send leaves the file. The coordinator's next wake prints it again.
         for _ in range(2):
             self.assertEqual(self.brigade("docs", "inbox", "take"), f"A1: {line}")
-        self.assertIn("requests from the user: 1", self.brigade("docs", "status"))
+        self.assertIn("requests from the executive admin: 1", self.brigade("docs", "status"))
         self.assertEqual(self.brigade("docs", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.brigade("docs", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.brigade("docs", "inbox", "done", "A2", ok=False), "brigade: no request A2 in the inbox")
         self.assertEqual(self.inbox("docs"), [])
         self.assertEqual(self.brigade("docs", "inbox", "take"), "nothing handed to you")
-        self.assertNotIn("requests from the user", self.brigade("docs", "status"))
+        self.assertNotIn("requests from", self.brigade("docs", "status"))
         self.assertEqual([row[1:4] for row in self.rows("docs", "log.tsv") if row[1] == "inbox-done"], [["inbox-done", "A1", "done"]])
         self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[1] == "request"],
                          [["request", "A1", "sent", f"to docs: {line}"]])
+
+    def test_status_walk_and_close_count_every_pending_request_as_from_the_executive_admin(self):
+        self.open("docs")
+        self.open_admin()
+        self.admin("request", "--to", "docs", "reports-to docs th-admin")
+        self.admin("request", "--to", "docs", "from-user docs: add a FAQ")
+        for printed in (self.brigade("docs", "status"), self.brigade("docs", "walk", "--repo", str(self.project)),
+                        self.brigade("docs", "close")):
+            self.assertIn("requests from the executive admin: 2", printed)
+            self.assertNotIn("requests from the user", printed)
 
     def test_a_request_killed_before_its_file_is_republished_once(self):
         self.open("docs")
@@ -4774,7 +4833,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.brigade("core", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
         self.assertEqual(self.inbox("core"), [])
-        self.assertNotIn("requests from the user", self.brigade("core", "status"))
+        self.assertNotIn("requests from", self.brigade("core", "status"))
 
     def test_a_request_finished_while_republish_runs_stays_finished(self):
         self.open("core")
@@ -4788,7 +4847,7 @@ class AdminTest(StoresTest):
         (case / "proceed").touch()
         code, out, err = self.finish(proc)
         self.assertEqual(code, 0, err)
-        self.assertNotIn("requests from the user", self.brigade("core", "status"))
+        self.assertNotIn("requests from", self.brigade("core", "status"))
         self.assertEqual(self.brigade("core", "inbox", "take"), "nothing handed to you")
         self.assertEqual(self.inbox("core"), [])
         self.assertEqual(self.admin("request", "--republish"), "nothing to republish")
