@@ -1200,7 +1200,7 @@ STYLE = joined_lines("""
     .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400}
     .strip{display:flex;flex-wrap:wrap;gap:6px}
     .strip>*{max-width:100%;box-sizing:border-box}
-    .strip .sum{flex:0 1 auto;max-width:260px}
+    .strip .sum{flex:0 1 auto;max-width:200px}
     .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;margin-bottom:6px}
     .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:var(--c)}
     .tl{position:relative;--lab:230px}
