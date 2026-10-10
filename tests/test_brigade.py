@@ -933,7 +933,7 @@ class BrigadeTest(unittest.TestCase):
             "reports/D1.md lists no follow-ups; nothing added",
             "not filed, text on the heading line: None of the tests cover the retry path.",
         ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups: none\n").splitlines(), [
+        self.assertEqual(self.follow_ups_in("## Follow-ups\t: none\n").splitlines(), [
             "reports/D1.md lists no follow-ups; nothing added",
             "not filed, text on the heading line: none",
         ])
@@ -4796,12 +4796,13 @@ class AdminTest(StoresTest):
         self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[1] == "request"],
                          [["request", "A1", "sent", f"to docs: {line}"]])
 
-    def test_status_and_walk_count_every_pending_request_as_from_the_executive_admin(self):
+    def test_status_walk_and_close_count_every_pending_request_as_from_the_executive_admin(self):
         self.open("docs")
         self.open_admin()
         self.admin("request", "--to", "docs", "reports-to docs th-admin")
         self.admin("request", "--to", "docs", "from-user docs: add a FAQ")
-        for printed in (self.brigade("docs", "status"), self.brigade("docs", "walk", "--repo", str(self.project))):
+        for printed in (self.brigade("docs", "status"), self.brigade("docs", "walk", "--repo", str(self.project)),
+                        self.brigade("docs", "close", "--dry-run")):
             self.assertIn("requests from the executive admin: 2", printed)
             self.assertNotIn("requests from the user", printed)
 

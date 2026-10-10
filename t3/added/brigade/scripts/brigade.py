@@ -353,22 +353,28 @@ class Restaurant:
             return meta
 
     def rows(self, table):
+        """The rows of a table's finished lines after its header line. A table that does not exist has none.
+
+        A finished line ends in a newline. The bytes after the last newline are not a row and are never decoded.
+        A finished line that is not UTF-8, or that parse_row turns down, is refused as malformed.
+        The header line is decoded and never parsed.
+        """
         data = self.snapshot(table)
         if data is None:
             return []
         rows = []
-        # The last element is the bytes after the final newline. It is empty, or it is the tail of a killed append.
         for number, line in enumerate(data.split(b"\n")[:-1], start=1):
+            header = number == 1
             try:
                 text = line.decode()
             except UnicodeDecodeError:
                 text = None
-            # Line 1 is the header.
-            row = text if number == 1 or text is None else parse_row(table, text)
+            row = text if header or text is None else parse_row(table, text)
             if row is None:
                 raise BrigadeError(f"{table} line {number} is malformed; fix or remove it")
-            rows.append(row)
-        return rows[1:]
+            if not header:
+                rows.append(row)
+        return rows
 
     def save_rows(self, table, rows):
         header = TABLES[table]
@@ -705,7 +711,7 @@ def follow_ups(text):
     below its section's last list item, which closes the section.
 
     The text that follows the word on a follow-ups heading line is an aside too, whatever it says. It is the rest of the
-    line without leading colons and surrounding spaces.
+    line without leading colons and surrounding whitespace.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -718,7 +724,7 @@ def follow_ups(text):
             named = re.match(r"#{1,6}\s+follow-?ups?\b", line, re.I)
             if named:
                 level = depth
-                sections.append([("heading", [line[named.end():].lstrip(": ")])])
+                sections.append([("heading", [re.sub(r"^[\s:]+", "", line[named.end():])])])
             elif depth <= level:
                 level = 0
             block, blank = None, True
