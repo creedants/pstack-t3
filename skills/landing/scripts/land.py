@@ -85,12 +85,21 @@ def state_home():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pstack-t3"
 
 
-def git(*args, cwd, check=True, stdin=None):
-    """Run git with LC_ALL=C. Callers parse English diagnostics such as CONFLICT."""
+def git(*args, cwd, check=True, stdin=None, exact=False):
+    """Run git with LC_ALL=C. Callers parse English diagnostics such as CONFLICT.
+
+    Python's text mode turns a carriage return in the output, with or without a newline after it, into one newline.
+    With exact, the output is decoded with no such change.
+    """
     env = os.environ.copy()
     env["LC_ALL"] = "C"
-    result = subprocess.run(["git", *args], cwd=cwd, input=stdin, capture_output=True, text=True,
-                            encoding="utf-8", errors="surrogateescape", env=env)
+    if exact:
+        result = subprocess.run(["git", *args], cwd=cwd, input=None if stdin is None else stdin.encode("utf-8", "surrogateescape"),
+                                capture_output=True, env=env)
+        result.stdout, result.stderr = (stream.decode("utf-8", "surrogateescape") for stream in (result.stdout, result.stderr))
+    else:
+        result = subprocess.run(["git", *args], cwd=cwd, input=stdin, capture_output=True, text=True,
+                                encoding="utf-8", errors="surrogateescape", env=env)
     if check and result.returncode != 0:
         raise LandError(f"git {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
     return result
@@ -372,8 +381,10 @@ CREDIT_LINE = re.compile(r"Based on #[0-9]+ by @[A-Za-z0-9-]+\.?")
 
 
 def configured_identity(repo):
-    """git config user.name and user.email read in repo, or None unless both print a value."""
-    name, email = (git("config", key, cwd=repo, check=False).stdout.strip() for key in ("user.name", "user.email"))
+    """git config user.name and user.email read in repo, with no character removed. None unless both have a non-empty value."""
+    # -z ends a value with a NUL, which no value holds.
+    name, email = (git("config", "-z", "--get", key, cwd=repo, check=False, exact=True).stdout.removesuffix("\0")
+                   for key in ("user.name", "user.email"))
     return Identity(name, email) if name and email else None
 
 
