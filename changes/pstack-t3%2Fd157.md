@@ -1,0 +1,1 @@
+- Light mode no longer caps the `verifiers` role at `medium`. Under light with budget `default`, `roles.py show` and `roles.py backup` resolve a `verifiers` seat on the configured budget, as in full mode, so a gate review seated from it keeps its level. Every other role, `review backups` included, still takes the cap.

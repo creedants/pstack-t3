@@ -4,7 +4,7 @@ This is the design of the light mode setting in pstack-t3, which has shipped. Li
 
 The intended readers are a user who runs low on a provider's usage budget, and the engineer who builds the changes below.
 
-**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. A trial of the `medium` cap on the gate review finished on 2026-10-10. It found that the cap misses blocking findings. The decision is to keep the gate review at its full level in light mode. [Results](#results) records it. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap. The sections below keep the design as it was written before those changes landed, with its census of that time.
+**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. A trial of the `medium` cap on the gate review finished on 2026-10-10. It found that the cap misses blocking findings. The decision is to keep the gate review at its full level in light mode. [Results](#results) records it. The passages below that cap the gate at `medium` describe the design as it stood before that decision. `roles.py` no longer applies the cap to the `verifiers` role, which seats the gate review. The sections below keep the design as it was written before those changes landed, with its census of that time.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item. brigade's commands and files keep their kitchen names only where they name a command or a file, such as `fire`, `dishes.tsv`, and `restaurant.json`.
 
@@ -21,7 +21,7 @@ Light mode keeps every gate that decides whether code lands, and cuts the fan-ou
 | A fresh worker for every send-back | A fix attempt waives the design and investigation steps its playbook and attempt kind name |
 | One executing fresh-child test per changed spawn behavior | Second reviewers, arena, interrogate, reflect, and extra fresh-child tests |
 | The code delegate, so the author is never the diff's only reader | Fan-out waves are capped at 3 children |
-| | Reasoning is capped at `medium` unless an explicit budget says otherwise |
+| | Reasoning is capped at `medium` on every role except `verifiers`, unless an explicit budget says otherwise |
 
 On this repository's history, light mode would cut the child activity of a typical Feature change from about 610 items to about 240. It would cut a typical Bug fix from about 530 to about 280. That is a 47 to 60 percent cut in the measured unit, before the reasoning cap. A second set of per-child means gives 45 to 53 percent. See [Saving per change](#saving-per-change) for the method and its limits.
 
@@ -168,11 +168,11 @@ The brief has to carry the decision because a child may not see the project file
 
 The coordinator resolves the worker's `modelSelection` when it launches the worker (`t3/added/brigade/SKILL.md`, Run a service step 4.3) and the gate verifier's seat when it launches the verifier (step 6). It resolves both with `show --brief-mode <the item's mode>`, never with `--coordinator-mode`, so an escalated item's worker and gate get full seats.
 
-So a coordinator set to `light` over a project set to `full` writes `Mode: light` into its worker's brief. The worker runs `roles.py show --brief-mode light`, and every seat it and its delegates resolve gets the light cap. A child escalated to `full` under a project set to `light` gets `Mode: full`. Its `roles.py show --brief-mode full` applies no light cap.
+So a coordinator set to `light` over a project set to `full` writes `Mode: light` into its worker's brief. The worker runs `roles.py show --brief-mode light`, and every seat it and its delegates resolve outside the `verifiers` role gets the light cap. A child escalated to `full` under a project set to `light` gets `Mode: full`. Its `roles.py show --brief-mode full` applies no light cap.
 
 ### The reasoning cap
 
-When the effective mode is `light` and the merged budget is `default`, `show` resolves seats as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats, and `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat already becomes an explicit target with the capped option (`inherit_with_budget`), so a light child cannot pass its parent's xhigh through. That conversion needs a catalog and the right parent. Without a catalog, `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped, but an `inherit` seat either stays `inherit` (the saved snapshot clears the parent) or converts against the catalog's saved parent (`--catalog` keeps it). Under `light`, `show` without a catalog or without `--parent` prints an `info` line that the `inherit` cap may be wrong. The runtime's Roles section already requires both.
+When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats, and `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat already becomes an explicit target with the capped option (`inherit_with_budget`), so a light child cannot pass its parent's xhigh through. That conversion needs a catalog and the right parent. Without a catalog, `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped, but an `inherit` seat either stays `inherit` (the saved snapshot clears the parent) or converts against the catalog's saved parent (`--catalog` keeps it). Under `light`, `show` without a catalog or without `--parent` prints an `info` line that the `inherit` cap may be wrong, unless the call resolves only `verifiers`. The runtime's Roles section already requires both.
 
 The cap is the only option light mode changes. Light mode never sets `fastMode` to true. In both modes, a Grok seat on a model that declares `fastMode` comes back from `show` with `"fastMode": false`, and that includes a seat that falls back to the built-in Grok default. [The runtime's Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
 
@@ -264,7 +264,7 @@ Each row maps to the census row it changes. "Merged" means two passes become one
 | 32 Coordinator thread | 1 | 1 | Kept |
 | 33 Executive admin thread | 1 | 1 | Kept |
 | 34 brigade worker | 1 per attempt | 1 per attempt, reasoning capped at `medium` | Cheaper seat |
-| 35 Gate verifier | 1 per attempt | 1 per attempt, same seat, reasoning capped at `medium`. The trial's decision is in [Results](#results) | Cheaper seat |
+| 35 Gate verifier | 1 per attempt | 1 per attempt, same seat, same reasoning level. The trial's decision is in [Results](#results) | Kept |
 | 36 Second reviewer | Trials | Never | Cut |
 | 37 Fix the recipe | A `correct` work item | Filed as a ticket and run when the mode returns to `full` | Cut |
 | 38 Landing writer | 1 per unit | 1 per unit, with `Mode: light` in its brief | Kept |
@@ -408,7 +408,7 @@ With the built-in two-seat architect panel (Opus 29 and Grok 54 items), a full F
 
 A second set of means checks how much these figures depend on the sample. Across every child in the T3 thread list through 2026-10-07 16:40 UTC, grouped by title, the means are `how` explainer 17, architect runner 30, cross-judge 8.5, code delegate 65, Comment Sicko 10, verifier 40, and `why` investigator 60. Pricing a light runner at two full runners, the saving is about 53 percent for Feature and 45 percent for Bug fix. The cross-judge is the largest difference. The sample's judges ran on panels of five, while most snapshot judges did not.
 
-The worker thread's own items fall too, because it waits on fewer children, and the `medium` cap shortens every seat's reasoning. Neither is in these numbers, since T3 records no tokens. Escalated items run in full and save nothing here. On this repository about half the items escalate, so the measured saving across the whole history is about half of the per-change figure.
+The worker thread's own items fall too, because it waits on fewer children, and the `medium` cap shortens the reasoning of every seat outside the `verifiers` role. Neither is in these numbers, since T3 records no tokens. Escalated items run in full and save nothing here. On this repository about half the items escalate, so the measured saving across the whole history is about half of the per-change figure.
 
 Folding the trail reviewer into the gate saves one child per run that keeps a trail. Two historical trail reviews cost 18 and 16 items.
 
@@ -418,13 +418,13 @@ The estimate has three limits. The sample is 10 work items chosen by hand. Activ
 
 Light mode keeps the round-1 review, and round 1 is where this repository caught most of its real bugs. Of 59 send-backs, 35 rounds held 51 real-bug findings on 24 items. The other 24 rounds held only instruction or doc gaps. Every send-back verdict came from the gating verifier. On D64 the gating verifiers were Grok in round 1 and Space Bunny in round 2. Space Bunny ran as the second reviewer in round 1 and supplied three of that round's findings. In round 2 Grok passed, and Space Bunny, recorded as the gate, found the message-only relay gap. The risks are in what light mode thins around that review.
 
-1. **A weaker verifier.** The reviewer trial shows that a cheaper model misses concurrency bugs. Every trial model passed D59 and D60, which held a mode-overwrite race and three lease failures. Kimi as a second reviewer passed D62 and missed Codex's three crash-safety findings. Light mode therefore keeps the verifier's model and lowers only its reasoning level, and an escalated item keeps the full level. The trial tested a `medium` cap on the gate and found misses. The decision is that the gate keeps its full level, and the code still applies the cap ([Results](#results)).
+1. **A weaker verifier.** The reviewer trial shows that a cheaper model misses concurrency bugs. Every trial model passed D59 and D60, which held a mode-overwrite race and three lease failures. Kimi as a second reviewer passed D62 and missed Codex's three crash-safety findings. The design therefore kept the verifier's model and lowered only its reasoning level, and an escalated item kept the full level. The trial tested a `medium` cap on the gate and found misses. The decision is that the gate keeps its full level, and `roles.py` no longer caps the `verifiers` role ([Results](#results)).
 2. **Later rounds that caught round-1 misses.** D42 round 2 found a duplicate-PR path (`reports/D42-review-2.md`). D55 round 2 found an option-shaped summary that breaks the printed retry (`reports/D55-review-2.md`). D61 round 2 found an unskipped test that fails setup (`reports/D61-review-2.md`). All three are on `land.py` or `brigade.py`, so rule 1 escalates them. Light mode also keeps full-diff re-review.
 3. **Fixes that introduce bugs.** D12 rounds 2 and 3 (tag publishing, a second push URL) and D24 rounds 2 to 5 (installer ownership) were bugs the fix itself created. Re-review at every head SHA caught them, and light mode keeps it. D24 is the costliest item in the store, and rule 1 escalates it through `scripts/install.py`.
 4. **Second reviewers.** Space Bunny found an empty-path reservation that locks the repository on D61 (`reports/D61-review-space-bunny.md`) and three skill gaps on D64 that Grok missed. Light mode drops second reviewers, so that class of catch is lost. D61 and D64 both changed `brigade.py`, so rule 1 escalates them. The same reviewer stalled or quit on 2 of 6 runs, so it was never a dependable gate.
 5. **Skill-text gaps.** 24 send-back rounds held only instruction gaps, such as D11's merge wait that hangs and D64's relay lines that `sync` cannot print. The folded Comment Sicko and the single architect runner touch this class most. The gate review still reads the whole diff, and the executing fresh-child test shows an agent following the text.
 6. **The six real-bug items rule 1 misses.** D3 (`measure_capacity.py`), D14 and D25 (`roles.py`), D49 (a concurrency design doc), D50 and D63 (test and shell snippets). Each was caught by its round-1 review, which light mode keeps. A project that wants them in full adds `t3/scripts/roles.py` to `"escalate"`. A design doc about concurrency is a rule-3 case.
-7. **The admin relay after this design.** D64's relay gap was caught by a second reviewer that light mode drops. Coverage of the admin relay in light mode is the gate review at `medium`, rule 1 for any change that touches `brigade.py`, and the executing fresh-child test that drives the admin through one relayed reply.
+7. **The admin relay after this design.** D64's relay gap was caught by a second reviewer that light mode drops. Coverage of the admin relay in light mode is the gate review at its full-mode level, rule 1 for any change that touches `brigade.py`, and the executing fresh-child test that drives the admin through one relayed reply.
 
 ## Changes
 
@@ -440,10 +440,10 @@ Each change is one PR through the landing queue, with its own tests and its own 
 
 ### Change 2. Effective mode, the cap, escalation, and waivers
 
-- **What.** `effective_mode` implements the precedence. `show` and the new `mode` subcommand share `--brief-mode`, `--session-mode`, and `--coordinator-mode`. `resolve` applies budget `small` under `light` with budget `default`. `mode` takes `--cwd`, `--paths`, `--send-backs`, `--escalated`, `--playbook`, and `--attempt`, applies rules 1 and 2 with the path semantics above, and prints the brief lines. `LIGHT_WAIVERS` holds the waiver table.
+- **What.** `effective_mode` implements the precedence. `show` and the new `mode` subcommand share `--brief-mode`, `--session-mode`, and `--coordinator-mode`. `resolve` applies budget `small` under `light` with budget `default`. A later change exempts the `verifiers` role ([Results](#results)). `mode` takes `--cwd`, `--paths`, `--send-backs`, `--escalated`, `--playbook`, and `--attempt`, applies rules 1 and 2 with the path semantics above, and prints the brief lines. `LIGHT_WAIVERS` holds the waiver table.
 - **Files.** `t3/scripts/roles.py`, `tests/test_roles_cli.py`, a new `tests/test_roles_mode.py`, generated `skills/pstack-runtime/`, its fragment.
 - **Tests.**
-  - `--coordinator-mode light` over a project `full` prints `Mode: light`, and `show` with the same input caps a configured xhigh `verifiers` seat at `medium`.
+  - `--coordinator-mode light` over a project `full` prints `Mode: light`, and `show` with the same input caps a configured xhigh `verifiers` seat at `medium`. A later change made `show` keep that seat at xhigh ([Results](#results)).
   - `--brief-mode full` with a project `light` prints `Mode: full`, and `show` leaves the xhigh seat alone.
   - `--session-mode light` over a project `full` gives `light`. `--brief-mode full` over `--session-mode light` gives `full`.
   - Under `light` and budget `default`, an `inherit` seat becomes an explicit target with `medium`. Under `light` and budget `large`, the xhigh seat stays. Under `light` with no `--parent`, `show` prints the `info` line that the cap did not apply.
@@ -546,8 +546,8 @@ Two facts show the decision does not hang on one reading of the data.
 
 What follows from the decision.
 
-- **The worker-side cuts remain.** These are the single architect runner, the simple `how` path, the source-control-only `why`, the folded Comment Sicko, the waivers, the fan-out cap of 3, and the reasoning cap on every seat that is not the gate.
-- **The code and skills still cap the gate.** Under light mode with budget `default`, `roles.py show` resolves the `verifiers` seat at `medium`, and the runtime's Modes section and the Summary table above say so. The decision has not changed the code or those passages.
+- **The worker-side cuts remain.** These are the single architect runner, the simple `how` path, the source-control-only `why`, the folded Comment Sicko, the waivers, the fan-out cap of 3, and the reasoning cap on every role except `verifiers`.
+- **The code no longer caps the `verifiers` role.** Under light mode with budget `default`, `roles.py show` and `roles.py backup` resolve a `verifiers` seat on the configured budget, as in full mode, and the runtime's Modes section and the Summary table above say so. `roles.py` takes a role and no purpose, so every child seated from `verifiers` keeps its level, not only a gate review. A `review backups` seat still takes the cap.
 - **Light mode becomes the recommended choice under a usage limit.** That is the rule's last sentence. The trial supports the gate half of it. The saving the recommendation rests on is the design's estimate, which the trial did not test.
 - **The saving estimate does not change.** [Saving per change](#saving-per-change) counted no reasoning saving, so a gate at full level leaves its figures as they were.
 

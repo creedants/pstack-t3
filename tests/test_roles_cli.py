@@ -2334,30 +2334,29 @@ class FastGrokCliTest(unittest.TestCase):
             "skipped inherit of grok/grok-4.7-build-fast: "
             f"grok-4.7-build-fast is a fast Grok variant, and {FAST_RULE}"
         )
-        expected = {
-            "full": {
-                "source": "default",
-                "seats": [
-                    {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
-                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
-                    {"providerInstanceId": "grok", "model": "grok-4.7"},
-                ],
-                "notes": [note],
-            },
-            "light": {
-                "source": "default",
-                "seats": [
-                    {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
-                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
-                    {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}},
-                ],
-                "notes": [note],
-            },
+        bare = {
+            "source": "default",
+            "seats": [
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "grok", "model": "grok-4.7"},
+            ],
+            "notes": [note],
         }
-        for mode, entry in expected.items():
-            with self.subTest(mode=mode):
+        capped = {
+            "source": "default",
+            "seats": [
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+                {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}},
+            ],
+            "notes": [note],
+        }
+        for mode, budget, entry in (("full", "default", bare), ("light", "default", bare), ("full", "small", capped)):
+            with self.subTest(mode=mode, budget=budget):
                 with tempfile.TemporaryDirectory() as directory:
                     repo = Repo(directory)
+                    repo.put(repo.user, {"budget": budget})
                     completed, _path = self.show(
                         repo, catalog, "verifiers", parent="grok/grok-4.7-build-fast", brief_mode=mode,
                     )
@@ -2366,24 +2365,23 @@ class FastGrokCliTest(unittest.TestCase):
                 self.assertEqual(json.loads(completed.stdout)["roles"]["verifiers"], entry)
 
     def test_fast_mode_parent_verifiers_are_explicit(self):
-        expected = {
-            "full": (
-                {"providerInstanceId": "cursor", "model": "grok-4.7", "options": {"fastMode": False}},
-                "inherit made explicit as cursor/grok-4.7 so fastMode stays false",
-            ),
-            "light": (
-                {
-                    "providerInstanceId": "cursor",
-                    "model": "grok-4.7",
-                    "options": {"fastMode": False, "reasoning_effort": "medium"},
-                },
-                "inherit made explicit as cursor/grok-4.7 so the small budget applies and fastMode stays false",
-            ),
-        }
-        for mode, (seat, info) in expected.items():
-            with self.subTest(mode=mode):
+        bare = (
+            {"providerInstanceId": "cursor", "model": "grok-4.7", "options": {"fastMode": False}},
+            "inherit made explicit as cursor/grok-4.7 so fastMode stays false",
+        )
+        capped = (
+            {
+                "providerInstanceId": "cursor",
+                "model": "grok-4.7",
+                "options": {"fastMode": False, "reasoning_effort": "medium"},
+            },
+            "inherit made explicit as cursor/grok-4.7 so the small budget applies and fastMode stays false",
+        )
+        for mode, budget, (seat, info) in (("full", "default", bare), ("light", "default", bare), ("full", "small", capped)):
+            with self.subTest(mode=mode, budget=budget):
                 with tempfile.TemporaryDirectory() as directory:
                     repo = Repo(directory)
+                    repo.put(repo.user, {"budget": budget})
                     completed, _path = self.show(
                         repo, cursor_grok_catalog(), "verifiers", parent="cursor/grok-4.7", brief_mode=mode,
                     )
