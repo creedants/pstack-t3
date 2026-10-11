@@ -116,7 +116,7 @@ def refuse_stray_worktree(common):
     found = target.is_dir() and git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=target, check=False)
     if not found or found.returncode != 0 or Path(found.stdout.strip()).resolve() != common:
         raise LandError(f"{config} sets core.worktree to {value}, where git does not find this repository; "
-                        f"remove it with git config --file {shlex.quote(str(config))} --unset-all core.worktree")
+                        f"remove it with git --work-tree=. config --file {shlex.quote(str(config))} --unset-all core.worktree")
 
 
 def common_dir(path):

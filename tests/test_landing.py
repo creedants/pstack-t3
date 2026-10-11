@@ -4125,7 +4125,7 @@ os.execv({real!r}, [{real!r}, *args])
                 "recommit it as the configured author")
 
     def land_one_by(self, author, *message, body=None):
-        """Land one commit by this author under the Owner identity in push mode. Returns the commit id and what land printed."""
+        """Submit one commit by this author under the Owner identity in push mode, then run land. Returns the commit id and what land printed."""
         self.init(mode="push")
         self.configure_owner()
         self.worker("w1", {"a.txt": "agent\n"})
@@ -4262,15 +4262,15 @@ os.execv({real!r}, [{real!r}, *args])
     def stray_worktree_line(self, value, quoted=None):
         config = (self.work / ".git").resolve() / "config"
         return (f"land: {config} sets core.worktree to {value}, where git does not find this repository; "
-                f"remove it with git config --file {quoted or config} --unset-all core.worktree\n")
+                f"remove it with git --work-tree=. config --file {quoted or config} --unset-all core.worktree\n")
 
     def run_land(self, repo, *args):
-        """Run land.py in repo. Returns its exit status, stdout, and stderr."""
+        """Run land.py with --repo set to repo. Returns its exit status, stdout, and stderr."""
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), *args],
                                 capture_output=True, text=True, env=os.environ.copy())
         return result.returncode, result.stdout, result.stderr
 
-    def test_a_core_worktree_that_names_a_missing_directory_stops_each_repository_command(self):
+    def test_a_core_worktree_that_names_a_missing_directory_stops_status_land_resume_lease_init_and_submit(self):
         self.init()
         sha = self.worker("w1", {"a.txt": "agent\n"})
         gone = self.base / "gone"
@@ -4315,7 +4315,14 @@ os.execv({real!r}, [{real!r}, *args])
                                         capture_output=True, text=True, env=os.environ.copy())
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", self.stray_worktree_line("../gone")))
 
-    def test_the_last_of_two_core_worktree_values_decides(self):
+    def test_the_printed_command_run_in_the_checkout_removes_a_relative_core_worktree(self):
+        self.init()
+        sh("git", "config", "core.worktree", "../gone", cwd=self.work)
+        command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
+        subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_the_last_core_worktree_value_decides(self):
         self.init()
         gone = self.base / "gone"
         sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
