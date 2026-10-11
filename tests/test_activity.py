@@ -11,7 +11,6 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -30,6 +29,7 @@ COORDINATOR = "mcp:threadmarker-coordinator"
 PROJECT = "project:projectmarker-own"
 ELSEWHERE = "project:projectmarker-elsewhere"
 CHANGED = "this T3 build stores threads differently, so update pstack-t3"
+NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc).timestamp()
 FROZEN = "import runpy, sys, time\nclock = float(sys.argv[1])\ntime.time = lambda: clock\ndel sys.argv[:2]\nrunpy.run_path(sys.argv[0], run_name='__main__')"
 SCHEMA = {
     "orchestration_v2_projection_metadata": ("projection_name", "schema_version"),
@@ -94,12 +94,16 @@ class Fixture:
         self.base = self.root / "pathmarker t3 base"
         self.database = self.base / "userdata" / "statev2.sqlite"
         self.meta = {"restaurant": "kit", "projectRoot": str(self.root / "pathmarker checkout" / "proj"), "thread": COORDINATOR}
-        self.now = time.time()
+        self.now = NOW
         self.units, self.log, self.threads, self.turns, self.delegations = [], [], [], [], []
         self.writer = None
 
+    def ago(self, minutes):
+        assert self.now == int(self.now), "a stamp is written in milliseconds, so a fractional now can put it after the instant it names and shorten an age by a second"
+        return self.now - minutes * 60
+
     def stamp(self, minutes):
-        return None if minutes is None else datetime.fromtimestamp(self.now - minutes * 60, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return None if minutes is None else datetime.fromtimestamp(self.ago(minutes), timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     def unit(self, ident, state="in-progress", summary="", thread="", task="", pr=""):
         row = dict.fromkeys(UNIT_COLUMNS, "")
@@ -162,9 +166,9 @@ class Fixture:
         if self.writer is not None:
             self.writer.close()
 
-    def command(self, *args, at=True, t3_home=True, env=None, clock=None, cwd=None):
-        """With clock, the script runs as the main program of a process whose time.time() returns that instant."""
-        words = [sys.executable, str(SCRIPT)] if clock is None else [sys.executable, "-c", FROZEN, repr(clock), str(SCRIPT)]
+    def command(self, *args, at=True, t3_home=True, env=None, cwd=None):
+        """The script runs as the main program of a process whose time.time() returns self.now, however long ago the fixture was built."""
+        words = [sys.executable, "-c", FROZEN, repr(self.now), str(SCRIPT)]
         words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
         words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
         environment = {"HOME": str(self.home), "PATH": os.environ.get("PATH", ""), **(env or {})}
@@ -181,7 +185,7 @@ class Fixture:
         return result.stdout
 
     def stamp_at_offset(self, minutes, hours):
-        return datetime.fromtimestamp(self.now - minutes * 60, timezone(timedelta(hours=hours))).isoformat(timespec="milliseconds")
+        return datetime.fromtimestamp(self.ago(minutes), timezone(timedelta(hours=hours))).isoformat(timespec="milliseconds")
 
     def start(self, *args, **how):
         words, options = self.command(*args, **how)
@@ -1875,7 +1879,7 @@ class EmitTest(OutputCase):
 
     def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_is_in_the_text(self):
         fixture = named(self.fixture).write()
-        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        document, text = self.document(), self.out("--text")
         self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD"]))
 
     def test_run_gives_both_forms_the_filter_of_the_run(self):
@@ -1885,13 +1889,13 @@ class EmitTest(OutputCase):
         fixture.units[0]["summary"] = f"SUMWORD of {ODD} and x{fixture.store} today"
         fixture.write()
         self.assertEqual(CLEAN(fixture.units[0]["summary"]), fixture.units[0]["summary"])
-        self.assertEqual(data_of(self.document(clock=fixture.now))["I"][0][1], "SUMWORD of and today")
-        self.assertIn("   working   SUMWORD of and today   ", self.out("--text", clock=fixture.now))
+        self.assertEqual(data_of(self.document())["I"][0][1], "SUMWORD of and today")
+        self.assertIn("   working   SUMWORD of and today   ", self.out("--text"))
 
     @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
     def test_renderer_draws_each_string_that_holds_a_word_of_the_named_page_alone_in_a_text_or_an_attribute(self):
         fixture = named(self.fixture).write()
-        document = self.document(clock=fixture.now)
+        document = self.document()
         built = RendererTest.render(self, document)
         drawn_strings = [*built["texts"], *built["titles"], *(link[1] for link in built["links"])]
         data = set(strings(list(data_of(document).values())))
@@ -2011,7 +2015,7 @@ class FrameTest(OutputCase):
         fixture = busy(self.fixture)
         fitted, _ = MOD["fit"](page_of(fixture), 15999, CLEAN, 1960)
         self.assertEqual((MOD["height"](fitted), sum(len(one.rows) for one in fitted.groups)), (1950, 20))
-        data = data_of(self.document(clock=fixture.now))
+        data = data_of(self.document())
         self.assertEqual((sum(len(lines) for _, lines in data["G"]), len([each for each in data["I"] if each[5]])), (20, 8))
         self.assertEqual(data["N"], [
             "28 sub-agents that are done or stopped are shown as 4 summary rows.",
@@ -2095,7 +2099,7 @@ class TextTest(OutputCase):
         whole = [f"  D12345678901234567890-{number}   working   same   1 agent, 10m at work" for number in range(9)]
         for budget, listed in (("500000", whole), ("16000", ["  D12345678…   working   same   1 agent, 10m at work"] * 9)):
             with self.subTest(budget):
-                lines = self.out("--text", "--max-bytes", budget, clock=fixture.now).split("\n")
+                lines = self.out("--text", "--max-bytes", budget).split("\n")
                 at = lines.index("Work items")
                 self.assertEqual((lines[1], lines[at + 1:at + 12]), ("10 running now, 10 agents, 0 sub-agents, 0 failed", [*listed, "  and 1 more work item", ""]))
 
@@ -2107,7 +2111,7 @@ class TextTest(OutputCase):
             fixture.unit(f"D12345678901234567890-{number}", summary="same", thread=worker(number))
             fixture.thread(worker(number), turns=(("running", 10, None),))
         fixture.write()
-        data = data_of(self.document("--max-bytes", "16000", clock=fixture.now))
+        data = data_of(self.document("--max-bytes", "16000"))
         self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][1]), (
             [["D12345678…", "same", "working", "go", "", 1]] * 8, [0, 1, 2, 3, 4, 5], "2 more work items in flight are not listed."))
 
@@ -2234,7 +2238,7 @@ class RendererTest(OutputCase):
         fixture = queued_only(self.fixture)
         fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
         fixture.write()
-        built = self.render(self.document(clock=fixture.now))
+        built = self.render(self.document())
         texts, classes = built["texts"], built["classes"]
         self.assertEqual([text for text in texts if text in ("Running now", "Queued", "Timeline")], ["Queued", "Timeline"])
         self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7", "worker", "model-a", "5m", "D7", "spec_review", "model-a", " · under ", "worker", "2m"])
@@ -2245,7 +2249,7 @@ class RendererTest(OutputCase):
         fixture = one_running(self.fixture)
         fixture.thread(delegated(worker(1), "helper-task"), title="helper", parent=worker(1), turns=(("running", 0.05, None),))
         fixture.write()
-        built = self.render(self.document(clock=fixture.now))
+        built = self.render(self.document())
         self.assertEqual(built["bars"][-1], ["min(99.9%,100% - 3px)", "0.1%"])
         self.assertIn(".b{position:absolute;top:4px;height:11px;min-width:3px;", MOD["STYLE"])
 
@@ -2520,7 +2524,7 @@ def ordinary(fixture):
 class OrdinaryWordsTest(OutputCase):
     def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_loses_none_of_them_to_the_filter_in_the_text(self):
         fixture = ordinary(self.fixture).write()
-        self.assertEqual(self.out("--text", clock=fixture.now), "\n".join([
+        self.assertEqual(self.out("--text"), "\n".join([
             "Agent activity for private auditor, last 3h",
             "3 running now, 2 agents, 4 sub-agents, 1 failed",
             "Running now",
@@ -2541,7 +2545,7 @@ class OrdinaryWordsTest(OutputCase):
 
     def test_store_whose_ids_request_names_summaries_titles_models_and_name_are_ordinary_words_loses_none_of_them_to_the_filter_in_the_document(self):
         fixture = ordinary(self.fixture).write()
-        data = data_of(self.document(clock=fixture.now))
+        data = data_of(self.document())
         self.assertEqual((data["c"], data["M"], data["N"]), ("private auditor", ["model-a", "src", "private auditor", "451237", "review", "code", "queue"], []))
         self.assertEqual(data["I"], [["code", "code review of the queue", "in review", "info", "", 1],
                                      ["queue", "queue src report", "working", "go", "https://git.example/queue/code/pull/451237", 1],
@@ -2555,7 +2559,7 @@ class OrdinaryWordsTest(OutputCase):
     @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
     def test_page_drawn_for_that_store_names_the_item_and_the_agent_of_each_running_and_queued_row(self):
         fixture = ordinary(self.fixture).write()
-        texts = RendererTest.render(self, self.document(clock=fixture.now))["texts"]
+        texts = RendererTest.render(self, self.document())["texts"]
         self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], [
             "code", "src", "review", " · under ", "worker", "10m", "queue", "worker", "code", "30m", "queue", "queue", "queue", "20m",
             "Queued", "451237", "review", "src", "5m"])
@@ -2596,7 +2600,7 @@ class SlashCommandTest(OutputCase):
         fixture.unit("D9", "in-review", "Run /review then /loop and /code-review today")
         fixture.thread(delegated(worker(3), "helper-4"), title="Run /review then /loop and /code-review", parent=worker(3), turns=(("running", 8, None),))
         fixture.write()
-        data, text = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        data, text = data_of(self.document()), self.out("--text").split("\n")
         self.assertEqual([item[:2] for item in data["I"]], [["/code-review", "Run /code-review on the queue"], ["/loop", "Run /loop on the queue"], ["/review", "Run /review on the queue"],
                                                             ["D9", "Run /review then /loop and /code-review today"]])
         self.assertEqual([[data["I"][index][0], [line[1] for line in lines]] for index, lines in data["G"]], [
@@ -2623,7 +2627,7 @@ class SlashCommandTest(OutputCase):
             fixture.thread(worker(10 + number), title="worker", turns=(("running", 20, None),))
             fixture.thread(delegated(worker(1), f"helper-{number}"), title=f"/loop over {path} now", parent=worker(1), turns=(("running", 10 + number, None),))
         fixture.write()
-        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        document, text = self.document(), self.out("--text")
         data = data_of(document)
         self.assertEqual([word for word in ("someone", "/a/b", "~/x") if word in document or word in text], [])
         self.assertEqual(sorted(item[:2] for item in data["I"]), [["D7", "Read and and and and after /review today"], *(["work item", f"item {number}"] for number in range(1, 6))])
@@ -2638,7 +2642,7 @@ class SlashCommandTest(OutputCase):
         fixture.thread(delegated(worker(1), "helper-1"), title="/loop in /checkoutmarker", parent=worker(1), turns=(("running", 20, None),))
         fixture.thread(delegated(worker(1), "helper-2"), title="/loop", parent=worker(1), turns=(("running", 10, None),))
         fixture.write()
-        document, text = self.document(clock=fixture.now), self.out("--text", clock=fixture.now)
+        document, text = self.document(), self.out("--text")
         data = data_of(document)
         self.assertEqual(["checkoutmarker" in output.lower() for output in (document, text)], [False, False])
         self.assertEqual((sorted(item[:2] for item in data["I"]), [line[1] for line in data["G"][0][1]]), ([["D7", "Run /review in and and today"], ["work item", "second item"]], ["worker", "helper 1", "/loop"]))
@@ -2672,7 +2676,7 @@ class PlantedTest(OutputCase):
         """No string of the document's data, with its character references decoded, and no line of the text holds value in any case. The words beside it stay in the store's name, the id, the summary, and the model.
         A title that holds it is not used, and its row takes the label of its request name. Returns the data."""
         fixture.write()
-        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        data, lines = data_of(self.document()), self.out("--text").split("\n")
         written = [html.unescape(text) for part in data.values() for text in strings(part)]
         self.assertEqual([text for text in (*written, *lines) if value.lower() in text.lower()], [])
         self.assertEqual((data["c"], data["I"][0][:2], data["M"], data["G"][1][1][0][1]), ("kit", ["D7", "see now"], ["model-a", "m"], "helper second"))
@@ -2699,7 +2703,7 @@ class PlantedTest(OutputCase):
             fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 9 - number, None),))
         fixture.thread(delegated(COORDINATOR, "helper-second"), title="/code-review kit-d7-audit-task-2", parent=COORDINATOR, turns=(("running", 5, None),))
         fixture.write()
-        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        data, lines = data_of(self.document()), self.out("--text").split("\n")
         self.assertEqual((data["I"][0][:2], [line[1] for line in data["G"][1][1]]), (
             ["D1", "Run /code-review on the queue for kit-d7-audit-task-2"], ["code review", "queue", "d7 audit task", "/code-review kit-d7-audit-task-2"]))
         self.assertEqual([line for line in lines if "queue" in line or "task-2" in line], [
@@ -2744,7 +2748,7 @@ class PlantedTest(OutputCase):
         fixture.thread(delegated(COORDINATOR, "helper-second"), title="read xa-_y here", parent=COORDINATOR, turns=(("running", 9, None),))
         fixture.thread(delegated(COORDINATOR, "a-_"), parent=COORDINATOR, turns=(("running", 8, None),))
         fixture.write()
-        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        data, lines = data_of(self.document()), self.out("--text").split("\n")
         self.assertEqual((data["c"], data["I"][0][:2], data["M"], [line[1] for line in data["G"][1][1]]), (
             "kit xa-_", ["D7 a-_b", "see xa-_ and a-_2 with a-__ or pre-a-_ now"], ["model-a", "m a-_b"], ["read xa-_y here", "a _"]))
         self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  read "))]), (
@@ -2880,7 +2884,7 @@ class RowShapeTest(OutputCase):
 
     def refused(self, name, spoil):
         self.staffed(name, spoil)
-        return self.fails(3, clock=self.fixture.now)
+        return self.fails(3)
 
     def test_timestamp_in_another_shape_exits_3_wherever_its_text_sorts(self):
         texts = ("", "0000-bad", "bad", "2026-13-45T00:00:00.000Z", "2026-10-09T23:45:00", "2026-10-09 23:45:00.000Z", "2026-10-09T23:45:00.000000Z", 5, b"2026-10-09T23:45:00.000Z")
@@ -2903,7 +2907,7 @@ class RowShapeTest(OutputCase):
                 self.assertEqual(fixture.turns[1][2:], {None: ("2026-10-09T23:45:00.000Z", "2026-10-10T00:15:00.000Z"), 0: ("2026-10-09T23:45:00.000+00:00", "2026-10-10T00:15:00.000+00:00"),
                                                         -7: ("2026-10-09T16:45:00.000-07:00", "2026-10-09T17:15:00.000-07:00"),
                                                         14: ("2026-10-10T13:45:00.000+14:00", "2026-10-10T14:15:00.000+14:00")}[hours])
-                data = data_of(self.document(clock=fixture.now))
+                data = data_of(self.document())
                 self.assertEqual((data["n"], data["G"][0][1][0][5:7]), ([0, 1, 1, 0], ["30m", [750, 167, 0]]))
 
     def test_value_that_is_not_text_or_an_empty_id_status_or_provider_exits_3_and_names_the_column(self):
@@ -2954,10 +2958,10 @@ class RowShapeTest(OutputCase):
             fixture.delegations.append(("node:nodemarker-elsewhere", "mcp:threadmarker-other-project", None, "running", None, None))
 
         fixture = self.staffed("pending", pending)
-        data = data_of(self.document(clock=fixture.now))
+        data = data_of(self.document())
         self.assertEqual((data["n"], [line[:2] for line in data["G"][0][1]]), ([0, 1, 1, 0], [[0, "worker"], [1, "part"]]))
         self.assertEqual(data["N"], ["T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown."])
-        self.assertIn("  T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown.", self.out("--text", clock=fixture.now).split("\n"))
+        self.assertIn("  T3 lists 2 sub-agents with no thread or no start time under threads this page read. They are not shown.", self.out("--text").split("\n"))
 
     def test_sub_agent_rows_that_make_a_thread_its_own_parent_or_ancestor_exit_3_in_both_forms(self):
         def looped(*pairs, started):
@@ -2977,7 +2981,7 @@ class RowShapeTest(OutputCase):
                 with self.subTest(name, started=started):
                     self.staffed(f"{name}-{started}", looped(*pairs, started=started))
                     line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
-                    self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
+                    self.assertEqual((self.fails(3), self.fails(3, "--text")), (line, line))
 
     def test_self_parent_row_and_two_thread_cycle_that_a_later_row_overrides_and_self_parent_row_with_no_start_time_after_a_valid_row_exit_3_in_both_forms(self):
         cases = {"self": ((worker(1), worker(1), 10), (COORDINATOR, worker(1), 5)),
@@ -2992,7 +2996,7 @@ class RowShapeTest(OutputCase):
             with self.subTest(name):
                 self.staffed(f"masked-{name}", spoil)
                 line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
-                self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
+                self.assertEqual((self.fails(3), self.fails(3, "--text")), (line, line))
 
     def test_sub_agent_rows_with_no_start_time_that_make_no_loop_are_read_and_the_running_worker_is_counted(self):
         def chained(fixture):
@@ -3001,9 +3005,9 @@ class RowShapeTest(OutputCase):
             fixture.delegations.append(("node:nodemarker-chain", worker(1), worker(2), "running", None, None))
 
         fixture = self.staffed("chain", chained)
-        data = data_of(self.document(clock=fixture.now))
+        data = data_of(self.document())
         self.assertEqual((data["n"], [line[:2] for line in data["G"][0][1]], data["N"]), ([2, 1, 2, 0], [[0, "worker"], [1, "part"], [1, "second worker"]], []))
-        self.assertEqual(self.out("--text", clock=fixture.now).split("\n")[1], "2 running now, 1 agent, 2 sub-agents, 0 failed")
+        self.assertEqual(self.out("--text").split("\n")[1], "2 running now, 1 agent, 2 sub-agents, 0 failed")
 
     def test_no_count_is_negative_and_a_page_with_a_running_agent_never_says_no_agent_ran_for_150_random_sets_of_sub_agent_rows(self):
         """Each set either makes a thread its own ancestor, which is refused, or gives a page whose every count is at least 0 before and after each fold."""
@@ -3050,7 +3054,7 @@ class RowShapeTest(OutputCase):
         connection.execute("update orchestration_v2_projection_threads set title = cast(x'70617468ff6d61726b6572' as text) where title = 'part'")
         connection.commit()
         connection.close()
-        line = self.fails(3, clock=fixture.now)
+        line = self.fails(3)
         self.assertEqual(line, "activity: cannot read T3's database (a text value is not UTF-8); check that T3 Code is running and try again")
 
 
@@ -3068,7 +3072,7 @@ class QueuedTest(OutputCase):
                 fixture = self.fixture = queued_only(Fixture(self.root / status))
                 put(fixture.turns, 1, 1, status)
                 fixture.write()
-                self.assertEqual(self.out("--text", clock=fixture.now), "\n".join([
+                self.assertEqual(self.out("--text"), "\n".join([
                     "Agent activity for kit, last 3h",
                     "0 running now, 1 agent, 0 sub-agents, 0 failed",
                     "Queued",
@@ -3076,16 +3080,16 @@ class QueuedTest(OutputCase):
                     "Work items",
                     "  D7   working   Activity page   1 agent, 0s at work",
                     ""]))
-                data = data_of(self.document(clock=fixture.now))
+                data = data_of(self.document())
                 self.assertEqual((data["n"], data["S"][1], data["G"][0][1][0][4:]), ([0, 1, 0, 0], "queued", [1, "0s", [972, 28, 5], 1, "5m"]))
 
     def test_agent_with_a_running_turn_and_a_queued_turn_is_counted_running_and_keeps_both_bars(self):
         fixture = queued_only(self.fixture)
         fixture.turns[1:] = [(worker(1), "running", fixture.stamp(10), None), (worker(1), "queued", fixture.stamp(5), None)]
         fixture.write()
-        lines = self.out("--text", clock=fixture.now).split("\n")
+        lines = self.out("--text").split("\n")
         self.assertEqual(lines[1:5], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Running now", "  D7 worker   model-a   running for 10m", "Work items"])
-        data = data_of(self.document(clock=fixture.now))
+        data = data_of(self.document())
         self.assertEqual((data["n"], data["G"][0][1][0][4:]), ([1, 1, 0, 0], [0, "10m", [944, 56, 1, 972, 28, 5], 1, "10m"]))
 
     def test_providers_own_sub_agent_whose_open_delegation_is_queued_is_listed_under_queued(self):
@@ -3093,7 +3097,7 @@ class QueuedTest(OutputCase):
         put(fixture.turns, 1, 1, "running")
         fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
         fixture.write()
-        lines = self.out("--text", clock=fixture.now).split("\n")
+        lines = self.out("--text").split("\n")
         self.assertEqual(lines[1:6], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Running now", "  D7 worker   model-a   running for 5m", "Queued",
                                       "  D7 spec_review   model-a   queued for 2m   under worker"])
 
@@ -3101,12 +3105,12 @@ class QueuedTest(OutputCase):
 class BudgetTest(OutputCase):
     def test_stdout_of_the_html_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
         fixture = busy(self.fixture).write()
-        whole = fixture.stdout_bytes("--max-bytes", "500000", clock=fixture.now)
+        whole = fixture.stdout_bytes("--max-bytes", "500000")
         self.assertTrue(len(whole) > 16001 and whole.endswith(b"</script>\n"))
-        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole)), clock=fixture.now), whole)
-        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole))), whole)
+        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1))
         self.assertLess(len(under), len(whole))
-        self.assertLessEqual(len(fixture.stdout_bytes(clock=fixture.now)), 16000)
+        self.assertLessEqual(len(fixture.stdout_bytes()), 16000)
 
     def long_values(self):
         """A store name, a summary, a work item id, a pull request number, and a model that are each valid and thousands of characters long, and a written title of 60 characters."""
@@ -3119,12 +3123,12 @@ class BudgetTest(OutputCase):
 
     def test_stdout_of_the_text_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it_where_it_marks_each_cut_and_counts_the_link(self):
         fixture = self.long_values()
-        whole = fixture.stdout_bytes("--text", "--max-bytes", "500000", clock=fixture.now)
+        whole = fixture.stdout_bytes("--text", "--max-bytes", "500000")
         self.assertTrue(len(whole) > 100000 and whole.endswith(b" at work\n"), len(whole))
-        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", str(len(whole)), clock=fixture.now), whole)
-        under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", str(len(whole))), whole)
+        under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1))
         self.assertLess(len(under), 16000)
-        self.assertLessEqual(len(fixture.stdout_bytes("--text", clock=fixture.now)), 16000)
+        self.assertLessEqual(len(fixture.stdout_bytes("--text")), 16000)
         self.assertEqual(len(whole), 125520)
         self.assertEqual(under.decode().split("\n"), [
             "Agent activity for name name name name name name nam…, last 3h",
@@ -3140,17 +3144,17 @@ class BudgetTest(OutputCase):
             "Notes",
             "  1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             ""])
-        self.assertEqual(fixture.stdout_bytes("--text", clock=fixture.now), under)
-        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", "16000", clock=fixture.now), under)
+        self.assertEqual(fixture.stdout_bytes("--text"), under)
+        self.assertEqual(fixture.stdout_bytes("--text", "--max-bytes", "16000"), under)
 
     def test_stdout_of_the_html_form_with_very_long_values_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
         fixture = self.long_values()
-        whole = fixture.stdout_bytes("--max-bytes", "500000", clock=fixture.now)
+        whole = fixture.stdout_bytes("--max-bytes", "500000")
         self.assertTrue(125000 < len(whole) <= 500000 and whole.endswith(b"</script>\n"), len(whole))
-        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole)), clock=fixture.now), whole)
-        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1), clock=fixture.now)
+        self.assertEqual(fixture.stdout_bytes("--max-bytes", str(len(whole))), whole)
+        under = fixture.stdout_bytes("--max-bytes", str(len(whole) - 1))
         self.assertLess(len(under), 16000)
-        self.assertEqual(fixture.stdout_bytes(clock=fixture.now), under)
+        self.assertEqual(fixture.stdout_bytes(), under)
         data = data_of(under.decode()[:-1])
         self.assertEqual((data["c"], [item[:2] + item[4:5] for item in data["I"]], data["M"], data["N"]), (
             "name name name name name name nam…", [["D6", "Queue fix", PR6], ["D7", "word word word word word word wor…", ""], ["D99999999…", "long id", "https://git.example/o/r/pull/8"]],
