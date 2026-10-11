@@ -125,10 +125,11 @@ def one_line(text):
 
 
 def shell_word(text):
-    """text as one shell word that holds no LINE_BREAKS character.
+    """A shell word that expands to text and holds no LINE_BREAKS character. text must not end in a newline.
 
-    It is shlex.quote(text) when text holds none. Otherwise it is a printf %b command substitution in double quotes.
-    Its argument writes each byte of a backslash or a LINE_BREAKS character as a backslash, a zero, and three octal digits.
+    It is shlex.quote(text) when text holds none. Otherwise it is a printf %b command substitution in double quotes,
+    and a shell drops newlines from the end of one. Its argument writes each byte of a backslash or a LINE_BREAKS
+    character as a backslash, a zero, and three octal digits.
     """
     if not set(LINE_BREAKS) & set(text):
         return shlex.quote(text)

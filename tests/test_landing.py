@@ -4391,7 +4391,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(complaint, self.stray_worktree_line(gone + r"\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\\"))
         self.assertEqual(len(complaint.splitlines()), 1)
 
-    def test_a_core_worktree_longer_than_a_file_name_can_be_stops_status(self):
+    def test_a_core_worktree_of_300_letters_stops_status(self):
         self.init()
         sh("git", "config", "core.worktree", "x" * 300, cwd=self.work)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line("x" * 300)))
