@@ -1061,7 +1061,7 @@ class FilterTest(unittest.TestCase):
                 clean = MOD["Privacy"](requests={name}).clean
                 self.assertEqual((clean(text), clean(kept)), (left, kept))
 
-    def test_clean_reads_a_request_name_without_the_spaces_that_start_and_end_it_and_removes_the_form_of_fewer_than_4_characters_that_its_percent_escapes_decode_to(self):
+    def test_clean_reads_the_listed_request_names_without_the_spaces_that_start_and_end_them_and_removes_the_forms_of_fewer_than_4_characters_that_their_percent_escapes_decode_to(self):
         self.assertEqual(MOD["Privacy"](requests={" a-_ "}).clean("see a-_"), "see")
         self.assertEqual(MOD["Privacy"](requests={" code-review "}).clean("run code-review and /code-review"), "run and /code-review")
         clean = MOD["Privacy"](requests={"%61-%5F", "b-%2520"}).clean
@@ -2697,7 +2697,7 @@ class PlantedTest(OutputCase):
             with self.subTest(address):
                 self.gone(self.planted(f"address-{number}", address), address)
 
-    def test_email_address_whose_quoted_local_part_ends_in_a_backslash_and_a_quotation_mark_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_it_is_not_shown(self):
+    def test_each_listed_email_address_whose_quoted_local_part_ends_in_a_backslash_and_a_quotation_mark_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_it_is_not_shown(self):
         for number, address in enumerate(('"audit\\""@example.test', f'"{"a" * 60}\\""@example.test', '"audit\\""@[127.0.0.1]')):
             with self.subTest(address):
                 self.gone(self.planted(f"pair-{number}", address), address)
@@ -2713,7 +2713,7 @@ class PlantedTest(OutputCase):
                 self.assertEqual(([item[4] for item in data["I"]], data["N"]), (["", "", ""], [
                     "2 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."]))
 
-    def test_word_that_holds_a_request_name_of_3_characters_beside_a_letter_a_digit_an_underscore_or_a_hyphen_stays_in_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+    def test_word_that_holds_the_listed_request_name_of_3_characters_beside_a_letter_a_digit_an_underscore_or_a_hyphen_stays_in_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
         fixture = self.fixture
         fixture.coordinator()
         fixture.meta["restaurant"] = "kit xa-_"
