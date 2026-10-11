@@ -345,7 +345,7 @@ def _admit(kind):
 def exclusive_slot():
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
     It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
-    A later conflicting caller that waits on this turn file then leaves the slots for it."""
+    A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
     held = _admit("exclusive")
