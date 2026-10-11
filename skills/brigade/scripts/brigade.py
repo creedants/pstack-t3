@@ -2648,9 +2648,10 @@ def parser():
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
     a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none; "
-                                    "a quoted file name with no directory that is not itself a tracked path records the "
-                                    "tracked file of that name when exactly one has it, and a file under skills/ is not "
-                                    "counted when a file of the same name is tracked under t3/")
+                                    "a quote that, with one trailing :<line> or :<line>-<line> dropped, holds no slash, no "
+                                    "whitespace, and none of * ? [ and is no tracked path records the tracked file of that "
+                                    "name when exactly one has that name, and a file under skills/ is not counted when a "
+                                    "file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")

@@ -4744,7 +4744,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("ticket", "paths", "--dry-run", owner=False), "T1 would record src/app/tool.py")
         self.assertEqual(self.store_files(), before)
 
-    def test_from_report_records_the_one_tracked_file_that_has_each_quoted_file_name_with_no_directory(self):
+    def test_from_report_records_the_tracked_file_for_each_quoted_file_name_with_no_directory_that_resolves_to_one_and_none_for_names_with_none_or_several(self):
         self.tracked_project("t3/added/x/scripts/tool.py", "skills/x/scripts/tool.py", "src/app/one.py", "lib/two.py",
                              "src/two.py")
         self.fired_bug_fix()
