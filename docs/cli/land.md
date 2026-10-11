@@ -238,7 +238,7 @@ drain the queue unless another run holds it
 land.py [flags] resume
 ```
 
-clear a pause after you checked trunk
+clear a pause after you did what its reason says
 
 ## land.py status
 

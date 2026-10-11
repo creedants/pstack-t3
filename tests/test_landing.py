@@ -4281,6 +4281,294 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.created_heads(), [])
         self.assertFalse((self.base / "prs.json").exists())
 
+    def identity_pause(self, now, before="Owner <owner@example.com>"):
+        return (f"the configured git identity is now {now} and the queue last ran as {before}; "
+                f"check git config --show-origin user.email in {self.work}, then run land.py resume")
+
+    UNSET = "unset (user.name and user.email do not both have a non-empty value)"
+
+    def configured_value(self, key):
+        """What git config -z --get prints for key in the checkout, with the final NUL removed. None when git exits 1."""
+        result = subprocess.run(["git", "config", "-z", "--get", key], cwd=self.work, capture_output=True, env=git_env())
+        return None if result.returncode == 1 else result.stdout.decode().removesuffix("\0")
+
+    def stored_identity(self):
+        """The JSON text under the contract key identity, or None when the key is absent."""
+        with self.raw_db() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'identity'").fetchone()
+        return row and row[0]
+
+    def queue_one_as(self, name, email, number=1):
+        """Queue E<number> for r/D<number> with one commit whose author git builds from this name and email."""
+        path, branch = ("a.txt", "b.txt", "lib/x.py")[number - 1], f"w{number}"
+        self.worker(branch, {path: "agent\n"})
+        subprocess.run(["git", "commit", "-q", "--amend", "--reset-author", "-m", branch], cwd=self.base / branch, check=True,
+                       capture_output=True, env={**git_env(), "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email})
+        sha = sh("git", "rev-parse", "HEAD", cwd=self.base / branch)
+        lease = self.land("lease", "claim", "--holder", f"r/D{number}", "--paths", path)
+        self.assertEqual(self.land("submit", "--holder", f"r/D{number}", "--branch", branch, "--sha", sha, "--lease", lease,
+                                   "--reviewer", REVIEWER), f"E{number}")
+
+    def queue_rows(self):
+        """Every row of every table in the store, by table name. The contract rows are sorted."""
+        with self.raw_db() as db:
+            tables = [name for name, in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+            rows = {table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall() for table in tables}
+        return {**rows, "contract": sorted(rows["contract"])}
+
+    def remember_then_configure(self, mode, before, after):
+        """Init in mode, run land with before configured and nothing queued, and configure after.
+
+        Queue E1 with the author git builds from after.
+        """
+        self.init(mode=mode)
+        self.configure_owner(*before)
+        self.assertEqual(self.land("land"), "nothing to land")
+        self.assertEqual(self.stored_identity(), json.dumps(before))
+        self.configure_owner(*after)
+        self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), after)
+        self.queue_one_as(*after)
+
+    def assert_push_mode_pauses(self, before, after, now, last):
+        self.remember_then_configure("push", before, after)
+        entries, refs = self.queue_rows()["entry"], self.on_origin("for-each-ref")
+        self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause(now, last))
+        self.assertEqual(self.origin_log(), ["init"])
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
+        self.assertEqual(tuple(self.entry_fields(1, "state", "pr")), ("queued", ""))
+        self.assertEqual(self.queue_rows()["entry"], entries)
+
+    def assert_human_mode_pauses(self, before, after, now, last):
+        with self.fake_gh():
+            self.remember_then_configure("human", before, after)
+            calls = self.base / "gh-calls"
+            before_calls = calls.read_text() if calls.exists() else None
+            entries, refs = self.queue_rows()["entry"], self.on_origin("for-each-ref")
+            self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause(now, last))
+            self.assertEqual(calls.read_text() if calls.exists() else None, before_calls)
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
+        self.assertEqual(tuple(self.entry_fields(1, "state", "pr")), ("queued", ""))
+        self.assertEqual(self.queue_rows()["entry"], entries)
+
+    OWNER = ("Owner", "owner@example.com")
+    IDENTITY_CHANGES = {
+        "name": (OWNER, ("Other", "owner@example.com"), "Other <owner@example.com>", "Owner <owner@example.com>"),
+        "email": (OWNER, ("Owner", "other@example.com"), "Owner <other@example.com>", "Owner <owner@example.com>"),
+        "name_spaces": (OWNER, (" Owner ", "owner@example.com"), " Owner  <owner@example.com>", "Owner <owner@example.com>"),
+        "email_spaces": (OWNER, ("Owner", " owner@example.com "), "Owner < owner@example.com >", "Owner <owner@example.com>"),
+        "name_case": (OWNER, ("owner", "owner@example.com"), "owner <owner@example.com>", "Owner <owner@example.com>"),
+        "email_case": (OWNER, ("Owner", "Owner@example.com"), "Owner <Owner@example.com>", "Owner <owner@example.com>"),
+        "same_joined_text": (("A <b>", "c"), ("A", "b> <c"), "A <b> <c>", "A <b> <c>"),
+    }
+
+    def test_the_first_land_with_an_identity_configured_lands_the_entry_and_stores_the_pair(self):
+        self.init(mode="push")
+        self.configure_owner()
+        self.queue_one_as("Owner", "owner@example.com")
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')
+
+    def test_push_mode_pauses_on_a_changed_name_and_leaves_trunk_and_the_entry(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["name"])
+
+    def test_human_mode_pauses_on_a_changed_name_and_calls_no_gh_and_pushes_no_queue_branch_and_leaves_the_entry(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["name"])
+
+    def test_push_mode_pauses_on_a_changed_email_and_leaves_trunk_and_the_entry(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["email"])
+
+    def test_human_mode_pauses_on_a_changed_email_and_calls_no_gh_and_pushes_no_queue_branch_and_leaves_the_entry(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["email"])
+
+    def test_push_mode_pauses_on_a_name_that_differs_only_in_surrounding_spaces(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["name_spaces"])
+
+    def test_human_mode_pauses_on_a_name_that_differs_only_in_surrounding_spaces(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["name_spaces"])
+
+    def test_push_mode_pauses_on_an_email_that_differs_only_in_surrounding_spaces(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["email_spaces"])
+
+    def test_human_mode_pauses_on_an_email_that_differs_only_in_surrounding_spaces(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["email_spaces"])
+
+    def test_push_mode_pauses_on_a_name_that_differs_only_in_letter_case(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["name_case"])
+
+    def test_human_mode_pauses_on_a_name_that_differs_only_in_letter_case(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["name_case"])
+
+    def test_push_mode_pauses_on_an_email_that_differs_only_in_letter_case(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["email_case"])
+
+    def test_human_mode_pauses_on_an_email_that_differs_only_in_letter_case(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["email_case"])
+
+    def test_push_mode_pauses_on_another_name_and_email_that_print_as_the_same_text(self):
+        self.assert_push_mode_pauses(*self.IDENTITY_CHANGES["same_joined_text"])
+
+    def test_human_mode_pauses_on_another_name_and_email_that_print_as_the_same_text(self):
+        self.assert_human_mode_pauses(*self.IDENTITY_CHANGES["same_joined_text"])
+
+    def land_one_then_pause_as_audit(self):
+        """Push mode. E1 lands as Owner, the identity becomes audit, E2 by audit is queued, and land pauses. Returns the pause reason."""
+        self.init(mode="push")
+        self.configure_owner()
+        self.queue_one_as("Owner", "owner@example.com")
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        self.configure_owner("audit", "audit@example.com")
+        self.queue_one_as("audit", "audit@example.com", number=2)
+        reason = self.identity_pause("audit <audit@example.com>")
+        self.assertEqual(self.land("land"), f"queue paused: {reason}")
+        return reason
+
+    def test_a_second_land_while_paused_for_the_identity_prints_the_first_reason_after_another_change_and_changes_no_row_and_no_origin_ref(self):
+        reason = self.land_one_then_pause_as_audit()
+        self.configure_owner("third", "third@example.com")
+        rows, refs = self.queue_rows(), self.on_origin("for-each-ref")
+        self.assertEqual(self.land("land"), f"queue paused: {reason}")
+        self.assertEqual(self.queue_rows(), rows)
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
+
+    def test_status_shows_the_identity_pause_after_the_counts(self):
+        reason = self.land_one_then_pause_as_audit()
+        self.assertEqual(self.land("status"), f"push mode onto refs/remotes/origin/main. landed: 1, queued: 1, leases held: 1. Paused: {reason}")
+
+    def test_resume_after_an_identity_pause_lets_land_run_and_store_the_new_pair_and_a_change_back_pauses_against_the_new_pair(self):
+        self.land_one_then_pause_as_audit()
+        self.assertEqual(self.land("resume"), "queue resumed")
+        self.assertIsNone(self.stored_identity())
+        self.assertEqual(self.land("land"), "landed E2 (r/D2)")
+        self.assertEqual(self.stored_identity(), '["audit", "audit@example.com"]')
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae> %s", "main"), "audit <audit@example.com> w2")
+        self.configure_owner()
+        self.assertEqual(self.land("land"),
+                         "queue paused: " + self.identity_pause("Owner <owner@example.com>", "audit <audit@example.com>"))
+
+    def assert_an_unset_identity_pauses(self, *config):
+        """E1 lands as Owner, each git config command in config runs, and E2 by t is queued.
+
+        land must pause, set the paused row, add one log row, and change no other row and no origin ref.
+        """
+        self.init(mode="push")
+        self.configure_owner()
+        self.queue_one_as("Owner", "owner@example.com")
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        for command in config:
+            sh("git", "config", *command, cwd=self.work)
+        self.queue_one_as("t", "t@t", number=2)
+        before, refs = self.queue_rows(), self.on_origin("for-each-ref")
+        reason = self.identity_pause(self.UNSET)
+        self.assertEqual(self.land("land"), f"queue paused: {reason}")
+        after = self.queue_rows()
+        self.assertEqual(after["log"][:-1], before["log"])
+        self.assertEqual(after["log"][-1][1:], ("queue", 0, "paused", reason))
+        self.assertEqual(after["contract"], [(key, json.dumps(reason) if key == "paused" else value) for key, value in before["contract"]])
+        self.assertEqual({**after, "log": before["log"], "contract": before["contract"]}, before)
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
+
+    def assert_resume_then_land_lands_and_stores_no_identity(self):
+        self.assertEqual(self.land("resume"), "queue resumed")
+        self.assertEqual(self.land("land"), "landed E2 (r/D2)")
+        self.assertIsNone(self.stored_identity())
+
+    def test_an_unset_user_name_pauses_and_changes_no_row_but_the_paused_row_and_one_new_log_row_and_no_origin_ref(self):
+        self.assert_an_unset_identity_pauses(("--unset", "user.name"))
+        self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), (None, "owner@example.com"))
+
+    def test_an_unset_user_email_pauses_and_after_resume_land_lands_and_stores_no_identity(self):
+        self.assert_an_unset_identity_pauses(("--unset", "user.email"))
+        self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), ("Owner", None))
+        self.assert_resume_then_land_lands_and_stores_no_identity()
+
+    def test_an_unset_user_name_and_user_email_pause_and_after_resume_land_lands_and_stores_no_identity(self):
+        self.assert_an_unset_identity_pauses(("--unset", "user.name"), ("--unset", "user.email"))
+        self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), (None, None))
+        self.assert_resume_then_land_lands_and_stores_no_identity()
+
+    def test_an_empty_user_email_pauses_and_after_resume_land_lands_and_stores_no_identity(self):
+        self.assert_an_unset_identity_pauses(("user.email", ""))
+        self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), ("Owner", ""))
+        self.assert_resume_then_land_lands_and_stores_no_identity()
+
+    def test_resume_from_a_rewind_pause_keeps_the_stored_identity_and_the_next_land_pauses_on_the_changed_one(self):
+        self.init(mode="push")
+        self.configure_owner()
+        start = sh("git", "rev-parse", "origin/main", cwd=self.work)
+        self.queue_one_as("Owner", "owner@example.com")
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        landed = self.on_origin("rev-parse", "main")
+        sh("git", "push", "-q", "--force", "origin", f"{start}:main", cwd=self.work)
+        self.queue_one_as("Owner", "owner@example.com", number=2)
+        self.assertEqual(self.land("land"), f"still queued: E2\nqueue paused: trunk no longer contains the last landed commit {landed[:12]} "
+                                            f"(now {start[:12]}); check what happened to trunk, then run land.py resume")
+        self.configure_owner("audit", "audit@example.com")
+        self.assertEqual(self.land("resume"), "queue resumed")
+        self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')
+        self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause("audit <audit@example.com>"))
+        self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')
+
+    def test_resume_on_a_queue_that_is_not_paused_keeps_the_stored_identity_and_land_pauses_on_a_changed_one(self):
+        self.init(mode="push")
+        self.configure_owner()
+        self.assertEqual(self.land("land"), "nothing to land")
+        self.assertEqual(self.land("resume"), "queue resumed")
+        self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')
+        self.configure_owner("audit", "audit@example.com")
+        self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause("audit <audit@example.com>"))
+
+    def test_the_identity_pause_prints_a_newline_and_a_backslash_in_either_name_as_python_escapes(self):
+        self.init(mode="push")
+        self.configure_owner("A\nB\\C", "owner@example.com")
+        self.assertEqual(self.land("land"), "nothing to land")
+        self.configure_owner("X\\Y\nZ", "owner@example.com")
+        self.assertEqual(self.configured_value("user.name"), "X\\Y\nZ")
+        self.assertEqual(self.land("land"),
+                         "queue paused: " + self.identity_pause(r"X\\Y\nZ <owner@example.com>", r"A\nB\\C <owner@example.com>"))
+
+    def test_a_store_with_no_identity_key_runs_each_listed_command_with_status_0_and_land_stores_the_pair_and_lands(self):
+        self.init(mode="push")
+        self.queue_one()
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        with self.raw_db() as db:
+            keys = [key for key, in db.execute("SELECT key FROM contract ORDER BY key")]
+        self.assertEqual(keys, ["batch", "checks", "commonDir", "mergeMethod", "mode", "paused", "remote", "repo", "setup", "timeout",
+                                "tip", "trunk"])
+        self.configure_owner()
+        self.worker("w2", {"b.txt": "agent\n"})
+        sh("git", "commit", "-q", "--amend", "--author", "Owner <owner@example.com>", "-m", "w2", cwd=self.base / "w2")
+        sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w2")
+        commands = (
+            ["init", "--trunk", "main", "--mode", "push", "--check", "./check.sh"],
+            ["cap", "5"],
+            ["mode", "push"],
+            ["owner", "--prefix", "docs/", "--generation", "1"],
+            ["lease", "claim", "--holder", "r/D2", "--paths", "b.txt"],
+            ["lease", "renew", "L2"],
+            ["lease", "claim", "--holder", "r/D3", "--paths", "lib"],
+            ["lease", "release", "L3"],
+            ["lease", "list"],
+            ["lease", "check", "--holder", "r/D4", "--paths", "c.txt"],
+            ["lease", "reserve", "--for", "docs/", "--paths", "docs", "--ruling", "R1", *ADMIN],
+            ["lease", "unreserve", "S1", *ADMIN],
+            ["submit", "--holder", "r/D2", "--branch", "w2", "--sha", sha, "--lease", "L2", "--reviewer", REVIEWER],
+            ["share", "--for", "docs/", "1", *ADMIN],
+            ["contest", "--holders", "x/D1,y/D1", *ADMIN],
+            ["contest", "--cancel", "C1", *ADMIN],
+            ["land"],
+            ["resume"],
+            ["status"],
+            ["status", "E2"],
+            ["status", "--holder", "r/"],
+        )
+        printed = {}
+        for command in commands:
+            with self.subTest(command=command[:2]):
+                status, printed[command[0]], error = self.run_land(self.work, *command)
+                self.assertEqual((status, error), (0, ""))
+        self.assertEqual(printed["land"], "landed E2 (r/D2)\n")
+        self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')
+
     def stray_worktree_line(self, value, quoted=None, shown=None):
         config = (self.work / ".git").resolve() / "config"
         return (f"land: {shown or config} sets core.worktree to {value}, where git does not find this repository; "

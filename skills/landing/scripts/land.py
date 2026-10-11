@@ -450,6 +450,33 @@ def foreign_author(store, entry):
     return None
 
 
+# Every reason identity_change gives starts with this. resume reads it to tell that pause from the others.
+IDENTITY_PAUSE = "the configured git identity is now "
+
+
+def identity_change(store):
+    """Why land must pause on the configured identity, or None.
+
+    With no identity stored under the contract key identity it returns None, and it first stores
+    configured_identity(store.repo) there when that is not None. With one stored it returns a reason unless
+    configured_identity(store.repo) equals it in both name and email. The reason gives the stored identity,
+    and the configured one or a note that it is unset.
+    """
+    configured, remembered = configured_identity(store.repo), store.contract.get("identity")
+    if remembered is None:
+        if configured:
+            with store.tx() as db:
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('identity', ?)", (json.dumps(configured),))
+        return None
+    remembered = Identity(*remembered)
+    if configured == remembered:
+        return None
+    now = one_line(f"{configured.name} <{configured.email}>") if configured else \
+        "unset (user.name and user.email do not both have a non-empty value)"
+    return (f"{IDENTITY_PAUSE}{now} and the queue last ran as {one_line(f'{remembered.name} <{remembered.email}>')}; "
+            f"check git config --show-origin user.email in {one_line(str(store.repo))}, then run land.py resume")
+
+
 def git_reason(stderr):
     """The useful line of a git failure: what the remote said, else the last line."""
     lines = [line.strip() for line in stderr.strip().splitlines() if line.strip()]
@@ -2082,6 +2109,9 @@ def land(store):
     try:
         if store.contract.get("paused"):
             return f"queue paused: {store.contract['paused']}"
+        if reason := identity_change(store):
+            pause(store, reason)
+            return f"queue paused: {reason}"
         reconcile(store)
         integration = Integration(store)
         mode = store.contract["mode"]
@@ -2290,7 +2320,7 @@ def parser():
     p.add_argument("--owner", required=True, help=ruling_help)
 
     sub.add_parser("land", help="drain the queue unless another run holds it")
-    sub.add_parser("resume", help="clear a pause after you checked trunk")
+    sub.add_parser("resume", help="clear a pause after you did what its reason says")
     p = sub.add_parser("status")
     p.add_argument("id", nargs="?")
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
@@ -2347,6 +2377,8 @@ def run(argv):
         return land(store), 0
     if args.command == "resume":
         with store.tx() as db:
+            if (store.contract.get("paused") or "").startswith(IDENTITY_PAUSE):
+                db.execute("DELETE FROM contract WHERE key = 'identity'")
             db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', '\"\"')")
             db.execute("DELETE FROM contract WHERE key = 'tip'")
             store.log(db, "queue", 0, "resumed")
