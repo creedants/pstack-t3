@@ -488,7 +488,7 @@ def occupied_note(row):
 
 
 UNREACHED = "a relative path with nothing at it from this working directory (recorded as the backup of {original})"
-KEPT_UNREACHED = "kept backup row {backup}: " + UNREACHED + "; rerun uninstall from the directory where that path names the backup"
+KEPT_UNREACHED = "kept backup row {backup}: " + UNREACHED + "; uninstall reads a relative path from the directory it runs in"
 
 
 def unreached(row):
@@ -1607,8 +1607,8 @@ INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {
 INERT_ROW_MANY = ('backup rows have nothing at their backup paths; uninstall skips each row while its backup path is empty; '
                   'to drop one, delete the row from "backups" in {manifest}:')
 UNREACHED_ROW = (
-    "backup row {backup}: " + UNREACHED + "; uninstall reads that path from the directory it runs in, "
-    'so run it from the directory where the path names the backup; to drop the row instead, delete it from "backups" in {manifest}'
+    "backup row {backup}: " + UNREACHED + "; uninstall reads a relative path from the directory it runs in; "
+    'to drop the row, delete it from "backups" in {manifest}'
 )
 HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
             '"{dry_run}" prints what the next run does with it')

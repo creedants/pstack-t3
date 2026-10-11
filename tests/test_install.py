@@ -5370,7 +5370,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(
             removed.stdout,
             f"kept backup row rel/backups/notes: a relative path with nothing at it from this working directory (recorded as the backup of {notes}); "
-            "rerun uninstall from the directory where that path names the backup\n"
+            "uninstall reads a relative path from the directory it runs in\n"
             "removed 3 links, restored 0 entries\n",
         )
         self.assertEqual(removed.stderr, "")
@@ -5402,7 +5402,7 @@ class OwnershipTest(unittest.TestCase):
         row = {"harnesses": ["grok"], "original": str(swarm), "backup": self.RELATIVE_ROW}
         kept = (
             f"kept backup row {self.RELATIVE_ROW}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
-            "rerun uninstall from the directory where that path names the backup"
+            "uninstall reads a relative path from the directory it runs in"
         )
         for command, counts in (
             (("uninstall", "--dry-run"), "would remove 3 links, would restore 0 entries"),
@@ -5422,7 +5422,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(restored.stdout, "removed 0 links, restored 1 entries\n")
         self.assertEqual(swarm.read_bytes(), b"saved\x00\xfe")
 
-    def test_doctor_from_another_directory_prints_the_run_it_from_the_directory_line_for_a_backup_row_recorded_as_a_relative_path(self):
+    def test_doctor_from_another_directory_prints_the_relative_path_line_for_a_backup_row_recorded_as_a_relative_path(self):
         a, swarm, saved = self.relative_row()
         work = self.another_directory()
         before = snapshot(self.home)
@@ -5434,8 +5434,8 @@ class OwnershipTest(unittest.TestCase):
             [
                 self.harness_line("grok", "3/3 pstack-t3"),
                 f"        backup row {self.RELATIVE_ROW}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
-                "uninstall reads that path from the directory it runs in, so run it from the directory where the path names the backup; "
-                f'to drop the row instead, delete it from "backups" in {legacy_file(self.home)}',
+                "uninstall reads a relative path from the directory it runs in; "
+                f'to drop the row, delete it from "backups" in {legacy_file(self.home)}',
             ],
         )
         self.assertEqual(self.doctor(a, 0, "--harness", "grok"), [self.harness_line("grok", "3/3 pstack-t3")])
@@ -5497,15 +5497,15 @@ class OwnershipTest(unittest.TestCase):
             a,
             None,
             f"kept backup row {backup}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
-            "rerun uninstall from the directory where that path names the backup",
+            "uninstall reads a relative path from the directory it runs in",
         )
         self.assertEqual(
             self.doctor(a, 1, "--harness", "grok"),
             [
                 self.harness_line("grok", "0/3 pstack-t3, 3 missing"),
                 f"        backup row {backup}: a relative path with nothing at it from this working directory (recorded as the backup of {swarm}); "
-                "uninstall reads that path from the directory it runs in, so run it from the directory where the path names the backup; "
-                f'to drop the row instead, delete it from "backups" in {legacy_file(self.home)}',
+                "uninstall reads a relative path from the directory it runs in; "
+                f'to drop the row, delete it from "backups" in {legacy_file(self.home)}',
             ],
         )
 
