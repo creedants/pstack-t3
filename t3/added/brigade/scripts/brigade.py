@@ -1005,7 +1005,8 @@ def add_goal(restaurant, name, purpose, done, share=""):
 def goal_work(counted, ident):
     """What keeps a goal from closing, as (words, advice) pairs. Empty when no ticket of the goal waits or rides along and no item is in flight."""
     tally = counted.goals.get(ident, Tally())
-    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal, or none with --no-goal"),
+    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal, or none with --no-goal; "
+             "a waiting ticket that an item in flight names keeps its goal until that item is merged or dropped"),
             (tally.in_flight, "in flight", "finish or drop each item in flight"),
             (counted.riding.get(ident, ()), "riding along", "finish or drop the item each of those tickets rides along in"))
     return [(f"{', '.join(ids)} {words}", advice) for ids, words, advice in held if ids]
@@ -2697,7 +2698,7 @@ def fire_label(labels, rail, ids, station, kind, ride_along):
     mine = labels.tickets[lead] if lead else Label()
     if kind and mine.kind and kind != mine.kind:
         return None, (f"{lead} has kind {mine.kind}, and --kind {kind} does not match it; "
-                      f"drop --kind, or run ticket set {lead} --kind {kind} first")
+                      f"drop --kind, or run ticket set {lead} --kind {kind} first when no item in flight names {lead}")
     found = mine.kind or kind or STATION_KIND.get(station, "")
     if not found:
         return None, ((f"{lead} has no kind" if lead else "no ticket gives this item a kind")
@@ -2724,7 +2725,7 @@ def fire_label(labels, rail, ids, station, kind, ride_along):
 def checked_fire_label(restaurant, ids, station, kind, ride_along, warned):
     """fire_label on the store as it is now, read under the caller's lock.
 
-    It prints the warning for each bad kind or goal cell of a ticket in `ids`, once per text in `warned`.
+    It prints the warning for each fault whose row id is in `ids`, once per text in `warned`.
     """
     labels = read_labels(restaurant)
     for ident, text in labels.faults:
@@ -4217,7 +4218,8 @@ def command(restaurant, args, contract=None, rails=None):
                 raise BrigadeError(f"{frozen}; --kind, --goal, and --no-goal change a waiting ticket only{kept}")
             item = held[args.id]["id"]
             raise BrigadeError(f"{frozen}; --kind, --goal, and --no-goal change a waiting ticket that no item in flight names; "
-                               f"{item} keeps the kind and goal it took when it started; drop {item} first, or leave {args.id} as it is")
+                               f"{item} keeps the kind and goal it took when it started; drop {item}, and every other item in flight that names {args.id}, first, "
+                               f"or leave {args.id} as it is")
         changes, said = {}, []
         if args.state:
             changes["state"] = args.state
