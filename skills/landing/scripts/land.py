@@ -10,6 +10,7 @@ one transaction. Heavy commands take a slot from a machine-wide governor.
 
 import argparse
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -19,6 +20,7 @@ import re
 import shlex
 import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import time
@@ -207,55 +209,170 @@ def governor_slots():
     return max(1, min(4, (os.cpu_count() or 4) // 4))
 
 
+TURN_MUTEX = 4096
+TURN_KIND = 1048576
+TURN_PLACE = 2097152
+TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
+
+
+def _slot_names(kind, slots):
+    """Return the slot filenames for kind, in lock order."""
+    workers = [f"worker-{index}" for index in range(slots)]
+    return {"worker": workers, "landing": ["landing-0"], "exclusive": ["landing-0"] + workers}[kind]
+
+
+def _conflicts(earlier, later):
+    """True when both can need the same slot file. Worker and landing never do."""
+    return earlier == later or "exclusive" in (earlier, later)
+
+
+def _ofd_excl(fd, byte, blocking):
+    """Take an exclusive OFD lock on one byte of fd. Nonblocking returns False when the byte is already held."""
+    try:
+        # F_OFD_SETLK is 37 and F_OFD_SETLKW is 38 on Linux. This fcntl module does not name them.
+        fcntl.fcntl(fd, 38 if blocking else 37, struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, byte, 1, 0))
+    except OSError as error:
+        if error.errno in (errno.EAGAIN, errno.EACCES):
+            return False
+        if error.errno in (errno.EINVAL, errno.ENOTSUP):
+            raise LandError("this filesystem does not support the slot governor's ordering lock") from None
+        raise
+    return True
+
+
+def _ofd_unlock(fd, byte):
+    fcntl.fcntl(fd, 37, struct.pack("hhqqi4x", fcntl.F_UNLCK, os.SEEK_SET, byte, 1, 0))
+
+
+def _try_take(kind, handles, slots):
+    """Flock the slot files kind needs, without blocking. Returns the locked files, or None with none locked.
+    Worker and landing need one file. Exclusive needs every file."""
+    names = _slot_names(kind, slots)
+    wanted = len(names) if kind == "exclusive" else 1
+    taken = []
+    for name in names:
+        try:
+            fcntl.flock(handles[name], fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if kind == "exclusive":
+                break
+            continue
+        taken.append(handles[name])
+        if len(taken) == wanted:
+            return taken
+    for handle in taken:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return None
+
+
+def _can_satisfy(kind, handles, slots):
+    """True when a waiter of kind could take its slots now. Holds nothing on return."""
+    taken = _try_take(kind, handles, slots)
+    for handle in taken or []:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return taken is not None
+
+
+def _earlier_waiters(gate, ticket, kind):
+    """Return the kinds of the live tickets that conflict with kind and came before this caller.
+    A ticket is live while its byte is locked. Runs under the turn mutex."""
+    low, upcoming = struct.unpack("<QQ", os.pread(gate, 16, 0).ljust(16, b"\0"))
+    first = low = low or 1
+    kinds = set()
+    live = False
+    for number in range(low, upcoming):
+        if number == ticket:
+            break
+        if _ofd_excl(gate, TURN_PLACE + number, False):
+            _ofd_unlock(gate, TURN_PLACE + number)
+            if not live:
+                low = number + 1
+            continue
+        live = True
+        earlier = TICKET_KINDS[os.pread(gate, 1, TURN_KIND + number)]
+        if _conflicts(earlier, kind):
+            kinds.add(earlier)
+    if low != first or not upcoming:
+        os.pwrite(gate, struct.pack("<QQ", low, max(upcoming, 1)), 0)
+    return kinds
+
+
+def _take_ticket(gate, place, kind):
+    """Issue the next ticket to this caller and lock its byte on place. Runs under the turn mutex."""
+    low, ticket = struct.unpack("<QQ", os.pread(gate, 16, 0))
+    os.pwrite(gate, struct.pack("<QQ", low, ticket + 1), 0)
+    os.pwrite(gate, kind[:1].encode(), TURN_KIND + ticket)
+    _ofd_excl(place, TURN_PLACE + ticket, False)
+    return ticket
+
+
+def _admit(kind):
+    directory = governor_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    slots = governor_slots()
+    handles = {name: open(directory / name, "a") for name in _slot_names("exclusive", slots)}
+    turns = []
+    try:
+        # Two opens, so that unlocking the mutex byte on gate keeps the ticket byte locked on place.
+        for _ in range(2):
+            turns.append(os.open(directory / "turn", os.O_RDWR | os.O_CREAT, 0o666))
+        gate, place = turns
+        ticket = None
+        while True:
+            _ofd_excl(gate, TURN_MUTEX, True)
+            earlier = _earlier_waiters(gate, ticket, kind)
+            taken = None
+            if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
+                taken = _try_take(kind, handles, slots)
+            if taken is None and ticket is None:
+                ticket = _take_ticket(gate, place, kind)
+            if taken is not None and ticket is not None:
+                _ofd_unlock(place, TURN_PLACE + ticket)
+            _ofd_unlock(gate, TURN_MUTEX)
+            if taken is not None:
+                return list(handles.values())
+            time.sleep(0.5)
+    except BaseException:
+        for handle in handles.values():
+            handle.close()
+        raise
+    finally:
+        for descriptor in turns:
+            os.close(descriptor)
+
+
 @contextlib.contextmanager
 def exclusive_slot():
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
-    Slots are taken in a fixed order with blocking locks, so two exclusive callers cannot deadlock."""
+    It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
+    A later conflicting caller that waits on this turn file then leaves the slots for it."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    directory = governor_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    names = ["landing-0"] + [f"worker-{index}" for index in range(governor_slots())]
-    handles = [open(directory / name, "a") for name in names]
+    held = _admit("exclusive")
     try:
-        for handle in handles:
-            fcntl.flock(handle, fcntl.LOCK_EX)
         os.environ["LAND_SLOT"] = "exclusive"
         yield
     finally:
         os.environ.pop("LAND_SLOT", None)
-        for handle in handles:
+        for handle in held:
             handle.close()
 
 
 @contextlib.contextmanager
 def slot(pool="worker"):
     """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
-    A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock."""
+    A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
+    A caller that shares this turn file leaves a free slot for an earlier conflicting ticket that can take it."""
     if os.environ.get("LAND_SLOT"):
         yield
         return
-    directory = governor_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    count = 1 if pool == "landing" else governor_slots()
-    handles = [open(directory / f"{pool}-{index}", "a") for index in range(count)]
-    held = None
+    held = _admit(pool)
     try:
-        while held is None:
-            for handle in handles:
-                try:
-                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    held = handle
-                    break
-                except BlockingIOError:
-                    continue
-            if held is None:
-                time.sleep(0.5)
         os.environ["LAND_SLOT"] = pool
         yield
     finally:
         os.environ.pop("LAND_SLOT", None)
-        for handle in handles:
+        for handle in held:
             handle.close()
 
 
