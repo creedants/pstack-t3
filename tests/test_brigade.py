@@ -2220,12 +2220,40 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("\nACCEPTANCE:\n- a\n\nCONTRACT:\nnone\n\nVERIFY:\n- v\n", text)
         self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), "none\n")
 
-    def test_brief_renders_a_contract_of_several_lines_with_only_the_whitespace_at_its_two_ends_removed(self):
+    VERBATIM = "\n  A refused write changes no table.  \n\n  - `log.tsv` gains no row.\nVERIFY: is not a heading here. \n"
+
+    def contract_fields(self, contract):
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "paths": "src/boot.ts", "lease": "L4", "contract": contract}), encoding="utf-8")
+        return ("--fields", str(fields))
+
+    def raw_stdout(self, *args):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), *args], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_brief_renders_and_stores_a_contract_as_given_from_the_flag_and_from_a_fields_file(self):
         self.briefable()
-        contract = "A refused write changes no table.\n\n  - `log.tsv` gains no row.\nVERIFY: is not a heading here."
-        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", f"\n  {contract} \n\n")
-        self.assertIn(f"\nACCEPTANCE:\n- a\n\nCONTRACT:\n{contract}\n\nVERIFY:\n- v\n", text)
-        self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), contract + "\n")
+        for form, words in (("flag", (*self.FLAGS, "--contract", self.VERBATIM)), ("fields", self.contract_fields(self.VERBATIM))):
+            with self.subTest(form=form):
+                text = self.brigade("brief", "D1", *words)
+                self.assertIn(f"\nACCEPTANCE:\n- a\n\nCONTRACT:\n{self.VERBATIM}\n\nVERIFY:\n- v\n", text)
+                self.assertEqual((self.at / "briefs" / "D1.contract.md").read_bytes(), (self.VERBATIM + "\n").encode())
+                (self.at / "briefs" / "D1.contract.md").unlink()
+
+    def test_contract_prints_the_given_text_and_one_newline_for_a_text_with_whitespace_at_its_ends_and_one_with_a_carriage_return(self):
+        self.briefable()
+        returned = "First line.\r\nSecond line."
+        for contract in (self.VERBATIM, returned, "none"):
+            for form, words in (("flag", (*self.FLAGS, "--contract", contract)), ("fields", self.contract_fields(contract))):
+                with self.subTest(contract=contract, form=form):
+                    brief = self.raw_stdout("brief", "D1", *words)
+                    rendered = f"\nCONTRACT:\n{contract}\n\nVERIFY:\n".encode()
+                    self.assertIn(rendered, brief)
+                    self.assertIn(rendered, (self.at / "briefs" / "D1.md").read_bytes())
+                    self.assertEqual(self.raw_stdout("contract", "D1"), (contract + "\n").encode())
 
     def test_contract_prints_the_text_a_brief_stored_from_flags_and_from_a_fields_file(self):
         self.briefable()
