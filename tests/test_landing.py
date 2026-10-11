@@ -4186,6 +4186,11 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(printed, self.foreign_bounce(sha, "Owner <owner@example.com>", "Owner < owner@example.com >"))
         self.assertEqual(self.origin_log(), ["init"])
 
+    def test_an_author_name_with_a_carriage_return_bounces_under_a_configured_name_with_a_newline_there(self):
+        sha, printed = self.land_one_by("A\rB <owner@example.com>", "-m", "w1", owner=("A\nB", "owner@example.com"))
+        self.assertEqual(printed, self.foreign_bounce(sha, r"A\rB <owner@example.com>", r"A\nB <owner@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
     def test_without_a_configured_identity_an_entry_by_any_author_lands(self):
         self.init(mode="push")
         for key in ("user.name", "user.email"):
@@ -4224,6 +4229,12 @@ os.execv({real!r}, [{real!r}, *args])
     def test_a_based_on_line_without_a_co_authored_by_trailer_bounces(self):
         sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee")
         self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+
+    def test_a_co_authored_by_trailer_folded_over_two_lines_bounces(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                        "-m", "Co-authored-by: Ann Lee\n <ann@example.com>")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
 
     def test_a_co_authored_by_trailer_that_names_someone_else_bounces(self):
         sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
@@ -4270,9 +4281,9 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.created_heads(), [])
         self.assertFalse((self.base / "prs.json").exists())
 
-    def stray_worktree_line(self, value, quoted=None):
+    def stray_worktree_line(self, value, quoted=None, shown=None):
         config = (self.work / ".git").resolve() / "config"
-        return (f"land: {config} sets core.worktree to {value}, where git does not find this repository; "
+        return (f"land: {shown or config} sets core.worktree to {value}, where git does not find this repository; "
                 f"remove it with git --work-tree=. config --file {quoted or config} --unset-all core.worktree\n")
 
     def run_land(self, repo, *args):
@@ -4384,6 +4395,29 @@ os.execv({real!r}, [{real!r}, *args])
         self.init()
         sh("git", "config", "core.worktree", "x" * 300, cwd=self.work)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line("x" * 300)))
+
+    def test_the_printed_command_is_one_line_and_runs_when_the_config_path_holds_a_newline_and_a_backslash(self):
+        self.work = self.base / "new\nline\\work"
+        sh("git", "clone", "-q", "origin.git", str(self.work), cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        top = str(self.base.resolve())
+        shown = top + r"/new\nline\\work/.git/config"
+        quoted = "\"$(printf %b '" + top + r"/new\0012line\0134work/.git/config" + "')\""
+        status, printed, complaint = self.run_land(self.work, "status")
+        self.assertEqual((status, printed, complaint), (1, "", self.stray_worktree_line(gone, quoted, shown)))
+        self.assertEqual(len(complaint.splitlines()), 1)
+        subprocess.run(complaint.rstrip("\n").split("remove it with ", 1)[1], shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.git_raw("config", "--get-all", "core.worktree", cwd=self.work).returncode, 1)
+
+    def test_a_git_directory_whose_name_ends_in_a_space_is_read_under_that_name(self):
+        self.work = self.base / "apart"
+        store = self.base / "store "
+        sh("git", "clone", "-q", "--separate-git-dir", str(store), "origin.git", "apart", cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        config = str(store.resolve() / "config")
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone, "'" + config + "'", config)))
 
     def test_slot_runs_with_a_core_worktree_that_names_a_missing_directory(self):
         self.init()
