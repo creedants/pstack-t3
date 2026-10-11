@@ -209,6 +209,22 @@ def clean(value):
     return re.sub(r"[\t\r\n]+", " ", str(value if value is not None else "")).strip()
 
 
+# The cells save_rows and append write as they are given. read_labels decides whether each holds a legal value, and
+# clean changes no legal value, so cleaning one could only make a cell that is not legal read as legal after a rewrite.
+KEPT_CELLS = {"rail.tsv": ("kind", "goal"), "dishes.tsv": ("kind", "goal"), "goals.tsv": ("id",)}
+
+
+def stored(table, key, value):
+    """The text save_rows and append write into one cell.
+
+    A cell in KEPT_CELLS is written as it is given when it is text with no tab and no newline. That is every value a
+    table read gives. Every other value is written as clean gives it.
+    """
+    if key in KEPT_CELLS.get(table, ()) and isinstance(value, str) and "\t" not in value and "\n" not in value:
+        return value
+    return clean(value)
+
+
 def write_atomic(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as handle:
@@ -433,11 +449,11 @@ class Restaurant:
 
     def save_rows(self, table, rows):
         header = TABLES[table]
-        body = ["\t".join(header)] + ["\t".join(clean(row.get(key, "")) for key in header) for row in rows]
+        body = ["\t".join(header)] + ["\t".join(stored(table, key, row.get(key, "")) for key in header) for row in rows]
         self.write(table, "\n".join(body) + "\n")
 
     def append(self, table, row):
-        data = ("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n").encode()
+        data = ("\t".join(stored(table, key, row.get(key, "")) for key in TABLES[table]) + "\n").encode()
         path = self.dir / table
         with self.guarded():
             if not path.exists():
@@ -870,8 +886,11 @@ def read_labels(restaurant):
     """The one reader of the kind and goal cells of rail.tsv and dishes.tsv, and of goals.tsv. It writes nothing.
 
     Call it under the store lock. A goals.tsv that does not exist reads as no goals.
-    A row of goals.tsv with an empty id is not a goal. Of the rows of goals.tsv with one id, the first is the goal.
-    The rows with an empty id add one pair to faults between them. So do the rows after the first with one id.
+    A row of goals.tsv with an empty id is not a goal. Neither is a row whose id clean changes, which is an id with white
+    space at an end or a carriage return in it. Of the other rows of goals.tsv with one id, the first is the goal.
+    The rows with an empty id add one pair to faults between them. So do the rows with one id that are not a goal.
+    A kind cell, a goal cell, and an id of goals.tsv are read as they are in the file, and stored writes each back as it
+    is, so a rewrite changes the reading of none that the command did not set.
     A cell whose value is not legal reads as follows and adds one pair to faults.
 
     - A kind that is not one of KINDS reads as no kind.
@@ -881,14 +900,20 @@ def read_labels(restaurant):
     """
     goals, faults, extra = {}, [], []
     for row in restaurant.rows("goals.tsv"):
-        if row["id"] and row["id"] not in goals:
+        if row["id"] and clean(row["id"]) == row["id"] and row["id"] not in goals:
             goals[row["id"]] = read_goal(row, faults)
         elif row["id"] not in extra:
             extra.append(row["id"])
     for ident in extra:
-        repeated = (f"goals.tsv has more than one row with id {ident}; the first is the goal and the others are not read; "
+        if not ident:
+            text = "goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand"
+        elif clean(ident) != ident:
+            text = (f"goals.tsv has a row with id {ident!r}, which has white space at an end or a carriage return in it; "
+                    "it is not a goal; correct the id in goals.tsv by hand to an id no other row has, or remove the row")
+        else:
+            text = (f"goals.tsv has more than one row with id {ident}; the first is the goal and the others are not read; "
                     "remove the others from goals.tsv by hand")
-        faults.append((ident, repeated if ident else "goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand"))
+        faults.append((ident, text))
     held, tickets = in_flight_tickets(restaurant), {}
     for row in restaurant.rows("rail.tsv"):
         frozen = frozen_label(row, held)

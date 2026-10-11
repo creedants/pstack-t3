@@ -6303,6 +6303,14 @@ class BrigadeTest(unittest.TestCase):
         row = self.table_row(self.at, table, ident)
         return row["kind"], row["goal"]
 
+    def raw_cells(self, table, ident, *keys):
+        """These cells of the row with this id, as the bytes in the file. A carriage return stays, which splitlines would cut."""
+        header, *lines = (self.at / table).read_bytes().split(b"\n")[:-1]
+        names = header.decode().split("\t")
+        found = [row for row in (dict(zip(names, line.split(b"\t"))) for line in lines) if row["id"] == ident.encode()]
+        self.assertEqual(len(found), 1, f"{ident!r} in {table}")
+        return tuple(found[0][key] for key in keys)
+
     def test_ticket_add_with_a_summary_and_no_kind_is_refused_and_changes_no_file(self):
         self.open()
         before = self.store_files()
@@ -7597,6 +7605,99 @@ class BrigadeTest(unittest.TestCase):
             self.assertNotIn(name, "".join(out.values()))
         self.assertEqual(self.brigade("goal", "set", "G1", "--name", "renamed"), "G1 name renamed")
         self.assertEqual([row[3] for row in self.rows_of("goals.tsv")], ["renamed", "current with upstream", "second", "third"])
+
+    PADDED_GOAL_ROW = ("goals.tsv has a row with id ' G1 ', which has white space at an end or a carriage return in it; "
+                       "it is not a goal; correct the id in goals.tsv by hand to an id no other row has, or remove the row")
+
+    def test_a_goals_tsv_row_whose_id_has_white_space_at_an_end_is_warned_of_by_each_printing_command_and_is_not_listed_as_a_goal(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.hand_edit("goals.tsv", "G1", id=" G1 ")
+        out = self.assert_each_printing_command_warns(
+            self.PADDED_GOAL_ROW, f"T1 names goal 'G1', {self.NO_GOAL_ROW}; run ticket set T1 --goal G<n> or --no-goal")
+        self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
+        self.assertEqual(out["goal list"].splitlines()[::3],
+                         ["G2 open current with upstream: 0 waiting, 0 in flight, 0 merged, 0 send-backs",
+                          "unassigned: 1 waiting, 0 in flight, 0 merged, 0 send-backs"])
+        self.assertEqual(out["ticket list"], "T1 waiting normal fix [user] a")
+        self.assertNotIn("activity view", "".join(out.values()))
+        self.assertEqual(self.raw_cells("goals.tsv", " G1 ", "id"), (b" G1 ",))
+
+    def test_fire_of_a_ticket_whose_goal_cell_is_a_padded_id_warns_starts_an_unassigned_item_and_leaves_the_cell_as_it_was(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.hand_edit("rail.tsv", "T1", goal=" G1 ")
+        names = f"brigade: warning: T1 names goal ' G1 ', {self.NO_GOAL_ROW}; "
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"),
+                         (0, "D1\n", names + "run ticket set T1 --goal G<n> or --no-goal\n"))
+        self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"fix", b""))
+        self.assertEqual(self.raw_cells("rail.tsv", "T1", "state", "kind", "goal"), (b"assigned", b"fix", b" G1 "))
+        code, out, err = self.run_raw("status")
+        self.assertEqual((code, err), (0, names + f"{self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand\n"))
+        self.assertEqual(out.splitlines()[3:], ["kinds: fix 1 in flight", "goals: unassigned 1 in flight"])
+
+    def test_fire_ride_along_of_a_low_ticket_whose_kind_cell_is_a_padded_feature_warns_and_leaves_the_cell_as_it_was(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "feature", "--priority", "low")
+        self.hand_edit("rail.tsv", "T2", kind=" feature ")
+        has = f"brigade: warning: T2 has kind ' feature ', {self.NOT_A_KIND}; "
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", "--ride-along", "T2"),
+                         (0, "D1\n", has + "run ticket set T2 --kind <kind>\n"))
+        self.assertEqual(self.raw_cells("rail.tsv", "T2", "state", "kind", "goal"), (b"assigned", b" feature ", b""))
+        code, out, err = self.run_raw("ticket", "list")
+        self.assertEqual((code, err), (0, has + f"{self.NOT_WHILE} T2 is assigned; correct it in rail.tsv by hand\n"))
+        self.assertEqual(out, "T1 assigned normal fix [user] a\nT2 assigned low [user] b\n")
+
+    def test_a_rewrite_of_its_table_leaves_each_kept_cell_byte_for_byte_and_the_warning_for_it_still_prints(self):
+        self.two_goals()
+        for summary in ("a", "b", "c", "d"):
+            self.brigade("ticket", "add", "--summary", summary, "--kind", "fix", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Do c")
+        self.brigade("fire", "--tickets", "T4", "--station", "bug-fix", "--summary", "Do d")
+        # Per table, the row whose cell is padded, and a command that rewrites the table to change another row.
+        rewrites = {"rail.tsv": ("T1", lambda cell: ("ticket", "set", "T2", "--paths", f"docs/{cell}")),
+                    "dishes.tsv": ("D1", lambda cell: ("dish", "D2", "--thread", f"thread-{cell}")),
+                    "goals.tsv": ("G1", lambda cell: ("goal", "set", "G2", "--name", f"renamed {cell}"))}
+        kept = runpy.run_path(str(SCRIPT))["KEPT_CELLS"]
+        self.assertEqual(sorted(kept), sorted(rewrites))
+        for table, cells in kept.items():
+            ident, rewrite = rewrites[table]
+            for cell in cells:
+                with self.subTest(table=table, cell=cell):
+                    legal, = self.raw_cells(table, ident, cell)
+                    self.assertTrue(legal)
+                    padded = b" " + legal + b" "
+                    self.hand_edit(table, ident, **{cell: padded.decode()})
+                    held = padded.decode() if cell == "id" else ident
+                    warned = self.run_raw("status")
+                    self.assertEqual(warned[0], 0)
+                    self.assertIn(repr(padded.decode()), warned[2])
+                    before = (self.at / table).read_bytes()
+                    self.assertEqual(self.run_raw(*rewrite(cell))[0], 0)
+                    self.assertNotEqual((self.at / table).read_bytes(), before)
+                    self.assertEqual(self.raw_cells(table, held, cell), (padded,))
+                    self.assertEqual(self.run_raw("status"), warned)
+                    self.hand_edit(table, held, **{cell: legal.decode()})
+                    self.assertEqual(self.run_raw("status")[2], "")
+
+    def test_a_goal_cell_that_ends_in_a_carriage_return_still_reads_as_unassigned_after_another_ticket_is_rewritten(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
+        rail = self.at / "rail.tsv"
+        self.assertEqual(rail.read_bytes().count(b"\tG1\n"), 1)
+        rail.write_bytes(rail.read_bytes().replace(b"\tG1\n", b"\tG1\r\n"))
+        warning = (f"brigade: warning: T1 names goal 'G1\\r', {self.NO_GOAL_ROW}; "
+                   "run ticket set T1 --goal G<n> or --no-goal\n")
+        unassigned = ["kinds: fix 2 waiting", "goals: unassigned 2 waiting"]
+        code, out, err = self.run_raw("status")
+        self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
+        self.assertEqual(self.run_raw("ticket", "set", "T2", "--priority", "low"), (0, "T2 priority low\n", ""))
+        self.assertEqual(self.raw_cells("rail.tsv", "T2", "priority"), (b"low",))
+        self.assertEqual(self.raw_cells("rail.tsv", "T1", "kind", "goal"), (b"fix", b"G1\r"))
+        code, out, err = self.run_raw("status")
+        self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
 
     def test_a_ticket_and_an_item_that_name_a_goal_with_no_row_are_warned_of_and_count_as_unassigned(self):
         self.two_goals()
