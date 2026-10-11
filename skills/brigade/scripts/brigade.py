@@ -2912,7 +2912,7 @@ def run(argv):
         if args.source != "user" or args.ref or args.request or args.again:
             raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
         if args.priority or args.paths or args.decision:
-            raise BrigadeError("--from-report takes no --priority, --paths, or --decision")
+            raise BrigadeError("--from-report takes no --priority, nonempty --paths, or --decision")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
