@@ -1175,7 +1175,7 @@ def status_label_lines(labels, counted):
         untagged: 1
 
     An entry holds the waiting count and the in flight count that are not 0, and is absent when both are 0.
-    kinds has an entry per kind in KINDS order. An item in flight with no kind is on no line.
+    kinds has an entry per kind in KINDS order. An item in flight with no kind is absent from kinds.
     goals has an entry per goal in file order and then one for unassigned work. A goal that is not open has its state
     after its id. The line is absent when goals.tsv has no row.
     A line with no entry is absent, and so is untagged at 0.
