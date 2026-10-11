@@ -1,0 +1,2 @@
+- `scripts/measure_capacity.py` counts a Python process that runs `scripts/run_tests.py` in `build_procs`, so a test run and its workers show in that column. It also flushes each row as it prints it, so a sampler stopped early keeps the rows it printed.
+- `docs/capacity.md` records one to four concurrent runs of `scripts/run_tests.py` on this machine, and the pull request template and `docs/light-mode.md` name `python3 scripts/run_tests.py` as the test command.

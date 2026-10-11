@@ -18,13 +18,16 @@ whitespace has no argument boundary left, so it has no basename and does
 not count. claude-desktop and the codex app-server hosts do not match those
 basenames. A shell whose script text only mentions these words counts zero.
 
-build_procs counts the Python process that is running this repo's build
-script or the unittest module. The basename of argv[0] is python or python
-plus a numeric version, and argv[1] is scripts/build.py or a path that ends
-in /scripts/build.py, or argv[1] is -m and argv[2] is unittest. A direct
-exec whose argv[0] is that build script counts too. A shell whose script
-text only mentions those strings counts zero. The count is not, by itself,
-proof that a build passed.
+build_procs counts a Python process that is running a build script, a test
+runner, or the unittest module. The basename of argv[0] is python or python
+plus a numeric version, and argv[1] is scripts/build.py or
+scripts/run_tests.py or a path that ends in /scripts/build.py or
+/scripts/run_tests.py, or argv[1] is -m and argv[2] is unittest. A direct
+exec whose argv[0] is one of those scripts counts too. One run of
+scripts/run_tests.py counts its runner and each worker and listing child it
+has alive, because each is a Python process started with the script path as
+argv[1]. A shell whose script text only mentions those strings counts zero.
+The count is not, by itself, proof that a build or a test run passed.
 
 psi_full_avg10 is the 10-second "full" memory-stall average from
 /proc/pressure/memory, or "na" when that file is absent.
@@ -136,10 +139,13 @@ def is_python(name):
     return rest == "" or all(part.isdigit() for part in rest.split("."))
 
 
+BUILD_SCRIPTS = ("scripts/build.py", "scripts/run_tests.py")
+
+
 def is_build_script(arg):
     if not arg or any(character.isspace() for character in arg):
         return False
-    return arg == "scripts/build.py" or arg.endswith("/scripts/build.py")
+    return any(arg == script or arg.endswith("/" + script) for script in BUILD_SCRIPTS)
 
 
 def is_session(args):
@@ -278,10 +284,10 @@ def main():
     if args.interval < 0:
         raise SystemExit("interval must be >= 0")
     port = choose_port()
-    print("\t".join(COLUMNS))
+    print("\t".join(COLUMNS), flush=True)
     for index in range(args.samples):
         row = sample(args.label, port)
-        print("\t".join(str(row[name]) for name in COLUMNS))
+        print("\t".join(str(row[name]) for name in COLUMNS), flush=True)
         if index + 1 < args.samples and args.interval:
             time.sleep(args.interval)
 
