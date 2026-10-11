@@ -5835,9 +5835,9 @@ class BrigadeTest(unittest.TestCase):
              "the edit's heading, the closing line of a fence, or another of those three lines")
     APART = (" opens a fenced block of Edit 1; every line between an Old text or New text line and the fenced block below "
              "it must be empty or only spaces and tabs")
-    MALFORMED = (": line 7 of Edit 1 starts, after any whitespace, block quote marks, and list marks, with File: and a "
-                 "backtick; what follows must be a path that does not start with a space or a backtick, then one backtick, "
-                 "then no backtick")
+    MALFORMED = (": line 7 of Edit 1 starts, once its indentation, block quote marks, list marks, and the whitespace at its "
+                 "two ends are removed, with File: and a backtick; what follows must be a path that holds no backtick and "
+                 "does not start with a space, then a backtick that no backtick follows directly")
     # A line to put directly above a File, Old text, or New text line, and a line to put directly below it or None.
     AROUND = (("> example", None), ("- example", None), ('[r]: /url "example', 'end"'), ("Example ``", "``"),
               ("[r]: /url 'example", "end'"), ("[r]: /url (example", "end)"), ("> > example", None), ("- - example", None),
@@ -5894,7 +5894,7 @@ class BrigadeTest(unittest.TestCase):
                                               "File: `src/greeting.txt` ``\nOld text:\n`` and a note\n\n")
         self.assert_edits_verify_and_pass_record_refuse(cases + [(body, ": line 11" + self.APART)])
 
-    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_starts_after_any_whitespace_block_quote_marks_and_list_marks_with_file_and_a_backtick_and_a_path_that_starts_with_a_space_or_a_backtick_ends_at_no_backtick_or_ends_at_two(self):
+    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_starts_once_its_indentation_block_quote_marks_list_marks_and_end_whitespace_are_removed_with_file_and_a_backtick_and_a_path_that_starts_with_a_space_or_a_backtick_ends_at_no_backtick_or_ends_at_two(self):
         report = self.one_edit_report()
         cases = [report.replace("File: `src/greeting.txt`", line)
                  for line in ("File: `src/greeting.txt`` b`", "File: ` src/greeting.txt `", "File: ``src/greeting.txt``",
@@ -5909,7 +5909,7 @@ class BrigadeTest(unittest.TestCase):
                                                          (report.replace("wrold", "wr\0old"), " holds a NUL character"),
                                                          ("Notes\0\n\n" + report, " holds a NUL character")])
 
-    def test_edits_verify_reads_edits_whose_lines_stand_directly_below_one_another_in_a_report_with_lines_that_start_with_a_digit_that_is_not_ascii_and_a_period_or_a_closing_parenthesis(self):
+    def test_edits_verify_reads_an_edit_whose_lines_stand_directly_below_one_another_in_a_report_with_lines_that_start_with_a_digit_that_is_not_ascii_and_a_period_or_a_closing_parenthesis(self):
         reviewed = self.edits_store()
         notes = ("## Notes\n\n\u0661. ```\n\n\uff11) ~~~\n\nNote\n\u0661. ---\n\n\u0661. ## Edits\n\n"
                  "\u0967. <details>\n\n")

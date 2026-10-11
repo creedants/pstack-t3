@@ -802,7 +802,7 @@ HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
 FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
 FILE_LINE = re.compile(r"File: `([^` ][^`]*)`(?!`)")
 LABELS = {"Old text:": "old", "New text:": "new"}
-# What edit_mark gives the five parts one_edit takes for one edit, in the only order it takes them.
+# The marks edit_mark gives the five parts of one edit that one_edit reads, in the only order it reads them.
 EDIT_MARKS = ["file", "old", "fence", "new", "fence"]
 BLANK = re.compile(r"[ \t]*")
 # What a block quote, a list item, and indentation put in front of a line's text.
@@ -835,9 +835,9 @@ EDITS_REFUSED = {
               "a New text line, and a fenced block"),
     "near": (": Edit {number} has a File, Old text, or New text line after whitespace, a block quote mark, or a list mark, "
              "or an Old text or New text line that ends in whitespace"),
-    "malformed": (": line {line} of Edit {number} starts, after any whitespace, block quote marks, and list marks, with File: "
-                  "and a backtick; what follows must be a path that does not start with a space or a backtick, then one "
-                  "backtick, then no backtick"),
+    "malformed": (": line {line} of Edit {number} starts, once its indentation, block quote marks, list marks, and the "
+                  "whitespace at its two ends are removed, with File: and a backtick; what follows must be a path that "
+                  "holds no backtick and does not start with a space, then a backtick that no backtick follows directly"),
     "below": (": line {line} is a File, Old text, or New text line of Edit {number}; the line above it must be empty or only "
               "spaces and tabs, the edit's heading, the closing line of a fence, or another of those three lines"),
     "apart": (": line {line} opens a fenced block of Edit {number}; every line between an Old text or New text line and "
@@ -975,8 +975,8 @@ def report_parts(lines):
 def edit_mark(kind, value):
     """What one part of an edit is to one_edit.
 
-    A fence is `fence`. A line that FILE_LINE matches at its start is `file`. That is `File: `, a backtick, a path, a
-    backtick, and then no backtick, where the path holds no backtick and does not start with a space.
+    A fence is `fence`. A line that FILE_LINE matches at its start is `file`. That is `File: `, a backtick, a path, and a
+    backtick that no backtick follows directly, where the path holds no backtick and does not start with a space.
     A line that is `Old text:` is `old`, and one that is `New text:` is `new`. A line that BLANK matches in full is `blank`.
     Another line that is `file`, `old`, or `new` once what NESTED matches at its start and then the whitespace at its
     two ends are removed is `unread`. Another line that then starts with `File: ` and a backtick is `malformed`.
