@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.15-555.svg" alt="upstream pstack 0.15.15"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.17-555.svg" alt="upstream pstack 0.15.17"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
@@ -184,7 +184,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
-See [all 56 skills and every playbook](docs/skills.md). Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
+See [all 57 skills and every playbook](docs/skills.md). Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
 
 ## How it works
 
