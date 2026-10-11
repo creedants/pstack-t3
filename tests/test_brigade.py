@@ -4,6 +4,7 @@ import json
 import os
 import runpy
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7993,6 +7994,427 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(after[:len(before)], before)
         self.assertEqual(after[len(before):].decode().rstrip("\n").split("\t")[5:], ["", "New", "", "", "", "fix", ""])
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1], "T14 waiting normal fix [user] New")
+
+    def directory_files(self, directory):
+        return {str(path.relative_to(directory)): path.read_bytes()
+                for path in sorted(Path(directory).rglob("*")) if path.is_file() and path.name != "restaurant.lock"}
+
+    def next_sheet(self, *args):
+        text = self.brigade("next", *args)
+        lines = text.splitlines()
+        self.assertEqual([line for line in lines if line.startswith("reply:")], [lines[-1]])
+        self.assertFalse(any(line.startswith("fire") for line in lines))
+        for line in lines:
+            if line.startswith("run "):
+                self.assertNotIn(shlex.split(line[4:])[0], ("fire", "watch", "startable", "land.py"))
+        return text
+
+    def fresh(self):
+        if self.at.exists():
+            shutil.rmtree(self.at)
+        self.fired_bug_fix()
+
+    def execute_sheet(self, sheet):
+        lines = [line for line in sheet.splitlines() if line.startswith("run ")]
+        self.assertTrue(lines)
+        commands = []
+        for line in lines:
+            words = shlex.split(line[4:])
+            self.assertNotIn(words[0], ("fire", "watch", "startable"))
+            commands.append(words)
+            copy = Path(self.temporary.name) / f"alone-{time.time_ns()}"
+            shutil.copytree(self.at, copy)
+            self.run_at(copy, *words)
+        ordered = Path(self.temporary.name) / f"ordered-{time.time_ns()}"
+        shutil.copytree(self.at, ordered)
+        for words in commands:
+            self.run_at(ordered, *words)
+
+    def test_next_readonly(self):
+        self.queue()
+        lock = self.at / "restaurant.lock"
+        lock.unlink(missing_ok=True)
+        before, landing = self.store_files(), self.landing_rows()
+        self.assertEqual(self.brigade("next"), "\n".join([
+            "wake: unspecified", "reporting: milestones", "nothing else owed", "reply: no (routine: unspecified)"]))
+        self.assertFalse(lock.exists())
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.landing_rows(), landing)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.open_admin()
+        self.admin("request", "--to", "perf", "from-user perf: please fix the gate")
+        admin_dir = self.store / "bridge-kit" / ".admin"
+        before, landing = self.store_files(), self.landing_rows()
+        admin_before = self.directory_files(admin_dir)
+        triggers = [
+            ("next",),
+            ("next", "report-back", "D1"),
+            ("next", "review", "D1", "--verdict", "pass"),
+            ("next", "review", "D1", "--verdict", "send-back"),
+            ("next", "review", "D1", "--verdict", "blocked"),
+            ("next", "review", "D1", "--verdict", "pass-with-edits"),
+            ("next", "checks", "D1", "--result", "pass"),
+            ("next", "checks", "D1", "--result", "fail"),
+            ("next", "merge", "D1"),
+            ("next", "liveness",),
+            ("next", "intake",),
+            ("next", "morning",),
+            ("next", "evening",),
+            ("next", "user",),
+            ("next", "user", "--question"),
+            ("next", "admin", "A1"),
+            ("next", "--failure", "fixable"),
+            ("next", "--failure", "stuck"),
+            ("next", "--failure", "stuck", "merge", "D1"),
+            ("next", "merge", "D1", "--failure", "stuck"),
+            ("next", "--unsent", "failed"),
+            ("next", "--unsent", "report", "liveness"),
+            ("next", "liveness", "--unsent", "report"),
+        ]
+        for args in triggers:
+            with self.subTest(args=args):
+                self.brigade(*args)
+                self.assertEqual(self.store_files(), before)
+                self.assertEqual(self.landing_rows(), landing)
+                self.assertEqual(self.directory_files(admin_dir), admin_before)
+        for level in ("every-turn", "milestones", "digest"):
+            self.brigade("set", "--reporting", level)
+            before, landing = self.store_files(), self.landing_rows()
+            self.brigade("next")
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(self.landing_rows(), landing)
+        self.brigade("set", "--reports-to", "admin-thread")
+        before, landing = self.store_files(), self.landing_rows()
+        self.assertIn("reports to: admin-thread", self.brigade("next"))
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.landing_rows(), landing)
+        for args, sentence in (
+            (("next", "report-back", "D99"), "brigade: no D99 in dishes.tsv\n"),
+            (("next", "review", "D99", "--verdict", "pass"), "brigade: no D99 in dishes.tsv\n"),
+            (("next", "checks", "D99", "--result", "fail"), "brigade: no D99 in dishes.tsv\n"),
+            (("next", "merge", "D99"), "brigade: no D99 in dishes.tsv\n"),
+            (("next", "admin", "A9"), "brigade: no request A9 in the inbox\n"),
+        ):
+            with self.subTest(args=args):
+                before = self.store_files()
+                self.assertEqual(self.run_raw(*args), (1, "", sentence))
+                self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.admin("next", ok=False), "brigade: the executive admin routes work and never runs it")
+        self.assertEqual(self.directory_files(admin_dir), admin_before)
+        self.store_from_before_kinds()
+        self.assertFalse((self.at / "goals.tsv").exists())
+        before, landing = self.store_files(), self.landing_rows()
+        self.brigade("next")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.landing_rows(), landing)
+        self.assertFalse((self.at / "goals.tsv").exists())
+        self.brigade("set", "--thread", "t1")
+        bare = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), "next"],
+                              capture_output=True, text=True)
+        self.assertEqual((bare.returncode, bare.stdout, bare.stderr),
+                         (1, "", "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status\n"))
+        self.assertEqual(self.brigade("--owner", "other@1", "next", ok=False),
+                         "brigade: owner other@1 is stale; this store is owned by t1@1")
+        meta_path = self.at / "restaurant.json"
+        meta = json.loads(meta_path.read_text())
+        meta["thread"] = ""
+        meta_path.write_text(json.dumps(meta) + "\n")
+        before, landing = self.store_files(), self.landing_rows()
+        self.assertEqual(self.brigade("next", ok=False),
+                         "brigade: this store has no recorded thread; it was retired, and only set --thread --expect restarts it")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.landing_rows(), landing)
+        mod = runpy.run_path(str(SCRIPT))
+        glob = mod["run"].__globals__
+        glob["READ_ONLY"] = True
+        try:
+            restaurant = mod["Restaurant"](str(self.at))
+            with self.assertRaises(mod["BrigadeError"]) as raised:
+                restaurant.write("probe.txt", "nope\n")
+            self.assertEqual(str(raised.exception), "brigade: next is read-only")
+            self.assertFalse((self.at / "probe.txt").exists())
+            with self.assertRaises(mod["BrigadeError"]) as raised:
+                mod["land_result"](str(self.project), "status")
+            self.assertEqual(str(raised.exception), "brigade: next is read-only")
+        finally:
+            glob["READ_ONLY"] = False
+        meta["thread"] = "t1"
+        meta_path.write_text(json.dumps(meta) + "\n")
+        mod["Restaurant"](str(self.at), "t1@1").write("probe.txt", "ok\n")
+        self.assertEqual((self.at / "probe.txt").read_text(), "ok\n")
+
+    def test_next_accepts_commands(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        for number in range(3):
+            self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--author", CLAUDE, "--verifier", CODEX, "--late")
+        inbox = self.at / "inbox"
+        inbox.mkdir()
+        (inbox / "hand.json").write_text(json.dumps(
+            {"handoff": "app/other/T1", "summary": "Fix a", "source": "user", "ref": ""}))
+        sheet = self.next_sheet("report-back", "D1")
+        self.assertEqual(sheet, "\n".join([
+            "wake: report-back D1",
+            "reporting: milestones",
+            "run inbox take",
+            "run dish D1 --reported",
+            "run 86 add --dish D1 --round-budget",
+            "run close",
+            "reply: yes (decision: D1)",
+        ]))
+        self.execute_sheet(sheet)
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        sheet = self.next_sheet("merge", "D1")
+        self.assertEqual(sheet, "\n".join([
+            "wake: merge D1",
+            "reporting: milestones",
+            "run inbox take",
+            "run dish D1 --state merged",
+            "see Finish with the old worker for thread none, branch none, and pull request none for D1. "
+            "If its run is still open, interrupt it and hang the attempt, then archive it. "
+            "Remove the worktree and delete the branch after that. Do not claim they are already gone.",
+            "if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
+            "run next again with --failure stuck",
+            "reply: yes (merged: D1)",
+        ]))
+        self.execute_sheet(sheet)
+
+    def test_next_facts(self):
+        self.fired_bug_fix()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
+                 "run next again with --failure stuck")
+        follow = "if land or watch reports D1 landed: run next merge D1"
+        unspecified = self.next_sheet()
+        self.assertEqual(unspecified, "\n".join([
+            "wake: unspecified", "reporting: milestones", "see Run land for D1.", follow, pause,
+            "reply: no (routine: unspecified)"]))
+        self.assertNotIn("run dish D1 --state merged", unspecified)
+        checks = self.next_sheet("checks", "D1", "--result", "pass")
+        self.assertEqual(checks, "\n".join([
+            "wake: checks D1", "reporting: milestones", "see Run land for holder perf/D1.", follow, pause,
+            "reply: no (routine: pull request)"]))
+        self.assertNotIn("run dish D1 --state merged", checks)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "other")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Other")
+        review = self.next_sheet("review", "D2", "--verdict", "send-back")
+        self.assertIn("see Record pass record for D2 with verdict send-back. No sha is recorded.", review)
+        self.assertNotIn("sha abc", review)
+        self.assertNotIn("D2 is send-back", review)
+        self.assertNotIn("D2 sent-back", review)
+        self.assertIn("if the old worker's wait for D2 is terminal: run dish D2 --state in-progress", review)
+        self.assertNotIn("run pass", review)
+        self.assertFalse(any(line.startswith("run dish D2") for line in review.splitlines()))
+        (self.at / "inbox").mkdir()
+        (self.at / "inbox" / "bad.json").write_text("{")
+        bad = self.next_sheet()
+        self.assertIn("see inbox/bad.json is not valid JSON", bad)
+        self.assertNotIn("run inbox take", bad)
+        self.assertTrue(any(line.startswith("if ") for line in bad.splitlines()))
+
+    def test_next_reply(self):
+        self.open()
+        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
+                 "run next again with --failure stuck")
+        self.assertEqual(self.next_sheet("morning"), "\n".join([
+            "wake: morning", "reporting: milestones",
+            "see No intake source is recorded. File a user request with ticket add when the message asks for work.",
+            "see Morning service is not a report.",
+            "reply: no (routine: morning service)"]))
+        self.assertEqual(self.next_sheet("evening"), "\n".join([
+            "wake: evening", "reporting: milestones",
+            "see Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
+            "Otherwise at most three sentences and then the close output.",
+            "run close",
+            "reply: yes (evening: report)"]))
+        self.assertEqual(self.next_sheet("user"), "\n".join([
+            "wake: user", "reporting: milestones",
+            "see Answer the user first.",
+            "see File the work the message asks for with ticket add.",
+            "run close",
+            "reply: yes (user: message)"]))
+        self.assertEqual(self.next_sheet("user", "--question").splitlines()[-1], "reply: yes (user: question)")
+        self.assertEqual(self.next_sheet("liveness"), "\n".join([
+            "wake: liveness", "reporting: milestones", "see watch", pause,
+            "if watch printed no work in progress: run set --schedule liveness=",
+            "reply: no (routine: liveness)"]))
+        self.brigade("set", "--reporting", "every-turn")
+        every = self.next_sheet()
+        self.assertEqual(every.splitlines()[-1], "reply: yes (every-turn: wake)")
+        self.assertNotIn("run close", every)
+        self.assertEqual(self.next_sheet("--unsent", "misrouted").splitlines()[-1], "reply: yes (every-turn: wake)")
+        self.brigade("set", "--reporting", "milestones")
+        self.assertEqual(self.next_sheet("--unsent", "misrouted").splitlines()[-1], "reply: no (routine: unspecified)")
+        report = self.next_sheet("--unsent", "report")
+        self.assertEqual(report.splitlines()[-1], "reply: yes (report: unsent report)")
+        self.assertNotIn("run close", report)
+        self.brigade("set", "--intake", "github")
+        intake = self.next_sheet("intake")
+        self.assertIn("see Intake sources are github. File tickets from those sources with ticket add.", intake)
+        self.assertEqual(intake.splitlines()[-1], "reply: no (routine: intake)")
+        self.assertNotIn("run close", intake)
+        self.fresh()
+        self.park_item()
+        self.brigade("close")
+        for level, last in (("milestones", "reply: no (routine: unspecified)"),
+                            ("digest", "reply: no (routine: unspecified)"),
+                            ("every-turn", "reply: yes (every-turn: wake)")):
+            self.brigade("set", "--reporting", level)
+            self.assertEqual(self.next_sheet().splitlines()[-1], last)
+        self.fresh()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.next_sheet("review", "D1", "--verdict", "send-back").splitlines()[-1], "reply: no (sent-back: D1)")
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        crossed = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.assertEqual(crossed.splitlines()[-1], "reply: yes (decision: D1)")
+        self.assertIn("run close --to-file", crossed)
+        blocked = self.next_sheet("review", "D1", "--verdict", "blocked")
+        self.assertEqual(blocked.splitlines()[-1], "reply: yes (decision: D1)")
+        self.assertIn("run close --to-file", blocked)
+        self.assertIn("if only the user can unblock D1: run 86 add --dish D1", blocked)
+        fixable = self.next_sheet("review", "D1", "--verdict", "blocked", "--failure", "fixable")
+        self.assertEqual(fixable.splitlines()[-1], "reply: no (failure: fixable)")
+        self.assertNotIn("run close", fixable)
+        self.assertNotIn("86 add --dish D1", fixable)
+        self.assertEqual(self.next_sheet("checks", "D1", "--result", "fail").splitlines()[-1], "reply: no (failure: fail)")
+        stuck = self.next_sheet("checks", "D1", "--result", "fail", "--failure", "stuck")
+        self.assertEqual(stuck.splitlines()[-1], "reply: yes (stuck: stuck)")
+        self.assertIn("run close --to-file", stuck)
+        self.assertEqual(self.next_sheet("--unsent", "blocked").splitlines()[-1], "reply: no (failure: unsent blocked)")
+        self.assertEqual(self.next_sheet("--unsent", "blocked", "--failure", "stuck").splitlines()[-1], "reply: yes (stuck: stuck)")
+        digest_report = self.next_sheet("--unsent", "report")
+        self.assertEqual(digest_report.splitlines()[-1], "reply: yes (report: unsent report)")
+        self.assertIn("run close --to-file", digest_report)
+        refused = self.next_sheet("merge", "D1")
+        self.assertEqual(refused.splitlines()[-1], "reply: no (routine: merge)")
+        self.assertNotIn("run dish D1 --state merged", refused)
+        self.fresh()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        drained = self.next_sheet("merge", "D1")
+        self.assertEqual(drained.splitlines()[-1], "reply: yes (drained: batch)")
+        self.assertIn("run dish D1 --state merged", drained)
+        self.assertIn("run close --to-file", drained)
+        for line in drained.splitlines():
+            if line.startswith("run "):
+                self.brigade(*shlex.split(line[4:]))
+        self.assertEqual(self.next_sheet().splitlines()[-1], "reply: no (routine: unspecified)")
+        self.fresh()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        merged = self.next_sheet("merge", "D1")
+        self.assertEqual(merged.splitlines()[-1], "reply: yes (merged: D1)")
+        self.assertNotIn("run close", merged)
+        self.fresh()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Second")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        held = self.next_sheet("merge", "D1")
+        self.assertEqual(held.splitlines()[-1], "reply: no (merged: D1)")
+        self.assertNotIn("run close", held)
+        self.fresh()
+        same = self.run_raw("next", "--failure", "stuck", "merge", "D1")
+        other = self.run_raw("next", "merge", "D1", "--failure", "stuck")
+        self.assertEqual(same, other)
+        self.assertEqual(same[0], 0)
+        self.assertEqual(same[1].splitlines()[-1], "reply: yes (stuck: stuck)")
+        self.fresh()
+        self.brigade("set", "--reports-to", "admin-thread")
+        evening = self.next_sheet("evening")
+        self.assertEqual(evening.splitlines()[-1], "reply: no (reports to the executive admin: evening report)")
+        self.assertIn("run close --to-file", evening)
+        lines = evening.splitlines()
+        report_line = "see t3_thread_send admin-thread mode queue: report perf: the path close --to-file prints"
+        self.assertLess(lines.index("run close --to-file"), lines.index(report_line))
+        user = self.next_sheet("user")
+        self.assertEqual(user.splitlines()[-1], "reply: yes (user: message)")
+        self.assertNotIn("run close", user)
+        self.assertEqual(self.next_sheet("user", "--question").splitlines()[-1], "reply: yes (user: question)")
+        failed = self.next_sheet("--unsent", "failed")
+        self.assertEqual(failed.splitlines()[-1], "reply: yes (failed: unsent failed)")
+        self.open_admin()
+        published = self.admin("request", "--to", "perf", "from-user perf: please fix the gate")
+        ident = published.split()[0]
+        routed = self.next_sheet("admin", ident)
+        self.assertEqual(routed.splitlines()[-1], "reply: no (reports to the executive admin: admin request)")
+        self.assertIn(f"see t3_thread_send admin-thread mode queue: reply perf: sent after the answer", routed)
+        self.brigade("set", "--reports-to", "")
+        direct = self.next_sheet("admin", ident)
+        self.assertEqual(direct.splitlines()[-1], "reply: yes (user: message)")
+        self.assertIn("run close\n", direct + "\n")
+        self.assertNotIn("run close --to-file", direct)
+
+    def test_next_wrong_id(self):
+        self.fired_bug_fix()
+        before = self.store_files()
+        self.assertEqual(self.run_raw("next", "report-back", "D99"), (1, "", "brigade: no D99 in dishes.tsv\n"))
+        self.assertEqual(self.run_raw("next", "admin", "A3"), (1, "", "brigade: no request A3 in the inbox\n"))
+        self.assertEqual(self.store_files(), before)
+
+    def test_next_old_store(self):
+        self.store_from_before_kinds()
+        self.assertFalse((self.at / "goals.tsv").exists())
+        code, out, err = self.run_raw("next")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("wake: unspecified\n"))
+        lines = out.splitlines()
+        self.assertEqual([line for line in lines if line.startswith("reply:")], [lines[-1]])
+        self.assertFalse((self.at / "goals.tsv").exists())
+        path = self.at / "dishes.tsv"
+        rows = path.read_text().splitlines()
+        fields = rows[1].split("\t")
+        self.assertEqual((fields[0], len(fields)), ("D1", 15))
+        rows[1] = "\t".join(fields + ["nope"])
+        path.write_text("\n".join(rows) + "\n")
+        code, out, err = self.run_raw("next")
+        status = self.run_raw("status")
+        self.assertEqual(code, 0)
+        self.assertEqual(err, status[2])
+        self.assertIn("D1 has kind 'nope'", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual([line for line in out.splitlines() if line.startswith("reply:")], [out.splitlines()[-1]])
+        self.assertFalse((self.at / "goals.tsv").exists())
+
+    def test_next_malformed(self):
+        self.fired_bug_fix()
+        path = self.at / "dishes.tsv"
+        rows = path.read_text().splitlines()
+        rows[1] = "not-a-row"
+        path.write_text("\n".join(rows) + "\n")
+        code, out, err = self.run_raw("next")
+        self.assertEqual((code, out, err),
+                         (1, "", "brigade: bridge-kit/perf/dishes.tsv line 2 is malformed; fix or remove it\n"))
+        self.assertNotIn("Traceback", err)
+
+    def test_next_admin_lines_match_the_events_table(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        rows = []
+        started = False
+        for line in text.splitlines():
+            if line.startswith("| Line |"):
+                started = True
+                continue
+            if not started:
+                continue
+            if not line.startswith("|"):
+                break
+            if set(line.replace("|", "").replace("-", "").strip()) == set():
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            kind = cells[0].replace("`", "").split()[0]
+            store = " ".join(cells[2].replace("`", "").split())
+            rows.append((kind, store))
+        recorded = [(kind, store) for kind, store, _only in runpy.run_path(str(SCRIPT))["ADMIN_LINES"]]
+        self.assertEqual(recorded, rows)
 
 
 class StoresTest(unittest.TestCase):
