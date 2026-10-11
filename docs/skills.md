@@ -28,6 +28,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | [`blast-radius`](../skills/blast-radius/SKILL.md) | Find what a change could break somewhere else before it ships, beyond the diff, and prove the one fact it's safe because of by running real code instead of writing it up. Use for 'blast radius of X', 'what could this break', or reviewing a small diff you don't trust. |
 | [`bro`](../skills/bro/SKILL.md) | Restate the last message in plain human language, with no jargon. |
 | [`how`](../skills/how/SKILL.md) | Use for "how does X work", code walkthroughs before changing something, and placement / ownership / layering questions ("where should this live", "which package owns this", "is this the right layer"). Explains subsystem architecture, runtime flow, onboarding mental models. Use why for motivation. |
+| [`ketchup`](../skills/ketchup/SKILL.md) | Catch the user up on everything in this chat since their last message, in plain words. Give each action item an executive summary with enough context to make the call. Use for /ketchup. |
 | [`recall`](../skills/recall/SKILL.md) | Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work. |
 | [`teach`](../skills/teach/SKILL.md) | Explain a body of work plainly so a person actually understands it. Runs the `how` and `why` skills and weaves what they find into one clear explanation. Use for 'teach me this', 'help me really understand X', 'explain this change or subsystem to me'. |
 | [`why`](../skills/why/SKILL.md) | Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Discovers available MCPs and queries each evidence category (source control, issue tracker, long-form docs, real-time chat, infrastructure observability, error tracking, product analytics warehouse) in parallel, then returns a cited read on decisions and tradeoffs. Use how for runtime behavior. |
@@ -99,12 +100,6 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | [`principle-subtract-before-you-add`](../skills/principle-subtract-before-you-add/SKILL.md) | Apply when sequencing an addition, refactor, or rewrite. Remove dead code, redundant validators, and stub references first, then build on the simpler base. |
 | [`principle-test-behavior-not-implementation`](../skills/principle-test-behavior-not-implementation/SKILL.md) | Apply when you write, change, or keep a test. Call the code as its users do and assert the exact result they see. Rewrite or delete a test that would pass if every imported function returned undefined. |
 | [`principle-type-system-discipline`](../skills/principle-type-system-discipline/SKILL.md) | Apply when designing types, reviewing a function signature, or writing code in any statically-typed language. Make illegal states unrepresentable, brand semantic primitives, parse external data at boundaries, refuse to lie to the compiler, exhaust variants, derive from authoritative schemas. |
-
-## Other
-
-| Skill | What it does |
-| --- | --- |
-| [`ketchup`](../skills/ketchup/SKILL.md) | Catch the user up on everything in this chat since their last message, in plain words. Give each action item an executive summary with enough context to make the call. Use for /ketchup. |
 
 ## poteto-mode playbooks
 

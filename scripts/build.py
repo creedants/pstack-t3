@@ -29,7 +29,7 @@ RUNTIME_POINTER = (
     "Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, "
     "choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.\n\n"
 )
-NO_POINTER = re.compile(r"^(principle-|pstack-runtime$|bro$|unslop$|technical-writing$|typescript-best-practices$|tdd$)")
+NO_POINTER = re.compile(r"^(principle-|pstack-runtime$|bro$|ketchup$|unslop$|technical-writing$|typescript-best-practices$|tdd$)")
 
 
 def sha256(path):
