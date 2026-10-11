@@ -203,7 +203,7 @@ liveness: which dishes have reports, are running, or are over their timebox
 brigade.py [flags] startable
 ```
 
-waiting tickets in the order they should start, each with why it can or cannot start now; it starts nothing
+waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that would take the last idle worker is held back while any urgent or normal ticket is waiting, whether or not that ticket can start now; it starts nothing
 
 ## brigade.py hang
 

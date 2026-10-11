@@ -63,7 +63,7 @@ STANDINGS = {
     "unknown": StandingText("unknown", "unknown, no paths recorded"),
     "decision": StandingText("decisions", "decision for the owner"),
     "below": StandingText("below auto-start", "below auto-start"),
-    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
+    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle while an urgent or normal ticket waits"),
 }
 NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
@@ -1617,6 +1617,7 @@ def plan(tickets, running, cap, level, refusals, now):
     allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
+    higher_waits = any(ticket.priority != "low" for ticket in tickets)
     started = {}
     standings = []
     for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
@@ -1638,7 +1639,7 @@ def plan(tickets, running, cap, level, refusals, now):
             kind = "below"
         elif not idle:
             kind, why = "blocked", NO_WORKER
-        elif low and idle <= LOW_RESERVE:
+        elif low and higher_waits and idle <= LOW_RESERVE:
             kind = "reserve"
         else:
             idle -= 1
@@ -2658,6 +2659,8 @@ def parser():
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
     sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
+                                     "a low ticket that would take the last idle worker is held back while any urgent "
+                                     "or normal ticket is waiting, whether or not that ticket can start now; "
                                      "it starts nothing")
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")

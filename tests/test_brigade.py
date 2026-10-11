@@ -4845,17 +4845,94 @@ class BrigadeTest(unittest.TestCase):
             "T2 normal, 0m: blocked, waiting for an idle worker; b.txt",
         ]))
 
-    def test_startable_holds_back_a_free_low_ticket_that_would_take_the_last_idle_worker(self):
+    HELD_BACK = "held back, low tickets leave 1 worker idle while an urgent or normal ticket waits"
+
+    def test_startable_holds_back_a_free_low_ticket_from_the_last_idle_worker_while_a_normal_ticket_waits(self):
+        self.queue()
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, held back: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            f"T2 low, 0m: {self.HELD_BACK}; b.txt",
+        ]))
+
+    def test_startable_lists_a_free_low_ticket_as_startable_at_a_cap_of_one_when_no_urgent_or_normal_ticket_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 1, startable: 1",
+            "T1 low, 0m: startable; a.txt",
+            "  Tidy a",
+        ]))
+
+    def test_startable_lists_two_free_low_tickets_as_startable_at_a_cap_of_two_when_no_urgent_or_normal_ticket_waits(self):
         self.queue()
         self.brigade("set", "--autofire", "low")
         self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
         self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
         self.assertEqual(self.brigade("startable"), "\n".join([
             "workers: 0 of 2 running, 2 idle, auto-start: low",
-            "waiting tickets: 2, startable: 1, held back: 1",
+            "waiting tickets: 2, startable: 2",
             "T1 low, 0m: startable; a.txt",
             "  Tidy a",
-            "T2 low, 0m: held back, low tickets leave 1 worker idle; b.txt",
+            "T2 low, 0m: startable; b.txt",
+            "  Tidy b",
+        ]))
+
+    def test_startable_blocks_a_free_low_ticket_for_no_idle_worker_when_a_normal_ticket_takes_the_one_worker(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 low, 0m: blocked, waiting for an idle worker; b.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_a_normal_ticket_blocked_by_a_lease_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, blocked: 1, held back: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_an_urgent_ticket_with_no_paths_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix something", "--priority", "urgent")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, unknown: 1, held back: 1",
+            "T1 urgent, 0m: unknown, no paths recorded",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_a_normal_decision_ticket_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Pick a name", "--decision")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, decisions: 1, held back: 1",
+            "T1 normal, 0m: decision for the owner",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
         ]))
 
     def test_startable_flags_a_low_ticket_filed_more_than_seven_days_ago_and_no_other(self):
