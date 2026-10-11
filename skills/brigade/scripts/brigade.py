@@ -103,7 +103,45 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable", "next")
+# next sets this. A write or a land.py call then raises instead of changing a store.
+READ_ONLY = False
+# Kind, the store row, and whether the line leaves no store row. The Events table in the skill is the source.
+ADMIN_LINES = (
+    ("merged", "dish merged", False),
+    ("sent-back", "dish sent-back or blocked", False),
+    ("decision", "decision open", False),
+    ("failed", "none", True),
+    ("drained", "none", True),
+    ("report", "none", True),
+    ("blocked", "ticket blocked", False),
+    ("misrouted", "ticket moved", False),
+    ("reply", "none", True),
+    ("contest", "none", True),
+    ("appeal", "none", True),
+)
+UNSENT = tuple(kind for kind, _, _ in ADMIN_LINES)
+MESSAGE_ONLY = frozenset(kind for kind, _, only in ADMIN_LINES if only)
+DRAIN_LABELS = ("in progress", "in review", "passed review", "waiting to land")
+YES_OCCASIONS = {
+    "every-turn": frozenset(("user", "evening", "decision", "failure", "stuck", "merged", "sent-back", "blocked", "every-turn")),
+    "milestones": frozenset(("user", "evening", "decision", "failure", "stuck", "merged", "sent-back", "blocked")),
+    "digest": frozenset(("user", "evening", "decision", "stuck", "drained")),
+}
+CLOSE_OCCASIONS = frozenset(("evening", "decision", "user"))
+OCCASION_ORDER = ("user", "decision", "evening", "drained", "merged", "sent-back", "blocked", "stuck", "failure")
+ROUTINE_DETAILS = {
+    "unspecified": "unspecified",
+    "report-back": "worker report",
+    "checks": "pull request",
+    "merge": "merge",
+    "liveness": "liveness",
+    "intake": "intake",
+    "morning": "morning service",
+    "evening": "evening report",
+    "user": "user message",
+    "admin": "admin request",
+}
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -290,6 +328,7 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+        self._read_depth = 0
         # The warning texts this command has printed. One command makes one Restaurant for its own store.
         self.warned = set()
 
@@ -299,18 +338,25 @@ class Restaurant:
             self.warned.add(text)
             print(f"brigade: warning: {text}", file=sys.stderr)
 
-    def fence(self):
-        """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
+    def owner_block(self):
+        """The sentence fence raises, or None when this caller may use the store."""
         meta = self.meta
         if meta.get("generation") is None:
-            return
+            return None
         recorded = f"{meta.get('thread') or ''}@{meta['generation']}"
         if self.owner is None:
-            raise BrigadeError(f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status")
+            return f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status"
         if self.owner != recorded:
-            raise BrigadeError(f"owner {self.owner} is stale; this store is owned by {recorded}")
+            return f"owner {self.owner} is stale; this store is owned by {recorded}"
         if not meta.get("thread"):
-            raise BrigadeError("this store has no recorded thread; it was retired, and only set --thread --expect restarts it")
+            return "this store has no recorded thread; it was retired, and only set --thread --expect restarts it"
+        return None
+
+    def fence(self):
+        """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
+        block = self.owner_block()
+        if block:
+            raise BrigadeError(block)
 
     def land_owner(self):
         """The --owner words for land.py: this store's holder prefix at the caller's generation."""
@@ -343,25 +389,36 @@ class Restaurant:
                 self._lock_fd = None
 
     @contextmanager
-    def read_lock(self):
+    def read_lock(self, create=True):
         """A shared lock for a read, unless this process already holds this store's lock.
 
         Under its own lock a command reads its own tables and takes no second lock.
         Reading another store while holding a lock raises, so the caller reads that store first.
         No process holds two stores' locks.
+        create is false when a missing restaurant.lock must stay missing. A nested read takes no second lock.
         """
-        if self.dir.resolve() in HELD_LOCKS:
+        if self._read_depth or self.dir.resolve() in HELD_LOCKS:
             yield
             return
         if HELD_LOCKS:
             raise BrigadeError(
                 f"cannot read {self.dir} while holding {HELD_LOCKS[0]}'s lock; "
                 "read other stores before taking a lock")
-        fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        lock = self.dir / "restaurant.lock"
+        if not create and not lock.exists():
+            self._read_depth += 1
+            try:
+                yield
+            finally:
+                self._read_depth -= 1
+            return
+        fd = os.open(lock, os.O_RDWR | (os.O_CREAT if create else 0), 0o644)
+        self._read_depth += 1
         try:
             fcntl.flock(fd, fcntl.LOCK_SH)
             yield
         finally:
+            self._read_depth -= 1
             os.close(fd)
 
     def snapshot(self, table, offset=0):
@@ -397,6 +454,8 @@ class Restaurant:
     @contextmanager
     def guarded(self):
         """The one gate for every change this command makes: the store lock, then the owner fence, held through the change."""
+        if READ_ONLY:
+            raise BrigadeError("brigade: next is read-only")
         with self.locked():
             if not self.unfenced:
                 self.fence()
@@ -2317,13 +2376,19 @@ def section_lines(title, items, dishes, labels):
     return lines
 
 
-def report(restaurant, write=True):
-    meta = restaurant.meta
-    since = meta.get("lastReportAt") or ""
+def events_since(restaurant, since):
+    """The latest log row of each kind and id newer than since."""
     latest = {}
     for event in restaurant.rows("log.tsv"):
         if event["at"] > since:
             latest[(event["kind"], event["id"])] = event
+    return latest
+
+
+def report(restaurant, write=True):
+    meta = restaurant.meta
+    since = meta.get("lastReportAt") or ""
+    latest = events_since(restaurant, since)
     sections = {title: [] for title in SECTIONS.values()}
     for (kind, _), event in latest.items():
         title = SECTIONS.get((kind, event["state"]))
@@ -2491,6 +2556,8 @@ def blocked_waiting(restaurant):
 
 
 def land_result(project_root, *args):
+    if READ_ONLY:
+        raise BrigadeError("brigade: next is read-only")
     return subprocess.run([sys.executable, str(LAND), "--repo", str(project_root), *args],
                           capture_output=True, text=True)
 
@@ -3168,6 +3235,34 @@ def open_item_decisions(rows):
     return decisions
 
 
+def dish_progress(restaurant, dish, moment, held=False):
+    """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
+
+    The report file's mtime is read here. Call this under the store lock.
+    """
+    if held or dish["state"] != "in-progress":
+        return []
+    starts = attempt_starts(restaurant, dish)
+    if not dish["thread"] and len(starts) > 1:
+        return [f"{dish['id']}: in progress with no worker thread; launch a fresh worker"]
+    start = starts[-1]
+    minutes = int((moment - start).total_seconds() // 60)
+    timebox = int(dish.get("timebox") or 60)
+    report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
+    where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
+    written = datetime.fromtimestamp(report_path.stat().st_mtime, timezone.utc) if report_path.exists() else None
+    if written and written >= start:
+        if dish.get("reported") == "yes":
+            ago = int((moment - written).total_seconds() // 60)
+            if ago > OPEN_RUN_MINUTES:
+                return [f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})"]
+            return [f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})"]
+        return [f"{dish['id']}: report written, no report-back ({where})"]
+    if minutes > timebox:
+        return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
+    return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
+
+
 def watch(restaurant):
     rails = sibling_rails(restaurant)
     with restaurant.checked():
@@ -3178,32 +3273,10 @@ def watch(restaurant):
         decisions = open_item_decisions(restaurant.rows("86.tsv"))
         debts = {dish["id"]: round_debt(restaurant, dish) for dish in dishes}
         for dish in dishes:
-            if dish["state"] != "in-progress":
-                continue
-            attempt = progress.setdefault(dish["id"], [])
-            starts = attempt_starts(restaurant, dish)
-            if not dish["thread"] and len(starts) > 1:
-                attempt.append(f"{dish['id']}: in progress with no worker thread; launch a fresh worker")
-                continue
-            start = starts[-1]
-            minutes = int((moment - start).total_seconds() // 60)
-            timebox = int(dish.get("timebox") or 60)
-            report = restaurant.dir / "reports" / f"{dish['id']}.md"
-            where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
-            written = datetime.fromtimestamp(report.stat().st_mtime, timezone.utc) if report.exists() else None
-            if written and written >= start:
-                if dish.get("reported") == "yes":
-                    ago = int((moment - written).total_seconds() // 60)
-                    if ago > OPEN_RUN_MINUTES:
-                        attempt.append(f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})")
-                    else:
-                        attempt.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
-                else:
-                    attempt.append(f"{dish['id']}: report written, no report-back ({where})")
-            elif minutes > timebox:
-                attempt.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
-            else:
-                attempt.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+            held = bool(decisions.get(dish["id"]) or debts[dish["id"]])
+            sentences = dish_progress(restaurant, dish, moment, held)
+            if sentences:
+                progress[dish["id"]] = sentences
         lines = []
         for ticket in restaurant.rows("rail.tsv"):
             if ticket["state"] != "moved":
@@ -3228,7 +3301,7 @@ def watch(restaurant):
     for dish in dishes:
         decision = decisions.get(dish["id"])
         pending = debts[dish["id"]]
-        found = [] if decision or pending else progress.get(dish["id"], [])
+        found = list(progress.get(dish["id"], []))
         entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
         if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
@@ -3684,6 +3757,675 @@ def admin_sections(admin, since):
     return lines
 
 
+@dataclass(frozen=True)
+class Run:
+    argv: tuple
+
+
+@dataclass(frozen=True)
+class See:
+    words: str
+
+
+@dataclass(frozen=True)
+class If:
+    condition: str
+    action: str
+
+
+@dataclass(frozen=True)
+class Reply:
+    yes: bool
+    occasion: str
+    detail: str
+    close: tuple
+
+
+@dataclass(frozen=True)
+class Trigger:
+    wake: str
+    dish: str = ""
+    request: str = ""
+    verdict: str = ""
+    result: str = ""
+    question: bool = False
+
+
+@dataclass(frozen=True)
+class Debt:
+    dish: str
+    count: int
+    at: str
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """One read of the store. It holds no plan and no live restaurant."""
+
+    reporting: str
+    reports_to: str
+    last_report_at: str
+    owner_block: str
+    restaurant: str
+    intake: tuple
+    dishes: tuple
+    tickets: tuple
+    decisions: tuple
+    debts: tuple
+    round_counts: dict
+    events: tuple
+    counts: dict
+    progress: tuple
+    unrecorded: tuple
+    inbox: tuple
+    requests: tuple
+    passes: dict
+    blocked_since: tuple
+    moment: datetime
+
+
+def dish_by_id(snapshot, ident):
+    for dish in snapshot.dishes:
+        if dish["id"] == ident:
+            return dish
+    return None
+
+
+def open_for(snapshot, ident):
+    for row in snapshot.decisions:
+        if row["dish"] == ident:
+            return row
+    return None
+
+
+def lowest_id(idents):
+    return min(idents, key=lambda ident: int(ident[1:]))
+
+
+def crossing_send_back(restaurant, dish_id):
+    """The at of the send-back that reached ROUND_BUDGET, using the same rows round_count counts."""
+    verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+    settled = [row["at"] for row in verdicts if row["verdict"] == "pass"]
+    settled += [row["answered"] for row in restaurant.rows("86.tsv")
+                if row["dish"] == dish_id and row["kind"] == ROUND_KIND and row["state"] == "answered"]
+    since = max(settled, default="")
+    backs = [row["at"] for row in verdicts if row["verdict"] == "send-back" and row["at"] > since]
+    if len(backs) < ROUND_BUDGET:
+        return ""
+    return backs[ROUND_BUDGET - 1]
+
+
+def load_inbox(restaurant):
+    """Each json handoff take_tickets would read, as (name, ok, problem). A bad file is not a traceback."""
+    found = []
+    inbox = restaurant.dir / "inbox"
+    for path in sorted(inbox.glob("*.json")):
+        try:
+            raw = path.read_text()
+        except (OSError, UnicodeError) as error:
+            found.append((path.name, False, f"could not be read ({error})"))
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as error:
+            found.append((path.name, False, f"is not valid JSON ({error.msg})"))
+            continue
+        if not isinstance(data, dict):
+            found.append((path.name, False, "is not a JSON object"))
+            continue
+        missing = [key for key in ("handoff", "source", "ref", "summary") if key not in data]
+        if missing:
+            found.append((path.name, False, f"has no {missing[0]} key"))
+            continue
+        found.append((path.name, True, ""))
+    return tuple(found)
+
+
+def load_snapshot(restaurant, moment):
+    """Read the store under the caller's lock. The caller already refused a bad owner."""
+    read_labels(restaurant, EVERY_ROW)
+    meta = restaurant.meta
+    since = meta.get("lastReportAt") or ""
+    dishes = tuple(restaurant.rows("dishes.tsv"))
+    tickets = tuple(restaurant.rows("rail.tsv"))
+    decisions = tuple(row for row in restaurant.rows("86.tsv") if row["state"] == "open")
+    open_dishes = {row["dish"] for row in decisions if row["dish"]}
+    progress = []
+    for dish in dishes:
+        if dish["state"] != "in-progress" or dish.get("reported") != "yes":
+            continue
+        for sentence in dish_progress(restaurant, dish, moment, dish["id"] in open_dishes):
+            if "no report-back" in sentence:
+                continue
+            if sentence.startswith(f"{dish['id']}: reported ") or sentence.startswith(f"{dish['id']}: report written "):
+                progress.append((dish["id"], sentence))
+    debts = []
+    round_counts = {}
+    for dish in dishes:
+        round_counts[dish["id"]] = round_count(restaurant, dish["id"])
+        count = round_debt(restaurant, dish)
+        if count:
+            debts.append(Debt(dish["id"], count, crossing_send_back(restaurant, dish["id"])))
+    passes = {}
+    for dish in dishes:
+        sha = dish.get("sha") or ""
+        if dish["state"] == "queued" or sha:
+            ok, why = pass_check(restaurant, dish["id"], sha)
+            passes[dish["id"]] = (ok, why)
+    blocked_since = {}
+    for event in restaurant.rows("log.tsv"):
+        if event["kind"] == "ticket" and event["state"] == "blocked" and event["id"] not in blocked_since:
+            blocked_since[event["id"]] = event["at"]
+    pending = tuple((path.stem, path.read_text().strip()) for path in request_files(restaurant)[0])
+    block = restaurant.owner_block() or ""
+    return Snapshot(
+        reporting_of(meta), meta.get("reportsTo") or "", since, block, slug(meta["restaurant"]),
+        tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
+        tuple(events_since(restaurant, since).values()), counts(restaurant), tuple(progress),
+        tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
+        tuple(blocked_since.items()), moment)
+
+
+def inbox_ready(snapshot):
+    """True when inbox take would read every json handoff and there is something to take."""
+    if any(not ok for _, ok, _ in snapshot.inbox):
+        return False
+    return bool(snapshot.inbox) or bool(snapshot.requests)
+
+
+def accepted_argv(snapshot, argv):
+    """The argv when that command would exit 0 on this store. None becomes a see or an if."""
+    if snapshot.owner_block:
+        return None
+    if argv == ("inbox", "take"):
+        return argv if inbox_ready(snapshot) else None
+    if argv[:2] == ("ticket", "paths"):
+        return None
+    if len(argv) == 3 and argv[0] == "dish" and argv[2] == "--reported":
+        dish = dish_by_id(snapshot, argv[1])
+        if dish and dish["state"] == "in-progress" and dish.get("reported") != "yes":
+            return argv
+        return None
+    if len(argv) == 5 and argv[0] == "86" and argv[1] == "add" and argv[2] == "--dish" and argv[4] == "--round-budget":
+        debt = next((row for row in snapshot.debts if row.dish == argv[3]), None)
+        if debt and not open_for(snapshot, debt.dish) and debt.at > snapshot.last_report_at:
+            return argv
+        return None
+    if argv in (("close",), ("close", "--to-file")):
+        return argv
+    if len(argv) == 4 and argv[0] == "dish" and argv[2:] == ("--state", "merged"):
+        dish = dish_by_id(snapshot, argv[1])
+        passed = snapshot.passes.get(argv[1])
+        if dish and dish["state"] == "queued" and passed and passed[0]:
+            return argv
+        return None
+    return None
+
+
+def maybe_run(snapshot, argv):
+    accepted = accepted_argv(snapshot, argv)
+    if accepted is None:
+        return None
+    return Run(tuple(accepted))
+
+
+def routine_detail(trigger):
+    if trigger.wake == "review":
+        return trigger.verdict
+    return ROUTINE_DETAILS.get(trigger.wake, trigger.wake)
+
+
+def fresh_decision_ids(snapshot):
+    """New question ids, new decision-ticket ids, and dishes that owe a raise."""
+    since = snapshot.last_report_at
+    questions = [row["id"] for row in snapshot.decisions if row["at"] > since]
+    tickets = [row["id"] for row in snapshot.tickets
+               if row["state"] in ("waiting", "assigned") and row.get("decision") == "yes" and row["at"] > since]
+    dishes = [debt.dish for debt in snapshot.debts if debt.at > since and not open_for(snapshot, debt.dish)]
+    return questions, tickets, dishes
+
+
+def budget_reached(snapshot, trigger):
+    if trigger.wake != "review" or trigger.verdict not in ("send-back", "pass-with-edits"):
+        return False
+    if open_for(snapshot, trigger.dish):
+        return False
+    return snapshot.round_counts.get(trigger.dish, 0) + 1 >= ROUND_BUDGET
+
+
+def blocked_needs_user(snapshot, trigger, failure):
+    return (trigger.wake == "review" and trigger.verdict == "blocked" and failure != "fixable"
+            and not open_for(snapshot, trigger.dish))
+
+
+def decision_holds(snapshot, trigger, failure):
+    questions, tickets, dishes = fresh_decision_ids(snapshot)
+    if questions or tickets or dishes:
+        return True
+    if budget_reached(snapshot, trigger):
+        return True
+    return blocked_needs_user(snapshot, trigger, failure)
+
+
+def decision_detail(snapshot, trigger, failure):
+    questions, tickets, dishes = fresh_decision_ids(snapshot)
+    if budget_reached(snapshot, trigger) or blocked_needs_user(snapshot, trigger, failure):
+        dishes = [*dishes, trigger.dish]
+    if questions:
+        return lowest_id(questions)
+    if tickets:
+        return lowest_id(tickets)
+    if dishes:
+        return lowest_id(dishes)
+    return "decision"
+
+
+def merge_accepted(snapshot, trigger):
+    return trigger.wake == "merge" and maybe_run(snapshot, ("dish", trigger.dish, "--state", "merged")) is not None
+
+
+def is_drained(snapshot, trigger):
+    """The four counts are zero after an accepted merge claim, and the claim or a newer merged or dropped row exists."""
+    if not snapshot.dishes and not snapshot.tickets:
+        return False
+    counts = dict(snapshot.counts)
+    claimed = merge_accepted(snapshot, trigger)
+    if claimed:
+        counts["waiting to land"] = max(0, counts.get("waiting to land", 0) - 1)
+    if any(counts.get(label, 0) for label in DRAIN_LABELS):
+        return False
+    newer = any(event["kind"] == "dish" and event["state"] in ("merged", "dropped") for event in snapshot.events)
+    return bool(newer or claimed)
+
+
+def request_text(snapshot, trigger):
+    for ident, text in snapshot.requests:
+        if ident == trigger.request:
+            return text
+    return ""
+
+
+def from_user_request(snapshot, trigger):
+    return trigger.wake == "admin" and request_text(snapshot, trigger).startswith("from-user ")
+
+
+def note_unsent(holding, unsent, failure):
+    if not unsent or unsent == "misrouted":
+        return
+    if unsent == "blocked":
+        if failure != "stuck":
+            holding["failure"] = ("unsent blocked", False)
+        return
+    holding[unsent] = (f"unsent {unsent}", unsent in MESSAGE_ONLY)
+
+
+def held_occasions(snapshot, trigger, failure, unsent):
+    """The occasions this wake holds, earliest first. A forced pair is yes at every level."""
+    holding = {}
+    if trigger.wake == "user" or (from_user_request(snapshot, trigger) and not snapshot.reports_to):
+        detail = "question" if trigger.wake == "user" and trigger.question else "message"
+        holding["user"] = (detail, False)
+    if decision_holds(snapshot, trigger, failure):
+        holding["decision"] = (decision_detail(snapshot, trigger, failure), False)
+    if trigger.wake == "evening":
+        holding["evening"] = ("report", False)
+    if snapshot.reporting == "digest" and is_drained(snapshot, trigger):
+        holding["drained"] = ("batch", False)
+    if merge_accepted(snapshot, trigger):
+        holding["merged"] = (trigger.dish, False)
+    if trigger.wake == "review" and trigger.verdict in ("send-back", "pass-with-edits") and not budget_reached(snapshot, trigger):
+        holding["sent-back"] = (trigger.dish, False)
+    if trigger.wake == "review" and trigger.verdict == "blocked" and not blocked_needs_user(snapshot, trigger, failure):
+        if failure != "fixable":
+            holding["blocked"] = (trigger.dish, False)
+    if failure == "stuck":
+        holding["stuck"] = ("stuck", False)
+    if failure == "fixable" or (trigger.wake == "checks" and trigger.result == "fail" and not failure):
+        holding["failure"] = ("fixable" if failure == "fixable" else "fail", False)
+    note_unsent(holding, unsent, failure)
+    found = [(name, *holding[name]) for name in OCCASION_ORDER if name in holding]
+    for name, pair in holding.items():
+        if name not in OCCASION_ORDER:
+            found.append((name, *pair))
+    if snapshot.reporting == "every-turn" and not found:
+        found.append(("every-turn", "wake", False))
+    return found
+
+
+def occasion_yes(level, occasion, forced):
+    if forced:
+        return True
+    return occasion in YES_OCCASIONS[level]
+
+
+def reply_for(snapshot, trigger, failure, unsent):
+    """The one reply. The first held occasion wins the token."""
+    if snapshot.reports_to and not unsent:
+        close = ("close", "--to-file") if trigger.wake == "evening" or is_drained(snapshot, trigger) else None
+        if trigger.wake == "user":
+            return Reply(True, "user", "question" if trigger.question else "message", None)
+        return Reply(False, "reports to the executive admin", routine_detail(trigger), close)
+    found = held_occasions(snapshot, trigger, failure, unsent)
+    if not found:
+        return Reply(False, "routine", routine_detail(trigger), None)
+    occasion, detail, forced = found[0]
+    yes = occasion_yes(snapshot.reporting, occasion, forced)
+    yeses = [name for name, _, flag in found if occasion_yes(snapshot.reporting, name, flag)]
+    close = None
+    if snapshot.reporting == "digest" and yes:
+        close = ("close", "--to-file")
+    elif any(name in CLOSE_OCCASIONS for name in yeses):
+        close = ("close",)
+    return Reply(yes, occasion, detail, close)
+
+
+def wake_label(trigger):
+    if trigger.wake in ("report-back", "review", "checks", "merge"):
+        return f"{trigger.wake} {trigger.dish}"
+    if trigger.wake == "admin":
+        return f"admin {trigger.request}"
+    return trigger.wake
+
+
+def cue_line(cue):
+    if isinstance(cue, Run):
+        return "run " + " ".join(shlex.quote(word) for word in cue.argv)
+    if isinstance(cue, See):
+        return f"see {cue.words}"
+    return f"if {cue.condition}: {cue.action}"
+
+
+def format_sheet(snapshot, trigger, cues, reply):
+    lines = [f"wake: {wake_label(trigger)}", f"reporting: {snapshot.reporting}"]
+    if snapshot.reports_to:
+        lines.append(f"reports to: {snapshot.reports_to}")
+    lines.extend(cue_line(cue) for cue in cues)
+    if not cues:
+        lines.append("nothing else owed")
+    token = "yes" if reply.yes else "no"
+    lines.append(f"reply: {token} ({reply.occasion}: {reply.detail})")
+    return "\n".join(lines)
+
+
+def holder_of(snapshot, dish_id):
+    return f"{snapshot.restaurant}/{dish_id}"
+
+
+def land_follow(dish_id):
+    return If(f"land or watch reports {dish_id} landed", f"run next merge {dish_id}")
+
+
+def pause_if():
+    return If("the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker",
+              "run next again with --failure stuck")
+
+
+def pass_words(snapshot, dish):
+    branch = dish.get("branch") or "none"
+    sha = dish.get("sha") or "none"
+    lease = dish.get("lease") or "none"
+    return (f"File follow-ups from reports/{dish['id']}.md, write the pull request file, submit, and land. "
+            f"Holder {holder_of(snapshot, dish['id'])}, branch {branch}, sha {sha}, lease {lease}.")
+
+
+def merge_why(snapshot, dish):
+    if dish["state"] != "queued":
+        return f"{dish['id']} is {dish['state']}, not queued"
+    ok, why = snapshot.passes.get(dish["id"], (False, f"{dish['id']} has no review verdict for {dish.get('sha') or ''}"))
+    if not ok:
+        return f"only reviewed work lands: {why}"
+    return f"{dish['id']} cannot be marked merged"
+
+
+def housekeeping(dish):
+    thread = dish.get("thread") or "none"
+    branch = dish.get("branch") or "none"
+    pr = dish.get("pr") or "none"
+    return (f"Finish with the old worker for thread {thread}, branch {branch}, and pull request {pr} for {dish['id']}. "
+            f"If its run is still open, interrupt it and hang the attempt, then archive it. "
+            f"Remove the worktree and delete the branch after that. Do not claim they are already gone.")
+
+
+def prefix_cues(snapshot, trigger, failure):
+    wake, dish_id = trigger.wake, trigger.dish
+    if wake == "report-back":
+        cues = []
+        run = maybe_run(snapshot, ("dish", dish_id, "--reported"))
+        if run:
+            cues.append(run)
+        owes = any(debt.dish == dish_id and debt.at > snapshot.last_report_at for debt in snapshot.debts)
+        if owes or open_for(snapshot, dish_id):
+            return cues
+        cues.append(See(f"Read reports/{dish_id}.md and the diff. t3_thread_read the worker thread. "
+                        f"If that run is still open, interrupt it, hang the attempt, then review per Run a service step 6."))
+        return cues
+    if wake == "review":
+        if open_for(snapshot, dish_id):
+            return []
+        dish = dish_by_id(snapshot, dish_id)
+        files = [name for name, _kind in snapshot.unrecorded if name.startswith(f"{dish_id}-review")]
+        extra = f" Unrecorded review file {files[0]}." if files else ""
+        sha = dish.get("sha") or ""
+        if sha:
+            recorded = f"Record pass record for {dish_id} at sha {sha} with verdict {trigger.verdict}.{extra}"
+        else:
+            recorded = f"Record pass record for {dish_id} with verdict {trigger.verdict}. No sha is recorded.{extra}"
+        cues = [See(recorded)]
+        if trigger.verdict in ("send-back", "pass-with-edits"):
+            if budget_reached(snapshot, trigger) and not maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget")):
+                cues.append(If(f"{dish_id} reaches the round budget and no decision is open",
+                               f"run 86 add --dish {dish_id} --round-budget"))
+            cues.append(If(f"the old worker's wait for {dish_id} is terminal",
+                           f"run dish {dish_id} --state in-progress"))
+        elif trigger.verdict == "pass":
+            cues.append(See(pass_words(snapshot, dish)))
+        elif trigger.verdict == "blocked" and failure != "fixable":
+            cues.append(If(f"only the user can unblock {dish_id}", f"run 86 add --dish {dish_id}"))
+        return cues
+    if wake == "checks":
+        dish = dish_by_id(snapshot, dish_id)
+        cues = [See(f"Run land for holder {holder_of(snapshot, dish_id)}.")]
+        if dish.get("pr"):
+            cues.append(See(f"watch_pull_request {dish['pr']}."))
+        cues.append(land_follow(dish_id))
+        if trigger.result == "fail" and failure != "stuck" and snapshot.reporting == "digest":
+            cues.append(If("this thread cannot fix the failed check",
+                           f"run next checks {dish_id} --result fail --failure stuck"))
+        return cues
+    if wake == "merge":
+        dish = dish_by_id(snapshot, dish_id)
+        run = maybe_run(snapshot, ("dish", dish_id, "--state", "merged"))
+        cues = [run] if run else [See(merge_why(snapshot, dish))]
+        cues.append(See(housekeeping(dish)))
+        return cues
+    if wake == "liveness":
+        cues = [See("watch")]
+        for dish in snapshot.dishes:
+            if dish["state"] == "queued":
+                cues.append(land_follow(dish["id"]))
+        cues.append(pause_if())
+        cues.append(If("watch printed no work in progress", "run set --schedule liveness="))
+        return cues
+    if wake in ("intake", "morning"):
+        if snapshot.intake:
+            listed = ", ".join(snapshot.intake)
+            cues = [See(f"Intake sources are {listed}. File tickets from those sources with ticket add.")]
+        else:
+            cues = [See("No intake source is recorded. File a user request with ticket add when the message asks for work.")]
+        if wake == "morning":
+            cues.append(See("Morning service is not a report."))
+        return cues
+    if wake == "evening":
+        return [See("Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
+                    "Otherwise at most three sentences and then the close output.")]
+    if wake == "user":
+        first = "Answer the question first." if trigger.question else "Answer the user first."
+        return [See(first), See("File the work the message asks for with ticket add.")]
+    if wake == "admin":
+        text = request_text(snapshot, trigger)
+        cues = [See(f"{trigger.request}: {text}")]
+        if text.startswith("from-user "):
+            cues.append(See(f"Treat {trigger.request} as a message from the user. File its work with ticket add --request {trigger.request}. "
+                            f"Answer with the reply line."))
+        elif text.startswith("answer "):
+            cues.append(See(f"Run 86 answer for the decision {trigger.request} names."))
+        elif text.startswith("reports-to "):
+            cues.append(See(f"Run set --reports-to with the thread {trigger.request} names, or clear it when the thread is none."))
+        elif text.startswith("ruling "):
+            cues.append(See(f"Read the ruling {trigger.request} names. Carry it out when it is in force."))
+        else:
+            cues.append(See(f"{text} matches no row of the Requests table."))
+        cues.append(If(f"the action for {trigger.request} is done", f"run inbox done {trigger.request}"))
+        return cues
+    return []
+
+
+def older_than_hour(at, moment):
+    try:
+        stamp = datetime.fromisoformat(at)
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return moment - stamp > timedelta(hours=1)
+
+
+def admin_sends(snapshot, trigger, failure, after_close):
+    """Owed event lines for the admin thread. report and drained follow the close cue."""
+    if not snapshot.reports_to:
+        return []
+    thread = snapshot.reports_to
+    name = snapshot.restaurant
+
+    def send(line):
+        return See(f"t3_thread_send {thread} mode queue: {line}")
+
+    if after_close:
+        cues = []
+        if trigger.wake == "evening":
+            cues.append(send(f"report {name}: the path close --to-file prints"))
+        if is_drained(snapshot, trigger):
+            cues.append(send(f"drained {name}: the path close --to-file prints"))
+        return cues
+    cues = []
+    if merge_accepted(snapshot, trigger):
+        dish = dish_by_id(snapshot, trigger.dish)
+        title = dish.get("summary") or trigger.dish
+        pr = f" [{dish['pr']}]" if dish.get("pr") else ""
+        cues.append(send(f"merged {name}: {title}{pr}"))
+    if trigger.wake == "review" and trigger.verdict in ("send-back", "pass-with-edits", "blocked"):
+        cues.append(send(f"sent-back {name} {trigger.dish}: {trigger.verdict}"))
+    if decision_holds(snapshot, trigger, failure):
+        questions, _, _ = fresh_decision_ids(snapshot)
+        if questions:
+            row = next(item for item in snapshot.decisions if item["id"] == lowest_id(questions))
+            cues.append(send(f"decision {name} {row['id']}: {row['question']} Options: {row['options']}. Default: {row['default']}."))
+        else:
+            cues.append(send(f"decision {name}: sent after 86 add prints the id"))
+    if failure == "stuck":
+        cues.append(send(f"failed {name}: cannot fix this"))
+    for ident, at in snapshot.blocked_since:
+        if older_than_hour(at, snapshot.moment):
+            cues.append(send(f"blocked {name} {ident}: waiting since {at}. Lease ids are not in the store."))
+    if from_user_request(snapshot, trigger):
+        cues.append(send(f"reply {name}: sent after the answer"))
+    return cues
+
+
+def tail_cues(snapshot, trigger, failure, reply):
+    named = {trigger.dish} if trigger.dish and trigger.wake in ("report-back", "review", "checks", "merge") else set()
+    if trigger.wake == "liveness":
+        named.update(dish["id"] for dish in snapshot.dishes if dish["state"] == "queued")
+    cues = []
+    for row in snapshot.decisions:
+        if not row["dish"]:
+            cues.append(See(f"{row['id']}: {row['question']}. Launch nothing until 86 answer {row['id']}."))
+            continue
+        cues.append(See(f"{row['dish']}: open decision {row['id']}: {row['question']}; "
+                        f"launch no worker or verifier until 86 answer {row['id']}"))
+    held = {row["dish"] for row in snapshot.decisions if row["dish"]}
+    for dish_id, sentence in snapshot.progress:
+        if dish_id not in named and dish_id not in held:
+            cues.append(See(sentence))
+    seen = set()
+    for debt in snapshot.debts:
+        run = maybe_run(snapshot, ("86", "add", "--dish", debt.dish, "--round-budget"))
+        if run and run.argv not in seen:
+            seen.add(run.argv)
+            cues.append(run)
+    for dish in snapshot.dishes:
+        if dish["state"] != "passed" or dish["id"] in named:
+            continue
+        cues.append(See(f"{dish['id']}: passed, not submitted"))
+        if dish.get("sha"):
+            cues.append(If(f"the landing queue has an entry for {dish['id']}",
+                           f"run land.py status --holder {holder_of(snapshot, dish['id'])} --sha {dish['sha']}"))
+    queued = [dish for dish in snapshot.dishes if dish["state"] == "queued"]
+    for dish in queued:
+        if dish["id"] in named:
+            continue
+        cues.append(See(f"Run land for {dish['id']}."))
+        cues.append(land_follow(dish["id"]))
+    claiming = trigger.dish if merge_accepted(snapshot, trigger) else ""
+    for event in snapshot.events:
+        if event["kind"] == "dish" and event["state"] == "merged" and event["id"] != claiming:
+            cues.append(See(f"{event['id']} merged and not closed out"))
+    if any(row["state"] == "waiting" for row in snapshot.tickets):
+        cues.append(See("Run startable and take the first ticket it prints as startable, "
+                        "with every ticket it prints as rides with that ticket."))
+    if queued and trigger.wake != "liveness":
+        cues.append(pause_if())
+    cues.extend(admin_sends(snapshot, trigger, failure, False))
+    if reply.close:
+        cues.append(Run(reply.close))
+    cues.extend(admin_sends(snapshot, trigger, failure, True))
+    return cues
+
+
+def inbox_cues(snapshot):
+    bad = [(name, problem) for name, ok, problem in snapshot.inbox if not ok]
+    if bad:
+        return [See(f"inbox/{name} {problem}, so inbox take would stop") for name, problem in bad]
+    run = maybe_run(snapshot, ("inbox", "take"))
+    return [run] if run else []
+
+
+def compile_sheet(snapshot, trigger, failure, unsent):
+    """The cues for this wake. The reply's close is the last command, before a report or drained line."""
+    reply = reply_for(snapshot, trigger, failure, unsent)
+    return [*inbox_cues(snapshot), *prefix_cues(snapshot, trigger, failure), *tail_cues(snapshot, trigger, failure, reply)]
+
+
+def trigger_from(args):
+    return Trigger(args.wake or "unspecified", getattr(args, "dish", "") or "", getattr(args, "request", "") or "",
+                   getattr(args, "verdict", "") or "", getattr(args, "result", "") or "", bool(getattr(args, "question", False)))
+
+
+def next_text(restaurant, args):
+    """Print the steps this wake owes and one reply. The flag makes a write or land.py raise."""
+    global READ_ONLY
+    READ_ONLY = True
+    try:
+        trigger = trigger_from(args)
+        failure = getattr(args, "failure", None)
+        unsent = getattr(args, "unsent", None)
+        with restaurant.read_lock(create=False):
+            block = restaurant.owner_block()
+            if block:
+                raise BrigadeError(block)
+            if trigger.dish:
+                restaurant.find("dishes.tsv", trigger.dish)
+            if trigger.request:
+                pending = {path.stem for path in request_files(restaurant)[0]}
+                if trigger.request not in pending:
+                    raise BrigadeError(f"no request {trigger.request} in the inbox")
+            snapshot = load_snapshot(restaurant, datetime.now(timezone.utc))
+        reply = reply_for(snapshot, trigger, failure, unsent)
+        return format_sheet(snapshot, trigger, compile_sheet(snapshot, trigger, failure, unsent), reply)
+    finally:
+        READ_ONLY = False
+
+
 def parser():
     top = argparse.ArgumentParser(prog="brigade.py", description=__doc__.splitlines()[0])
     top.add_argument("--store", help="store root (default $BRIGADE_STORE or $XDG_STATE_HOME/pstack-t3/brigade)")
@@ -3975,6 +4717,37 @@ def parser():
     p = sub.add_parser("walk", help="every restaurant's counts and open decisions, grouped by repository")
     p.add_argument("--stale-hours", type=float, default=24)
     p.add_argument("--repo", help="print only this repository")
+
+    p = sub.add_parser("next", help="print the steps this wake owes and whether the wake is a reply")
+    p.add_argument("--failure", choices=("fixable", "stuck"), default=None,
+                   help="fixable or stuck, for a failure this wake already knows")
+    p.add_argument("--unsent", choices=UNSENT, default=None,
+                   help="a line to the executive admin that did not send")
+    wakes = p.add_subparsers(dest="wake")
+
+    def wake_parser(name, help_text):
+        parser = wakes.add_parser(name, help=help_text)
+        parser.add_argument("--failure", choices=("fixable", "stuck"), default=argparse.SUPPRESS,
+                            help="fixable or stuck, for a failure this wake already knows")
+        parser.add_argument("--unsent", choices=UNSENT, default=argparse.SUPPRESS,
+                            help="a line to the executive admin that did not send")
+        return parser
+
+    wake_parser("report-back", "a worker report arrived for this dish").add_argument("dish")
+    review = wake_parser("review", "a review verdict for this dish")
+    review.add_argument("dish")
+    review.add_argument("--verdict", choices=VERDICTS, required=True)
+    checks = wake_parser("checks", "a pull request check for this dish")
+    checks.add_argument("dish")
+    checks.add_argument("--result", choices=("pass", "fail"), required=True)
+    wake_parser("merge", "the queue may have landed this dish").add_argument("dish")
+    wake_parser("liveness", "the liveness schedule woke")
+    wake_parser("intake", "the intake schedule woke")
+    wake_parser("morning", "the morning service woke")
+    wake_parser("evening", "the evening report is due")
+    user = wake_parser("user", "a message from the user")
+    user.add_argument("--question", action="store_true", help="the message asks a question")
+    wake_parser("admin", "a request from the executive admin").add_argument("request")
     return top
 
 
@@ -4087,6 +4860,8 @@ def run(argv):
         raise BrigadeError("the executive admin routes work and never runs it")
     if not admin and args.command in ADMIN_COMMANDS:
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
+    if args.command == "next":
+        return next_text(restaurant, args)
     if args.command == "sync":
         # The admin's lock is taken only after each coordinator's read lock is released, so this runs outside checked.
         text, failures = sync(restaurant)

@@ -1,0 +1,1 @@
+- `brigade.py next` reads the store and prints the steps the wake owes, then one `reply:` line. It writes nothing.

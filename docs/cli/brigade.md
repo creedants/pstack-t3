@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`.
 
 ## brigade.py open
 
@@ -582,3 +582,156 @@ every restaurant's counts and open decisions, grouped by repository
 | --- | --- | --- | --- | --- |
 | `--stale-hours STALE_HOURS` |  |  | `24` |  |
 | `--repo REPO` |  |  |  | print only this repository |
+
+## brigade.py next
+
+```text
+brigade.py [flags] next [--failure FAILURE] [--unsent UNSENT] <wake>
+```
+
+print the steps this wake owes and whether the wake is a reply
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` |  | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` |  | a line to the executive admin that did not send |
+
+`<wake>` is one of `report-back`, `review`, `checks`, `merge`, `liveness`, `intake`, `morning`, `evening`, `user`, `admin`.
+
+## brigade.py next report-back
+
+```text
+brigade.py [flags] next [flags] report-back [--failure FAILURE] [--unsent UNSENT] dish
+```
+
+a worker report arrived for this dish
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `dish` | yes |  |  |  |
+
+## brigade.py next review
+
+```text
+brigade.py [flags] next [flags] review [--failure FAILURE] [--unsent UNSENT] --verdict VERDICT dish
+```
+
+a review verdict for this dish
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `dish` | yes |  |  |  |
+| `--verdict VERDICT` | yes | `pass`, `send-back`, `blocked`, `pass-with-edits` |  |  |
+
+## brigade.py next checks
+
+```text
+brigade.py [flags] next [flags] checks [--failure FAILURE] [--unsent UNSENT] --result RESULT dish
+```
+
+a pull request check for this dish
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `dish` | yes |  |  |  |
+| `--result RESULT` | yes | `pass`, `fail` |  |  |
+
+## brigade.py next merge
+
+```text
+brigade.py [flags] next [flags] merge [--failure FAILURE] [--unsent UNSENT] dish
+```
+
+the queue may have landed this dish
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `dish` | yes |  |  |  |
+
+## brigade.py next liveness
+
+```text
+brigade.py [flags] next [flags] liveness [--failure FAILURE] [--unsent UNSENT]
+```
+
+the liveness schedule woke
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+
+## brigade.py next intake
+
+```text
+brigade.py [flags] next [flags] intake [--failure FAILURE] [--unsent UNSENT]
+```
+
+the intake schedule woke
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+
+## brigade.py next morning
+
+```text
+brigade.py [flags] next [flags] morning [--failure FAILURE] [--unsent UNSENT]
+```
+
+the morning service woke
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+
+## brigade.py next evening
+
+```text
+brigade.py [flags] next [flags] evening [--failure FAILURE] [--unsent UNSENT]
+```
+
+the evening report is due
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+
+## brigade.py next user
+
+```text
+brigade.py [flags] next [flags] user [--failure FAILURE] [--unsent UNSENT] [--question]
+```
+
+a message from the user
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `--question` |  |  |  | the message asks a question |
+
+## brigade.py next admin
+
+```text
+brigade.py [flags] next [flags] admin [--failure FAILURE] [--unsent UNSENT] request
+```
+
+a request from the executive admin
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
+| `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
+| `request` | yes |  |  |  |
