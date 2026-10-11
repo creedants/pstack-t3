@@ -275,7 +275,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 
 ### Never cut
 
-- **Tests and the build gate.** The worker runs `python3 scripts/run_tests.py` and `python3 scripts/build.py` through `land.py slot --`. The queue reruns them.
+- **Tests and the build gate.** The worker runs `python3 scripts/run_tests.py` and `python3 scripts/build.py` through `land.py slot --`. The queue runs its configured checks.
 - **The landing queue's checks.** `land.py` spends no model usage. Light mode has nothing to gain there.
 - **One review by another model family at every head SHA.** [The gate review](#the-gate-review) defines it for brigade and for standalone playbooks.
 - **Re-review of every fix attempt over its whole diff.** Three later rounds caught a real bug that round 1 missed in the same diff (D42, D55, D61). A fix attempt's review reads the full diff against trunk, not only the delta.
