@@ -482,6 +482,13 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
 
+    def assert_refused_choice(self, output, flag, value, choices):
+        refusal = f"argument {flag}: invalid choice: '{value}'"
+        self.assertIn(refusal, output)
+        after = output[output.index(refusal) + len(refusal):]
+        for choice in choices:
+            self.assertIn(choice, after)
+
     def table_row(self, directory, table, ident):
         lines = [line for line in (directory / table).read_text().splitlines() if line]
         keys = lines[0].split("\t")
@@ -4351,9 +4358,11 @@ class BrigadeTest(unittest.TestCase):
     def test_ticket_add_and_ticket_set_refuse_a_priority_outside_urgent_normal_and_low(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "a")
-        choice = "argument --priority: invalid choice: 'high' (choose from urgent, normal, low)"
-        self.assertIn(choice, self.brigade("ticket", "add", "--summary", "b", "--priority", "high", ok=False))
-        self.assertIn(choice, self.brigade("ticket", "set", "T1", "--priority", "high", ok=False))
+        choices = ("urgent", "normal", "low")
+        self.assert_refused_choice(
+            self.brigade("ticket", "add", "--summary", "b", "--priority", "high", ok=False), "--priority", "high", choices)
+        self.assert_refused_choice(
+            self.brigade("ticket", "set", "T1", "--priority", "high", ok=False), "--priority", "high", choices)
         self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] a")
 
     def test_a_ticket_with_an_empty_priority_cell_reads_urgent_from_upstream_low_from_report_and_normal_from_other_sources(self):
@@ -4497,8 +4506,8 @@ class BrigadeTest(unittest.TestCase):
     def test_set_autofire_refuses_a_value_outside_off_urgent_normal_and_low(self):
         self.open()
         before = (self.at / "restaurant.json").read_bytes()
-        self.assertIn("argument --autofire: invalid choice: 'high' (choose from off, urgent, normal, low)",
-                      self.brigade("set", "--autofire", "high", ok=False))
+        self.assert_refused_choice(self.brigade("set", "--autofire", "high", ok=False), "--autofire", "high",
+                                   ("off", "urgent", "normal", "low"))
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
 
     def test_a_missing_or_empty_autofire_key_reads_as_normal(self):
