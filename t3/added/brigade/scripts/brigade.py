@@ -798,11 +798,16 @@ NOT_A_REPORT = {
 }
 EDITS_HEADING = "## Edits"
 EDIT_HEADING = re.compile(r"### Edit (\S.*)")
-FENCE_OPEN = re.compile(r"(`{3,})[ \t]*[^\s`]*[ \t]*")
+FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
 FILE_LINE = re.compile(r"File: `([^`]+)`")
+# Lines outside a fence that parse_edits does not read and Markdown can read as structure. Each key is a key of EDITS_REFUSED.
+UNREAD = (
+    ("fence", re.compile(r" {1,3}(?:`{3}|~{3})")),
+)
 # Why a review report's edits are refused. Each value finishes the words `reports/<name>`.
 EDITS_REFUSED = {
     "none": " holds no edit under a ## Edits heading",
+    "fence": ": line {line} has three backticks or tildes after one to three spaces; start each fence at the first column",
     "parts": ": Edit {number} needs a File line, then Old text with a fenced block, then New text with a fenced block",
     "empty": ": Edit {number} has an empty old text",
     "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
@@ -897,20 +902,29 @@ def report_parts(lines):
     """A report's lines as (kind, text) parts.
 
     A `line` is one line outside a fence. A `fence` is the text between a fence's two lines.
+    A fence opens at a line that starts at the first column with three or more backticks and holds no other backtick,
+    or that starts there with three or more tildes.
+    It closes at the next line that is at most three spaces, at least as many of the same character, and then only
+    spaces and tabs.
     A fence that never closes ends the parts and gives none.
+    Raises EditsRefused for the first line outside a fence that an UNREAD pattern matches at its start.
     """
     parts, index = [], 0
     while index < len(lines):
         line = lines[index]
         opened = FENCE_OPEN.fullmatch(line)
         if opened:
-            closing = re.compile(f"`{{{len(opened.group(1))},}}")
+            run = opened.group(1) or opened.group(2)
+            closing = re.compile(f" {{0,3}}{run[0]}{{{len(run)},}}[ \t]*")
             close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
             if close is None:
                 break
             parts.append(("fence", "\n".join(lines[index + 1:close])))
             index = close + 1
             continue
+        unread = next((key for key, pattern in UNREAD if pattern.match(line)), None)
+        if unread:
+            raise EditsRefused(EDITS_REFUSED[unread].format(line=index + 1))
         parts.append(("line", line))
         index += 1
     return parts
