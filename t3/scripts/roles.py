@@ -98,9 +98,11 @@ def effective_mode(config, brief=None, session=None, coordinator=None):
 
 
 # roles.py takes a role and no purpose, so every use of verifiers keeps its level, not only a gate review.
+# review backups seats the panel that stands in for a verifiers seat, so it keeps its level too.
 def seat_budget(budget, mode, role):
-    """Light caps only a default budget, and never the verifiers role. An explicit budget wins both ways."""
-    return "small" if mode == "light" and budget == "default" and role != PANEL_GATE_ROLE else budget
+    """Light caps only a default budget, and never verifiers or review backups. An explicit budget wins both ways."""
+    capped = mode == "light" and budget == "default" and role not in (PANEL_GATE_ROLE, PANEL_BACKUP_ROLE)
+    return "small" if capped else budget
 
 
 NO_CATALOG_INFO = (
