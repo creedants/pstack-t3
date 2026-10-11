@@ -849,19 +849,20 @@ def frozen_label(ticket, held):
     return f"{ticket['id']} is a ticket of {item['id']}, which is {item['state']}" if item else ""
 
 
-def read_label(table, row, goals, faults, frozen):
-    """One row's Label. `frozen` is frozen_label for a row of rail.tsv, and None for a row of dishes.tsv."""
+def read_label(row, goals, faults, by_hand):
+    """One row's Label. `by_hand` is the end of the warning for a bad cell of a row whose cells ticket set does not change now.
+
+    It is "" for any other row, and the warning then ends with the ticket set line to run.
+    """
     ident = row["id"]
     kind = row["kind"] if row["kind"] in KINDS else ""
     goal = row["goal"] if row["goal"] in goals else ""
-    by_hand = (f"no command changes this cell; correct it in {table} by hand" if frozen is None
-               else f"ticket set does not change this cell while {frozen}; correct it in {table} by hand")
     if row["kind"] and not kind:
         faults.append((ident, f"{ident} has kind {row['kind']!r}, which is not {one_of(KINDS)}; it reads as no kind; "
-                              + (by_hand if frozen != "" else f"run ticket set {ident} --kind <kind>")))
+                              + (by_hand or f"run ticket set {ident} --kind <kind>")))
     if row["goal"] and not goal:
         faults.append((ident, f"{ident} names goal {row['goal']!r}, which has no row in goals.tsv; it reads as unassigned; "
-                              + (by_hand if frozen != "" else f"run ticket set {ident} --goal G<n> or --no-goal")))
+                              + (by_hand or f"run ticket set {ident} --goal G<n> or --no-goal")))
     return Label(kind, goal)
 
 
@@ -888,9 +889,13 @@ def read_labels(restaurant):
         repeated = (f"goals.tsv has more than one row with id {ident}; the first is the goal and the others are not read; "
                     "remove the others from goals.tsv by hand")
         faults.append((ident, repeated if ident else "goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand"))
-    held = in_flight_tickets(restaurant)
-    tickets = {row["id"]: read_label("rail.tsv", row, goals, faults, frozen_label(row, held)) for row in restaurant.rows("rail.tsv")}
-    items = {row["id"]: read_label("dishes.tsv", row, goals, faults, None) for row in restaurant.rows("dishes.tsv")}
+    held, tickets = in_flight_tickets(restaurant), {}
+    for row in restaurant.rows("rail.tsv"):
+        frozen = frozen_label(row, held)
+        tickets[row["id"]] = read_label(row, goals, faults, frozen and f"ticket set does not change this cell while {frozen}; "
+                                                                       "correct it in rail.tsv by hand")
+    items = {row["id"]: read_label(row, goals, faults, "no command changes this cell; correct it in dishes.tsv by hand")
+             for row in restaurant.rows("dishes.tsv")}
     return Labels(goals, tickets, items, tuple(faults))
 
 
