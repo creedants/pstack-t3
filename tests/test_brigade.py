@@ -5708,8 +5708,7 @@ class BrigadeTest(unittest.TestCase):
         self.record_edits(reviewed, "--edits", "D1-review-1.md")
         self.quoting_report("   ````", "   ````")
         head = self.head_commit(self.QUOTED_APPLIED)
-        refusal = ("brigade: reports/D1-review-1.md: line 5 has three backticks or tildes after one to three spaces; "
-                   "start each fence at the first column")
+        refusal = "brigade: reports/D1-review-1.md: line 5 " + self.NESTED_FENCE
         self.assertEqual(self.verify(reviewed, head), (1, "", refusal))
         self.assertEqual(self.edits_rows(), [])
         self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
@@ -5717,6 +5716,8 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.record_edits(head, "--edits", "D1-review-1.md", ok=False), refusal)
         self.assertEqual(len(self.pass_rows()), 1)
 
+    NESTED_FENCE = ("has three backticks or tildes after nothing but indentation, block quote marks, and list marks; "
+                    "start each fence at the first column")
     PARTS_REFUSAL = ("brigade: reports/D1-review-1.md: Edit {} must hold, once each and in this order, a File line, "
                      "an Old text line, a fenced block, a New text line, and a fenced block")
 
@@ -5740,21 +5741,39 @@ class BrigadeTest(unittest.TestCase):
                                  "brigade: reports/D1-review-1.md: line 3 starts like a heading and is not one to six #, one space, "
                                  "and the text, from the first column with nothing after the text")
 
-    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_directly_below_a_line_of_text(self):
+    def test_pass_record_refuses_a_report_with_three_backticks_or_tildes_after_indentation_block_quote_marks_or_list_marks(self):
         self.fired_bug_fix()
-        for underline in ("---", "=====", " -", "=  "):
-            with self.subTest(underline=underline):
-                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\nEdits\n{underline}\n\n{self.section()}"),
-                                 "brigade: reports/D1-review-1.md: line 4 is only = or only - directly below a line of text, "
-                                 "and Markdown can read the two as a heading")
+        for opening in (" ```", "   ~~~~", "    ```", "\t~~~", "> ```", ">```", "- ```text", "1. ~~~", "  + ```", "> - ```", "2)\t~~~"):
+            with self.subTest(opening=opening):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{opening}\nquoted\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 " + self.NESTED_FENCE)
 
-    def test_pass_record_refuses_a_report_with_a_line_that_starts_with_an_angle_bracket_and_then_a_letter_a_slash_or_a_mark(self):
+    def test_pass_record_refuses_a_report_with_a_fence_that_no_later_line_closes(self):
+        self.fired_bug_fix()
+        for opening, last in (("````text", "```"), ("~~~", "```"), ("```", "``"), ("```", "    ```"), ("~~~~", "~~~~ ~")):
+            with self.subTest(opening=opening, last=last):
+                body = (f"Verdict: pass with edits\n\n{self.section()}\n{opening}\nThe sentence then reads so.\n{last}\n\n"
+                        "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n")
+                self.assertEqual(self.refused_edits(body),
+                                 "brigade: reports/D1-review-1.md: line 21 opens a fence that no later line closes")
+
+    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_after_its_nesting_and_below_a_line_that_is_not_blank(self):
+        self.fired_bug_fix()
+        for above, underline in (("Edits", "---"), ("Edits", "====="), ("Edits", " -"), ("Edits", "=  "), ("> Edits", "> ---"),
+                                 ("> Edits", ">="), ("- Edits", "  ==="), ("+ Edits", "\t-"), ("1. Edits", "   --- \t"),
+                                 ("> - Edits", "  >   ="), ("Edits", "- -")):
+            with self.subTest(above=above, underline=underline):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{above}\n{underline}\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 4 is only = or only - once its indentation, block quote "
+                                 "marks, list marks, and trailing spaces and tabs are removed, and the line above it is not blank")
+
+    def test_pass_record_refuses_a_report_with_a_line_that_starts_with_an_angle_bracket_and_then_an_ascii_letter_a_slash_an_exclamation_mark_or_a_question_mark(self):
         self.fired_bug_fix()
         for line in ("<details>", "   <!--", "</summary>", "<?php", "<item>: edits verified"):
             with self.subTest(line=line):
                 self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{line}\n{self.section()}"),
-                                 "brigade: reports/D1-review-1.md: line 3 starts, after at most three spaces, with < and then a "
-                                 "letter, /, !, or ?, and Markdown can read it as the start of an HTML block")
+                                 "brigade: reports/D1-review-1.md: line 3 starts, after at most three spaces, with < and then an "
+                                 "ASCII letter, /, !, or ?")
 
     def test_pass_record_refuses_a_report_with_two_headings_whose_text_is_edits(self):
         self.fired_bug_fix()
@@ -5799,6 +5818,25 @@ class BrigadeTest(unittest.TestCase):
                 self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}"),
                                  self.PARTS_REFUSAL.format(1))
 
+    def test_pass_record_refuses_an_edit_with_a_file_old_text_or_new_text_line_after_nesting_or_a_label_line_that_ends_in_whitespace(self):
+        self.fired_bug_fix()
+        for more in ("  File: `src/other.txt`", "1. File: `src/other.txt`, line 2", "> Old text:", "- New text:", "\tOld text:",
+                     "Old text: ", "New text:\t", "   > - New text:  "):
+            with self.subTest(more=more):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}\n"),
+                                 "brigade: reports/D1-review-1.md: Edit 1 has a File, Old text, or New text line after "
+                                 "indentation, a block quote mark, or a list mark, or an Old text or New text line that ends in "
+                                 "whitespace")
+
+    @unittest.skipIf(os.geteuid() == 0, "the superuser reads a file with no read permission")
+    def test_pass_record_refuses_a_report_that_cannot_be_read(self):
+        self.fired_bug_fix()
+        report = self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + self.section())
+        report.chmod(0)
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md cannot be read: Permission denied")
+        self.assertEqual(self.pass_rows(), [])
+
     def test_pass_record_refuses_a_report_that_holds_a_carriage_return(self):
         self.fired_bug_fix()
         report = "Verdict: pass with edits\n\n" + self.section()
@@ -5811,10 +5849,11 @@ class BrigadeTest(unittest.TestCase):
         report = ("Verdict: pass with edits\n\n" + self.section()).encode()
         self.assertEqual(self.refused_edits(report.replace(b"world", b"w\xf6rld")), "brigade: reports/D1-review-1.md is not UTF-8")
 
-    def test_edits_verify_reads_tilde_fences_and_closing_fences_with_spaces_around_them_below_notes_that_parse_edits_reads_as_text(self):
+    def test_edits_verify_reads_tilde_fences_and_closing_fences_with_spaces_around_them_below_notes_that_report_parts_does_not_refuse(self):
         reviewed = self.edits_store()
-        notes = ("## Notes\n\n> ```\n> quoted\n> ```\n\n- item\n\n      ```\n      nested\n      ```\n\n\t~~~\n\n    <details>\n\n"
-                 "< 3 items\n\n---\n\n## Rule\n---\n\n```\ncode\n```\n---\n\n#hashtag\n\n####### seven\n\n")
+        notes = ("## Notes\n\n> quoted\n\n- item\n\n      nested\n\n-```\n\n```a`b\n\n``\n\n    <details>\n\n<\u00e9\n\n"
+                 "< 3 items\n\n---\n\n## Rule\n---\n\n```\ncode\n```\n---\n\n- File: `src/other.txt`\n\n  Old text:\n\n"
+                 "#hashtag\n\n####### seven\n\n")
         self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + notes + "## Edits\n\n"
                          "### Edit 1\n\nFile: `src/greeting.txt`\n\nOld text:\n\n~~~\nhelo\n~~~\n\n"
                          "New text:\n\n~~~~text one `two`\nhello\n  ~~~~~ \t\n\n"
