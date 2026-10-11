@@ -9,13 +9,16 @@ ROOT = Path(__file__).resolve().parents[1]
 GROUPS = [
     ("Entry point", lambda name: name in {"poteto-help", "poteto-mode"}),
     ("Multi-model workflows", lambda name: name in {"interrogate", "swarm", "arena", "architect", "reflect"}),
-    ("Understand", lambda name: name in {"how", "why", "teach", "recall", "blast-radius", "bro"}),
+    ("Understand", lambda name: name in {"how", "why", "teach", "recall", "blast-radius", "bro", "ketchup"}),
     ("Plan and run long work", lambda name: name in {"brigade", "brigade-admin", "landing", "figure-it-out", "show-me-your-work"}),
     ("Verify", lambda name: name in {"tdd", "create-verification-skill", "maintain-verification-skill", "benchmark-checklist"}),
     ("Write and clean", lambda name: name in {"unslop", "technical-writing", "no-comments", "typescript-best-practices"}),
     ("Setup and authoring", lambda name: name in {"setup-pstack", "pstack-runtime", "pstack-author-skill", "automate-me", "make-bot-ui", "correct"}),
     ("Principles", lambda name: name.startswith("principle-")),
 ]
+BULLET = re.compile(r"^- \*\*(.+?)\.\*\* (.+)$", re.M)
+# A bullet gives its file as a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " lead-in.
+GIVEN_FILE = re.compile(r"\s*(?:File: )?`(playbooks/[\w-]+\.md)`\.?$")
 
 
 def description(skill_md):
@@ -24,16 +27,36 @@ def description(skill_md):
     return text.strip().strip("\"'").replace("\\\"", "\"").replace("|", "\\|")
 
 
-def playbooks(skills):
+def kebab(title):
+    return re.sub(r"[^a-z0-9 -]", "", title.lower()).replace(" ", "-")
+
+
+def playbook_entries(skills):
+    """Return one (title, file, summary) tuple per "- **Title.** summary" line after poteto-mode's "## Playbooks" heading, in list order.
+
+    file is the skill-relative path GIVEN_FILE finds at the end of the bullet, otherwise playbooks/<kebab(title)>.md.
+    summary is the bullet's text after the title with the GIVEN_FILE match removed, stripped of surrounding whitespace.
+    """
     text = (skills / "poteto-mode/SKILL.md").read_text()
     section = text.split("## Playbooks", 1)[1]
-    rows = []
-    for name, summary in re.findall(r"^- \*\*(.+?)\.\*\* (.+)$", section, re.M):
-        path = re.search(r"`(playbooks/[\w-]+\.md)`", summary)
-        summary = re.sub(r"\s*(Full steps: )?`playbooks/[\w-]+\.md`\.?", "", summary).strip()
-        link = f"[{name}](../skills/poteto-mode/{path.group(1)})" if path else name
-        rows.append(f"| {link} | {summary.replace('|', '/')} |")
-    return rows
+    entries = []
+    for title, summary in BULLET.findall(section):
+        given = GIVEN_FILE.search(summary)
+        file = given.group(1) if given else f"playbooks/{kebab(title)}.md"
+        entries.append((title, file, GIVEN_FILE.sub("", summary).strip()))
+    return entries
+
+
+def playbooks(skills):
+    return [f"| [{title}](../skills/poteto-mode/{file}) | {summary.replace('|', '/')} |" for title, file, summary in playbook_entries(skills)]
+
+
+def missing_playbooks(skills):
+    return [
+        f'poteto-mode/SKILL.md: playbook "{title}" resolves to {file}, which does not exist'
+        for title, file, _ in playbook_entries(skills)
+        if not (skills / "poteto-mode" / file).is_file()
+    ]
 
 
 def render(skills):

@@ -29,7 +29,7 @@ RUNTIME_POINTER = (
     "Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, "
     "choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.\n\n"
 )
-NO_POINTER = re.compile(r"^(principle-|pstack-runtime$|bro$|unslop$|technical-writing$|typescript-best-practices$|tdd$)")
+NO_POINTER = re.compile(r"^(principle-|pstack-runtime$|bro$|ketchup$|unslop$|technical-writing$|typescript-best-practices$|tdd$)")
 
 
 def sha256(path):
@@ -125,13 +125,13 @@ def build(destination, update_lock=False, skip_lock=False):
         render(staged)
         sys.path.insert(0, str(ROOT / "scripts"))
         from check import check_tree
+        from catalog import missing_playbooks, write
 
-        findings = check_tree(staged)
+        findings = check_tree(staged) + missing_playbooks(staged)
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, destination)
     if destination == ROOT / "skills":
-        from catalog import write
         import cli_reference
 
         write(destination)
