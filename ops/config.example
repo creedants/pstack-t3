@@ -1,0 +1,25 @@
+# Config for the scripts in ops/. Copy this file to ~/.config/pstack-t3/ops.conf and set every key.
+#
+# One KEY=value per line. A line that starts with # is a comment.
+# A value runs to the end of the line. Blanks around it are dropped.
+# Nothing is expanded. Write no quotes, no $HOME, and no ~.
+# A list is words separated by blanks.
+# Each script reads the keys with its own prefix and refuses a key with that prefix it does not know.
+
+# t3-nightly-update.sh
+
+# Directory that holds the T3 Code build, the downloads, the log, and the state file.
+NIGHTLY_APPS_DIR=/path/to/apps
+# Name of the installed build's directory inside NIGHTLY_APPS_DIR.
+NIGHTLY_APP_NAME=t3code
+# File that restart sources before it starts T3 Code. It can hold credentials. Keep it out of this repository.
+NIGHTLY_RESTART_ENV=/path/to/restart.env
+# mise tools that check passes to mise outdated and clis passes to mise upgrade, both with MISE_MINIMUM_RELEASE_AGE=0.
+NIGHTLY_MISE_TOOLS=first-tool second-tool npm:@scope/third-tool
+# Commands whose first --version line clis logs after the upgrade. A command that is not installed is skipped.
+NIGHTLY_VERSION_COMMANDS=first-tool second-tool
+
+# t3-archive-threads.py
+
+# T3 Code's home directory. The script reads userdata/statev2.sqlite and userdata/server-runtime.json under it.
+ARCHIVE_T3_HOME=/path/to/.t3
