@@ -1,0 +1,1 @@
+- docs: the README says the executive admin, the `local` and `push` landing modes, and the light-mode design and trial page are frozen, and what frozen means. `docs/light-mode.md` drops the trial's plan and keeps its decision in Results. The README says `$XDG_CONFIG_HOME/pstack-t3` holds the install state only when that variable is an absolute path.

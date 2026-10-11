@@ -90,6 +90,14 @@ The coordinator and the queue have both run on real work.
 - **A pilot.** One coordinator on Claude Opus ran five units of work in 4.5 hours. Four merged as pull requests, and one was dropped because no change beat the noise. Grok wrote every change. Codex and Claude reviewed them, and two of six reviews sent work back for real bugs. The [pilot audit](docs/brigade-plan.md#pilot-bridgekit-performance-2026-10-04) lists what went wrong and what changed.
 - **This repository.** 38 of the 39 pull requests from #8 to #46 landed through the same queue. The queue then added a line to each body naming the reviewer and the commit that reviewer checked. It no longer adds that line, and the reviewer stays in the queue's local store.
 
+## What is frozen
+
+Three pieces are frozen. A frozen piece keeps the tests it has and gets no new work. A fix for data loss or for a broken install still lands.
+
+- **The executive admin.** The `brigade-admin` skill, opened with `$brigade-admin`.
+- **The `local` and `push` landing modes.** The `merge` and `human` modes are not frozen.
+- **The light-mode design and trial page.** [`docs/light-mode.md`](docs/light-mode.md) holds the design and the trial record. The `light` setting itself is not frozen.
+
 ## See it in action
 
 These are real runs in T3 Code.
@@ -279,7 +287,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 
 - `--project /path/to/repo` installs for one repository. `--harness claude,codex` limits the providers. `--dry-run` prints the plan.
 - **Prefer the user install.** When a name exists at both scopes, Claude and Grok load the user copy, so another pstack at user scope shadows a project install. `doctor` reports shadowed and stale copies.
-- **Each checkout records its own links.** The install state lives in `~/.config/pstack-t3` (or `$XDG_CONFIG_HOME/pstack-t3`) for a user install and in `<repo>/.pstack` for a project install. A checkout writes the links it owns to its own file under `install-owners/`, and the shared `install-manifest.json` beside it lists links and moved-aside entries for older installers. `--dry-run` writes nothing. If the manifest or this checkout's owner file is not a valid JSON object, install and uninstall stop, name the file, and change nothing.
+- **Each checkout records its own links.** The install state lives in `~/.config/pstack-t3` (or `$XDG_CONFIG_HOME/pstack-t3` when that variable is an absolute path) for a user install and in `<repo>/.pstack` for a project install. A checkout writes the links it owns to its own file under `install-owners/`, and the shared `install-manifest.json` beside it lists links and moved-aside entries for older installers. `--dry-run` writes nothing. If the manifest or this checkout's owner file is not a valid JSON object, install and uninstall stop, name the file, and change nothing.
 - **Uninstall removes only links to its own checkout.** `python3 scripts/install.py uninstall` removes a link only after it proves the link points at this checkout's `skills/<name>`. That covers this checkout's links that another checkout's `--replace` moved aside. It leaves a link that points somewhere else.
 - **Nothing is overwritten.** Without `--replace`, a path taken by another entry stops the install and nothing is linked. With it, the old entry moves into `backups/` beside the manifest. Uninstall restores a backup only to an empty path, and only while the backup is still the entry it read when it planned. A backup that is no longer that entry is never put back in its place. Uninstall leaves whatever it finds at the backup path. When it detects the change, it prints a line that begins `skipped restore` or `kept` and names the path.
   - When uninstall finds the original path of a backup taken, it keeps the backup and prints a line that begins `kept backup` or `skipped restore`. When the occupant is a link into a deleted checkout, the `kept backup` line says so. Clear the path and rerun uninstall.
