@@ -1005,11 +1005,13 @@ class FilterTest(unittest.TestCase):
         kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and (jd)@example.test"
         self.assertEqual(self.clean(kept), kept)
 
-    def test_clean_removes_an_address_with_a_quoted_local_part_or_a_bracketed_host_of_four_numbers_or_ipv6_and_keeps_an_at_sign_before_any_other_bracket(self):
+    def test_clean_removes_an_address_with_a_quoted_local_part_of_at_most_62_characters_or_a_bracketed_host_of_four_numbers_or_ipv6_and_keeps_the_other_local_parts_and_bracketed_hosts_it_lists(self):
         for word in ('"auditor"@example.test', "auditor@[127.0.0.1]", "auditor@[IPv6:2001:db8::1]", "AUDITOR@[ipv6:2001:DB8::1]", '"a.b"@[127.0.0.1]', "<auditor@[127.0.0.1]>", "%22auditor%22%40example.test"):
             with self.subTest(word):
                 self.assertEqual(self.clean(f"mail {word} now"), "mail now")
         self.assertEqual(self.clean('mail "the auditor"@example.test now'), "mail now")
+        long = f'"{"a" * 63}"@example.test'
+        self.assertEqual((self.clean(f"mail {long[0]}{long[2:]} now"), self.clean(f"mail {long} now")), ("mail now", f"mail {long} now"))
         kept = "bump react@18.2.0 for @handle on user@host and (jd)@example.test with list[0]@[a] or x@[1] and x@[1.2.3] then x@[1234.1.1.1] and x@[IPv6:] or \"\"@example.test and \"jd\" @example.test now"
         self.assertEqual(self.clean(kept), kept)
 
@@ -1053,7 +1055,7 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(self.clean("read /storemarker and /CHECKOUTMARKER and x/storemarker/a and %2Fcheckoutmarker then /review and /loop end", paths=paths), "read and and and then /review and /loop end")
         self.assertEqual(self.clean("read /storemarker and /checkoutmarker end"), "read /storemarker and /checkoutmarker end")
 
-    def test_clean_removes_a_path_of_two_or_more_segments_whose_first_starts_with_punctuation_or_a_second_slash_and_keeps_one_segment_two_slashes_alone_and_two_slashes_after_a_colon(self):
+    def test_clean_removes_a_path_of_two_or_more_segments_whose_first_starts_with_a_hyphen_a_plus_sign_an_asterisk_an_at_sign_or_a_second_slash_and_keeps_one_segment_two_slashes_alone_and_two_slashes_after_a_colon(self):
         for word in ("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt", "///a/b", "x=//secret/a", "(/*/a)", "/@a/b", "%2F-secret%2Fnotes.txt"):
             with self.subTest(word):
                 self.assertEqual(self.clean(f"see {word} now"), "see now")
@@ -2035,6 +2037,18 @@ class TextTest(OutputCase):
                 at = lines.index("Work items")
                 self.assertEqual((lines[1], lines[at + 1:at + 12]), ("10 running now, 10 agents, 0 sub-agents, 0 failed", [*listed, "  and 1 more work item", ""]))
 
+    def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_each_have_their_own_entry_or_are_counted_in_the_document_at_max_bytes_16000(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.meta["restaurant"] = "name " * 10000
+        for number in range(10):
+            fixture.unit(f"D12345678901234567890-{number}", summary="same", thread=worker(number))
+            fixture.thread(worker(number), turns=(("running", 10, None),))
+        fixture.write()
+        data = data_of(self.document("--max-bytes", "16000", clock=fixture.now))
+        self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][1]), (
+            [["D12345678…", "same", "working", "go", "", 1]] * 8, [0, 1, 2, 3, 4, 5], "2 more work items in flight are not listed."))
+
     def render(self, build):
         build(self.fixture).write()
         return self.out("--text")
@@ -2593,7 +2607,8 @@ class PlantedTest(OutputCase):
         return fixture
 
     def gone(self, fixture, value):
-        """No string of the document's data, with &quot; read as a quotation mark, and no line of the text holds value in any case. The words beside it stay. Returns the data."""
+        """No string of the document's data, with &quot; read as a quotation mark, and no line of the text holds value in any case. The words beside it stay in the store's name, the id, the summary, and the model.
+        A title that holds it is not used, and its row takes the label of its request name. Returns the data."""
         fixture.write()
         data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
         written = [text.replace("&quot;", '"') for part in data.values() for text in strings(part)]
@@ -2603,7 +2618,7 @@ class PlantedTest(OutputCase):
             "Agent activity for kit, last 3h", ["  D7 worker   m   running for 10m", "  helper second   model-a   running for 9m", "  D7   working   see now   1 agent, 10m at work"]))
         return data
 
-    def test_whole_request_name_of_a_delegated_task_is_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_a_pull_request_owner_a_pull_request_repository_and_another_rows_written_title(self):
+    def test_whole_request_name_of_a_delegated_task_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_pull_request_link_and_another_rows_written_title_that_hold_it_are_not_shown(self):
         request = "kit-d7-audit-task"
         fixture = self.planted("request", request)
         fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 8, None),))
@@ -2629,7 +2644,7 @@ class PlantedTest(OutputCase):
             "  queue   model-a   running for 8m", "  /code-review kit-d7-audit-task-2   model-a   running for 5m",
             "  D1   working   Run /code-review on the queue for kit-d7-audit-task-2   1 agent, 10m at work"])
 
-    def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+    def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_one_is_not_shown(self):
         for number, path in enumerate(("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt")):
             with self.subTest(path):
                 self.gone(self.planted(f"shape-{number}", path), path)
@@ -2637,7 +2652,7 @@ class PlantedTest(OutputCase):
             with self.subTest(root=root):
                 self.gone(self.planted(f"root-{number}", root, root=root), root)
 
-    def test_email_address_with_a_quoted_local_part_and_one_with_a_bracketed_host_are_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+    def test_email_address_with_a_quoted_local_part_and_one_with_a_bracketed_host_are_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_one_is_not_shown(self):
         for number, address in enumerate(('"auditor"@example.test', "auditor@[127.0.0.1]")):
             with self.subTest(address):
                 self.gone(self.planted(f"address-{number}", address), address)

@@ -32,7 +32,7 @@ A UUID.
 One of mcp, thread, node, run, task, run-attempt, provider-turn, provider-session, context-transfer, and context-handoff anywhere in a word, then a colon, then a letter, a digit, an underscore, or a percent sign.
 An email address, which is an at sign between a local part and a domain.
 The domain is a name that holds a dot before two or more letters. Or it is square brackets around four numbers of 1 to 3 digits joined by dots, or around `IPv6:` and one or more hexadecimal digits, colons, and dots.
-The local part is one or more characters other than a straight double quotation mark between two such marks. Or it ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
+The local part is 1 to 62 characters other than a straight double quotation mark between two such marks. Or it ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
 A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
@@ -55,7 +55,7 @@ It leaves a word of one segment that starts with a slash, such as /review, unles
 A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
-Different work items can print the same id, summary, state, and link. Each is still listed or counted as its own work item.
+Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 """
 
 import argparse
@@ -279,7 +279,7 @@ class Item:
     pr: str
     in_flight: bool
     no_link: str = ""
-    # The work item's position in the store's table, so two work items that print alike stay two. No form prints it.
+    # The work item's position among the store's work items, so two work items that print alike stay two. No form prints it.
     key: int = 0
 
 
