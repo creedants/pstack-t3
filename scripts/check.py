@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Lint a generated skills tree for Cursor-only leftovers and broken structure."""
+"""Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence."""
 
+import ast
 import importlib.util
 import re
 import sys
@@ -49,6 +50,11 @@ CATALOG_HEREDOC_OPEN = "<<'JSON'"
 CATALOG_HEREDOC_CLOSER = "JSON"
 
 ROLES_PY = Path(__file__).resolve().parents[1] / "t3/scripts/roles.py"
+TESTS_DIR = Path(__file__).resolve().parents[1] / "tests"
+# Every tests/test_*.py must carry fence_git_environment as it is in the reference module, and a setUpModule that contains a call to it.
+FENCE_REFERENCE = "test_landing.py"
+FENCE_FUNCTION = "fence_git_environment"
+FENCE_SETUP = "setUpModule"
 LIGHT_HEADER_CELLS = frozenset({"light", "light mode", "light behavior", "in light mode"})
 LIGHT_MODE_NAME = re.compile(r"(?i:\blight mode\b)|Mode: light")
 TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
@@ -160,8 +166,66 @@ def check_tree(root):
     return findings
 
 
-if __name__ == "__main__":
-    tree = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / "skills"
-    problems = check_tree(tree)
+def _module_function(module, name):
+    """The last `def` of `name` directly in the module body. A later rebinding by assignment, import, or a block is not seen."""
+    found = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name]
+    return found[-1] if found else None
+
+
+def _calls_name(function, name):
+    return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name for node in ast.walk(function))
+
+
+def fence_findings(tests_dir):
+    """Compare each tests/test_*.py with the fence in tests/test_landing.py by syntax tree.
+
+    The comparison is `ast.dump` of the last `def fence_git_environment` directly in the module
+    body, which ignores comments, whitespace, and line numbers and includes the docstring. Each
+    module must also have a `def setUpModule` directly in the module body whose tree contains a
+    call to the bare name `fence_git_environment`, with or without arguments.
+    """
+    tests_dir = Path(tests_dir)
+    label = tests_dir.name
+    reference_path = tests_dir / FENCE_REFERENCE
+    copy = f"Copy {FENCE_FUNCTION} and {FENCE_SETUP} from {label}/{FENCE_REFERENCE}"
+    reference = None
+    if reference_path.is_file():
+        try:
+            reference_function = _module_function(ast.parse(reference_path.read_text(), str(reference_path)), FENCE_FUNCTION)
+        except (OSError, ValueError, SyntaxError):
+            reference_function = None
+        reference = ast.dump(reference_function) if reference_function else None
+    if reference is None:
+        return [f"{label}/{FENCE_REFERENCE}: is missing, cannot be read or parsed, or has no def {FENCE_FUNCTION} directly in the module body, so no test module can be compared with it"]
+    findings = []
+    for file in sorted(tests_dir.glob("test_*.py")):
+        if not file.is_file():
+            continue
+        rel = f"{label}/{file.name}"
+        try:
+            module = ast.parse(file.read_text(), str(file))
+        except (OSError, ValueError, SyntaxError) as error:
+            findings.append(f"{rel}: could not be read or parsed, so its git environment fence was not checked: {type(error).__name__}")
+            continue
+        fence = _module_function(module, FENCE_FUNCTION)
+        setup = _module_function(module, FENCE_SETUP)
+        if fence is None:
+            findings.append(f"{rel}: has no def {FENCE_FUNCTION} directly in the module body. {copy}")
+        elif ast.dump(fence) != reference:
+            findings.append(f"{rel}: {FENCE_FUNCTION} differs from the one in {label}/{FENCE_REFERENCE}. {copy}")
+        if setup is None:
+            findings.append(f"{rel}: has no def {FENCE_SETUP} directly in the module body. {copy}")
+        elif not _calls_name(setup, FENCE_FUNCTION):
+            findings.append(f"{rel}: {FENCE_SETUP} contains no call to the bare name {FENCE_FUNCTION}. {copy}")
+    return findings
+
+
+def main(argv):
+    tree = Path(argv[0]) if argv else Path(__file__).resolve().parents[1] / "skills"
+    problems = check_tree(tree) + fence_findings(TESTS_DIR)
     print("\n".join(problems) or "ok")
-    sys.exit(1 if problems else 0)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
