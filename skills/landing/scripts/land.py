@@ -110,7 +110,7 @@ def git_push(*args, cwd, check=False):
     return git("push", "--no-follow-tags", *args, cwd=cwd, check=check)
 
 
-# This option overrides core.worktree. Without it git fails when a relative core.worktree names a missing directory.
+# Override core.worktree while finding the common directory and reading its config.
 IGNORE_CORE_WORKTREE = ("--work-tree=.",)
 
 
@@ -137,7 +137,7 @@ def shell_word(text):
 
 
 def refuse_stray_worktree(common):
-    """Stop when the common config file sets core.worktree to a value where git does not find this repository."""
+    """Stop when the common config file sets core.worktree to a non-empty value where git does not find this repository."""
     config = common / "config"
     # -z ends the value with a NUL, so a newline before the NUL belongs to the value.
     value = git(*IGNORE_CORE_WORKTREE, "config", "--file", str(config), "-z", "--get", "core.worktree",
@@ -157,7 +157,7 @@ def common_dir(path):
     found = git(*IGNORE_CORE_WORKTREE, "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path, exact=True)
     common = Path(found.stdout.removesuffix("\n")).resolve()
     refuse_stray_worktree(common)
-    # A bare repository has no top level, so this call refuses one.
+    # Require git rev-parse --show-toplevel to succeed.
     git("rev-parse", "--show-toplevel", cwd=path)
     return common
 
