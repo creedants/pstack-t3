@@ -1,0 +1,1 @@
+- `scripts/sync_upstream.py --merge` syncs and, for each override whose upstream file changed, either writes a clean three-way merge of it or leaves the override as it is and names it. `--merge --dry-run` prints a row for each of those overrides and writes nothing in the checkout. The lock is never refreshed.
