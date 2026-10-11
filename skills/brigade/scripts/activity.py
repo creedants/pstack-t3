@@ -630,17 +630,27 @@ def touches(start, end, window):
     return start <= window.end and (end is None or end >= window.start)
 
 
-def check_parents(parent_of):
-    """Refuse a thread that is its own parent or its own ancestor. The rows below a coordinator are drawn as a tree."""
+def check_parents(parents_of):
+    """Refuse a row that makes a thread its own parent, and rows that make a thread its own ancestor. The rows below a coordinator are drawn as a tree.
+    parents_of holds every parent each child has in any row, whichever row read_t3 then uses for the tree.
+    """
     clear = set()
-    for thread in parent_of:
-        chain = set()
-        while thread in parent_of and thread not in clear:
-            if thread in chain:
+    for start in parents_of:
+        if start in clear:
+            continue
+        chain, stack = {start}, [(start, iter(parents_of[start]))]
+        while stack:
+            thread, parents = stack[-1]
+            parent = next(parents, None)
+            if parent is None:
+                stack.pop()
+                chain.discard(thread)
+                clear.add(thread)
+            elif parent in chain:
                 raise SourceError(f"T3's {SUBAGENTS} makes a thread its own ancestor; {CHANGED}")
-            chain.add(thread)
-            thread = parent_of[thread]
-        clear |= chain
+            elif parent in parents_of and parent not in clear:
+                chain.add(parent)
+                stack.append((parent, iter(parents_of[parent])))
 
 
 def same_project(connection, threads, coordinators):
@@ -661,7 +671,7 @@ def same_project(connection, threads, coordinators):
 
 
 def read_t3(connection, window, roots, coordinators=()):
-    parent_of, delegations, nodes, unstarted, seen = {}, {}, {}, [], set()
+    parent_of, parents_of, delegations, nodes, unstarted, seen = {}, {}, {}, {}, [], set()
     for node, parent, child, status, started, completed in connection.execute(
             f"select subagent_id, thread_id, child_thread_id, status, started_at, completed_at from {SUBAGENTS}"):
         node, parent, status = (text_in(value, SUBAGENTS, column) for value, column in ((node, "subagent_id"), (parent, "thread_id"), (status, "status")))
@@ -673,13 +683,14 @@ def read_t3(connection, window, roots, coordinators=()):
         child = text_in(child, SUBAGENTS, "child_thread_id")
         seen.add(child)
         nodes[node] = child
+        parents_of.setdefault(child, set()).add(parent)
         if start is None:
             parent_of.setdefault(child, parent)
             unstarted.append((parent, child))
         elif child not in delegations or start >= delegations[child].start:
             parent_of[child] = parent
             delegations[child] = Delegation(parse_status(status, end is not None), start, end)
-    check_parents(parent_of)
+    check_parents(parents_of)
     # Every turn is read and compared as an instant. A filter on the stored text would hide a row whose text sorts before the window.
     turns, ran = {}, set()
     for thread, status, requested, completed in connection.execute(f"select thread_id, status, requested_at, completed_at from {RUNS}"):
