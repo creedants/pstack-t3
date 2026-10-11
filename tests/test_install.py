@@ -3798,7 +3798,7 @@ class OwnershipTest(unittest.TestCase):
         self.restore_recorded_as(f"{self.home}/.config/pstack-t3/backups/20260101T000000-1-abcd/grok/swarm")
         self.assertEqual(self.under_backups(), [])
 
-    def test_a_restore_under_a_relative_home_that_is_a_symlink_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
+    def test_a_restore_under_a_relative_home_whose_config_home_is_a_symlink_from_a_backup_recorded_as_an_absolute_path_leaves_backups_empty(self):
         real = self.home / "dotfiles" / "kept"
         real.mkdir(parents=True)
         os.symlink(real, self.home / ".config")
@@ -5079,7 +5079,7 @@ class OwnershipTest(unittest.TestCase):
         )
         self.assertEqual(snapshot(self.home), before)
 
-    def test_an_uninstall_under_a_relative_home_that_is_a_symlink_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
+    def test_an_uninstall_under_a_relative_home_whose_config_home_is_a_symlink_leaves_an_entry_held_beside_a_backup_recorded_as_an_absolute_path_and_changes_nothing(self):
         real = self.home / "dotfiles" / "kept"
         real.mkdir(parents=True)
         os.symlink(real, self.home / ".config")
