@@ -6477,7 +6477,7 @@ class BrigadeTest(unittest.TestCase):
             with self.subTest(state=state):
                 self.assertEqual(self.brigade("goal", "set", "G1", "--state", state, "--evidence", "why", ok=False),
                                  "brigade: G1 still has work: T1, T3 waiting; give each waiting ticket another goal with "
-                                 "ticket set --goal or --no-goal; then run this again")
+                                 "ticket set --goal, or none with --no-goal; then run this again")
         self.assertEqual(self.store_files(), before)
         self.brigade("ticket", "set", "T1", "--no-goal")
         self.brigade("ticket", "set", "T3", "--goal", "G2")
@@ -6921,7 +6921,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both")
         self.assert_goal_keeps_open("G2", "T2 riding along", "finish or drop the item each of those tickets rides along in")
         self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1, T2 waiting again")
-        self.assert_goal_keeps_open("G2", "T2 waiting", "give each waiting ticket another goal with ticket set --goal or --no-goal")
+        self.assert_goal_keeps_open("G2", "T2 waiting", "give each waiting ticket another goal with ticket set --goal, or none with --no-goal")
 
     def test_goal_set_names_the_waiting_tickets_the_items_in_flight_and_the_tickets_riding_along_in_one_refusal(self):
         self.two_goals()
@@ -6933,7 +6933,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Do c")
         self.assert_goal_keeps_open(
             "G2", "T4 waiting; D2 in flight; T2 riding along",
-            "give each waiting ticket another goal with ticket set --goal or --no-goal; finish or drop each item in flight; "
+            "give each waiting ticket another goal with ticket set --goal, or none with --no-goal; finish or drop each item in flight; "
             "finish or drop the item each of those tickets rides along in")
 
     def test_from_report_gives_each_ticket_the_kind_polish_and_the_goal_of_the_reports_item(self):
@@ -8089,7 +8089,8 @@ class HandoffTest(StoresTest):
 
     def test_ticket_take_files_a_handoff_with_a_kind_that_is_none_of_the_five_as_a_ticket_with_no_kind_and_says_so(self):
         self.assertEqual(self.take_handoff(kind="chore"),
-                         "T1 from app/core/T1: Tidy the guide; kind chore is not one this version knows, so it has no kind")
+                         "T1 from app/core/T1: Tidy the guide; kind chore is not one this version knows, so it has no kind; "
+                         "run ticket set T1 --kind <feature|fix|polish|upkeep|study>")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
         self.assertEqual(self.brigade("engine", "ticket", "take"), "nothing handed to you")
 

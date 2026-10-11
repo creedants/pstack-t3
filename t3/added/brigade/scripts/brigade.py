@@ -972,7 +972,7 @@ def add_goal(restaurant, name, purpose, done, share=""):
 def goal_work(counted, ident):
     """What keeps a goal from closing, as (words, advice) pairs. Empty when no ticket of the goal waits or rides along and no item is in flight."""
     tally = counted.goals.get(ident, Tally())
-    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal or --no-goal"),
+    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal, or none with --no-goal"),
             (tally.in_flight, "in flight", "finish or drop each item in flight"),
             (counted.riding.get(ident, ()), "riding along", "finish or drop the item each of those tickets rides along in"))
     return [(f"{', '.join(ids)} {words}", advice) for ids, words, advice in held if ids]
@@ -1721,12 +1721,14 @@ def take_tickets(restaurant):
             rows = restaurant.rows("rail.tsv")
             kind = handoff.get("kind") or ""
             if kind not in KINDS:
-                unknown = f"; kind {clean(kind)} is not one this version knows, so it has no kind" if kind else ""
-                kind = ""
+                unknown, kind = clean(kind), ""
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
                    "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
                    **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}, "kind": kind}
             restaurant.save_rows("rail.tsv", rows + [row])
+            if unknown:
+                unknown = (f"; kind {unknown} is not one this version knows, so it has no kind; "
+                           f"run ticket set {row['id']} --kind {KIND_CHOICE}")
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
         restaurant.remove(path)
