@@ -101,22 +101,27 @@ def git_push(*args, cwd, check=False):
     return git("push", "--no-follow-tags", *args, cwd=cwd, check=check)
 
 
+# This option overrides core.worktree. Without it git fails when a relative core.worktree names a missing directory.
+IGNORE_CORE_WORKTREE = ("--work-tree=.",)
+
+
 def refuse_stray_worktree(common):
     """Stop when the common config file sets core.worktree to a value where git does not find this repository."""
     config = common / "config"
-    listed = git("config", "--file", str(config), "--get-all", "core.worktree", cwd=common, check=False)
-    for value in listed.stdout.splitlines():
-        # git resolves a relative core.worktree against the git directory.
-        target = common / value
-        found = target.is_dir() and git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=target, check=False)
-        if not found or found.returncode != 0 or Path(found.stdout.strip()).resolve() != common:
-            raise LandError(f"{config} sets core.worktree to {value}, where git does not find this repository; "
-                            f"remove it with git config --file {shlex.quote(str(config))} --unset-all core.worktree")
+    value = git(*IGNORE_CORE_WORKTREE, "config", "--file", str(config), "--get", "core.worktree", cwd=common, check=False).stdout.rstrip("\n")
+    if not value:
+        return
+    # git resolves a relative core.worktree against the git directory.
+    target = common / value
+    found = target.is_dir() and git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=target, check=False)
+    if not found or found.returncode != 0 or Path(found.stdout.strip()).resolve() != common:
+        raise LandError(f"{config} sets core.worktree to {value}, where git does not find this repository; "
+                        f"remove it with git config --file {shlex.quote(str(config))} --unset-all core.worktree")
 
 
 def common_dir(path):
     """The git common directory identifies a repository across all of its worktrees."""
-    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path).stdout.strip()).resolve()
+    common = Path(git(*IGNORE_CORE_WORKTREE, "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path).stdout.strip()).resolve()
     refuse_stray_worktree(common)
     # A bare repository has no top level, so this call refuses one.
     git("rev-parse", "--show-toplevel", cwd=path)

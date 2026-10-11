@@ -4115,6 +4115,7 @@ os.execv({real!r}, [{real!r}, *args])
                              "E1 already awaiting-merge")
             self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
                              "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
+
     def configure_owner(self):
         sh("git", "config", "user.name", "Owner", cwd=self.work)
         sh("git", "config", "user.email", "owner@example.com", cwd=self.work)
@@ -4257,6 +4258,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("land"), self.foreign_bounce(sha))
         self.assertEqual(self.created_heads(), [])
         self.assertFalse((self.base / "prs.json").exists())
+
     def stray_worktree_line(self, value, quoted=None):
         config = (self.work / ".git").resolve() / "config"
         return (f"land: {config} sets core.worktree to {value}, where git does not find this repository; "
@@ -4303,6 +4305,24 @@ os.execv({real!r}, [{real!r}, *args])
             with self.subTest(value=value):
                 sh("git", "config", "core.worktree", value, cwd=self.work)
                 self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_a_relative_core_worktree_that_names_a_missing_directory_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", "../gone", cwd=self.work)
+        for repo in (self.work, self.base):
+            with self.subTest(cwd=repo.name):
+                result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "status"], cwd=repo,
+                                        capture_output=True, text=True, env=os.environ.copy())
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", self.stray_worktree_line("../gone")))
+
+    def test_the_last_of_two_core_worktree_values_decides(self):
+        self.init()
+        gone = self.base / "gone"
+        sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
+        sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(self.work), cwd=self.base)
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
 
     def test_slot_runs_with_a_core_worktree_that_names_a_missing_directory(self):
         self.init()
