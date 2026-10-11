@@ -1564,7 +1564,7 @@ class BrigadeTest(unittest.TestCase):
         env = os.environ | {"COLUMNS": "200"}
         result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("status              the thread line first, then counts, then workers, then reports to, mode, and owner when present", result.stdout)
+        self.assertIn("status              the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present", result.stdout)
         self.assertNotIn("one line of counts", result.stdout)
 
     def test_status_and_walk_speak_plain_engineering_prose(self):
@@ -4580,7 +4580,7 @@ class BrigadeTest(unittest.TestCase):
                            "- Change ``rows[0]`` in `src/a/one.py`\n")
         self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/a/one.py,src/b/two.py", "T3": "src/a/one.py"})
 
-    def test_from_report_records_no_path_for_a_quote_outside_the_repository_or_of_the_repository_itself(self):
+    def test_from_report_skips_absolute_dot_dot_repository_and_non_numeric_suffix_quotes_and_records_the_normalized_path_of_a_line_suffixed_or_directory_quote(self):
         self.tracked_project(*TRACKED)
         self.fired_bug_fix()
         self.follow_ups_in("## Follow-ups\n\n- See `../README.md`, `/README.md`, `.`, `docs/../README.md`, "
@@ -4836,7 +4836,7 @@ class BrigadeTest(unittest.TestCase):
             "T2 normal, 0m: blocked, waiting for an idle worker; b.txt",
         ]))
 
-    def test_startable_holds_back_a_free_low_ticket_while_one_worker_is_idle(self):
+    def test_startable_holds_back_a_free_low_ticket_that_would_take_the_last_idle_worker(self):
         self.queue()
         self.brigade("set", "--autofire", "low")
         self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")

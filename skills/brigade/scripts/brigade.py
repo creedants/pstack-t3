@@ -2614,7 +2614,7 @@ def parser():
                         "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
                         "do not count")
     a.add_argument("--priority", choices=PRIORITIES_BY_RANK,
-                   help="missing reads by source: upstream is urgent, report is low, every other source is normal")
+                   help="missing reads as urgent from upstream, low from report, and normal from every other source")
     a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
     a.add_argument("--decision", action="store_true",
                    help="the ticket asks the owner to decide; the startable command never lists it as startable")
@@ -2746,7 +2746,7 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then workers, then reports to, mode, and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
