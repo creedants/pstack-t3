@@ -501,10 +501,13 @@ def plan_uninstall(view, root, selected, holds):
     owned = records(view, root)
     present = stacks(view)
 
+    def covered(harnesses):
+        return set(harnesses) <= chosen
+
     def selected_row(harnesses):
-        have = set(harnesses)
-        if have <= chosen:
+        if covered(harnesses):
             return True
+        have = set(harnesses)
         if have & chosen:
             shared.add(", ".join(sorted(have - chosen)))
         return False
@@ -554,7 +557,7 @@ def plan_uninstall(view, root, selected, holds):
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     for row in view.backups:
-        if unreached(row) and set(row.harnesses) <= chosen and held_beside(row.backup) is None:
+        if unreached(row) and covered(row.harnesses) and held_beside(row.backup) is None:
             occupied.append(KEPT_UNREACHED.format(backup=row.backup, original=row.original))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
