@@ -17,8 +17,8 @@ GROUPS = [
     ("Principles", lambda name: name.startswith("principle-")),
 ]
 BULLET = re.compile(r"^- \*\*(.+?)\.\*\* (.+)$", re.M)
-# The file a bullet gives: a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " or "Full steps: " lead-in.
-GIVEN_FILE = re.compile(r"\s*(?:(?:File|Full steps): )?`(playbooks/[\w-]+\.md)`\.?$")
+# The file a bullet gives: a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " lead-in.
+GIVEN_FILE = re.compile(r"\s*(?:File: )?`(playbooks/[\w-]+\.md)`\.?$")
 
 
 def description(skill_md):
