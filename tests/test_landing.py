@@ -4257,6 +4257,60 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.land("land"), self.foreign_bounce(sha))
         self.assertEqual(self.created_heads(), [])
         self.assertFalse((self.base / "prs.json").exists())
+    def stray_worktree_line(self, value, quoted=None):
+        config = (self.work / ".git").resolve() / "config"
+        return (f"land: {config} sets core.worktree to {value}, where git does not find this repository; "
+                f"remove it with git config --file {quoted or config} --unset-all core.worktree\n")
+
+    def run_land(self, repo, *args):
+        """Run land.py in repo. Returns its exit status, stdout, and stderr."""
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), *args],
+                                capture_output=True, text=True, env=os.environ.copy())
+        return result.returncode, result.stdout, result.stderr
+
+    def test_a_core_worktree_that_names_a_missing_directory_stops_each_repository_command(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "agent\n"})
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        config = self.work / ".git" / "config"
+        before = config.read_bytes()
+        commands = (["status"], ["land"], ["resume"], ["lease", "list"],
+                    ["init", "--trunk", "main", "--mode", "auto", "--check", "./check.sh"],
+                    ["submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER])
+        for repo in (self.work, self.base / "w1"):
+            for command in commands:
+                with self.subTest(repo=repo.name, command=command[0]):
+                    self.assertEqual(self.run_land(repo, *command), (1, "", self.stray_worktree_line(gone)))
+        self.assertEqual(config.read_bytes(), before)
+
+    def test_a_core_worktree_that_names_a_directory_outside_the_repository_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.base), cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(self.base)))
+
+    def test_the_printed_command_quotes_a_config_path_that_has_a_space(self):
+        self.work = self.base / "spaced work"
+        sh("git", "clone", "-q", "origin.git", "spaced work", cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        quoted = "'" + str((self.work / ".git").resolve() / "config") + "'"
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone, quoted)))
+
+    def test_a_core_worktree_that_names_the_checkout_does_not_stop_status(self):
+        self.init()
+        for value in (str(self.work), ".."):
+            with self.subTest(value=value):
+                sh("git", "config", "core.worktree", value, cwd=self.work)
+                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_slot_runs_with_a_core_worktree_that_names_a_missing_directory(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.base / "gone"), cwd=self.work)
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", "echo ran"],
+                                cwd=self.work, capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "ran\n", ""))
 
 
 def repository_state(repo):

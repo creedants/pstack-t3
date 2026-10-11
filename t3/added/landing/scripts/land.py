@@ -16,6 +16,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -100,10 +101,26 @@ def git_push(*args, cwd, check=False):
     return git("push", "--no-follow-tags", *args, cwd=cwd, check=check)
 
 
+def refuse_stray_worktree(common):
+    """Stop when the common config file sets core.worktree to a value where git does not find this repository."""
+    config = common / "config"
+    listed = git("config", "--file", str(config), "--get-all", "core.worktree", cwd=common, check=False)
+    for value in listed.stdout.splitlines():
+        # git resolves a relative core.worktree against the git directory.
+        target = common / value
+        found = target.is_dir() and git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=target, check=False)
+        if not found or found.returncode != 0 or Path(found.stdout.strip()).resolve() != common:
+            raise LandError(f"{config} sets core.worktree to {value}, where git does not find this repository; "
+                            f"remove it with git config --file {shlex.quote(str(config))} --unset-all core.worktree")
+
+
 def common_dir(path):
     """The git common directory identifies a repository across all of its worktrees."""
-    top = git("rev-parse", "--show-toplevel", cwd=path).stdout.strip()
-    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=top).stdout.strip()).resolve()
+    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path).stdout.strip()).resolve()
+    refuse_stray_worktree(common)
+    # A bare repository has no top level, so this call refuses one.
+    git("rev-parse", "--show-toplevel", cwd=path)
+    return common
 
 
 def canonical(path, kind="lease"):
