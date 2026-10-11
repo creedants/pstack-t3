@@ -2795,13 +2795,27 @@ def checked_fire_label(restaurant, ids, station, kind, ride_along):
     return fire_label(labels, rail, ids, station, kind, ride_along)
 
 
+def write_lead_kind(restaurant, ids, kind):
+    """Write `kind` into the kind cell of the lead ticket, ids[0], when the cell holds another value. It logs nothing.
+
+    fire calls it before it appends the item row. A fire killed after it leaves no item whose kind its lead ticket lacks.
+    """
+    rows = restaurant.rows("rail.tsv")
+    changed = [row for row in rows if row["id"] in ids[:1] and row["kind"] != kind]
+    for row in changed:
+        row["kind"] = kind
+    if changed:
+        restaurant.save_rows("rail.tsv", rows)
+
+
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=()):
     """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
 
     The kind and goal check runs twice, each time under the store lock. The first run comes after the owner check, unfireable, and the worker
     cap, so a fire that one of those refuses or blocks gets the words it got before kinds and goals. It comes before the
     lease claim, so a fire it refuses claims no lease. The second run sees a change made while the claim ran.
-    The lead ticket's kind cell takes the item's kind in the rewrite that assigns the tickets. No other kind or goal cell
+    The lead ticket's kind cell takes the item's kind in a rewrite of its own, before the item row is appended. A fire
+    killed between its writes leaves no item whose kind its lead ticket lacks. No other kind or goal cell
     of a ticket changes, so a ticket that rides along keeps its own.
     """
     while True:
@@ -2837,6 +2851,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             if not refusal and not full:
                 label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if label and current == dish:
+                write_lead_kind(restaurant, ids, label.kind)
                 restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": station,
                                                  "tickets": ",".join(ids), "task": task, "thread": thread,
                                                  "branch": branch, "summary": summary, "timebox": timebox,
@@ -2848,8 +2863,6 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 for row in rows:
                     if row["id"] in ids:
                         row["state"], row["dish"] = "assigned", dish
-                    if row["id"] in ids[:1]:
-                        row["kind"] = label.kind
                 restaurant.save_rows("rail.tsv", rows)
                 for row in rows:
                     if row["id"] in ids:
