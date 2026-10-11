@@ -19,9 +19,13 @@ Its control characters are read as spaces, and it is compared with each characte
 The identifiers are the thread ids, the sub-agent ids, and the work items' task values in the store and in T3's turn and sub-agent rows.
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
-A form of fewer than 4 characters, or of spaces only, is not private text either.
+A form of spaces only is not private text either. Neither is an identifier form of fewer than 4 characters.
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
 Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
+A path form of 4 or more characters is private text anywhere in a word.
+A path form of fewer than 4 characters is read without the slashes that end it, and a form of slashes only is read as one slash. It is private text only as a whole word.
+That word starts with a slash that starts the string or follows one of the characters the last path shape below can follow, and it ends before the next space, quotation mark, or backtick.
+The word is also the form when it is the form before one or more of a slash, a closing round, square, curly, or angle bracket, and the marks . , ; : ! ? |.
 
 Private text is also text of one of these shapes, with upper and lower case letters read alike.
 A UUID.
@@ -31,7 +35,8 @@ The local part ends in a character other than a space, an at sign, a round or sq
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
 A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
-Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.
+Such a path starts with a slash before a character other than a space, a slash, a quotation mark, or a backtick, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.
+It can start with two or more slashes instead when no colon stands before them.
 Or it starts with a tilde before a slash or a backslash, with a tilde and a name that starts with a letter or an underscore before one, with $HOME or ${HOME} before one, or with two backslashes before a letter, a digit, an underscore, or a dot.
 A path after an opening quotation mark or a backtick is private text up to the mark that closes it.
 Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash and does not start with a slash.
@@ -45,7 +50,7 @@ A request name with no hyphen is not private text.
 
 The filter removes a word for no other reason.
 The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
-It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.
+It leaves a word of one segment that starts with a slash, such as /review, unless it holds private text.
 A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
@@ -730,7 +735,9 @@ T3_KINDS = ("mcp", "thread", "node", "run", "task", "run-attempt", "provider-tur
 OPENS = r"(?:^|(?<=[\s\"'`“”‘’(\[{<>=:,;|]))"
 QUOTES = "\"'`“”‘’"
 # One segment after a slash is a slash command such as /review, so a path that starts with a slash needs a second segment.
-PATH = rf"(?:{OPENS}(?:/(?=[\w.~][^\s/{QUOTES}]*/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
+# A colon before two slashes is a URL's.
+SEGMENT = rf"[^\s/{QUOTES}]"
+PATH = rf"(?:{OPENS}(?:(?:/|(?<!:)/{{2,}})(?={SEGMENT}+/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
 # The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
 SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:(?=[\w/\\.~%])", re.IGNORECASE)
 LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
@@ -739,6 +746,8 @@ DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
 TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
 # The slash that starts a word belongs to its token, so /code-review is not code-review.
 NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
+SLASH_WORD = re.compile(rf"{OPENS}/[^\s{QUOTES}]*")
+CLOSERS = "/)]}>.,;:!?|"
 CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
 NEXT_PATH_WORD = re.compile(r"\s+(?!/)\S*[/\\]\S*")
@@ -864,23 +873,28 @@ class Privacy:
 
     def __init__(self, identifiers=(), paths=(), requests=()):
         """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
+        roots holds each shorter form of a path that is not blank, in lower case, without the slashes that end it. A form of slashes only is `/`.
         names holds each request name that is one TOKEN, in lower case. A request name with no hyphen is in neither.
         """
-        index = {}
+        index, roots = {}, set()
         requests = {plain(value) for value in requests if "-" in value}
         self.names = frozenset(lowered(value) for value in requests if re.fullmatch(TOKEN, value))
-        whole = (*paths, *(value for value in requests if lowered(value) not in self.names))
-        for value, exact in (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in whole)):
+        known = (*((plain(value), False, False) for value in identifiers), *((plain(value), True, True) for value in paths),
+                 *((value, True, False) for value in requests if lowered(value) not in self.names))
+        for value, exact, path in known:
             for _ in range(3):
                 low = lowered(value)
                 if len(low) >= ANCHOR and low.strip() and (exact or not ordinary(value)):
                     index.setdefault(low[:ANCHOR], set()).add(low)
+                elif path and low.strip():
+                    roots.add(low.rstrip("/") or "/")
                 value = unescaped(value)[0]
+        self.roots = frozenset(roots)
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
         self.cache = {}
 
     def found(self, text):
-        """The spans of text that hold an indexed form in any case, a token that is one of names in any case, or text of a private shape."""
+        """The spans of text that hold an indexed form, a token that is one of names, or a word that is one of roots, each in any case, or text of a private shape."""
         low = lowered(text)
         for at in range(len(low) - ANCHOR + 1 if self.index else 0):
             for form in self.index.get(low[at:at + ANCHOR], ()):
@@ -889,6 +903,12 @@ class Privacy:
         for match in NAME.finditer(low) if self.names else ():
             if match.group() in self.names:
                 yield match.span()
+        for match in SLASH_WORD.finditer(low) if self.roots else ():
+            word = match.group()
+            while word not in self.roots and len(word) > 1 and word[-1] in CLOSERS:
+                word = word[:-1]
+            if word in self.roots:
+                yield match.start(), match.start() + len(word)
         covered = 0
         for match in SHAPES.finditer(text):
             if match.start() >= covered:

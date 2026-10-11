@@ -1044,6 +1044,24 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(self.clean("read /storemarker and /CHECKOUTMARKER and x/storemarker/a and %2Fcheckoutmarker then /review and /loop end", paths=paths), "read and and and then /review and /loop end")
         self.assertEqual(self.clean("read /storemarker and /checkoutmarker end"), "read /storemarker and /checkoutmarker end")
 
+    def test_clean_removes_a_path_of_two_or_more_segments_whose_first_starts_with_punctuation_or_a_second_slash_and_keeps_one_segment_two_slashes_alone_and_two_slashes_after_a_colon(self):
+        for word in ("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt", "///a/b", "x=//secret/a", "(/*/a)", "/@a/b", "%2F-secret%2Fnotes.txt"):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"see {word} now"), "see now")
+        kept = "see /review and /-flag with /+1 or // and // note at https://example.test/o/r/pull/7 for ftp://secret/a and a//b then /- / -/ now"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_a_path_it_was_given_of_fewer_than_4_characters_only_as_a_whole_word_that_starts_with_a_slash_where_a_path_can_start_with_or_without_closing_marks_after_it(self):
+        for word in ("/x", "/X", "/x.", "/x/", "(/x)", "x=/x", "\"/x\"", "/x/src", "/x/).", "%2Fx", "/x?!"):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"in {word} now", paths={"/x"}), "in now")
+        kept = "see /x.py and /xy with /x-ray in src/x.py or /review at https://example.test/x/r/pull/7 and https://x/o/r/pull/7 for a/x and x/ then /x(1) now"
+        self.assertEqual(self.clean(kept, paths={"/x"}), kept)
+        self.assertEqual(self.clean("in /x and /X/ or /x, then /xy now", paths={"/x/"}), "in and or then /xy now")
+        self.assertEqual(self.clean("at / and (/) or // then /a and https://example.test/o/r/pull/7 now", paths={"/"}), "at and or then /a and https://example.test/o/r/pull/7 now")
+        self.assertEqual(self.clean("in /x. and /x.. or /x now", paths={"/x."}), "in and or /x now")
+        self.assertEqual(self.clean("in /x and /xy now"), "in /x and /xy now")
+
     def test_clean_removes_a_path_after_a_quotation_mark_up_to_the_next_such_mark_and_any_other_through_each_next_word_with_a_slash(self):
         self.assertEqual(self.clean('see "/srv/private dir/secret file.txt" and `~/a b` and \'C:\\a b\\c d\' now'), "see and and now")
         self.assertEqual(self.clean("see “/srv/private dir/secret file.txt” and ‘~/a b’ and x=”/srv/a now"), "see and and now")
@@ -2624,14 +2642,14 @@ class ReferenceTest(unittest.TestCase):
         stated = ("Every string a page emits passes one filter after its parts are joined.",
                   "An identifier that reads as ordinary words is not private text.",
                   "The filter removes a word for no other reason.",
-                  "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.",
-                  "It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.",
+                  "Such a path starts with a slash before a character other than a space, a slash, a quotation mark, or a backtick, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.",
+                  "It leaves a word of one segment that starts with a slash, such as /review, unless it holds private text.",
                   "Userinfo, a query, and a fragment are dropped.",
                   "A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.",
                   "The output and the newline after it take at most --max-bytes bytes.")
         self.assertEqual([sentence for sentence in stated if sentence not in reference or sentence not in " ".join(MOD["__doc__"].split())], [])
         replaced = ("4 characters or longer", "with any other value that is not blank", "the class Privacy", "6 or more digits", "the most bytes the HTML document",
-                    "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde. Or")
+                    "Such a path starts with a slash before a letter", "unless it holds a path this run read.")
         self.assertEqual([words for words in replaced if words in reference], [])
         self.assertIn("| `--max-bytes MAX_BYTES` | | | `16000` | the most bytes the output and the newline after it take, from 16000 to 500000 |", reference)
 
