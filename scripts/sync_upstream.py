@@ -13,6 +13,12 @@ is and name it. The merge base is the file in vendor/pstack before the sync,
 used only when its sha256 is the one in t3/overrides.lock.json. The lock is
 never refreshed. With --merge --dry-run, print a row for each of those files
 and write nothing in the checkout.
+
+With --merge --conflicts DIR, also write git's conflict-marked merge of each
+override whose merge conflicts to DIR/<its path under t3/overrides>. The files
+are written before the sync writes anything in the checkout, and under
+--dry-run too. DIR is refused when it resolves to the checkout or a path under
+it, and when it exists. DIR is not created when no override conflicts.
 """
 
 import argparse
@@ -52,6 +58,9 @@ MERGE_DETAIL = {
     "no-base": "no old upstream text that matches the lock, left as is, re-port by hand",
 }
 DRY_RUN_DETAIL = {**MERGE_DETAIL, "clean": "would merge"}
+SAVED_SUFFIX = ", git's marked merge is in {path}"
+# Fixed strings. Without them git labels each marker line with a path, and the new upstream text sits under a random temporary one.
+MERGE_LABELS = ("override", "old upstream", "new upstream")
 MERGE_FOOTER = """\
 t3/overrides.lock.json is not refreshed.
 A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.
@@ -101,6 +110,7 @@ class Outcome:
     rel: str
     kind: Kind
     merged: bytes | None = None
+    marked: bytes | None = None
 
 
 def run(*command, cwd=None):
@@ -218,12 +228,13 @@ def check(args, meta):
 
 
 def merge_file(current, base, other):
-    result = subprocess.run(("git", "merge-file", "-p", str(current), str(base), str(other)), capture_output=True)
-    if 1 <= result.returncode <= 127:
-        return None
-    if result.returncode:
+    labels = (argument for label in MERGE_LABELS for argument in ("-L", label))
+    result = subprocess.run(
+        ("git", "merge-file", "-p", *labels, str(current), str(base), str(other)), capture_output=True
+    )
+    if result.returncode and not 1 <= result.returncode <= 127:
         raise subprocess.CalledProcessError(result.returncode, result.args, stderr=os.fsdecode(result.stderr))
-    return result.stdout
+    return bool(result.returncode), result.stdout
 
 
 def merge_outcome(rel, current, base, other, digest):
@@ -238,9 +249,9 @@ def merge_outcome(rel, current, base, other, digest):
     mine = current.read_bytes()
     if any(b"\0" in text for text in (old, mine, new)):
         return Outcome(rel, "binary")
-    merged = merge_file(current, base, other)
-    if merged is None:
-        return Outcome(rel, "conflict")
+    conflicted, merged = merge_file(current, base, other)
+    if conflicted:
+        return Outcome(rel, "conflict", marked=merged)
     if merged == mine:
         return Outcome(rel, "same")
     return Outcome(rel, "markers") if MARKER_LINE.search(merged) else Outcome(rel, "clean", merged)
@@ -267,11 +278,37 @@ def apply(outcomes, t3):
             os.replace(staging, target)
 
 
-def render_merges(outcomes, dry_run):
+def conflicts_path(text):
+    path = Path(text).resolve()
+    if path == ROOT or ROOT in path.parents:
+        raise ValueError("--conflicts needs a path outside the checkout")
+    if os.path.lexists(text) or os.path.lexists(path):
+        raise ValueError("--conflicts needs a path that does not exist yet")
+    return path
+
+
+def save_conflicts(outcomes, directory):
+    conflicts = [outcome for outcome in outcomes if outcome.kind == "conflict"]
+    if not conflicts:
+        return
+    directory.mkdir(parents=True)
+    for outcome in conflicts:
+        target = directory / outcome.rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(outcome.marked)
+
+
+def render_merges(outcomes, dry_run, directory=None):
     if not outcomes:
         return "no override's upstream file changed\n"
     detail = DRY_RUN_DETAIL if dry_run else MERGE_DETAIL
-    return "".join(f"{outcome.kind:<8}  {quoted('t3/overrides/' + outcome.rel)}  {detail[outcome.kind]}\n" for outcome in outcomes)
+    rows = []
+    for outcome in outcomes:
+        text = detail[outcome.kind]
+        if directory and outcome.kind == "conflict":
+            text += SAVED_SUFFIX.format(path=quoted(str(directory / outcome.rel)))
+        rows.append(f"{outcome.kind:<8}  {quoted('t3/overrides/' + outcome.rel)}  {text}\n")
+    return "".join(rows)
 
 
 def main():
@@ -282,6 +319,11 @@ def main():
     parser.add_argument("--repository", help="with --check, the upstream to read (default: the repository in upstream.json)")
     parser.add_argument("--merge", action="store_true", help="sync and apply the three-way merge described above")
     parser.add_argument("--dry-run", action="store_true", help="with --merge, write nothing in the checkout")
+    parser.add_argument(
+        "--conflicts",
+        metavar="DIR",
+        help="with --merge, write git's conflict-marked merge of each override whose merge conflicts under DIR, as described above. DIR is refused when it exists or resolves to the checkout or a path under it",
+    )
     args = parser.parse_args()
     if not args.check and (args.json or args.repository):
         parser.error("--json and --repository need --check")
@@ -289,6 +331,14 @@ def main():
         parser.error("--merge does not combine with --check")
     if args.dry_run and not args.merge:
         parser.error("--dry-run needs --merge")
+    if args.conflicts is not None and not args.merge:
+        parser.error("--conflicts needs --merge")
+    directory = None
+    if args.conflicts is not None:
+        try:
+            directory = conflicts_path(args.conflicts)
+        except ValueError as error:
+            parser.error(str(error))
     meta = json.loads(UPSTREAM.read_text())
     if args.check:
         return check(args, meta)
@@ -310,6 +360,8 @@ def main():
             if args.merge:
                 lock = json.loads(build.LOCK.read_text()) if build.LOCK.exists() else {}
                 outcomes = plan_merges(build.T3 / "overrides", build.VENDOR / "skills", source / "skills", lock)
+                if directory:
+                    save_conflicts(outcomes, directory)
         except (subprocess.CalledProcessError, OSError) as error:
             if not args.merge:
                 raise
@@ -319,7 +371,7 @@ def main():
         if args.dry_run:
             version = plugin.get("version", meta.get("version"))
             print(f"vendor/pstack: {meta['commit'][:12]} -> {commit[:12]} ({version}), dry run, nothing written in the checkout")
-            sys.stdout.write(render_merges(outcomes, dry_run=True) + (MERGE_FOOTER if outcomes else ""))
+            sys.stdout.write(render_merges(outcomes, dry_run=True, directory=directory) + (MERGE_FOOTER if outcomes else ""))
             return 0
         shutil.rmtree(source / ".git", ignore_errors=True)
         build.replace_tree(source, ROOT / "vendor/pstack")
@@ -329,7 +381,7 @@ def main():
     print(f"vendor/pstack: {previous[:12]} -> {commit[:12]} ({meta['version']})")
     if args.merge:
         apply(outcomes, build.T3)
-        sys.stdout.write(render_merges(outcomes, dry_run=False))
+        sys.stdout.write(render_merges(outcomes, dry_run=False, directory=directory))
     result = subprocess.run([sys.executable, str(ROOT / "scripts/build.py")], capture_output=True, text=True)
     print(result.stdout + result.stderr)
     sys.stdout.write(MERGE_FOOTER if outcomes else "")
