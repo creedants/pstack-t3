@@ -84,13 +84,14 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "startable")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "watch", "startable")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
 RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 NOTHING_HANDED = "nothing handed to you"
+NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contract key in --fields, and write none when the item has no safety, privacy, or integrity property")
 SNAPSHOT_CHUNK = 1 << 16
 REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
 ITEM_REPORT = re.compile(r"(D\d+)\.md")
@@ -1924,7 +1925,7 @@ def roles_mode(inputs):
     return ModeLines(lines, modes[0], source.removeprefix(ESCALATED) if source.startswith(ESCALATED) else None)
 
 
-def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
+def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, base, context):
     for _ in range(MODE_RESOLUTIONS):
         with restaurant.checked():
             restaurant.fence()
@@ -1938,11 +1939,12 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
                 continue
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
-            return write_brief(restaurant, dish, mode, goal, acceptance, verify, used_paths, used_lease, base, context, thread)
+            return write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, used_paths, used_lease, base,
+                               context, thread)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
-def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, base, context, thread):
+def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
     ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
@@ -1963,6 +1965,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
         "", "CONTEXT:", *([f"- {item}" for item in context] or ["- None beyond the tickets."]),
         *([f"- A reviewer sent an earlier attempt back. Its findings: {findings}"] if findings.exists() else []),
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
+        "", "CONTRACT:", contract,
         "", "VERIFY:", f"- {verify}",
         f"- Run builds and tests through `python3 {land} slot -- <command>`.",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
@@ -1980,8 +1983,22 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
     ]
     text = "\n".join(lines) + "\n"
+    restaurant.write(contract_file(ident), contract + "\n")
     restaurant.write(Path("briefs") / f"{ident}.md", text)
     return text
+
+
+def contract_file(ident):
+    return Path("briefs") / f"{ident}.contract.md"
+
+
+def stored_contract(restaurant, ident):
+    """The contract the item's last brief stored."""
+    restaurant.find("dishes.tsv", ident)
+    path = restaurant.dir / contract_file(ident)
+    if not path.is_file():
+        raise BrigadeError(f"{ident} has no contract on record; run brief with --contract")
+    return path.read_text(encoding="utf-8").removesuffix("\n")
 
 
 def attempt_starts(restaurant, dish):
@@ -2674,11 +2691,17 @@ def parser():
     p.add_argument("--fields", help="JSON file of brief fields, or - for stdin")
     p.add_argument("--goal", default=None, help="one sentence: the outcome")
     p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
+    p.add_argument("--contract", default=None,
+                   help="the item's contract, rendered under CONTRACT: in the brief; write none when the item has no safety, "
+                        "privacy, or integrity property; a brief with no contract is refused")
     p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
     p.add_argument("--paths", default=None, help="leased paths, when fire did not claim them")
     p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
     p.add_argument("--base", default=None, help="the trunk ref the worker's branch starts from, such as origin/main")
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
+
+    p = sub.add_parser("contract", help="print the contract the dish's last brief stored")
+    p.add_argument("id")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
     sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
@@ -2784,8 +2807,16 @@ def parser():
     return top
 
 
+def brief_contract(value):
+    """The contract with the whitespace at its two ends removed. Refuses None and text that is only whitespace."""
+    contract = (value or "").strip()
+    if not contract:
+        raise BrigadeError(NEEDS_CONTRACT)
+    return contract
+
+
 def _brief_fields(args):
-    flagged = any(getattr(args, name) is not None for name in ("goal", "verify", "base", "paths", "lease")) or args.acceptance or args.context
+    flagged = any(getattr(args, name) is not None for name in ("goal", "contract", "verify", "base", "paths", "lease")) or args.acceptance or args.context
     if args.fields is not None:
         if flagged:
             raise BrigadeError("use either --fields or the field flags, not both")
@@ -2804,7 +2835,7 @@ def _brief_fields(args):
             raise BrigadeError(f"brief fields: {error}") from error
         if not isinstance(payload, dict):
             raise BrigadeError("brief fields: JSON must be an object")
-        allowed = {"goal", "acceptance", "verify", "base", "context", "paths", "lease"}
+        allowed = {"goal", "acceptance", "contract", "verify", "base", "context", "paths", "lease"}
         lists = {"acceptance", "context"}
         unknown = [key for key in payload if key not in allowed]
         if unknown:
@@ -2823,6 +2854,7 @@ def _brief_fields(args):
         return {
             "goal": payload["goal"],
             "acceptance": payload["acceptance"],
+            "contract": brief_contract(payload.get("contract")),
             "verify": payload["verify"],
             "paths": payload["paths"] if "paths" in payload else "",
             "lease": payload["lease"] if "lease" in payload else "",
@@ -2834,6 +2866,7 @@ def _brief_fields(args):
     return {
         "goal": args.goal,
         "acceptance": args.acceptance,
+        "contract": brief_contract(args.contract),
         "verify": args.verify,
         "paths": args.paths or "",
         "lease": args.lease or "",
@@ -3016,6 +3049,9 @@ def command(restaurant, args, contract=None, rails=None):
             changes["schedules"] = schedules
         meta = restaurant.change_meta(drop, **changes)
         return json.dumps(meta, indent=2)
+
+    if args.command == "contract":
+        return stored_contract(restaurant, args.id)
 
     if args.command == "inbox":
         if args.action == "take":

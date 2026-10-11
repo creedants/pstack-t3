@@ -1714,7 +1714,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
-        text = self.brigade("brief", "D1", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
                             "--verify", "npm run perf", "--paths", "src/boot.ts", "--lease", "L4", "--base", "origin/main")
         self.assertTrue(text.startswith("Use the poteto-mode skill and its `perf-issue` playbook."))
         report = f"{self.at}/reports/D1.md"
@@ -1730,7 +1730,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
-        text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
                             "--lease", "L4", "--base", "origin/main")
         line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         asked = "List each follow-up as one top-level list item under a `"
@@ -1746,7 +1746,7 @@ class BrigadeTest(unittest.TestCase):
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
         self.fire_one(station="bug-fix")
-        error = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v",
+        error = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v",
                              "--paths", "a", "--lease", "L1", "--base", "origin/main", ok=False)
         self.assertIn("brigade.py set --thread", error)
         self.assertFalse((self.at / "briefs" / "D1.md").exists())
@@ -1756,7 +1756,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         self.brigade("set", "--thread", "thread-coord")
-        args = ["brief", "D1", "--goal", "g", "--verify", "v", "--paths", "a", "--lease", "L1", "--base", "origin/main"]
+        args = ["brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--paths", "a", "--lease", "L1", "--base", "origin/main"]
         self.assertIn("menu.md has no purpose yet", self.brigade(*args, "--acceptance", "a", ok=False))
         (self.at / "menu.md").write_text("## Purpose\n\nFix bugs.\n")
         self.assertIn("at least one --acceptance", self.brigade(*args, ok=False))
@@ -1876,7 +1876,7 @@ class BrigadeTest(unittest.TestCase):
                           self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s", "--paths", "src/x.py", ok=False))
             self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] two blocked: lease")
             self.brigade("set", "--thread", "thread-coord")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
             self.assertIn("leased to you as L1: src,changes/perf%2Fd1.md.", text)
             self.assertIn("branch `perf/d1`", text)
 
@@ -1983,6 +1983,7 @@ class BrigadeTest(unittest.TestCase):
         return {
             "goal": "Run `$B status` and `$B close` before $(touch sentinel).",
             "acceptance": ["Median cold start below 400 ms"],
+            "contract": "A cold start never reads `$HOME/.cache`.",
             "verify": "npm run perf",
             "paths": "src/boot.ts",
             "lease": "L4",
@@ -1991,7 +1992,7 @@ class BrigadeTest(unittest.TestCase):
         }
 
     def brief_from_flags(self, fields):
-        return self.brigade("brief", "D1", "--goal", fields["goal"], "--acceptance", fields["acceptance"][0],
+        return self.brigade("brief", "D1", "--contract", fields["contract"], "--goal", fields["goal"], "--acceptance", fields["acceptance"][0],
                             "--verify", fields["verify"], "--paths", fields["paths"], "--lease", fields["lease"],
                             "--base", fields["base"], "--context", fields["context"][0])
 
@@ -2089,15 +2090,87 @@ class BrigadeTest(unittest.TestCase):
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("JSON must be an object", error)
         self.assertFalse(brief.exists())
-        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "main", "nope": "x"}),
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "contract": "none", "verify": "v", "base": "main", "nope": "x"}),
                           encoding="utf-8")
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("unknown key nope", error)
         self.assertFalse(brief.exists())
-        fields.write_text(json.dumps({"goal": "g", "acceptance": "a", "verify": "v", "base": "main"}), encoding="utf-8")
+        fields.write_text(json.dumps({"goal": "g", "acceptance": "a", "contract": "none", "verify": "v", "base": "main"}), encoding="utf-8")
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("acceptance must be a list of strings", error)
         self.assertFalse(brief.exists())
+
+    NEEDS_CONTRACT = ("brigade: brief needs a contract; pass --contract <text> or the contract key in --fields, "
+                      "and write none when the item has no safety, privacy, or integrity property")
+    FLAGS = ("--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts", "--lease", "L4",
+             "--base", "origin/main")
+
+    def briefable(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+
+    def test_brief_refuses_flags_with_no_contract_or_a_contract_of_only_whitespace(self):
+        self.briefable()
+        self.assertEqual(self.brigade("brief", "D1", *self.FLAGS, ok=False), self.NEEDS_CONTRACT)
+        self.assertEqual(self.brigade("brief", "D1", *self.FLAGS, "--contract", " \n\t", ok=False), self.NEEDS_CONTRACT)
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+        self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
+
+    def test_brief_refuses_a_fields_file_that_has_goal_acceptance_verify_and_base_and_no_contract(self):
+        self.briefable()
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main"}),
+                          encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False), self.NEEDS_CONTRACT)
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "contract": "  "}), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False), self.NEEDS_CONTRACT)
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "contract": None}), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False),
+                         "brigade: brief fields: contract is null")
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+
+    def test_brief_refuses_a_contract_flag_next_to_a_fields_file(self):
+        self.briefable()
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps(self.literal_brief_fields()), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), "--contract", "none", ok=False),
+                         "brigade: use either --fields or the field flags, not both")
+
+    def test_brief_renders_the_contract_none_between_acceptance_and_verify(self):
+        self.briefable()
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        self.assertIn("\nACCEPTANCE:\n- a\n\nCONTRACT:\nnone\n\nVERIFY:\n- v\n", text)
+        self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), "none\n")
+
+    def test_brief_renders_a_contract_of_several_lines_with_its_lines_unchanged(self):
+        self.briefable()
+        contract = "A refused write changes no table.\n\n  - `log.tsv` gains no row.\nVERIFY: is not a heading here."
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", f"\n  {contract} \n\n")
+        self.assertIn(f"\nACCEPTANCE:\n- a\n\nCONTRACT:\n{contract}\n\nVERIFY:\n- v\n", text)
+        self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), contract + "\n")
+
+    def test_contract_prints_the_text_a_brief_stored_from_flags_and_from_a_fields_file(self):
+        self.briefable()
+        contract = "A refused write changes no table.\n\n  - `log.tsv` gains no row."
+        self.brigade("brief", "D1", *self.FLAGS, "--contract", contract)
+        self.assertEqual(self.brigade("contract", "D1"), contract)
+        fields = self.at / "brief-fields.json"
+        other = "A reader never sees a half-written row.\nNothing else."
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "paths": "src/boot.ts", "lease": "L4", "contract": other}), encoding="utf-8")
+        self.brigade("brief", "D1", "--fields", str(fields))
+        self.assertEqual(self.brigade("contract", "D1"), other)
+
+    def test_contract_refuses_an_item_with_no_contract_file_and_an_item_that_does_not_exist(self):
+        self.briefable()
+        self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        (self.at / "briefs" / "D1.contract.md").unlink()
+        self.assertEqual(self.brigade("contract", "D1", ok=False),
+                         "brigade: D1 has no contract on record; run brief with --contract")
+        self.assertEqual(self.brigade("contract", "D9", ok=False), "brigade: no D9 in dishes.tsv")
 
     def test_a_restaurant_file_without_reporting_reads_as_milestones(self):
         self.open()
@@ -2845,15 +2918,15 @@ class BrigadeTest(unittest.TestCase):
             self.brigade("ticket", "add", "--summary", "two")
             self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                          "--branch", "docs/a", "--paths", "src/a.py")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L1: src/a.py,changes/docs%2Fa.md.", text)
             self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s",
                          "--branch", "docs/a%b", "--paths", "src/b.py")
-            text = self.brigade("brief", "D2", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D2", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L2: src/b.py,changes/docs%2Fa%25b.md.", text)
             self.assertEqual(text.count("changes/docs%2Fa%25b.md"), 1)
             self.brigade("dish", "D1", "--lease", "L9", "--paths", "src/a.py,changes/docs%2Fa.md")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L9: src/a.py,changes/docs%2Fa.md.", text)
 
     def test_fire_warns_when_releasing_a_conflicting_lease_fails(self):
@@ -3372,7 +3445,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
 
-    FIX_BRIEF = ("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+    FIX_BRIEF = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
 
     def test_brief_refuses_an_item_that_owes_its_decision(self):
         self.started()
@@ -3384,7 +3457,7 @@ class BrigadeTest(unittest.TestCase):
         written = (self.at / "briefs" / "D1.md").read_bytes()
         before = self.unchanged()
         self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("brief", "D1", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
+        self.assertEqual(self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
                          self.NO_FIX_ROUND)
         self.unchanged(before)
         self.brigade("dish", "D1", "--state", "in-review")
@@ -4063,7 +4136,7 @@ class BrigadeTest(unittest.TestCase):
                  "your report to a fresh worker.")
     REPEAT = ("- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. "
               "A step that line names is not a deviation.")
-    BRIEF = ("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/a.py", "--lease", "L1",
+    BRIEF = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/a.py", "--lease", "L1",
              "--base", "origin/main")
 
     def coordinator(self, station="feature", mode="light", *fire):
@@ -5854,7 +5927,8 @@ class AdminTest(StoresTest):
         self.open_admin()
         refusal = "brigade: the executive admin routes work and never runs it"
         for args in (("fire", "--tickets", "T1", "--station", "feature", "--summary", "s"),
-                     ("brief", "D1", "--goal", "g", "--verify", "v", "--base", "main", "--acceptance", "a"),
+                     ("brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--base", "main", "--acceptance", "a"),
+                     ("contract", "D1"),
                      ("dish", "D1", "--state", "merged"),
                      ("dish", "D1", "--state", "dropped", "--stopped", "r1"),
                      ("pass", "check", "D1", "--sha", "abc"),

@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -172,7 +172,7 @@ group tickets into one dish and assign it to a station
 ## brigade.py brief
 
 ```text
-brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
+brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--contract CONTRACT] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
 ```
 
 render the worker brief for a dish; refuses when a field or the coordinator thread is missing
@@ -183,11 +183,24 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--fields FIELDS` |  |  |  | JSON file of brief fields, or - for stdin |
 | `--goal GOAL` |  |  |  | one sentence: the outcome |
 | `--acceptance ACCEPTANCE` (repeatable) |  |  |  | a checkable criterion; repeatable, at least one |
+| `--contract CONTRACT` |  |  |  | the item's contract, rendered under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
 | `--verify VERIFY` |  |  |  | exact commands that prove it, plus known gotchas |
 | `--paths PATHS` |  |  |  | leased paths, when fire did not claim them |
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
+
+## brigade.py contract
+
+```text
+brigade.py [flags] contract id
+```
+
+print the contract the dish's last brief stored
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
 
 ## brigade.py watch
 
