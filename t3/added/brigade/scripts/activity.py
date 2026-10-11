@@ -43,10 +43,12 @@ A path after an opening quotation mark or a backtick is private text up to the m
 Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash and does not start with a slash.
 
 Private text is also the request name of a delegated task when that name holds a hyphen.
-The request names are the text after the last `delegate-task:` of each identifier this run read, with the identifier's percent escapes decoded once.
+The request names are the text after the last `delegate-task:` of each identifier this run read, with the identifier's percent escapes decoded once and without the spaces that start and end that text.
 A name that is runs of letters and digits joined by single hyphens is private text only as a whole such run, compared in lower case as an identifier is.
 A longer such run that holds the name is not the name. Neither is the name after a slash that starts the string or follows one of the characters the last path shape above can follow, such as /code-review.
-Any other name with a hyphen is private text anywhere in a word, as read and with its percent escapes decoded once and twice, in each form of 4 or more characters. It is compared as a path this run read is.
+Any other name with a hyphen is read as it is and with its percent escapes decoded once and twice, each form without the spaces that start and end it. It is compared as a path this run read is.
+A form of 4 or more characters is private text anywhere in a word.
+A form of fewer than 4 characters is private text only where no letter, digit, underscore, or hyphen stands directly before or after it.
 A request name with no hyphen is not private text.
 
 The filter removes a word for no other reason.
@@ -761,6 +763,8 @@ TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
 # The slash that starts a word belongs to its token, so /code-review is not code-review.
 NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
 SLASH_WORD = re.compile(rf"{OPENS}/[^\s{QUOTES}]*")
+# A form of fewer than 4 characters of a request name that is not one TOKEN is not private text with one of these directly before or after it.
+BESIDE = r"[\w-]"
 CLOSERS = "/)]}>.,;:!?|"
 CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
@@ -888,27 +892,38 @@ class Privacy:
     def __init__(self, identifiers=(), paths=(), requests=()):
         """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
         roots holds each shorter form of a path that is not blank, in lower case, without the slashes that end it. A form of slashes only is `/`.
-        names holds each request name that is one TOKEN, in lower case. A request name with no hyphen is in neither.
+        names holds each request name that is one TOKEN, in lower case.
+        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
+        A request name, and each form of one that is not one TOKEN, is read without the spaces that start and end it. A request name with no hyphen is in none of the four.
         """
-        index, roots = {}, set()
-        requests = {plain(value) for value in requests if "-" in value}
-        self.names = frozenset(lowered(value) for value in requests if re.fullmatch(TOKEN, value))
-        known = (*((plain(value), False, False) for value in identifiers), *((plain(value), True, True) for value in paths),
-                 *((value, True, False) for value in requests if lowered(value) not in self.names))
-        for value, exact, path in known:
+        index, roots, shorts = {}, set(), set()
+        requests = {plain(value).strip() for value in requests if "-" in value}
+        tokens = {value for value in requests if re.fullmatch(TOKEN, value)}
+        self.names = frozenset(map(lowered, tokens))
+        known = (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in paths))
+        for value, path in known:
             for _ in range(3):
                 low = lowered(value)
-                if len(low) >= ANCHOR and low.strip() and (exact or not ordinary(value)):
+                if len(low) >= ANCHOR and low.strip() and (path or not ordinary(value)):
                     index.setdefault(low[:ANCHOR], set()).add(low)
                 elif path and low.strip():
                     roots.add(low.rstrip("/") or "/")
                 value = unescaped(value)[0]
+        for value in requests - tokens:
+            for _ in range(3):
+                low = lowered(value).strip()
+                if len(low) >= ANCHOR:
+                    index.setdefault(low[:ANCHOR], set()).add(low)
+                else:
+                    shorts.add(low)
+                value = unescaped(value)[0]
         self.roots = frozenset(roots)
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
+        self.shorts = re.compile(rf"(?<!{BESIDE})(?=({'|'.join(map(re.escape, sorted(shorts, key=len, reverse=True)))})(?!{BESIDE}))") if shorts else None
         self.cache = {}
 
     def found(self, text):
-        """The spans of text that hold an indexed form, a token that is one of names, or a word that is one of roots, each in any case, or text of a private shape."""
+        """The spans of text that hold an indexed form, a token that is one of names, a form shorts matches, or a word that is one of roots, each in any case, or text of a private shape."""
         low = lowered(text)
         for at in range(len(low) - ANCHOR + 1 if self.index else 0):
             for form in self.index.get(low[at:at + ANCHOR], ()):
@@ -917,6 +932,8 @@ class Privacy:
         for match in NAME.finditer(low) if self.names else ():
             if match.group() in self.names:
                 yield match.span()
+        for match in self.shorts.finditer(low) if self.shorts else ():
+            yield match.span(1)
         for match in SLASH_WORD.finditer(low) if self.roots else ():
             word = match.group()
             while word not in self.roots and len(word) > 1 and word[-1] in CLOSERS:
