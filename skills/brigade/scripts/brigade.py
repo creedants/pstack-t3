@@ -12,6 +12,8 @@ import argparse
 import fcntl
 import fnmatch
 import functools
+import hashlib
+import io
 import json
 import os
 import posixpath
@@ -21,6 +23,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
@@ -35,7 +38,8 @@ COUNTED_STATES = ("in-progress", "in-review")
 # A dish in one of these holds an active lease that watch keeps renewing. A queued dish's lease is the queue's.
 LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
-VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
+VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
+EDITS_VERDICT = "pass-with-edits"
 MODES = ("full", "light")
 ROUND_BUDGET = 3
 OWING_STATES = ("in-progress", "in-review", "sent-back", "blocked")
@@ -77,6 +81,7 @@ TABLES = {
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
+    "edits.tsv": ("at", "dish", "from", "to", "report"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
@@ -84,16 +89,19 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "startable")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
 RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 NOTHING_HANDED = "nothing handed to you"
+NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contract key in --fields, and write none when the item has no safety, privacy, or integrity property")
 SNAPSHOT_CHUNK = 1 << 16
 REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
 ITEM_REPORT = re.compile(r"(D\d+)\.md")
+CLAIMS_LINE = re.compile(r"^[ \t#>*+\-_`\d.)]*Claims check", re.M)
+CLAIMS_STATES = ("in-review", "passed")
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -788,6 +796,73 @@ NOT_A_REPORT = {
     "other": "is not a regular file",
     "elsewhere": "resolves outside this store's reports/",
 }
+EDITS_SECTION = (2, "Edits")
+EDIT_TITLE = re.compile(r"Edit (\S.*)")
+HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
+FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
+FILE_LINE = re.compile(r"File: `([^` ][^`]*)`(?!`)")
+LABELS = {"Old text:": "old", "New text:": "new"}
+# The marks edit_mark gives the five parts of one edit that one_edit reads, in the only order it reads them.
+EDIT_MARKS = ["file", "old", "fence", "new", "fence"]
+BLANK = re.compile(r"[ \t]*")
+# What a block quote, a list item, and indentation put in front of a line's text.
+NESTED = re.compile(r"[ \t]*(?:(?:>|(?:[-+*]|[0-9]{1,9}[.)])(?=[ \t]))[ \t]*)*")
+UNDERLINE = re.compile(NESTED.pattern + r"(?:=+|-+)[ \t]*")
+# What starts a line outside a fence that HEADING does not match and report_parts refuses. Each key is a key of EDITS_REFUSED.
+UNREAD = (
+    ("fence", re.compile(r"(?![`~])" + NESTED.pattern + r"(?:`{3}|~{3})")),
+    ("heading", re.compile(NESTED.pattern + r"#{1,6}(?:[ \t]|$)")),
+    ("html", re.compile(r" {0,3}<[A-Za-z/!?]")),
+)
+# Why parse_edits refuses a review report's edits. Each value finishes the words `reports/<name>`.
+EDITS_REFUSED = {
+    "none": " holds no edit under a ## Edits heading",
+    "return": " holds a carriage return",
+    "nul": " holds a NUL character",
+    "mark": " starts with a byte order mark",
+    "twice": " holds {count} headings whose text is Edits",
+    "fence": (": line {line} has three backticks or tildes after nothing but indentation, block quote marks, and list marks; "
+              "start each fence at the first column"),
+    "open": ": line {line} opens a fence that no later line closes",
+    "heading": (": line {line} starts like a heading and is not one to six #, one space, and the text, from the first column "
+                "with nothing after the text"),
+    "html": ": line {line} starts, after at most three spaces, with < and then an ASCII letter, /, !, or ?",
+    "underline": (": line {line} is only = or only - once its indentation, block quote marks, list marks, and trailing "
+                  "spaces and tabs are removed, and the line above it is not empty and not only spaces and tabs"),
+    "inside": ": line {line} is a heading in the ## Edits section that is neither ### Edit <n> nor a heading of one or two #",
+    "above": ": line {line} starts a fenced block in the ## Edits section above its first ### Edit heading",
+    "parts": (": Edit {number} must hold, once each and in this order, a File line, an Old text line, a fenced block, "
+              "a New text line, and a fenced block"),
+    "near": (": Edit {number} has a File, Old text, or New text line after whitespace, a block quote mark, or a list mark, "
+             "or an Old text or New text line that ends in whitespace"),
+    "malformed": (": line {line} of Edit {number} starts, once its indentation, block quote marks, list marks, and the "
+                  "whitespace at its two ends are removed, with File: and a backtick; what follows must be a path that "
+                  "holds no backtick and does not start with a space, then a backtick that no backtick follows directly"),
+    "below": (": line {line} is a File, Old text, or New text line of Edit {number}; the line above it must be empty or only "
+              "spaces and tabs, the edit's heading, the closing line of a fence, or another of those three lines"),
+    "apart": (": line {line} opens a fenced block of Edit {number}; every line between an Old text or New text line and "
+              "the fenced block below it must be empty or only spaces and tabs"),
+    "empty": ": Edit {number} has an empty old text",
+    "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
+}
+NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
+                  "run set --build-command <command> --check-command <command>, with none for one the project lacks")
+NO_COMMAND = "none"
+# Why an edit cannot apply to the reviewed commit.
+EDIT_FAILS = {
+    "missing": "FAIL {path}: no regular file at {sha}",
+    "count": "FAIL {path}: old text of Edit {number} occurs {count} times at {sha}",
+    "overlap": "FAIL {path}: Edit {number} overlaps another edit",
+}
+# One line per compared path, keyed by whether the build changed the path in the scratch copy and whether the copy and the head agree at it.
+PATH_LINES = {
+    (False, True): "edited {path}",
+    (True, True): "built {path}",
+    (False, False): "FAIL {path}: differs from {sha} with the edits applied",
+    (True, False): "FAIL {path}: differs from what the build writes",
+}
+# The kind and the execute bit of each tree mode that edits verify compares by content.
+BLOB_MODES = {"100644": ("file", False), "100755": ("file", True), "120000": ("link", False)}
 # What `close` advises for an entry of each kind it warns about. Each value finishes the warning line.
 REPAIR = {
     "link": "remove the link and leave its target as it is",
@@ -842,6 +917,244 @@ def item_report(restaurant, report):
     if kind != "file":
         raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing added")
     return name
+
+
+class EditsRefused(BrigadeError):
+    """A refusal from parse_edits. Its text is a value of EDITS_REFUSED with its fields filled in."""
+
+
+@dataclass(frozen=True)
+class Edit:
+    number: str
+    path: str
+    old: str
+    new: str
+
+
+def report_parts(lines):
+    """A report's lines as (kind, value, number) parts. The number is that of the part's first line, counted from 1.
+
+    A `fence` is the text between a fence's two lines.
+    A fence opens at a line that starts at the first column with three or more backticks and holds no other backtick,
+    or that starts there with three or more tildes.
+    It closes at the next line that is at most three spaces, at least as many of the same character, and then only
+    spaces and tabs.
+    A `heading` is the (count of `#`, text) of a line outside a fence that HEADING matches in full. That is one to six `#`,
+    one space, and a text with no whitespace at its two ends and no run of `#` at its end after a space or a tab.
+    A `line` is any other line outside a fence.
+    Raises EditsRefused for a fence that no later line closes, and for the first `line` that an UNREAD pattern matches at
+    its start or that UNDERLINE matches in full directly below a `line` that BLANK does not match in full.
+    """
+    parts, index = [], 0
+    while index < len(lines):
+        line, number = lines[index], index + 1
+        opened = FENCE_OPEN.fullmatch(line)
+        if opened:
+            run = opened.group(1) or opened.group(2)
+            closing = re.compile(f" {{0,3}}{run[0]}{{{len(run)},}}[ \t]*")
+            close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
+            if close is None:
+                raise EditsRefused(EDITS_REFUSED["open"].format(line=number))
+            parts.append(("fence", "\n".join(lines[index + 1:close]), number))
+            index = close + 1
+            continue
+        heading = HEADING.fullmatch(line)
+        if heading:
+            parts.append(("heading", (len(heading.group(1)), heading.group(2)), number))
+        else:
+            unread = next((key for key, pattern in UNREAD if pattern.match(line)), None)
+            if not unread and UNDERLINE.fullmatch(line) and parts and parts[-1][0] == "line" and not BLANK.fullmatch(parts[-1][1]):
+                unread = "underline"
+            if unread:
+                raise EditsRefused(EDITS_REFUSED[unread].format(line=number))
+            parts.append(("line", line, number))
+        index += 1
+    return parts
+
+
+def edit_mark(kind, value):
+    """What one part of an edit is to one_edit.
+
+    A fence is `fence`. A line that FILE_LINE matches at its start is `file`. That is `File: `, a backtick, a path, and a
+    backtick that no backtick follows directly, where the path holds no backtick and does not start with a space.
+    A line that is `Old text:` is `old`, and one that is `New text:` is `new`. A line that BLANK matches in full is `blank`.
+    Another line that is `file`, `old`, or `new` once what NESTED matches at its start and then the whitespace at its
+    two ends are removed is `unread`. Another line that then starts with `File: ` and a backtick is `malformed`.
+    Every line left is None.
+    """
+    if kind == "fence":
+        return "fence"
+    if FILE_LINE.match(value):
+        return "file"
+    if value in LABELS:
+        return LABELS[value]
+    if BLANK.fullmatch(value):
+        return "blank"
+    text = value[NESTED.match(value).end():].strip()
+    if FILE_LINE.match(text) or text in LABELS:
+        return "unread"
+    return "malformed" if text.startswith("File: `") else None
+
+
+def one_edit(number, parts):
+    """The Edit of the (kind, value, line number) parts between an edit's heading and the next heading.
+
+    Raises EditsRefused for a part that edit_mark calls `unread`, and for the first part that it calls `malformed`.
+    Raises it unless the parts that edit_mark calls `file`, `old`, `new`, or `fence` are, in this order, one `file`,
+    one `old`, one `fence`, one `new`, and one `fence`.
+    Raises it for the first part that is a `file`, `old`, or `new` directly below a part that edit_mark calls None, or
+    a `fence` whose nearest part above it that is not `blank` is neither `old` nor `new`.
+    """
+    marks = [edit_mark(kind, value) for kind, value, _ in parts]
+    if "unread" in marks:
+        raise EditsRefused(EDITS_REFUSED["near"].format(number=number))
+    if "malformed" in marks:
+        raise EditsRefused(EDITS_REFUSED["malformed"].format(line=parts[marks.index("malformed")][2], number=number))
+    if [mark for mark in marks if mark in EDIT_MARKS] != EDIT_MARKS:
+        raise EditsRefused(EDITS_REFUSED["parts"].format(number=number))
+    above = nearest = "heading"
+    for mark, (_, _, line) in zip(marks, parts):
+        if mark in ("file", "old", "new") and above is None:
+            raise EditsRefused(EDITS_REFUSED["below"].format(line=line, number=number))
+        if mark == "fence" and nearest not in ("old", "new"):
+            raise EditsRefused(EDITS_REFUSED["apart"].format(line=line, number=number))
+        above = mark
+        nearest = nearest if mark == "blank" else mark
+    marked = [value for mark, (_, value, _) in zip(marks, parts) if mark in EDIT_MARKS]
+    path, old, new = FILE_LINE.match(marked[0]).group(1), marked[2], marked[4]
+    if not old:
+        raise EditsRefused(EDITS_REFUSED["empty"].format(number=number))
+    if path.startswith("/") or ".." in PurePosixPath(path).parts:
+        raise EditsRefused(EDITS_REFUSED["path"].format(number=number, path=path))
+    return Edit(number, posixpath.normpath(path), old, new)
+
+
+def parse_edits(text):
+    """The edits of a review report's `## Edits` section, in the report's order.
+
+    The section starts after the report's one heading whose text is `Edits`, when that heading has two `#`.
+    It ends before the next heading of one or two `#`, or where the report's parts end.
+    In it a heading of three `#` whose text is `Edit <n>` starts an edit, and the edit ends before the next heading.
+    The `<n>` is any text that starts with a character other than whitespace.
+    Raises EditsRefused for a carriage return, for a NUL character, for a byte order mark as the first character,
+    for what report_parts refuses, for a second heading whose text is `Edits`, for any other heading in the section,
+    for a fence in the section above its first edit, for a section with no edit, and for the first edit that one_edit
+    refuses.
+    """
+    for key, found in (("return", "\r" in text), ("nul", "\0" in text), ("mark", text.startswith("\ufeff"))):
+        if found:
+            raise EditsRefused(EDITS_REFUSED[key])
+    parts = report_parts(text.split("\n"))
+    named = sum(kind == "heading" and value[1] == EDITS_SECTION[1] for kind, value, _ in parts)
+    if named > 1:
+        raise EditsRefused(EDITS_REFUSED["twice"].format(count=named))
+    section, edits = iter(parts), []
+    if any((kind, value) == ("heading", EDITS_SECTION) for kind, value, _ in section):
+        for kind, value, number in section:
+            if kind == "heading":
+                level, title = value
+                if level < 3:
+                    break
+                numbered = EDIT_TITLE.fullmatch(title) if level == 3 else None
+                if not numbered:
+                    raise EditsRefused(EDITS_REFUSED["inside"].format(line=number))
+                edits.append((numbered.group(1), []))
+            elif edits:
+                edits[-1][1].append((kind, value, number))
+            elif kind == "fence":
+                raise EditsRefused(EDITS_REFUSED["above"].format(line=number))
+    if not edits:
+        raise EditsRefused(EDITS_REFUSED["none"])
+    return tuple(one_edit(number, parts) for number, parts in edits)
+
+
+def report_edits(restaurant, name):
+    """The edits of reports/<name>.
+
+    Refuses a report that cannot be read and one that is not UTF-8. The caller has checked that the entry is a `file`.
+    """
+    try:
+        return parse_edits((restaurant.dir / "reports" / name).read_bytes().decode("utf-8"))
+    except OSError as error:
+        raise BrigadeError(f"reports/{name} cannot be read: {error.strerror}") from None
+    except UnicodeDecodeError:
+        raise BrigadeError(f"reports/{name} is not UTF-8") from None
+    except EditsRefused as error:
+        raise BrigadeError(f"reports/{name}{error}") from None
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    mode: str
+    oid: str
+
+
+@dataclass(frozen=True)
+class Digest:
+    """What edits verify compares at one path. The kind is `file`, `link`, or `other`, and a link's hash is of its target."""
+    kind: str
+    sha256: str
+    executable: bool
+
+
+def occurrences(content, old):
+    """The offset of every place old starts in content. Places that overlap each count."""
+    found, at = [], content.find(old)
+    while at != -1:
+        found.append(at)
+        at = content.find(old, at + 1)
+    return found
+
+
+def apply_edits(contents, edits, sha):
+    """({path: new bytes}, lines). A run with any line changes no path.
+
+    contents holds, for each path an edit names, the file's bytes at the reviewed commit, or None when no file is there.
+    Every old text is placed in those bytes, never in the result of another edit.
+    """
+    found = [None if contents[edit.path] is None else occurrences(contents[edit.path], edit.old.encode()) for edit in edits]
+    spans = [(edit.path, starts[0], starts[0] + len(edit.old.encode())) if starts is not None and len(starts) == 1 else None
+             for edit, starts in zip(edits, found)]
+    lines = []
+    for index, (edit, starts, span) in enumerate(zip(edits, found, spans)):
+        if starts is None:
+            case = "missing"
+        elif span is None:
+            case = "count"
+        elif any(other is not None and at != index and other[0] == span[0] and other[1] < span[2] and span[1] < other[2]
+                 for at, other in enumerate(spans)):
+            case = "overlap"
+        else:
+            continue
+        line = EDIT_FAILS[case].format(path=edit.path, number=edit.number, count=len(starts or ()), sha=sha)
+        if line not in lines:
+            lines.append(line)
+    if lines:
+        return {}, lines
+    changed = {}
+    for path in {edit.path for edit in edits}:
+        pieces, at = [], 0
+        placed = sorted(((span[1], span[2], edit.new.encode()) for edit, span in zip(edits, spans) if edit.path == path),
+                        key=lambda piece: piece[0])
+        for start, end, new in placed:
+            pieces += [contents[path][at:start], new]
+            at = end
+        changed[path] = b"".join(pieces) + contents[path][at:]
+    return changed, []
+
+
+def compared_paths(before, after, extracted, edited, built):
+    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted."""
+    return sorted(path for path in before.keys() | after.keys()
+                  if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
+                  or edited.get(path) != built.get(path))
+
+
+def path_lines(paths, edited, built, head, sha):
+    """One PATH_LINES line per path, and whether the scratch copy and the head agree at every path."""
+    agree = [built.get(path) == head.get(path) for path in paths]
+    lines = [PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha) for path, same in zip(paths, agree)]
+    return lines, all(agree)
 
 
 @dataclass(frozen=True)
@@ -1266,7 +1579,7 @@ def review_report(restaurant, dish_id, report):
 
 
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
-                member=False, late=False):
+                member=False, late=False, edits=""):
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
@@ -1275,8 +1588,20 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
         note = clean(f"same model family; {note}")
+    if verdict == EDITS_VERDICT:
+        if not edits:
+            raise BrigadeError(f"--verdict {EDITS_VERDICT} needs --edits <review report>")
+        if report:
+            raise BrigadeError("--edits names the round's report; drop --report")
+        report = edits
+    elif edits:
+        raise BrigadeError(f"--edits goes only with --verdict {EDITS_VERDICT}")
     if report:
         report = review_report(restaurant, dish_id, report)
+    if verdict == EDITS_VERDICT:
+        report_edits(restaurant, report)
+    if verdict == "pass" and not member:
+        edits_gate(restaurant, dish_id, sha, report)
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
                                    "author": author, "verifier": verifier, "note": note, "report": report,
                                    "member": "yes" if member else ""})
@@ -1291,6 +1616,156 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     if debt:
         return f"{printed}; {debt} send-backs, decision pending"
     return printed
+
+
+def edits_gate(restaurant, dish_id, sha, report):
+    """Refuse a pass while the item's last verdict row is pass-with-edits.
+
+    Two things lift it. One is an edits.tsv row for that round's sha, this sha, and that round's report.
+    The other is a `report` that is not that round's report.
+    """
+    verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+    if not verdicts or verdicts[-1]["verdict"] != EDITS_VERDICT:
+        return
+    last = verdicts[-1]
+    if any(row["dish"] == dish_id and (row["from"], row["to"], row["report"]) == (last["sha"], clean(sha), last["report"])
+           for row in restaurant.rows("edits.tsv")):
+        return
+    if report and report != last["report"]:
+        return
+    raise BrigadeError(f"{dish_id}'s last verdict is {EDITS_VERDICT} at {last['sha']}; run edits verify {dish_id} "
+                       f"--from {last['sha']} --to {sha}, or name a second review's report with --report")
+
+
+def command_words(command):
+    try:
+        return shlex.split(command)
+    except ValueError as error:
+        raise BrigadeError(f"{command!r} is not a command line: {error}") from None
+
+
+def git(project_root, *words):
+    return subprocess.run(["git", "-C", project_root, *words], capture_output=True)
+
+
+def commit_tree(project_root, sha):
+    """(the commit's full id, {path: TreeEntry}) of a commit in the project's repository."""
+    found = git(project_root, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{sha}^{{commit}}")
+    if found.returncode:
+        raise BrigadeError(f"{sha} is not a commit in {project_root}")
+    commit = found.stdout.decode().strip()
+    if not commit.startswith(sha.lower()):
+        raise BrigadeError(f"{sha} names a commit by something other than the start of its id; pass the commit id")
+    tree = {}
+    for record in git(project_root, "ls-tree", "-r", "-z", commit).stdout.split(b"\0")[:-1]:
+        entry, _, path = record.partition(b"\t")
+        mode, _, oid = entry.decode().split(" ")
+        tree[os.fsdecode(path)] = TreeEntry(mode, oid)
+    return commit, tree
+
+
+def head_digest(project_root, entry):
+    kind, executable = BLOB_MODES.get(entry.mode, ("other", False))
+    if kind == "other":
+        return Digest(kind, entry.oid, executable)
+    blob = git(project_root, "cat-file", "blob", entry.oid).stdout
+    return Digest(kind, hashlib.sha256(blob).hexdigest(), executable)
+
+
+def digests(root):
+    """{path: Digest} of every entry under root that is not a directory. No link is followed."""
+    found = {}
+    for directory, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = Path(directory) / name
+            status = path.lstat()
+            if stat.S_ISDIR(status.st_mode):
+                continue
+            relative = path.relative_to(root).as_posix()
+            if stat.S_ISLNK(status.st_mode):
+                found[relative] = Digest("link", hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest(), False)
+            elif stat.S_ISREG(status.st_mode):
+                found[relative] = Digest("file", hashlib.sha256(path.read_bytes()).hexdigest(), bool(status.st_mode & stat.S_IXUSR))
+            else:
+                found[relative] = Digest("other", "", False)
+    return found
+
+
+def exit_code(scratch, command):
+    """Run a command in the scratch copy with no shell and no stdin. Its output goes to stderr when it exits non-zero."""
+    try:
+        result = subprocess.run(command_words(command), cwd=scratch, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as error:
+        raise BrigadeError(f"cannot run {command}: {error.strerror}") from None
+    if result.returncode:
+        sys.stderr.buffer.write(result.stdout)
+        sys.stderr.flush()
+    return result.returncode
+
+
+def replay(project_root, reviewed, before, after, edits, build, check, sha):
+    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output."""
+    with tempfile.TemporaryDirectory() as directory:
+        scratch = Path(directory)
+        archive = git(project_root, "archive", "--format=tar", reviewed).stdout
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            # extractall has no filter argument in Python 3.10 before 3.10.12 or in 3.11 before 3.11.4.
+            tar.extractall(scratch, **({"filter": "tar"} if hasattr(tarfile, "tar_filter") else {}))
+        extracted = digests(scratch)
+        files = {path for path, digest in extracted.items() if digest.kind == "file"}
+        contents = {edit.path: (scratch / edit.path).read_bytes() if edit.path in files else None for edit in edits}
+        changed, lines = apply_edits(contents, edits, sha)
+        if lines:
+            return lines, False
+        for path, data in changed.items():
+            (scratch / path).write_bytes(data)
+        edited = digests(scratch)
+        if build != NO_COMMAND:
+            code = exit_code(scratch, build)
+            if code:
+                return [f"FAIL build: {build} exited {code}"], False
+        built = digests(scratch)
+        paths = compared_paths(before, after, extracted, edited, built)
+        head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
+        lines, clean = path_lines(paths, edited, built, head, sha)
+        if clean and check != NO_COMMAND:
+            code = exit_code(scratch, check)
+            lines.append(f"FAIL check: {check} exited {code}" if code else "ok check")
+            clean = not code
+        return lines, clean
+
+
+def verify_edits(restaurant, dish_id, from_sha, to_sha):
+    """Called from run(), because it starts subprocesses. It holds the store lock for its first read and for its write, and never while a subprocess runs."""
+    with restaurant.checked():
+        restaurant.fence()
+        restaurant.find("dishes.tsv", dish_id)
+        rounds = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+                  if row["verdict"] == EDITS_VERDICT and row["sha"] == from_sha]
+        if not rounds:
+            raise BrigadeError(f"{dish_id} has no {EDITS_VERDICT} round at {from_sha}")
+        meta = restaurant.meta
+        build, check = meta.get("buildCommand"), meta.get("checkCommand")
+        if not build or not check:
+            raise BrigadeError(NEEDS_COMMANDS)
+    name = rounds[-1]["report"]
+    kind = report_entry(restaurant, name)
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing verified")
+    edits = report_edits(restaurant, name)
+    (reviewed, before), (_, after) = (commit_tree(meta["projectRoot"], sha) for sha in (from_sha, to_sha))
+    lines, verified = replay(meta["projectRoot"], reviewed, before, after, edits, build, check, from_sha)
+    for line in lines:
+        print(line)
+    if not verified:
+        raise BrigadeError(f"{dish_id}: edits not verified, {from_sha} to {to_sha}")
+    row = {"dish": dish_id, "from": clean(from_sha), "to": clean(to_sha), "report": name}
+    with restaurant.checked():
+        restaurant.fence()
+        if not any(all(recorded[key] == value for key, value in row.items()) for recorded in restaurant.rows("edits.tsv")):
+            restaurant.append("edits.tsv", {"at": now(), **row})
+    return f"{dish_id}: edits verified, {from_sha} to {to_sha}"
 
 
 def unrecorded_reviews(restaurant):
@@ -1318,6 +1793,22 @@ def unrecorded_reviews(restaurant):
         if kind != "missing":
             unrecorded.append((path.name, kind))
     return unrecorded
+
+
+def unclaimed_reports(restaurant):
+    """(id, state) of each dish in CLAIMS_STATES whose reports/<id>.md is a `file` with no line CLAIMS_LINE matches.
+
+    The report is decoded as UTF-8 with replacement. An entry that report_stat does not call a `file` is not read.
+    """
+    unclaimed = []
+    for dish in restaurant.rows("dishes.tsv"):
+        name = f"{dish['id']}.md"
+        if dish["state"] not in CLAIMS_STATES or report_entry(restaurant, name) != "file":
+            continue
+        text = (restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace")
+        if not CLAIMS_LINE.search(text):
+            unclaimed.append((dish["id"], dish["state"]))
+    return unclaimed
 
 
 def report(restaurant, write=True):
@@ -1924,7 +2415,7 @@ def roles_mode(inputs):
     return ModeLines(lines, modes[0], source.removeprefix(ESCALATED) if source.startswith(ESCALATED) else None)
 
 
-def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, context):
+def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, base, context):
     for _ in range(MODE_RESOLUTIONS):
         with restaurant.checked():
             restaurant.fence()
@@ -1938,18 +2429,19 @@ def brief(restaurant, ident, goal, acceptance, verify, paths, lease, base, conte
                 continue
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
-            return write_brief(restaurant, dish, mode, goal, acceptance, verify, used_paths, used_lease, base, context, thread)
+            return write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, used_paths, used_lease, base,
+                               context, thread)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
-def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, base, context, thread):
+def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
     ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     land = LAND
     report = restaurant.dir / "reports" / f"{ident}.md"
-    sent_back = send_backs(restaurant.rows("pass.tsv"), ident)
+    sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
@@ -1963,6 +2455,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
         "", "CONTEXT:", *([f"- {item}" for item in context] or ["- None beyond the tickets."]),
         *([f"- A reviewer sent an earlier attempt back. Its findings: {findings}"] if findings.exists() else []),
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
+        "", "CONTRACT:", contract,
         "", "VERIFY:", f"- {verify}",
         f"- Run builds and tests through `python3 {land} slot -- <command>`.",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
@@ -1980,8 +2473,25 @@ def write_brief(restaurant, dish, mode, goal, acceptance, verify, paths, lease, 
         "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
     ]
     text = "\n".join(lines) + "\n"
+    restaurant.write(contract_file(ident), contract + "\n")
     restaurant.write(Path("briefs") / f"{ident}.md", text)
     return text
+
+
+def contract_file(ident):
+    return Path("briefs") / f"{ident}.contract.md"
+
+
+def stored_contract(restaurant, ident):
+    """The contract the item's last brief stored.
+
+    It is the contract file's text, with no newline converted and without the one newline write_brief put after the contract.
+    """
+    restaurant.find("dishes.tsv", ident)
+    path = restaurant.dir / contract_file(ident)
+    if not path.is_file():
+        raise BrigadeError(f"{ident} has no contract on record; run brief with --contract")
+    return path.read_bytes().decode("utf-8").removesuffix("\n")
 
 
 def attempt_starts(restaurant, dish):
@@ -2614,6 +3124,12 @@ def parser():
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
+    p.add_argument("--build-command",
+                   help="the build command edits verify runs; none records that the project has no build, and \"\" removes "
+                        "the setting")
+    p.add_argument("--check-command",
+                   help="the check command edits verify runs; none records that the project has no check, and \"\" removes "
+                        "the setting")
     p.add_argument("--autofire", choices=AUTOFIRE,
                    help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
@@ -2674,11 +3190,17 @@ def parser():
     p.add_argument("--fields", help="JSON file of brief fields, or - for stdin")
     p.add_argument("--goal", default=None, help="one sentence: the outcome")
     p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
+    p.add_argument("--contract", default=None,
+                   help="the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no "
+                        "safety, privacy, or integrity property; a brief with no contract is refused")
     p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
     p.add_argument("--paths", default=None, help="leased paths, when fire did not claim them")
     p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
     p.add_argument("--base", default=None, help="the trunk ref the worker's branch starts from, such as origin/main")
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
+
+    p = sub.add_parser("contract", help="print the contract the dish's last brief stored")
+    p.add_argument("id")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
     sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
@@ -2717,6 +3239,9 @@ def parser():
     a.add_argument("--note", default="")
     a.add_argument("--same-family", action="store_true", help="allow it when no other family is runnable")
     a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
+    a.add_argument("--edits", default="",
+                   help=f"the round's review report under reports/, such as D2-review-1.md; --verdict {EDITS_VERDICT} needs it, "
+                        "and no other verdict takes it; refused with one line that says why when its edits cannot be read")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -2726,6 +3251,20 @@ def parser():
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
+
+    p = sub.add_parser("edits", help="compare a head with a reviewed commit that has its pass-with-edits round's edits applied and the build run")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("verify",
+                     help="apply the edits of the item's last pass-with-edits round at --from to a scratch copy of that "
+                          "commit, run the build command there unless it is none, and compare the copy with --to at every "
+                          "path either commit holds where the two commits differ or the edits or the build changed the "
+                          "copy; when every path agrees, run the check command there unless it is none; a run with no "
+                          "failure adds one edits.tsv row for the pair unless an equal row exists; no worktree is read or "
+                          "written")
+    a.add_argument("dish")
+    a.add_argument("--from", dest="from_sha", metavar="SHA", required=True,
+                   help="the reviewed commit, as the pass-with-edits row records it")
+    a.add_argument("--to", metavar="SHA", required=True, help="the head to compare")
 
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
@@ -2784,8 +3323,15 @@ def parser():
     return top
 
 
+def brief_contract(value):
+    """The contract as given. Refuses None and text that is only whitespace."""
+    if not (value or "").strip():
+        raise BrigadeError(NEEDS_CONTRACT)
+    return value
+
+
 def _brief_fields(args):
-    flagged = any(getattr(args, name) is not None for name in ("goal", "verify", "base", "paths", "lease")) or args.acceptance or args.context
+    flagged = any(getattr(args, name) is not None for name in ("goal", "contract", "verify", "base", "paths", "lease")) or args.acceptance or args.context
     if args.fields is not None:
         if flagged:
             raise BrigadeError("use either --fields or the field flags, not both")
@@ -2804,7 +3350,7 @@ def _brief_fields(args):
             raise BrigadeError(f"brief fields: {error}") from error
         if not isinstance(payload, dict):
             raise BrigadeError("brief fields: JSON must be an object")
-        allowed = {"goal", "acceptance", "verify", "base", "context", "paths", "lease"}
+        allowed = {"goal", "acceptance", "contract", "verify", "base", "context", "paths", "lease"}
         lists = {"acceptance", "context"}
         unknown = [key for key in payload if key not in allowed]
         if unknown:
@@ -2823,6 +3369,7 @@ def _brief_fields(args):
         return {
             "goal": payload["goal"],
             "acceptance": payload["acceptance"],
+            "contract": brief_contract(payload.get("contract")),
             "verify": payload["verify"],
             "paths": payload["paths"] if "paths" in payload else "",
             "lease": payload["lease"] if "lease" in payload else "",
@@ -2834,6 +3381,7 @@ def _brief_fields(args):
     return {
         "goal": args.goal,
         "acceptance": args.acceptance,
+        "contract": brief_contract(args.contract),
         "verify": args.verify,
         "paths": args.paths or "",
         "lease": args.lease or "",
@@ -2917,6 +3465,8 @@ def run(argv):
         # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
         fields = _brief_fields(args)
         return brief(restaurant, args.id, **fields)
+    if args.command == "edits":
+        return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
@@ -2996,6 +3546,14 @@ def command(restaurant, args, contract=None, rails=None):
                 drop.append("mode")
             else:
                 raise BrigadeError('--mode takes full, light, or ""')
+        for key, value in (("buildCommand", args.build_command), ("checkCommand", args.check_command)):
+            if value is None:
+                continue
+            if value.strip():
+                command_words(value.strip())
+                changes[key] = value.strip()
+            else:
+                drop.append(key)
         if args.autofire:
             changes["autofire"] = args.autofire
         if args.reports_to is not None:
@@ -3016,6 +3574,9 @@ def command(restaurant, args, contract=None, rails=None):
             changes["schedules"] = schedules
         meta = restaurant.change_meta(drop, **changes)
         return json.dumps(meta, indent=2)
+
+    if args.command == "contract":
+        return stored_contract(restaurant, args.id)
 
     if args.command == "inbox":
         if args.action == "take":
@@ -3121,7 +3682,7 @@ def command(restaurant, args, contract=None, rails=None):
     if args.command == "pass":
         if args.action == "record":
             return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                               args.note, args.same_family, args.report, args.member, args.late)
+                               args.note, args.same_family, args.report, args.member, args.late, args.edits)
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:
@@ -3221,6 +3782,8 @@ def command(restaurant, args, contract=None, rails=None):
                 kind = "elsewhere" if linked else kind
                 print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row of {dish} names it; {REPAIR[kind]}",
                       file=sys.stderr)
+        for ident, state in unclaimed_reports(restaurant):
+            print(f"brigade: warning: reports/{ident}.md has no Claims check line; {ident} is {state}", file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text

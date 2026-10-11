@@ -1331,6 +1331,81 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], "# Perf report")
         self.assertNotIn("warning", out)
 
+    def no_claims(self, state, dish="D1"):
+        return f"brigade: warning: reports/{dish}.md has no Claims check line; {dish} is {state}"
+
+    def test_close_warns_about_the_report_of_an_item_in_review_that_has_no_claims_check_line(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n\nThe Claims check found nothing.\nclaims check: 3 statements\n")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        code, before, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        code, out, err = self.close_run("--to-file")
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        self.assertEqual(Path(out).read_text().strip(), before)
+        code, out, err = self.close_run()
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        self.assertNotIn("warning", out)
+        self.assertEqual(self.close_run()[2], self.no_claims("in-review"))
+
+    def test_close_warns_about_the_report_of_a_passed_item_that_has_no_claims_check_line(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n")
+        self.record("abc", "pass")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("passed")))
+
+    def test_close_prints_the_claims_check_warning_after_the_warning_for_an_unrecorded_review(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.review_file("D1-review-1.md")
+        self.assertEqual(self.close_run("--dry-run")[::2],
+                         (0, self.no_row("D1-review-1.md") + "\n" + self.no_claims("in-review")))
+
+    def test_close_accepts_each_shape_of_a_claims_check_line(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        for line in ("Claims check: 14 statements checked, 2 corrected", "## Claims check", "### Claims check",
+                     "- Claims check: 3 statements checked", "**Claims check.**", "1. **Claims check**",
+                     "  > Claims check: none", "2) `Claims check`", "_Claims check_"):
+            self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{line}\n\nMore.\n")
+            self.assertEqual(self.close_run("--dry-run")[::2], (0, ""), line)
+
+    def test_close_reads_a_report_that_is_not_utf8_for_its_claims_check_line(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        report = self.review_file("D1.md")
+        report.write_bytes(b"# D1 \xff\xfe\n\nStatus: done\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("in-review")))
+        report.write_bytes(b"# D1 \xff\xfe\n\n## Claims check\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_close_prints_no_claims_check_warning_for_an_item_in_progress_sent_back_blocked_or_merged(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "send-back")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "blocked")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "pass")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("passed")))
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_close_prints_no_claims_check_warning_for_a_report_that_is_missing_or_a_link(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        target = Path(self.temporary.name) / "elsewhere.md"
+        target.write_text("# D1\n")
+        (self.at / "reports").mkdir()
+        (self.at / "reports" / "D1.md").symlink_to(target)
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        (self.at / "reports" / "D1.md").unlink()
+        self.review_file("D1.md", "# D1\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("in-review")))
+
     def test_close_does_not_warn_about_a_report_a_row_names(self):
         self.fired_bug_fix()
         self.aged("D1-review-1.md", 2099)
@@ -1714,7 +1789,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
-        text = self.brigade("brief", "D1", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
                             "--verify", "npm run perf", "--paths", "src/boot.ts", "--lease", "L4", "--base", "origin/main")
         self.assertTrue(text.startswith("Use the poteto-mode skill and its `perf-issue` playbook."))
         report = f"{self.at}/reports/D1.md"
@@ -1730,7 +1805,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
-        text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
                             "--lease", "L4", "--base", "origin/main")
         line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         asked = "List each follow-up as one top-level list item under a `"
@@ -1746,7 +1821,7 @@ class BrigadeTest(unittest.TestCase):
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
         self.fire_one(station="bug-fix")
-        error = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v",
+        error = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v",
                              "--paths", "a", "--lease", "L1", "--base", "origin/main", ok=False)
         self.assertIn("brigade.py set --thread", error)
         self.assertFalse((self.at / "briefs" / "D1.md").exists())
@@ -1756,7 +1831,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         self.brigade("set", "--thread", "thread-coord")
-        args = ["brief", "D1", "--goal", "g", "--verify", "v", "--paths", "a", "--lease", "L1", "--base", "origin/main"]
+        args = ["brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--paths", "a", "--lease", "L1", "--base", "origin/main"]
         self.assertIn("menu.md has no purpose yet", self.brigade(*args, "--acceptance", "a", ok=False))
         (self.at / "menu.md").write_text("## Purpose\n\nFix bugs.\n")
         self.assertIn("at least one --acceptance", self.brigade(*args, ok=False))
@@ -1876,7 +1951,7 @@ class BrigadeTest(unittest.TestCase):
                           self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s", "--paths", "src/x.py", ok=False))
             self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] two blocked: lease")
             self.brigade("set", "--thread", "thread-coord")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
             self.assertIn("leased to you as L1: src,changes/perf%2Fd1.md.", text)
             self.assertIn("branch `perf/d1`", text)
 
@@ -1983,6 +2058,7 @@ class BrigadeTest(unittest.TestCase):
         return {
             "goal": "Run `$B status` and `$B close` before $(touch sentinel).",
             "acceptance": ["Median cold start below 400 ms"],
+            "contract": "A cold start never reads `$HOME/.cache`.",
             "verify": "npm run perf",
             "paths": "src/boot.ts",
             "lease": "L4",
@@ -1991,7 +2067,7 @@ class BrigadeTest(unittest.TestCase):
         }
 
     def brief_from_flags(self, fields):
-        return self.brigade("brief", "D1", "--goal", fields["goal"], "--acceptance", fields["acceptance"][0],
+        return self.brigade("brief", "D1", "--contract", fields["contract"], "--goal", fields["goal"], "--acceptance", fields["acceptance"][0],
                             "--verify", fields["verify"], "--paths", fields["paths"], "--lease", fields["lease"],
                             "--base", fields["base"], "--context", fields["context"][0])
 
@@ -2089,15 +2165,115 @@ class BrigadeTest(unittest.TestCase):
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("JSON must be an object", error)
         self.assertFalse(brief.exists())
-        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "main", "nope": "x"}),
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "contract": "none", "verify": "v", "base": "main", "nope": "x"}),
                           encoding="utf-8")
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("unknown key nope", error)
         self.assertFalse(brief.exists())
-        fields.write_text(json.dumps({"goal": "g", "acceptance": "a", "verify": "v", "base": "main"}), encoding="utf-8")
+        fields.write_text(json.dumps({"goal": "g", "acceptance": "a", "contract": "none", "verify": "v", "base": "main"}), encoding="utf-8")
         error = self.brigade("brief", "D1", "--fields", str(fields), ok=False)
         self.assertIn("acceptance must be a list of strings", error)
         self.assertFalse(brief.exists())
+
+    NEEDS_CONTRACT = ("brigade: brief needs a contract; pass --contract <text> or the contract key in --fields, "
+                      "and write none when the item has no safety, privacy, or integrity property")
+    FLAGS = ("--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts", "--lease", "L4",
+             "--base", "origin/main")
+
+    def briefable(self):
+        self.open()
+        self.fire_one()
+        self.brigade("set", "--thread", "thread-coord")
+
+    def test_brief_refuses_flags_with_no_contract_or_a_contract_of_only_whitespace(self):
+        self.briefable()
+        self.assertEqual(self.brigade("brief", "D1", *self.FLAGS, ok=False), self.NEEDS_CONTRACT)
+        self.assertEqual(self.brigade("brief", "D1", *self.FLAGS, "--contract", " \n\t", ok=False), self.NEEDS_CONTRACT)
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+        self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
+
+    def test_brief_refuses_a_fields_file_that_has_goal_acceptance_verify_and_base_and_no_contract(self):
+        self.briefable()
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main"}),
+                          encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False), self.NEEDS_CONTRACT)
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "contract": "  "}), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False), self.NEEDS_CONTRACT)
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "contract": None}), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), ok=False),
+                         "brigade: brief fields: contract is null")
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+
+    def test_brief_refuses_a_contract_flag_next_to_a_fields_file(self):
+        self.briefable()
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps(self.literal_brief_fields()), encoding="utf-8")
+        self.assertEqual(self.brigade("brief", "D1", "--fields", str(fields), "--contract", "none", ok=False),
+                         "brigade: use either --fields or the field flags, not both")
+
+    def test_brief_renders_the_contract_none_between_acceptance_and_verify(self):
+        self.briefable()
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        self.assertIn("\nACCEPTANCE:\n- a\n\nCONTRACT:\nnone\n\nVERIFY:\n- v\n", text)
+        self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), "none\n")
+
+    VERBATIM = "\n  A refused write changes no table.  \n\n  - `log.tsv` gains no row.\nVERIFY: is not a heading here. \n"
+
+    def contract_fields(self, contract):
+        fields = self.at / "brief-fields.json"
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "paths": "src/boot.ts", "lease": "L4", "contract": contract}), encoding="utf-8")
+        return ("--fields", str(fields))
+
+    def raw_stdout(self, *args):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), *args], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_brief_renders_and_stores_a_contract_as_given_from_the_flag_and_from_a_fields_file(self):
+        self.briefable()
+        for form, words in (("flag", (*self.FLAGS, "--contract", self.VERBATIM)), ("fields", self.contract_fields(self.VERBATIM))):
+            with self.subTest(form=form):
+                text = self.brigade("brief", "D1", *words)
+                self.assertIn(f"\nACCEPTANCE:\n- a\n\nCONTRACT:\n{self.VERBATIM}\n\nVERIFY:\n- v\n", text)
+                self.assertEqual((self.at / "briefs" / "D1.contract.md").read_bytes(), (self.VERBATIM + "\n").encode())
+                (self.at / "briefs" / "D1.contract.md").unlink()
+
+    def test_contract_prints_the_given_text_and_one_newline_for_a_text_with_whitespace_at_its_ends_and_one_with_a_carriage_return(self):
+        self.briefable()
+        returned = "First line.\r\nSecond line."
+        for contract in (self.VERBATIM, returned, "none"):
+            for form, words in (("flag", (*self.FLAGS, "--contract", contract)), ("fields", self.contract_fields(contract))):
+                with self.subTest(contract=contract, form=form):
+                    brief = self.raw_stdout("brief", "D1", *words)
+                    rendered = f"\nCONTRACT:\n{contract}\n\nVERIFY:\n".encode()
+                    self.assertIn(rendered, brief)
+                    self.assertIn(rendered, (self.at / "briefs" / "D1.md").read_bytes())
+                    self.assertEqual(self.raw_stdout("contract", "D1"), (contract + "\n").encode())
+
+    def test_contract_prints_the_text_a_brief_stored_from_flags_and_from_a_fields_file(self):
+        self.briefable()
+        contract = "A refused write changes no table.\n\n  - `log.tsv` gains no row."
+        self.brigade("brief", "D1", *self.FLAGS, "--contract", contract)
+        self.assertEqual(self.brigade("contract", "D1"), contract)
+        fields = self.at / "brief-fields.json"
+        other = "A reader never sees a half-written row.\nNothing else."
+        fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": "origin/main",
+                                      "paths": "src/boot.ts", "lease": "L4", "contract": other}), encoding="utf-8")
+        self.brigade("brief", "D1", "--fields", str(fields))
+        self.assertEqual(self.brigade("contract", "D1"), other)
+
+    def test_contract_refuses_an_item_with_no_contract_file_and_an_item_that_does_not_exist(self):
+        self.briefable()
+        self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        (self.at / "briefs" / "D1.contract.md").unlink()
+        self.assertEqual(self.brigade("contract", "D1", ok=False),
+                         "brigade: D1 has no contract on record; run brief with --contract")
+        self.assertEqual(self.brigade("contract", "D9", ok=False), "brigade: no D9 in dishes.tsv")
 
     def test_a_restaurant_file_without_reporting_reads_as_milestones(self):
         self.open()
@@ -2845,15 +3021,15 @@ class BrigadeTest(unittest.TestCase):
             self.brigade("ticket", "add", "--summary", "two")
             self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                          "--branch", "docs/a", "--paths", "src/a.py")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L1: src/a.py,changes/docs%2Fa.md.", text)
             self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s",
                          "--branch", "docs/a%b", "--paths", "src/b.py")
-            text = self.brigade("brief", "D2", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D2", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L2: src/b.py,changes/docs%2Fa%25b.md.", text)
             self.assertEqual(text.count("changes/docs%2Fa%25b.md"), 1)
             self.brigade("dish", "D1", "--lease", "L9", "--paths", "src/a.py,changes/docs%2Fa.md")
-            text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L9: src/a.py,changes/docs%2Fa.md.", text)
 
     def test_fire_warns_when_releasing_a_conflicting_lease_fails(self):
@@ -3372,7 +3548,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
 
-    FIX_BRIEF = ("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+    FIX_BRIEF = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
 
     def test_brief_refuses_an_item_that_owes_its_decision(self):
         self.started()
@@ -3384,7 +3560,7 @@ class BrigadeTest(unittest.TestCase):
         written = (self.at / "briefs" / "D1.md").read_bytes()
         before = self.unchanged()
         self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("brief", "D1", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
+        self.assertEqual(self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
                          self.NO_FIX_ROUND)
         self.unchanged(before)
         self.brigade("dish", "D1", "--state", "in-review")
@@ -4063,7 +4239,7 @@ class BrigadeTest(unittest.TestCase):
                  "your report to a fresh worker.")
     REPEAT = ("- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. "
               "A step that line names is not a deviation.")
-    BRIEF = ("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/a.py", "--lease", "L1",
+    BRIEF = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/a.py", "--lease", "L1",
              "--base", "origin/main")
 
     def coordinator(self, station="feature", mode="light", *fire):
@@ -5229,6 +5405,769 @@ class BrigadeTest(unittest.TestCase):
         self.review_file("D1.md", BULLETS)
         self.assertEqual({name: data for name, data in self.store_files().items() if name != "reports/D1.md"}, before)
 
+    @staticmethod
+    def edit_block(number, path, old, new, fence="```"):
+        return f"### Edit {number}\n\nFile: `{path}`\n\nOld text:\n\n{fence}\n{old}\n{fence}\n\nNew text:\n\n{fence}text\n{new}\n{fence}\n"
+
+    def edits_report(self, *blocks, name="D1-review-1.md", after="## Edits verified\n\nApplied in a scratch copy.\n"):
+        body = "Verdict: pass with edits\n\n## Blockers\n\nNone.\n\n## Edits\n\n" + "\n".join(blocks)
+        return self.review_file(name, body + ("\n" + after if after else ""))
+
+    def record_edits(self, sha, *extra, ok=True):
+        return self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass-with-edits",
+                            "--author", CODEX, "--verifier", CLAUDE, *extra, ok=ok)
+
+    def test_a_pass_with_edits_row_moves_the_item_to_sent_back_and_names_the_report(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.record_edits("abc", "--edits", "reports/D1-review-1.md"), "D1 sent-back")
+        self.assertEqual(self.dish_fields("state", "sha"), ("sent-back", "abc"))
+        self.assertEqual([row[3:5] + row[8:] for row in self.pass_rows()], [["abc", "pass-with-edits", "D1-review-1.md", ""]])
+
+    def test_pass_check_fails_at_the_sha_of_a_pass_with_edits_row(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.record_edits("abc", "--edits", "D1-review-1.md", "--note", "two wording edits")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
+                         "brigade: D1 at abc: pass-with-edits (two wording edits)")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued", ok=False),
+                         "brigade: only reviewed work lands: D1 at abc: pass-with-edits (two wording edits)")
+
+    def test_pass_with_edits_rows_do_not_count_toward_the_round_budget(self):
+        self.started()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.sent_back(2)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        for sha in ("b1", "b2"):
+            self.assertEqual(self.record_edits(sha, "--edits", "D1-review-1.md"), "D1 sent-back")
+            self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
+                         "brigade: D1 has 2 send-backs since its last pass or round decision; the decision opens at 3")
+        self.assertEqual(self.send_back("a3"), "D1 sent-back; 3 send-backs, decision pending")
+
+    def test_close_prints_no_unrecorded_review_warning_for_the_report_a_pass_with_edits_row_names(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_row("D1-review-1.md")))
+        self.record_edits("abc", "--edits", "D1-review-1.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_pass_record_refuses_pass_with_edits_without_edits_and_edits_with_another_verdict_or_a_report(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.record_edits("abc", ok=False), "brigade: --verdict pass-with-edits needs --edits <review report>")
+        self.assertEqual(self.record_edits("abc", "--report", "D1-review-1.md", ok=False),
+                         "brigade: --verdict pass-with-edits needs --edits <review report>")
+        for verdict in ("pass", "send-back", "blocked"):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", verdict, "--author", CODEX,
+                                          "--verifier", CLAUDE, "--edits", "D1-review-1.md", ok=False),
+                             "brigade: --edits goes only with --verdict pass-with-edits", verdict)
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", "--report", "D1-review-1.md", ok=False),
+                         "brigade: --edits names the round's report; drop --report")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-9.md", ok=False),
+                         "brigade: reports/D1-review-9.md does not exist; write the review report first")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1.md", ok=False),
+                         "brigade: D1.md is not a review report of D1; name a file like reports/D1-review-1.md")
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.dish_fields("state"), ("in-progress",))
+
+    def test_pass_record_refuses_a_pass_with_edits_report_whose_edits_do_not_parse(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n## Blockers\n\nNone.\n\n## Edits verified\n\nYes.\n")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md holds no edit under a ## Edits heading")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                          "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n```\n")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False), self.PARTS_REFUSAL.format(2))
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.dish_fields("state"), ("in-progress",))
+
+    def test_a_fix_brief_points_at_the_report_of_a_pass_with_edits_round(self):
+        self.briefable()
+        self.review_file("D1-review-1.md", "findings\n")
+        self.send_back("a1", "--report", "D1-review-1.md")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"), name="D1-review-2.md")
+        self.record_edits("a2", "--edits", "D1-review-2.md")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        self.assertIn(f"\n- A reviewer sent an earlier attempt back. Its findings: {self.at}/reports/D1-review-2.md\n", text)
+        self.assertNotIn("D1-review-1.md", text)
+
+    SOURCE = "helo wrold\nsecond line\n"
+    FIXED = "hello world\nsecond line\n"
+    BUILD = ('import pathlib, sys\ntext = pathlib.Path("src/greeting.txt").read_text()\nif "unbuildable" in text:\n'
+             '    print("build refuses unbuildable")\n    sys.exit(2)\n'
+             'pathlib.Path("out").mkdir(exist_ok=True)\npathlib.Path("out/greeting.txt").write_text(text.upper())\n')
+    CHECK = ('import pathlib, sys\nif "forbidden" in pathlib.Path("src/greeting.txt").read_text():\n'
+             '    print("check saw forbidden")\n    sys.exit(3)\n')
+    BUILD_COMMAND = f"{shlex.quote(sys.executable)} tools/build.py"
+    CHECK_COMMAND = f"{shlex.quote(sys.executable)} tools/check.py"
+    NEEDS_COMMANDS = ("brigade: edits verify needs a build command and a check command; "
+                      "run set --build-command <command> --check-command <command>, with none for one the project lacks")
+
+    def commit_files(self, files):
+        git = lambda *command: subprocess.run(("git", *command), cwd=self.project, capture_output=True, text=True,
+                                              check=True).stdout.strip()
+        for name, text in files.items():
+            path = self.project / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+        return git("rev-parse", "HEAD")
+
+    def head_commit(self, source, out=None, **files):
+        return self.commit_files({"src/greeting.txt": source, "out/greeting.txt": source.upper() if out is None else out,
+                                  **files})
+
+    def edits_store(self, build=BUILD_COMMAND, check=CHECK_COMMAND, **files):
+        """D1 in a store whose project is a git repository with a source file, a build script, and a check script.
+        Returns the reviewed commit."""
+        self.git_project()
+        reviewed = self.commit_files({"src/greeting.txt": self.SOURCE, "out/greeting.txt": self.SOURCE.upper(),
+                                      "tools/build.py": self.BUILD, "tools/check.py": self.CHECK, **files})
+        self.fired_bug_fix()
+        if build is not None:
+            self.brigade("set", "--build-command", build, "--check-command", check)
+        return reviewed
+
+    def two_edits(self, **kwargs):
+        return self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                                 self.edit_block("2", "src/greeting.txt", "wrold", "world"), **kwargs)
+
+    def verify(self, reviewed, head):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), "edits", "verify", "D1", "--from", reviewed, "--to", head],
+                                capture_output=True, text=True)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+    def verified(self, reviewed, head):
+        return f"D1: edits verified, {reviewed} to {head}"
+
+    def not_verified(self, reviewed, head):
+        return f"brigade: D1: edits not verified, {reviewed} to {head}"
+
+    def edits_rows(self):
+        return [line.split("\t")[1:] for line in (self.at / "edits.tsv").read_text().splitlines()[1:]]
+
+    def record_pass_at(self, sha, *extra, ok=True):
+        return self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass", "--author", CODEX,
+                            "--verifier", CLAUDE, *extra, ok=ok)
+
+    def gate(self, reviewed, sha):
+        return (f"brigade: D1's last verdict is pass-with-edits at {reviewed}; run edits verify D1 --from {reviewed} "
+                f"--to {sha}, or name a second review's report with --report")
+
+    def test_set_stores_the_build_and_check_commands_and_an_empty_value_removes_one(self):
+        self.open()
+        meta = json.loads(self.brigade("set", "--build-command", " make  gen ", "--check-command", "none"))
+        self.assertEqual((meta["buildCommand"], meta["checkCommand"]), ("make  gen", "none"))
+        meta = json.loads(self.brigade("set", "--build-command", ""))
+        self.assertNotIn("buildCommand", meta)
+        self.assertEqual(meta["checkCommand"], "none")
+        refusal = self.brigade("set", "--check-command", "make 'gen", ok=False)
+        self.assertTrue(refusal.startswith("brigade: \"make 'gen\" is not a command line: "), refusal)
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["checkCommand"], "none")
+
+    def test_set_refuses_a_command_that_is_not_a_command_line_once_the_whitespace_at_its_two_ends_is_removed(self):
+        self.open()
+        refusal = self.brigade("set", "--build-command", "make\\ ", ok=False)
+        self.assertTrue(refusal.startswith("brigade: 'make\\\\' is not a command line: "), refusal)
+        self.assertNotIn("buildCommand", json.loads((self.at / "restaurant.json").read_text()))
+
+    def test_edits_verify_passes_a_head_that_is_the_edits_and_the_rebuilt_output_and_records_the_pair_once(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.edits_rows(), [])
+        clean = (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", "")
+        self.assertEqual(self.verify(reviewed, head), clean)
+        self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
+        self.assertEqual(self.verify(reviewed, head), clean)
+        self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
+
+    def test_edits_verify_ignores_an_edit_under_a_notes_edits_heading(self):
+        reviewed = self.edits_store()
+        self.two_edits(after="## Edits verified\n\nApplied in a scratch copy.\n\n## Notes edits\n\n"
+                             + self.edit_block("1", "/srv/notes/review.md", "helo", "goodbye"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_edits_verify_parses_an_edits_section_that_ends_the_report(self):
+        reviewed = self.edits_store()
+        self.two_edits(after="")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_edits_verify_fails_a_head_with_one_more_changed_line_in_a_source_file(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello world\nsecond line, changed\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL out/greeting.txt: differs from what the build writes\n"
+                             f"FAIL src/greeting.txt: differs from {reviewed} with the edits applied",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_a_head_that_applied_an_edit_with_one_character_different(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello World\nsecond line\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"built out/greeting.txt\nFAIL src/greeting.txt: differs from {reviewed} with the edits applied",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_an_old_text_that_occurs_twice_at_the_reviewed_commit(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                          self.edit_block("2", "src/greeting.txt", "n", "N"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello wrold\nsecoNd liNe\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL src/greeting.txt: old text of Edit 2 occurs 2 times at {reviewed}",
+                          self.not_verified(reviewed, head)))
+
+    def test_edits_verify_fails_two_edits_whose_old_texts_overlap_and_an_edit_to_a_path_with_no_file(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo wr", "hello wr"),
+                          self.edit_block("2", "src/greeting.txt", "wrold", "world"),
+                          self.edit_block("3", "src/absent.txt", "helo", "hello"),
+                          self.edit_block("4", "src/greeting.txt", "second", "third"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello world\nthird line\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL src/greeting.txt: Edit 1 overlaps another edit\n"
+                             "FAIL src/greeting.txt: Edit 2 overlaps another edit\n"
+                             f"FAIL src/absent.txt: no regular file at {reviewed}",
+                          self.not_verified(reviewed, head)))
+
+    def test_edits_verify_fails_an_edit_that_names_a_symbolic_link_at_the_reviewed_commit(self):
+        self.edits_store()
+        (self.project / "src/link.txt").symlink_to("greeting.txt")
+        reviewed = self.commit_files({})
+        self.edits_report(self.edit_block("1", "src/link.txt", "helo", "hello"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL src/link.txt: no regular file at {reviewed}", self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_reads_the_edits_section_and_not_an_edits_line_in_an_earlier_fence(self):
+        reviewed = self.edits_store()
+        quoted = "## Edits\n\n" + self.edit_block("1", "tools/check.py", "import", "export")
+        self.review_file("D1-review-1.md", f"Verdict: pass with edits\n\n## Blockers\n\n````\n{quoted}````\n\n## Edits\n\n"
+                         + self.edit_block("1", "src/greeting.txt", "helo", "hello") + "\n"
+                         + self.edit_block("2", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    QUOTED_APPLIED = "hello wrold\nsecond line\n"
+    SECTION_APPLIED = "helo world\nsecond line\n"
+
+    def quoting_report(self, opening, closing):
+        """A report whose Notes section quotes an Edits section with one edit inside one fence, above an Edits section with another edit."""
+        quoted = "## Edits\n" + self.edit_block("8", "src/greeting.txt", "helo", "hello")
+        return self.review_file("D1-review-1.md", f"Verdict: pass with edits\n\n## Notes\n\n{opening}\n{quoted}{closing}\n\n## Edits\n"
+                                + self.edit_block("1", "src/greeting.txt", "wrold", "world"))
+
+    def assert_the_quoted_edit_is_not_read(self, opening, closing):
+        reviewed = self.edits_store()
+        self.quoting_report(opening, closing)
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL out/greeting.txt: differs from what the build writes\n"
+                             f"FAIL src/greeting.txt: differs from {reviewed} with the edits applied",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+        applied = self.head_commit(self.SECTION_APPLIED)
+        self.assertEqual(self.verify(reviewed, applied),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, applied)}", ""))
+
+    def test_edits_verify_fails_a_head_that_applied_an_edit_quoted_in_a_tilde_fence_and_not_the_edit_of_the_edits_section(self):
+        self.assert_the_quoted_edit_is_not_read("~~~text", "~~~")
+
+    def test_edits_verify_fails_a_head_that_applied_an_edit_quoted_in_a_backtick_fence_with_two_info_words_and_not_the_edit_of_the_edits_section(self):
+        self.assert_the_quoted_edit_is_not_read("````text title", "````")
+
+    def test_edits_verify_and_pass_record_refuse_a_report_with_a_fence_that_starts_after_three_spaces(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        self.quoting_report("   ````", "   ````")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        refusal = "brigade: reports/D1-review-1.md: line 5 " + self.NESTED_FENCE
+        self.assertEqual(self.verify(reviewed, head), (1, "", refusal))
+        self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.record_edits(head, "--edits", "D1-review-1.md", ok=False), refusal)
+        self.assertEqual(len(self.pass_rows()), 1)
+
+    NESTED_FENCE = ("has three backticks or tildes after nothing but indentation, block quote marks, and list marks; "
+                    "start each fence at the first column")
+    PARTS_REFUSAL = ("brigade: reports/D1-review-1.md: Edit {} must hold, once each and in this order, a File line, "
+                     "an Old text line, a fenced block, a New text line, and a fenced block")
+
+    def section(self):
+        return "## Edits\n\n" + self.edit_block("1", "src/greeting.txt", "wrold", "world")
+
+    def refused_edits(self, body):
+        """What pass record prints when it refuses a pass-with-edits round on a report with this body."""
+        path = self.review_file("D1-review-1.md")
+        path.write_bytes(body if isinstance(body, bytes) else body.encode())
+        refusal = self.record_edits("abc", "--edits", "D1-review-1.md", ok=False)
+        self.assertEqual(self.pass_rows(), [])
+        return refusal
+
+    def test_pass_record_refuses_a_report_with_a_heading_that_is_not_number_signs_one_space_and_its_text_from_the_first_column(self):
+        self.fired_bug_fix()
+        for heading in (" ## Edits", "## Edits ", "## Edits\t", "## Edits ##", "##  Edits", "##\tEdits", "> ## Edits", "- ## Edits",
+                        "1. ## Edits", "    ## Edits", "\t## Edits", "##", "> - ### Edit 2", "### Edit 2 "):
+            with self.subTest(heading=heading):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{heading}\n\nNotes.\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 starts like a heading and is not one to six #, one space, "
+                                 "and the text, from the first column with nothing after the text")
+
+    def test_pass_record_refuses_a_report_with_three_backticks_or_tildes_after_indentation_block_quote_marks_or_list_marks(self):
+        self.fired_bug_fix()
+        for opening in (" ```", "   ~~~~", "    ```", "\t~~~", "> ```", ">```", "- ```text", "1. ~~~", "  + ```", "> - ```", "2)\t~~~"):
+            with self.subTest(opening=opening):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{opening}\nquoted\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 " + self.NESTED_FENCE)
+
+    def test_pass_record_refuses_a_report_with_a_fence_that_no_later_line_closes(self):
+        self.fired_bug_fix()
+        for opening, last in (("````text", "```"), ("~~~", "```"), ("```", "``"), ("```", "    ```"), ("~~~~", "~~~~ ~")):
+            with self.subTest(opening=opening, last=last):
+                body = (f"Verdict: pass with edits\n\n{self.section()}\n{opening}\nThe sentence then reads so.\n{last}\n\n"
+                        "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n")
+                self.assertEqual(self.refused_edits(body),
+                                 "brigade: reports/D1-review-1.md: line 21 opens a fence that no later line closes")
+
+    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_after_its_nesting_and_below_a_line_that_is_not_empty_and_not_only_spaces_and_tabs(self):
+        self.fired_bug_fix()
+        for above, underline in (("Edits", "---"), ("Edits", "====="), ("Edits", " -"), ("Edits", "=  "), ("> Edits", "> ---"),
+                                 ("> Edits", ">="), ("- Edits", "  ==="), ("+ Edits", "\t-"), ("1. Edits", "   --- \t"),
+                                 ("> - Edits", "  >   ="), ("Edits", "- -"), ("\u00a0", "---"), ("\x0c", "==="),
+                                 (" \u2003", "-"), ("\x1f\t", "=")):
+            with self.subTest(above=above, underline=underline):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{above}\n{underline}\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 4 is only = or only - once its indentation, block quote "
+                                 "marks, list marks, and trailing spaces and tabs are removed, and the line above it is not empty "
+                                 "and not only spaces and tabs")
+
+    def test_pass_record_refuses_a_report_with_a_line_that_starts_with_an_angle_bracket_and_then_an_ascii_letter_a_slash_an_exclamation_mark_or_a_question_mark(self):
+        self.fired_bug_fix()
+        for line in ("<details>", "   <!--", "</summary>", "<?php", "<item>: edits verified"):
+            with self.subTest(line=line):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{line}\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 starts, after at most three spaces, with < and then an "
+                                 "ASCII letter, /, !, or ?")
+
+    def test_pass_record_refuses_a_report_with_two_headings_whose_text_is_edits(self):
+        self.fired_bug_fix()
+        for other in ("## Edits", "# Edits", "#### Edits"):
+            with self.subTest(other=other):
+                quoted = self.edit_block("8", "src/greeting.txt", "helo", "hello")
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{other}\n\n{quoted}\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md holds 2 headings whose text is Edits")
+
+    def test_pass_record_refuses_a_heading_in_the_edits_section_that_is_not_an_edit_heading_and_has_three_or_more_number_signs(self):
+        self.fired_bug_fix()
+        for heading in ("#### Edit 2", "### Edit", "### Edit  2", "### Notes on the edits", "###### Edit 2"):
+            with self.subTest(heading=heading):
+                body = (f"Verdict: pass with edits\n\n{self.section()}\n{heading}\n\n"
+                        + self.edit_block("2", "src/greeting.txt", "helo", "hello").split("\n", 1)[1])
+                self.assertEqual(self.refused_edits(body),
+                                 f"brigade: reports/D1-review-1.md: line {body.split(chr(10)).index(heading) + 1} is a heading in the "
+                                 "## Edits section that is neither ### Edit <n> nor a heading of one or two #")
+
+    def test_edits_verify_does_not_read_an_edit_below_a_heading_of_one_number_sign_that_follows_the_edits_section(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                          after="# Appendix\n\n" + self.edit_block("2", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_pass_record_refuses_a_fenced_block_in_the_edits_section_above_its_first_edit_heading(self):
+        self.fired_bug_fix()
+        unheaded = self.edit_block("1", "src/greeting.txt", "helo", "hello").split("\n", 2)[2]
+        self.assertEqual(self.refused_edits("Verdict: pass with edits\n\n## Edits\n\n" + unheaded + "\n"
+                                            + self.edit_block("2", "src/greeting.txt", "wrold", "world")),
+                         "brigade: reports/D1-review-1.md: line 9 starts a fenced block in the ## Edits section above its first "
+                         "### Edit heading")
+
+    def test_pass_record_refuses_an_edit_with_a_second_file_line_old_text_line_new_text_line_or_a_third_fenced_block(self):
+        self.fired_bug_fix()
+        unheaded = self.edit_block("2", "src/greeting.txt", "helo", "hello").split("\n", 2)[2]
+        for more in ("File: `src/other.txt`\n", "Old text:\n", "New text:\n", "```\nThe sentence then reads so.\n```\n", unheaded):
+            with self.subTest(more=more):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}"),
+                                 self.PARTS_REFUSAL.format(1))
+
+    def test_pass_record_refuses_an_edit_with_a_file_old_text_or_new_text_line_after_whitespace_a_block_quote_mark_or_a_list_mark_or_a_label_line_that_ends_in_whitespace(self):
+        self.fired_bug_fix()
+        for more in ("  File: `src/other.txt`", "1. File: `src/other.txt`, line 2", "> Old text:", "- New text:", "\tOld text:",
+                     "Old text: ", "New text:\t", "   > - New text:  ", "\u00a0File: `src/other.txt`", "\u00a0Old text:",
+                     "\x0cNew text:", "Old text:\u00a0", "> \u2003New text:"):
+            with self.subTest(more=more):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}\n"),
+                                 "brigade: reports/D1-review-1.md: Edit 1 has a File, Old text, or New text line after "
+                                 "whitespace, a block quote mark, or a list mark, or an Old text or New text line that ends in "
+                                 "whitespace")
+
+    BELOW = (" is a File, Old text, or New text line of Edit 1; the line above it must be empty or only spaces and tabs, "
+             "the edit's heading, the closing line of a fence, or another of those three lines")
+    APART = (" opens a fenced block of Edit 1; every line between an Old text or New text line and the fenced block below "
+             "it must be empty or only spaces and tabs")
+    MALFORMED = (": line 7 of Edit 1 starts, once its indentation, block quote marks, list marks, and the whitespace at its "
+                 "two ends are removed, with File: and a backtick; what follows must be a path that holds no backtick and "
+                 "does not start with a space, then a backtick that no backtick follows directly")
+    # A line to put directly above a File, Old text, or New text line, and a line to put directly below it or None.
+    AROUND = (("> example", None), ("- example", None), ('[r]: /url "example', 'end"'), ("Example ``", "``"),
+              ("[r]: /url 'example", "end'"), ("[r]: /url (example", "end)"), ("> > example", None), ("- - example", None),
+              ("> - example", None), ("+ example", None), ("* example", None), ("1. example", None), ("2) example", None),
+              ("> example  ", None), ("> example\\", None), ("- example  ", None), ("example", None),
+              ("Example <span", 'title="x">'), ("Example [link", "](/u)"), ("Example *stressed", "words*"), ("[r]: /url", None),
+              ("\u00a0", None), ("\u0661. example", None))
+
+    def one_edit_report(self):
+        return "Verdict: pass with edits\n\n" + self.section()
+
+    def run_raw(self, *args):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), *args], capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr
+
+    def assert_edits_verify_and_pass_record_refuse(self, cases):
+        """Each case is (body, refusal), and the refusal finishes the words `brigade: reports/D1-review-1.md`.
+
+        A pass-with-edits round is on record for one_edit_report, and the head is that edit and the rebuilt output.
+        With each body as the report, edits verify for that round and pass record for a new round each print that one
+        line and nothing else, exit 1, and change no store file. A pass at the head is refused after the last case.
+        """
+        reviewed = self.edits_store()
+        report = self.review_file("D1-review-1.md", self.one_edit_report())
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.SECTION_APPLIED)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        for body, refusal in cases:
+            with self.subTest(body=body):
+                report.write_bytes(body.encode())
+                before, line = self.store_files(), f"brigade: reports/D1-review-1.md{refusal}\n"
+                self.assertEqual(self.run_raw("edits", "verify", "D1", "--from", reviewed, "--to", head), (1, "", line))
+                self.assertEqual(self.run_raw("pass", "record", "D1", "--sha", head, "--verdict", "pass-with-edits",
+                                              "--author", CODEX, "--verifier", CLAUDE, "--edits", "D1-review-1.md"), (1, "", line))
+                self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+
+    def test_edits_verify_and_pass_record_refuse_a_file_old_text_or_new_text_line_directly_below_a_line_that_is_none_of_empty_only_spaces_and_tabs_the_edit_heading_a_closing_fence_and_those_three_lines(self):
+        cases = []
+        for line in ("File: `src/greeting.txt`", "Old text:", "New text:"):
+            for above, below in self.AROUND:
+                body = self.one_edit_report().replace(line, "\n".join(filter(None, (above, line, below))))
+                cases.append((body, f": line {body.split(chr(10)).index(line) + 1}{self.BELOW}"))
+        self.assert_edits_verify_and_pass_record_refuse(cases)
+
+    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_is_not_empty_and_not_only_spaces_and_tabs_between_an_old_text_or_new_text_line_and_the_fence_below_it(self):
+        cases = []
+        for label, fence in (("Old text:", "```"), ("New text:", "```text")):
+            for between in ("A note.\n", "\nA note.\n\n", "- item\n", "\u00a0\n", "> quoted\n\n"):
+                body = self.one_edit_report().replace(f"{label}\n\n", f"{label}\n{between}")
+                cases.append((body, f": line {body.split(chr(10)).index(fence) + 1}{self.APART}"))
+        body = self.one_edit_report().replace("File: `src/greeting.txt`\n\nOld text:\n\n",
+                                              "File: `src/greeting.txt` ``\nOld text:\n`` and a note\n\n")
+        self.assert_edits_verify_and_pass_record_refuse(cases + [(body, ": line 11" + self.APART)])
+
+    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_starts_once_its_indentation_block_quote_marks_list_marks_and_end_whitespace_are_removed_with_file_and_a_backtick_and_a_path_that_starts_with_a_space_or_a_backtick_ends_at_no_backtick_or_ends_at_two(self):
+        report = self.one_edit_report()
+        cases = [report.replace("File: `src/greeting.txt`", line)
+                 for line in ("File: `src/greeting.txt`` b`", "File: ` src/greeting.txt `", "File: ``src/greeting.txt``",
+                              "File: `src/greeting.txt", "File: ``")]
+        cases += [report.replace("### Edit 1\n", f"### Edit 1\n\n{line}\n")
+                  for line in ("> File: ``src/other.txt``", "  - File: ` src/other.txt `", "\u00a0File: `src/other.txt``")]
+        self.assert_edits_verify_and_pass_record_refuse([(body, self.MALFORMED) for body in cases])
+
+    def test_edits_verify_and_pass_record_refuse_a_report_that_starts_with_a_byte_order_mark_and_one_that_holds_a_nul_character(self):
+        report = self.one_edit_report()
+        self.assert_edits_verify_and_pass_record_refuse([("\ufeff" + report, " starts with a byte order mark"),
+                                                         (report.replace("wrold", "wr\0old"), " holds a NUL character"),
+                                                         ("Notes\0\n\n" + report, " holds a NUL character")])
+
+    def test_edits_verify_reads_an_edit_whose_lines_stand_directly_below_one_another_in_a_report_with_lines_that_start_with_a_digit_that_is_not_ascii_and_a_period_or_a_closing_parenthesis(self):
+        reviewed = self.edits_store()
+        notes = ("## Notes\n\n\u0661. ```\n\n\uff11) ~~~\n\nNote\n\u0661. ---\n\n\u0661. ## Edits\n\n"
+                 "\u0967. <details>\n\n")
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + notes + "## Edits\n\n"
+                         "### Edit 1\nFile: `src/greeting.txt`, line 1.\nOld text:\n```\nhelo\n```\nNew text:\n```text\nhello\n```\n\n"
+                         "\u0661. Old text:\n\n\u0661. File: `src/other.txt`\n\n"
+                         "### Edit 2\n\nFile: `src/greeting.txt`\nOld text:\n\n```\nwrold\n```\nNew text:\n```\nworld\n```\n")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    @unittest.skipIf(os.geteuid() == 0, "the superuser reads a file with no read permission")
+    def test_pass_record_refuses_a_report_that_cannot_be_read(self):
+        self.fired_bug_fix()
+        report = self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + self.section())
+        report.chmod(0)
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md cannot be read: Permission denied")
+        self.assertEqual(self.pass_rows(), [])
+
+    def test_pass_record_refuses_a_report_that_holds_a_carriage_return(self):
+        self.fired_bug_fix()
+        report = "Verdict: pass with edits\n\n" + self.section()
+        for body in (report.replace("\n", "\r\n"), report.replace("wrold", "wrold\r"), "Notes\r" + report):
+            with self.subTest(body=body):
+                self.assertEqual(self.refused_edits(body), "brigade: reports/D1-review-1.md holds a carriage return")
+
+    def test_pass_record_refuses_a_report_that_is_not_utf_8(self):
+        self.fired_bug_fix()
+        report = ("Verdict: pass with edits\n\n" + self.section()).encode()
+        self.assertEqual(self.refused_edits(report.replace(b"world", b"w\xf6rld")), "brigade: reports/D1-review-1.md is not UTF-8")
+
+    def test_edits_verify_reads_tilde_fences_and_closing_fences_with_spaces_around_them_below_notes_that_report_parts_does_not_refuse(self):
+        reviewed = self.edits_store()
+        notes = ("## Notes\n\n> quoted\n\n- item\n\n      nested\n\n-```\n\n```a`b\n\n``\n\n    <details>\n\n<\u00e9\n\n"
+                 "< 3 items\n\n---\n\n## Rule\n---\n\n```\ncode\n```\n---\n\n- File: `src/other.txt`\n\n  Old text:\n\n"
+                 "#hashtag\n\n####### seven\n\n")
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + notes + "## Edits\n\n"
+                         "### Edit 1\n\nFile: `src/greeting.txt`\n\nOld text:\n\n~~~\nhelo\n~~~\n\n"
+                         "New text:\n\n~~~~text one `two`\nhello\n  ~~~~~ \t\n\n"
+                         "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n   ```\n\nNew text:\n\n```\nworld\n```  \n")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_edits_verify_refuses_a_build_command_that_names_a_program_that_does_not_exist(self):
+        command = "no-such-program-d152 gen"
+        reviewed = self.edits_store(build=command)
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        code, out, err = self.verify(reviewed, head)
+        self.assertEqual((code, out), (1, ""))
+        self.assertTrue(err.startswith(f"brigade: cannot run {command}: "), err)
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_refuses_a_to_and_a_from_that_name_a_commit_by_a_ref(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        refusal = "brigade: {} names a commit by something other than the start of its id; pass the commit id"
+        self.assertEqual(self.verify(reviewed, "HEAD"), (1, "", refusal.format("HEAD")))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.record_edits("main", "--edits", "D1-review-1.md")
+        self.assertEqual(self.verify("main", head), (1, "", refusal.format("main")))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_a_head_that_left_an_edit_unapplied(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello wrold\nsecond line\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL out/greeting.txt: differs from what the build writes\n"
+                             f"FAIL src/greeting.txt: differs from {reviewed} with the edits applied",
+                          self.not_verified(reviewed, head)))
+
+    def test_edits_verify_refuses_a_report_that_no_longer_has_an_edits_section(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n## Blockers\n\nNone.\n\n## Edits verified\n\nYes.\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "", "brigade: reports/D1-review-1.md holds no edit under a ## Edits heading"))
+        (self.at / "reports" / "D1-review-1.md").unlink()
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "", "brigade: reports/D1-review-1.md does not exist; nothing verified"))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_a_head_whose_build_output_is_stale(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED, out=self.SOURCE.upper())
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL out/greeting.txt: differs from what the build writes\nedited src/greeting.txt",
+                          self.not_verified(reviewed, head)))
+
+    def test_edits_verify_fails_when_the_check_command_exits_non_zero(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "second", "forbidden"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("helo wrold\nforbidden line\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"built out/greeting.txt\nedited src/greeting.txt\nFAIL check: {self.CHECK_COMMAND} exited 3",
+                          f"check saw forbidden\n{self.not_verified(reviewed, head)}"))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_when_the_build_command_exits_non_zero(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "second", "unbuildable"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("helo wrold\nunbuildable line\n")
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL build: {self.BUILD_COMMAND} exited 2",
+                          f"build refuses unbuildable\n{self.not_verified(reviewed, head)}"))
+
+    def test_edits_verify_reads_a_four_backtick_fence_around_three_backticks_and_an_empty_new_text(self):
+        note = "Intro\n```\ncode\n```\nremove me\nEnd\n"
+        reviewed = self.edits_store(**{"docs/note.md": note})
+        self.edits_report(self.edit_block("1", "docs/note.md", "```\ncode\n```", "```\ncoda\n```", fence="````"),
+                          "### Edit 2\n\nFile: `docs/note.md`:5\n\nOld text:\n\n```\nremove me\n```\n\nNew text:\n\n```\n```\n")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.SOURCE, **{"docs/note.md": "Intro\n```\ncoda\n```\n\nEnd\n"})
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"edited docs/note.md\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_edits_verify_and_pass_record_refuse_a_path_that_is_absolute_or_has_a_dot_dot_part(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        for path in ("/srv/app/greeting.txt", "src/../../greeting.txt"):
+            self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"), self.edit_block("7b", path, "helo", "hello"))
+            refusal = (f"brigade: reports/D1-review-1.md: Edit 7b names {path}; "
+                       "a path is relative to the repository and has no .. part")
+            self.assertEqual(self.verify(reviewed, head), (1, "", refusal))
+            self.assertEqual(self.record_edits(reviewed, "--edits", "D1-review-1.md", ok=False), refusal)
+        self.edits_report(self.edit_block("3", "src/greeting.txt", "", "hello"))
+        self.assertEqual(self.verify(reviewed, head), (1, "", "brigade: reports/D1-review-1.md: Edit 3 has an empty old text"))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_refuses_a_store_with_no_build_or_check_command_and_takes_none_for_both(self):
+        reviewed = self.edits_store(build=None)
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED, out=self.SOURCE.upper())
+        self.assertEqual(self.verify(reviewed, head), (1, "", self.NEEDS_COMMANDS))
+        self.brigade("set", "--build-command", "none")
+        self.assertEqual(self.verify(reviewed, head), (1, "", self.NEEDS_COMMANDS))
+        self.brigade("set", "--build-command", "", "--check-command", "none")
+        self.assertEqual(self.verify(reviewed, head), (1, "", self.NEEDS_COMMANDS))
+        self.brigade("set", "--build-command", "none")
+        self.assertEqual(self.verify(reviewed, head), (0, f"edited src/greeting.txt\n{self.verified(reviewed, head)}", ""))
+        rebuilt = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, rebuilt),
+                         (1, f"FAIL out/greeting.txt: differs from {reviewed} with the edits applied\nedited src/greeting.txt",
+                          self.not_verified(reviewed, rebuilt)))
+
+    def test_edits_verify_refuses_a_from_with_no_pass_with_edits_round_and_a_sha_that_is_no_commit(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.send_back(head)
+        self.assertEqual(self.verify(head, head), (1, "", f"brigade: D1 has no pass-with-edits round at {head}"))
+        self.assertEqual(self.verify(reviewed[:12], head),
+                         (1, "", f"brigade: D1 has no pass-with-edits round at {reviewed[:12]}"))
+        absent = "0" * 40
+        self.assertEqual(self.verify(reviewed, absent),
+                         (1, "", f"brigade: {absent} is not a commit in {self.project.resolve()}"))
+
+    def test_edits_verify_leaves_the_worktree_and_its_head_unchanged(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        (self.project / "untracked.txt").write_text("mine\n")
+        (self.project / "src/greeting.txt").write_text("half an edit\n")
+        state = lambda: tuple(subprocess.run(("git", *command), cwd=self.project, capture_output=True, text=True,
+                                             check=True).stdout
+                              for command in (("status", "--porcelain"), ("rev-parse", "HEAD"), ("diff",)))
+        before = state()
+        self.assertEqual(before[0], " M src/greeting.txt\n?? untracked.txt\n")
+        self.assertEqual(self.verify(reviewed, head)[0], 0)
+        self.assertEqual(self.verify(reviewed, reviewed)[0], 1)
+        self.assertEqual(state(), before)
+
+    def test_a_pass_after_a_pass_with_edits_round_is_refused_until_the_edits_are_verified_for_that_head(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+        self.assertEqual(self.record_pass_at(head, "--late", ok=False), self.gate(reviewed, head))
+        self.assertEqual(len(self.pass_rows()), 1)
+        self.assertEqual(self.verify(reviewed, head)[0], 0)
+        self.assertEqual(self.record_pass_at(head), "D1 passed")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", head), f"D1 at {head} passed review by {CLAUDE}")
+
+    def test_verified_edits_do_not_lift_the_refusal_of_a_pass_at_another_head_or_at_the_same_head_written_shorter(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head)[0], 0)
+        later = self.head_commit(self.FIXED + "one more line\n")
+        self.assertEqual(self.record_pass_at(later, ok=False), self.gate(reviewed, later))
+        self.assertEqual(self.record_pass_at(head[:12], ok=False), self.gate(reviewed, head[:12]))
+        self.assertEqual(len(self.pass_rows()), 1)
+
+    def test_a_second_review_report_lifts_the_refusal_of_a_pass_and_the_edits_report_does_not(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit("hello world\nsecond line, changed\n")
+        self.assertEqual(self.verify(reviewed, head)[0], 1)
+        self.assertEqual(self.record_pass_at(head, "--report", "reports/D1-review-1.md", ok=False), self.gate(reviewed, head))
+        self.review_file("D1-review-2.md", "Verdict: pass\n")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", head), "D1 in-review")
+        self.assertEqual(self.record_pass_at(head, "--report", "reports/D1-review-2.md"), "D1 passed")
+
+    def test_a_member_pass_after_a_pass_with_edits_round_is_recorded_without_verified_edits(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "anyhead", "--verdict", "pass", "--author", CODEX,
+                                      "--verifier", "grok/grok-4.7", "--member"),
+                         "D1: member pass on record; D1 stays sent-back")
+        self.assertEqual(self.record_pass_at("anyhead", ok=False), self.gate(reviewed, "anyhead"))
+
+    def test_a_send_back_after_a_pass_with_edits_round_ends_the_refusal_of_a_pass(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.send_back("h2")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.record_pass_at("h3"), "D1 passed")
+
+    def test_a_store_with_no_edits_table_runs_status_watch_startable_a_pass_and_close_and_gains_no_table(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        (self.at / "edits.tsv").unlink()
+        self.assertEqual(self.brigade("status").splitlines()[0], "thread not recorded")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
+        self.assertEqual(self.brigade("startable"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nno waiting tickets")
+        self.assertEqual(self.record_pass_at("abc"), "D1 passed")
+        code, out, err = self.close_run()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[0], "# Perf report")
+        self.assertFalse((self.at / "edits.tsv").exists())
+
 
 class StoresTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""
@@ -5854,7 +6793,9 @@ class AdminTest(StoresTest):
         self.open_admin()
         refusal = "brigade: the executive admin routes work and never runs it"
         for args in (("fire", "--tickets", "T1", "--station", "feature", "--summary", "s"),
-                     ("brief", "D1", "--goal", "g", "--verify", "v", "--base", "main", "--acceptance", "a"),
+                     ("brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--base", "main", "--acceptance", "a"),
+                     ("contract", "D1"),
+                     ("edits", "verify", "D1", "--from", "abc", "--to", "def"),
                      ("dish", "D1", "--state", "merged"),
                      ("dish", "D1", "--state", "dropped", "--stopped", "r1"),
                      ("pass", "check", "D1", "--sha", "abc"),

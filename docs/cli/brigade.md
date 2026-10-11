@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -41,7 +41,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--autofire AUTOFIRE]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -58,6 +58,8 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
+| `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none records that the project has no build, and "" removes the setting |
+| `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none records that the project has no check, and "" removes the setting |
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 
 ## brigade.py ticket
@@ -172,7 +174,7 @@ group tickets into one dish and assign it to a station
 ## brigade.py brief
 
 ```text
-brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
+brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--contract CONTRACT] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
 ```
 
 render the worker brief for a dish; refuses when a field or the coordinator thread is missing
@@ -183,11 +185,24 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--fields FIELDS` |  |  |  | JSON file of brief fields, or - for stdin |
 | `--goal GOAL` |  |  |  | one sentence: the outcome |
 | `--acceptance ACCEPTANCE` (repeatable) |  |  |  | a checkable criterion; repeatable, at least one |
+| `--contract CONTRACT` |  |  |  | the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
 | `--verify VERIFY` |  |  |  | exact commands that prove it, plus known gotchas |
 | `--paths PATHS` |  |  |  | leased paths, when fire did not claim them |
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
+
+## brigade.py contract
+
+```text
+brigade.py [flags] contract id
+```
+
+print the contract the dish's last brief stored
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
 
 ## brigade.py watch
 
@@ -258,7 +273,7 @@ record or check a review verdict for a dish at a head SHA
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--member | --late] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--member | --late] dish
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -266,12 +281,13 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `dish` | yes |  |  |  |
 | `--pr PR` |  |  |  | PR URL; omit for local-only work |
 | `--sha SHA` | yes |  |  |  |
-| `--verdict VERDICT` | yes | `pass`, `send-back`, `blocked` |  |  |
+| `--verdict VERDICT` | yes | `pass`, `send-back`, `blocked`, `pass-with-edits` |  |  |
 | `--author AUTHOR` | yes |  |  | provider/model of the worker |
 | `--verifier VERIFIER` | yes |  |  | provider/model of the reviewer |
 | `--note NOTE` |  |  |  |  |
 | `--same-family` |  |  |  | allow it when no other family is runnable |
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
+| `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 
@@ -288,6 +304,30 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 | `dish` | yes |  |  |  |
 | `--sha SHA` | yes |  |  |  |
 | `--json` |  |  |  | print verdict, author, verifier, note, and crossFamily of the latest row |
+
+## brigade.py edits
+
+```text
+brigade.py [flags] edits <action>
+```
+
+compare a head with a reviewed commit that has its pass-with-edits round's edits applied and the build run
+
+`<action>` is one of `verify`.
+
+## brigade.py edits verify
+
+```text
+brigade.py [flags] edits verify --from SHA --to SHA dish
+```
+
+apply the edits of the item's last pass-with-edits round at --from to a scratch copy of that commit, run the build command there unless it is none, and compare the copy with --to at every path either commit holds where the two commits differ or the edits or the build changed the copy; when every path agrees, run the check command there unless it is none; a run with no failure adds one edits.tsv row for the pair unless an equal row exists; no worktree is read or written
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  |  |
+| `--from SHA` | yes |  |  | the reviewed commit, as the pass-with-edits row records it |
+| `--to SHA` | yes |  |  | the head to compare |
 
 ## brigade.py 86
 
