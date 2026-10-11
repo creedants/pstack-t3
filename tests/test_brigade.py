@@ -5757,15 +5757,17 @@ class BrigadeTest(unittest.TestCase):
                 self.assertEqual(self.refused_edits(body),
                                  "brigade: reports/D1-review-1.md: line 21 opens a fence that no later line closes")
 
-    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_after_its_nesting_and_below_a_line_that_is_not_blank(self):
+    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_after_its_nesting_and_below_a_line_that_is_not_empty_and_not_only_spaces_and_tabs(self):
         self.fired_bug_fix()
         for above, underline in (("Edits", "---"), ("Edits", "====="), ("Edits", " -"), ("Edits", "=  "), ("> Edits", "> ---"),
                                  ("> Edits", ">="), ("- Edits", "  ==="), ("+ Edits", "\t-"), ("1. Edits", "   --- \t"),
-                                 ("> - Edits", "  >   ="), ("Edits", "- -")):
+                                 ("> - Edits", "  >   ="), ("Edits", "- -"), ("\u00a0", "---"), ("\x0c", "==="),
+                                 (" \u2003", "-"), ("\x1f\t", "=")):
             with self.subTest(above=above, underline=underline):
                 self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{above}\n{underline}\n\n{self.section()}"),
                                  "brigade: reports/D1-review-1.md: line 4 is only = or only - once its indentation, block quote "
-                                 "marks, list marks, and trailing spaces and tabs are removed, and the line above it is not blank")
+                                 "marks, list marks, and trailing spaces and tabs are removed, and the line above it is not empty "
+                                 "and not only spaces and tabs")
 
     def test_pass_record_refuses_a_report_with_a_line_that_starts_with_an_angle_bracket_and_then_an_ascii_letter_a_slash_an_exclamation_mark_or_a_question_mark(self):
         self.fired_bug_fix()
@@ -5818,15 +5820,107 @@ class BrigadeTest(unittest.TestCase):
                 self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}"),
                                  self.PARTS_REFUSAL.format(1))
 
-    def test_pass_record_refuses_an_edit_with_a_file_old_text_or_new_text_line_after_nesting_or_a_label_line_that_ends_in_whitespace(self):
+    def test_pass_record_refuses_an_edit_with_a_file_old_text_or_new_text_line_after_whitespace_a_block_quote_mark_or_a_list_mark_or_a_label_line_that_ends_in_whitespace(self):
         self.fired_bug_fix()
         for more in ("  File: `src/other.txt`", "1. File: `src/other.txt`, line 2", "> Old text:", "- New text:", "\tOld text:",
-                     "Old text: ", "New text:\t", "   > - New text:  "):
+                     "Old text: ", "New text:\t", "   > - New text:  ", "\u00a0File: `src/other.txt`", "\u00a0Old text:",
+                     "\x0cNew text:", "Old text:\u00a0", "> \u2003New text:"):
             with self.subTest(more=more):
                 self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}\n"),
                                  "brigade: reports/D1-review-1.md: Edit 1 has a File, Old text, or New text line after "
-                                 "indentation, a block quote mark, or a list mark, or an Old text or New text line that ends in "
+                                 "whitespace, a block quote mark, or a list mark, or an Old text or New text line that ends in "
                                  "whitespace")
+
+    BELOW = (" is a File, Old text, or New text line of Edit 1; the line above it must be empty or only spaces and tabs, "
+             "the edit's heading, the closing line of a fence, or another of those three lines")
+    APART = (" opens a fenced block of Edit 1; every line between an Old text or New text line and the fenced block below "
+             "it must be empty or only spaces and tabs")
+    MALFORMED = (": line 7 of Edit 1 starts, after any whitespace, block quote marks, and list marks, with File: and a "
+                 "backtick; what follows must be a path that does not start with a space or a backtick, then one backtick, "
+                 "then no backtick")
+    # A line to put directly above a File, Old text, or New text line, and a line to put directly below it or None.
+    AROUND = (("> example", None), ("- example", None), ('[r]: /url "example', 'end"'), ("Example ``", "``"),
+              ("[r]: /url 'example", "end'"), ("[r]: /url (example", "end)"), ("> > example", None), ("- - example", None),
+              ("> - example", None), ("+ example", None), ("* example", None), ("1. example", None), ("2) example", None),
+              ("> example  ", None), ("> example\\", None), ("- example  ", None), ("example", None),
+              ("Example <span", 'title="x">'), ("Example [link", "](/u)"), ("Example *stressed", "words*"), ("[r]: /url", None),
+              ("\u00a0", None), ("\u0661. example", None))
+
+    def one_edit_report(self):
+        return "Verdict: pass with edits\n\n" + self.section()
+
+    def run_raw(self, *args):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                                 *_owner_words(self.at), *args], capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr
+
+    def assert_edits_verify_and_pass_record_refuse(self, cases):
+        """Each case is (body, refusal), and the refusal finishes the words `brigade: reports/D1-review-1.md`.
+
+        A pass-with-edits round is on record for one_edit_report, and the head is that edit and the rebuilt output.
+        With each body as the report, edits verify for that round and pass record for a new round each print that one
+        line and nothing else, exit 1, and change no store file. A pass at the head is refused after the last case.
+        """
+        reviewed = self.edits_store()
+        report = self.review_file("D1-review-1.md", self.one_edit_report())
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.SECTION_APPLIED)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        for body, refusal in cases:
+            with self.subTest(body=body):
+                report.write_bytes(body.encode())
+                before, line = self.store_files(), f"brigade: reports/D1-review-1.md{refusal}\n"
+                self.assertEqual(self.run_raw("edits", "verify", "D1", "--from", reviewed, "--to", head), (1, "", line))
+                self.assertEqual(self.run_raw("pass", "record", "D1", "--sha", head, "--verdict", "pass-with-edits",
+                                              "--author", CODEX, "--verifier", CLAUDE, "--edits", "D1-review-1.md"), (1, "", line))
+                self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+
+    def test_edits_verify_and_pass_record_refuse_a_file_old_text_or_new_text_line_directly_below_a_line_that_is_none_of_empty_only_spaces_and_tabs_the_edit_heading_a_closing_fence_and_those_three_lines(self):
+        cases = []
+        for line in ("File: `src/greeting.txt`", "Old text:", "New text:"):
+            for above, below in self.AROUND:
+                body = self.one_edit_report().replace(line, "\n".join(filter(None, (above, line, below))))
+                cases.append((body, f": line {body.split(chr(10)).index(line) + 1}{self.BELOW}"))
+        self.assert_edits_verify_and_pass_record_refuse(cases)
+
+    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_is_not_empty_and_not_only_spaces_and_tabs_between_an_old_text_or_new_text_line_and_the_fence_below_it(self):
+        cases = []
+        for label, fence in (("Old text:", "```"), ("New text:", "```text")):
+            for between in ("A note.\n", "\nA note.\n\n", "- item\n", "\u00a0\n", "> quoted\n\n"):
+                body = self.one_edit_report().replace(f"{label}\n\n", f"{label}\n{between}")
+                cases.append((body, f": line {body.split(chr(10)).index(fence) + 1}{self.APART}"))
+        body = self.one_edit_report().replace("File: `src/greeting.txt`\n\nOld text:\n\n",
+                                              "File: `src/greeting.txt` ``\nOld text:\n`` and a note\n\n")
+        self.assert_edits_verify_and_pass_record_refuse(cases + [(body, ": line 11" + self.APART)])
+
+    def test_edits_verify_and_pass_record_refuse_an_edit_with_a_line_that_starts_after_any_whitespace_block_quote_marks_and_list_marks_with_file_and_a_backtick_and_a_path_that_starts_with_a_space_or_a_backtick_ends_at_no_backtick_or_ends_at_two(self):
+        report = self.one_edit_report()
+        cases = [report.replace("File: `src/greeting.txt`", line)
+                 for line in ("File: `src/greeting.txt`` b`", "File: ` src/greeting.txt `", "File: ``src/greeting.txt``",
+                              "File: `src/greeting.txt", "File: ``")]
+        cases += [report.replace("### Edit 1\n", f"### Edit 1\n\n{line}\n")
+                  for line in ("> File: ``src/other.txt``", "  - File: ` src/other.txt `", "\u00a0File: `src/other.txt``")]
+        self.assert_edits_verify_and_pass_record_refuse([(body, self.MALFORMED) for body in cases])
+
+    def test_edits_verify_and_pass_record_refuse_a_report_that_starts_with_a_byte_order_mark_and_one_that_holds_a_nul_character(self):
+        report = self.one_edit_report()
+        self.assert_edits_verify_and_pass_record_refuse([("\ufeff" + report, " starts with a byte order mark"),
+                                                         (report.replace("wrold", "wr\0old"), " holds a NUL character"),
+                                                         ("Notes\0\n\n" + report, " holds a NUL character")])
+
+    def test_edits_verify_reads_edits_whose_lines_stand_directly_below_one_another_in_a_report_with_lines_that_start_with_a_digit_that_is_not_ascii_and_a_period_or_a_closing_parenthesis(self):
+        reviewed = self.edits_store()
+        notes = ("## Notes\n\n\u0661. ```\n\n\uff11) ~~~\n\nNote\n\u0661. ---\n\n\u0661. ## Edits\n\n"
+                 "\u0967. <details>\n\n")
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + notes + "## Edits\n\n"
+                         "### Edit 1\nFile: `src/greeting.txt`, line 1.\nOld text:\n```\nhelo\n```\nNew text:\n```text\nhello\n```\n\n"
+                         "\u0661. Old text:\n\n\u0661. File: `src/other.txt`\n\n"
+                         "### Edit 2\n\nFile: `src/greeting.txt`\nOld text:\n\n```\nwrold\n```\nNew text:\n```\nworld\n```\n")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
 
     @unittest.skipIf(os.geteuid() == 0, "the superuser reads a file with no read permission")
     def test_pass_record_refuses_a_report_that_cannot_be_read(self):
