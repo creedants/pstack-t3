@@ -97,9 +97,10 @@ def effective_mode(config, brief=None, session=None, coordinator=None):
     return config.get("mode", DEFAULT_MODE)
 
 
-def seat_budget(budget, mode):
-    """Light caps only a default budget. An explicit budget wins both ways."""
-    return "small" if mode == "light" and budget == "default" else budget
+# roles.py takes a role and no purpose, so every use of verifiers keeps its level, not only a gate review.
+def seat_budget(budget, mode, role):
+    """Light caps only a default budget, and never the verifiers role. An explicit budget wins both ways."""
+    return "small" if mode == "light" and budget == "default" and role != PANEL_GATE_ROLE else budget
 
 
 NO_CATALOG_INFO = (
@@ -112,9 +113,9 @@ NO_PARENT_INFO = (
 )
 
 
-def light_cap_gap(decision, budget, has_catalog, has_parent):
+def light_cap_gap(decision, budget, names, has_catalog, has_parent):
     """The info line show prints when the light cap may not have reached every seat."""
-    if seat_budget(budget, decision.mode) == budget:
+    if all(seat_budget(budget, decision.mode, name) == budget for name in names):
         return None
     if not has_catalog:
         return NO_CATALOG_INFO
@@ -1017,7 +1018,6 @@ def excluded_problems(roles):
 def resolve(config, catalog=None, names=None, parent=None, providers=None, launches_seats=False):
     names = names or ROLES
     decision = config.get("mode", DEFAULT_MODE)
-    budget = seat_budget(config["budget"], decision.mode)
     if catalog is not None:
         if parent is None:
             parent = inherit_parent(catalog)
@@ -1033,6 +1033,7 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
     for name in names:
         if name not in ROLES:
             raise RolesError(f"unknown role {name!r}")
+        budget = seat_budget(config["budget"], decision.mode, name)
         configured, skipped = configured_seats(config, name)
         if configured is None and name == PANEL_BACKUP_ROLE and name in config["roles"]:
             configured = []
@@ -1234,9 +1235,9 @@ def panel_shortfall(seats):
     return f"has {len(seats)} usable seat{'' if len(seats) == 1 else 's'} and needs {PANEL_MINIMUM_PASSES}"
 
 
-def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume):
+def _backup_panel(role, label, review_backups, catalog, panel_budget, blocked, authors, resume):
     configured, skipped = review_backups
-    verdicts = panel_verdicts(configured or [], catalog, budget, blocked, authors)
+    verdicts = panel_verdicts(configured or [], catalog, panel_budget, blocked, authors)
     seats = [verdict.seat for verdict in verdicts if verdict.seat is not None]
     notes = skipped + [note for verdict in verdicts for note in verdict.notes]
     lead = f"{role}: {label} is still out after the reset" if resume else f"{role}: {label} hit its usage limit"
@@ -1253,11 +1254,12 @@ def _backup_panel(role, label, review_backups, catalog, budget, blocked, authors
     return Backup("park", report)
 
 
-def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False, review_backups=None):
+def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False, review_backups=None, *, panel_budget):
     """Pick the one backup seat, a review backups panel, or park. The caller passes providers already out.
 
     With resume, the original seat comes back first when its provider is not out.
     review_backups is configured_seats' (seats, notes) for that role, or None when it is unset.
+    panel_budget is the budget of the review backups seats.
     """
     provider_id = failed["provider"]
     model_id = failed["model"]
@@ -1283,7 +1285,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
         report = f"{role}: {label} hit its usage limit; a review backups seat has no backup, so it counts as no pass"
         return Backup("park", report)
     if role == PANEL_GATE_ROLE and review_backups is not None:
-        return _backup_panel(role, label, review_backups, catalog, budget, blocked, authors, resume)
+        return _backup_panel(role, label, review_backups, catalog, panel_budget, blocked, authors, resume)
     if resume:
         report = f"{role}: {label} is still out after the reset; no backup seat, so the work waits for the reset"
     else:
@@ -1326,7 +1328,8 @@ def command_backup(args):
     text = "" if args.resume else sys.stdin.read()
     config = merged_config(args.cwd, args.config, args.project_config)
     decision = effective_mode(config, args.brief_mode, args.session_mode, args.coordinator_mode)
-    budget = seat_budget(config["budget"], decision.mode)
+    budget = seat_budget(config["budget"], decision.mode, args.role)
+    panel_budget = seat_budget(config["budget"], decision.mode, PANEL_BACKUP_ROLE)
     _catalog_path, catalog = load_show_catalog(args)
     if catalog is None:
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
@@ -1336,6 +1339,7 @@ def command_backup(args):
     review_backups = configured_seats(config, PANEL_BACKUP_ROLE) if PANEL_BACKUP_ROLE in config["roles"] else None
     result = backup_seat(
         args.role, failed, text, catalog, budget, args.out or [], authors, args.resume, review_backups,
+        panel_budget=panel_budget,
     )
     payload = {
         "decision": result.decision,
@@ -1442,7 +1446,7 @@ def command_show(args):
     else:
         payload = resolve(config, catalog, args.role, parent)
     print(json.dumps(payload, indent=2))
-    line = light_cap_gap(decision, config["budget"], catalog is not None, args.parent is not None)
+    line = light_cap_gap(decision, config["budget"], args.role or ROLES, catalog is not None, args.parent is not None)
     if line:
         print(line, file=sys.stderr)
 
