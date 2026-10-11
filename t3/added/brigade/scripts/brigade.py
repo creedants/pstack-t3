@@ -967,8 +967,8 @@ def edit_mark(kind, value):
 
     A fence is `fence`. A line that starts with ``File: `<path>` `` is `file`. A line that is `Old text:` is `old`, and one
     that is `New text:` is `new`.
-    A line that is one of those three once what NESTED matches at its start and the whitespace at its end are removed
-    is `unread`. Any other line is None.
+    Another line that is one of those three once what NESTED matches at its start and the whitespace at its end are
+    removed is `unread`. Every line left is None.
     """
     if kind == "fence":
         return "fence"
