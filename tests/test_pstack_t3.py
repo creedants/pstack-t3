@@ -17,6 +17,31 @@ import check  # noqa: E402
 import roles  # noqa: E402
 
 CATALOG = json.loads((ROOT / "tests/fixtures/catalog.json").read_text())
+PLAYBOOK_FILES = {
+    "Investigation": "playbooks/investigation.md",
+    "Bug fix": "playbooks/bug-fix.md",
+    "Perf issue": "playbooks/perf-issue.md",
+    "Hillclimb": "playbooks/hillclimb.md",
+    "Runtime forensics": "playbooks/runtime-forensics.md",
+    "Trace forensics": "playbooks/trace-forensics.md",
+    "Feature": "playbooks/feature.md",
+    "Refactoring": "playbooks/refactoring.md",
+    "Prototype": "playbooks/prototype.md",
+    "Visual parity": "playbooks/visual-parity.md",
+    "Authoring or modifying a skill": "playbooks/authoring-a-skill.md",
+    "Eval": "playbooks/eval.md",
+    "Babysit": "playbooks/babysit.md",
+    "Shipping": "playbooks/shipping.md",
+    "Autonomous run": "playbooks/autonomous-run.md",
+    "Orchestrate": "playbooks/orchestrate.md",
+    "Autopilot-full": "playbooks/autopilot-full.md",
+    "Autopilot-stack": "playbooks/autopilot-stack.md",
+    "Session pickup": "playbooks/session-pickup.md",
+    "Pause safely": "playbooks/pause-safely.md",
+    "Multi-phase or multi-PR plan": "playbooks/multi-phase-plan.md",
+    "Worktree and simulator cleanup": "playbooks/worktree-cleanup.md",
+    "Opening a PR": "playbooks/opening-a-pr.md",
+}
 
 
 def fence_git_environment():
@@ -1176,6 +1201,44 @@ class BuildTest(unittest.TestCase):
         for skill_md in (ROOT / "skills").glob("*/SKILL.md"):
             self.assertIn(f"[`{skill_md.parent.name}`]", text)
         self.assertIn("(../skills/poteto-mode/playbooks/bug-fix.md)", text)
+
+    def test_kebab_lowercases_and_hyphenates_three_playbook_titles(self):
+        import catalog
+        self.assertEqual(catalog.kebab("Bug fix"), "bug-fix")
+        self.assertEqual(catalog.kebab("Autopilot-full"), "autopilot-full")
+        self.assertEqual(catalog.kebab("Opening a PR"), "opening-a-pr")
+
+    def test_built_playbook_bullets_resolve_to_the_files_in_playbook_files(self):
+        import catalog
+        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "skills")}
+        self.assertEqual(resolved, PLAYBOOK_FILES)
+
+    def test_every_built_playbook_bullet_resolves_to_an_existing_file(self):
+        import catalog
+        for title, file, _ in catalog.playbook_entries(ROOT / "skills"):
+            self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
+        self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
+
+    def test_build_fails_before_the_swap_on_a_playbook_bullet_whose_file_does_not_exist(self):
+        import build
+        from unittest import mock
+        real = build.render
+
+        def render_with_a_stray_bullet(destination):
+            real(destination)
+            with (destination / "poteto-mode/SKILL.md").open("a") as skill:
+                skill.write("- **No such playbook.** Nothing.\n")
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "skills"
+            with mock.patch.object(build, "render", render_with_a_stray_bullet):
+                with self.assertRaises(SystemExit) as failure:
+                    build.build(out, skip_lock=True)
+            self.assertIn(
+                'poteto-mode/SKILL.md: playbook "No such playbook" resolves to playbooks/no-such-playbook.md, which does not exist',
+                str(failure.exception),
+            )
+            self.assertFalse(out.exists())
 
     def test_check_flags_cursor_leftovers(self):
         with tempfile.TemporaryDirectory() as directory:

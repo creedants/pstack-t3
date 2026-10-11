@@ -125,13 +125,13 @@ def build(destination, update_lock=False, skip_lock=False):
         render(staged)
         sys.path.insert(0, str(ROOT / "scripts"))
         from check import check_tree
+        from catalog import missing_playbooks, write
 
-        findings = check_tree(staged)
+        findings = check_tree(staged) + missing_playbooks(staged)
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, destination)
     if destination == ROOT / "skills":
-        from catalog import write
         import cli_reference
 
         write(destination)
