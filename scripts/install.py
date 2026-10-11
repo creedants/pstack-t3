@@ -1097,7 +1097,7 @@ def contested_by(backup):
 
 
 def held_beside(backup):
-    """Return the path of an entry named os.path.basename(backup) in a HOLDER directory in os.path.dirname(backup), or None. Reads only."""
+    """Return the path of an entry named os.path.basename(backup) in a HOLDER directory in os.path.dirname(backup), or None."""
     parent, name = os.path.split(backup)
     # os.listdir raises ValueError for a path that holds a NUL byte.
     with suppress(ValueError):
