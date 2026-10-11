@@ -4,7 +4,7 @@ This is the design of the light mode setting in pstack-t3, which has shipped. Li
 
 The intended readers are a user who runs low on a provider's usage budget, and the engineer who builds the changes below.
 
-**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. Change 6, the measured trial, finished on 2026-10-10. [Results](#results) records it. The trial found that the `medium` cap misses blocking findings, so the gate review keeps its full level in light mode. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap until a follow-up change removes it. The sections below keep the design as it was written before those changes landed, including its line numbers and its census of that time.
+**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. A trial of the `medium` cap on the gate review finished on 2026-10-10. It found that the cap misses blocking findings, so the gate review keeps its full level in light mode. [Results](#results) records it. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap. The sections below keep the design as it was written before those changes landed, with its census of that time.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item. brigade's commands and files keep their kitchen names only where they name a command or a file, such as `fire`, `dishes.tsv`, and `restaurant.json`.
 
@@ -27,7 +27,7 @@ On this repository's history, light mode would cut the child activity of a typic
 
 Light mode escalates a work item to `full` in three cases. Its lease covers a configured high-risk path. It has two send-backs in `pass.tsv`. Or the coordinator recorded the design as contested with `brigade.py dish --mode full`. On this repository the configured paths are `land.py`, `brigade.py`, and `install.py`. That rule alone escalates 34 of 69 merged items. 32 of them changed one of those scripts, and D5 and D11 held a directory lease over one. Light mode therefore applies to about half of this repository's items.
 
-[Changes](#changes) lists six changes in landing order.
+[Changes](#changes) lists five changes in landing order.
 
 ## Method
 
@@ -264,7 +264,7 @@ Each row maps to the census row it changes. "Merged" means two passes become one
 | 32 Coordinator thread | 1 | 1 | Kept |
 | 33 Executive admin thread | 1 | 1 | Kept |
 | 34 brigade worker | 1 per attempt | 1 per attempt, reasoning capped at `medium` | Cheaper seat |
-| 35 Gate verifier | 1 per attempt | 1 per attempt, same seat, reasoning capped at `medium` until [Change 6](#change-6-a-measured-light-mode-trial) decides | Cheaper seat |
+| 35 Gate verifier | 1 per attempt | 1 per attempt, same seat, reasoning capped at `medium`. The trial's decision is in [Results](#results) | Cheaper seat |
 | 36 Second reviewer | Trials | Never | Cut |
 | 37 Fix the recipe | A `correct` work item | Filed as a ticket and run when the mode returns to `full` | Cut |
 | 38 Landing writer | 1 per unit | 1 per unit, with `Mode: light` in its brief | Kept |
@@ -418,7 +418,7 @@ The estimate has three limits. The sample is 10 work items chosen by hand. Activ
 
 Light mode keeps the round-1 review, and round 1 is where this repository caught most of its real bugs. Of 59 send-backs, 35 rounds held 51 real-bug findings on 24 items. The other 24 rounds held only instruction or doc gaps. Every send-back verdict came from the gating verifier. On D64 the gating verifiers were Grok in round 1 and Space Bunny in round 2. Space Bunny ran as the second reviewer in round 1 and supplied three of that round's findings. In round 2 Grok passed, and Space Bunny, recorded as the gate, found the message-only relay gap. The risks are in what light mode thins around that review.
 
-1. **A weaker verifier.** The reviewer trial shows that a cheaper model misses concurrency bugs. Every trial model passed D59 and D60, which held a mode-overwrite race and three lease failures. Kimi as a second reviewer passed D62 and missed Codex's three crash-safety findings. Light mode therefore keeps the verifier's model and lowers only its reasoning level, and an escalated item keeps the full level. A `medium` cap on the gate is still untested. [Change 6](#change-6-a-measured-light-mode-trial) measures it before light becomes a recommendation.
+1. **A weaker verifier.** The reviewer trial shows that a cheaper model misses concurrency bugs. Every trial model passed D59 and D60, which held a mode-overwrite race and three lease failures. Kimi as a second reviewer passed D62 and missed Codex's three crash-safety findings. Light mode therefore keeps the verifier's model and lowers only its reasoning level, and an escalated item keeps the full level. The trial tested a `medium` cap on the gate and found misses. The decision is that the gate keeps its full level, and the code still applies the cap ([Results](#results)).
 2. **Later rounds that caught round-1 misses.** D42 round 2 found a duplicate-PR path (`reports/D42-review-2.md`). D55 round 2 found an option-shaped summary that breaks the printed retry (`reports/D55-review-2.md`). D61 round 2 found an unskipped test that fails setup (`reports/D61-review-2.md`). All three are on `land.py` or `brigade.py`, so rule 1 escalates them. Light mode also keeps full-diff re-review.
 3. **Fixes that introduce bugs.** D12 rounds 2 and 3 (tag publishing, a second push URL) and D24 rounds 2 to 5 (installer ownership) were bugs the fix itself created. Re-review at every head SHA caught them, and light mode keeps it. D24 is the costliest item in the store, and rule 1 escalates it through `scripts/install.py`.
 4. **Second reviewers.** Space Bunny found an empty-path reservation that locks the repository on D61 (`reports/D61-review-space-bunny.md`) and three skill gaps on D64 that Grok missed. Light mode drops second reviewers, so that class of catch is lost. D61 and D64 both changed `brigade.py`, so rule 1 escalates them. The same reviewer stalled or quit on 2 of 6 runs, so it was never a dependable gate.
@@ -428,7 +428,7 @@ Light mode keeps the round-1 review, and round 1 is where this repository caught
 
 ## Changes
 
-Changes 1 to 5 landed in order as #81, #83, #84, #85, and #88. Change 6 is the trial, and [Results](#results) records it.
+Changes 1 to 5 landed in order as #81, #83, #84, #85, and #88.
 
 Each change is one PR through the landing queue, with its own tests and its own changelog fragment. Each change that edits a skill's behavior needs the fresh-child tests [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) requires, run in `full` mode because the change itself is under review.
 
@@ -478,22 +478,14 @@ Each change is one PR through the landing queue, with its own tests and its own 
 - **Files.** `t3/added/brigade/scripts/brigade.py`, `t3/added/brigade/SKILL.md`, `t3/runtime.md`, `t3/overrides/poteto-mode/playbooks/opening-a-pr.md`, `tests/test_brigade.py`, `t3/overrides.lock.json` only after review, generated `skills/brigade/`, `skills/pstack-runtime/`, `skills/poteto-mode/`, `docs/skills.md`, its fragment.
 - **Tests.** `open --mode light` writes `"mode": "light"`. A first-attempt Feature brief under light prints `Mode: light`, `Attempt: first`, and `Waived by mode: Arena, Interrogate, Comment Sicko`. After one `send-back` row, `brief` prints `Attempt: fix` and the fix waivers. A replacement worker with no new `send-back` row does not count as a send-back. After two `send-back` rows, `brief` prints `Mode: full` and appends one `mode` row to `log.tsv`. A second `brief` appends no duplicate. After that, `set --mode light` leaves the next brief at `Mode: full`. `dish --mode full` with a stale `--owner` exits 1 and appends nothing. `dish --mode light` exits 1. `set --mode light` while an item is in progress leaves its written brief unchanged. A store replayed from its `log.tsv` keeps the escalation, and a write with a stale `--owner` changes no earlier row. `pass check --json` on a cross-family pass prints `"crossFamily": true` and exits 0. A pass followed by a `send-back` at the same SHA exits 1 and prints `"verdict": "send-back"`. A pass recorded with `--same-family` prints `"crossFamily": false`. A pass recorded at one SHA and checked at another exits 1 with `has no review verdict`. Executing fresh-child tests drive a coordinator through one light item to its gate, and drive a standalone light Feature whose head has a current cross-family brigade pass. That Feature launches no second gate and cites the pass. The same Feature, after a send-back is recorded at that SHA, launches a gate. Another executing test drives one worker report that says `Contested:`. That test shows the old worker stopped, one `mode` row with state `full`, a fresh worker on a full seat with `Mode: full` in its brief, the lease unchanged through the replacement, and no new `send-back` row.
 
-### Change 6. A measured light-mode trial
-
-- **What.** Run the next six work items of one coordinator in light mode and six comparable ones in full. Compare child activity items per item, send-backs per item, and real-bug findings per round, with the commands in [Appendix A](#appendix-a-commands). During the trial, every light item's gate runs twice at each reviewed head SHA, once at `medium` and once at the full level. That includes every pre-fix SHA, so a bug the `medium` gate missed on an earlier head still shows even after the worker removes it.
-- **Gate during the trial.** The item lands only when both reviews pass at its final head. A blocking finding from the full-level review is a send-back at that SHA, whatever the `medium` review said, and counts as a `medium` miss.
-- **Files.** `docs/light-mode.md` gains a Results section. No code.
-- **Decision.** The gate keeps the `medium` cap only if the full-level reviews found no blocking finding that the `medium` reviews missed on any evaluated SHA. Otherwise the gate keeps its full level in light mode, and only the worker-side cuts remain. Light mode becomes the recommended choice under a usage limit after that decision.
-- **Outcome.** The full-level reviews found a blocking finding the `medium` reviews missed on 3 of 8 evaluated commits. The gate keeps its full level in light mode. See [Results](#results).
-
 ## Results
 
-The trial ran 12 work items through one coordinator on 2026-10-09 and 2026-10-10, six in light mode and six in full mode as controls. It asked the question [Change 6](#change-6-a-measured-light-mode-trial) states. Does a `medium` gate review miss a blocking finding that a full-level review reports at the same commit? It did, at 3 of the 8 commits where both reviews ran. The gate therefore keeps its full level in light mode. The cost side of the design is unmeasured.
+The trial ran 12 work items through one coordinator on 2026-10-09 and 2026-10-10, six in light mode and six in full mode as controls. It asked whether a `medium` gate review misses a blocking finding that a full-level review reports at the same commit. It did, at 3 of the 8 commits where both reviews ran. The gate therefore keeps its full level in light mode. The cost side of the design is unmeasured.
 
 ### Trial method
 
 - **Assignment.** The items alternated. The light items are D97, D99, D101, D104, D106, and D108. The controls are D98, D100, D102, D105, D107, and D109. Each control carries a `mode` row in `log.tsv` with the reason `light-mode trial control`. No light item carries one, and each light brief says `Mode source: restaurant.json`.
-- **Paired gate reviews.** At each reviewed head of a light item, one read-only brief ran twice, once at the `medium` level and once at the full level. `pass.tsv` names `codex/gpt-6.1-sol` as the verifier at each of those heads. A numbered blocker in the full review that the `medium` review did not report is a medium miss, as [Change 6](#change-6-a-measured-light-mode-trial) defines it.
+- **Paired gate reviews.** At each reviewed head of a light item, one read-only brief ran twice, once at the `medium` level and once at the full level. `pass.tsv` names `codex/gpt-6.1-sol` as the verifier at each of those heads. A numbered blocker in the full review that the `medium` review did not report is a medium miss. Every reviewed head counts, including a head the worker later fixed.
 - **Controls.** A control ran one review per head at the full level. It gives send-backs and findings and no comparison.
 - **Free panel.** When Codex was at its usage limit, the `review backups` seats ran in its place. They are three free OpenCode reviewers, Muse, Step 5, and Space Bunny. A panel pass is 3 of 3 passes.
 - **Verification.** For each of the 8 paired heads, the `medium` and full review files were read side by side and every blocker was matched to its counterpart. The counts below come from that reading. The trial table's note that medium found 5 of the 7 blockers at D108 round 1 is one short. The `medium` review's five blockers cover six of the full review's seven, because its first blocker folds two.
@@ -541,7 +533,7 @@ The pairs agree on pass or fail at 8 of 8 heads. A `medium`-only gate would have
 
 ### Decision
 
-The design states the rule in [Change 6](#change-6-a-measured-light-mode-trial).
+The design set this rule before the trial ran.
 
 > The gate keeps the `medium` cap only if the full-level reviews found no blocking finding that the `medium` reviews missed on any evaluated SHA. Otherwise the gate keeps its full level in light mode, and only the worker-side cuts remain. Light mode becomes the recommended choice under a usage limit after that decision.
 
@@ -555,13 +547,13 @@ Two facts show the decision does not hang on one reading of the data.
 What follows from the decision.
 
 - **The worker-side cuts remain.** These are the single architect runner, the simple `how` path, the source-control-only `why`, the folded Comment Sicko, the waivers, the fan-out cap of 3, and the reasoning cap on every seat that is not the gate.
-- **The code and skills still cap the gate.** Under light mode with budget `default`, `roles.py show` resolves the `verifiers` seat at `medium`, and the runtime's Modes section and the Summary table above say so. A follow-up change must leave the `verifiers` seat at its configured level when it resolves a gate review, with a test that a configured `high` gate stays `high` under light, and must correct those passages. This document does not make that change.
+- **The code and skills still cap the gate.** Under light mode with budget `default`, `roles.py show` resolves the `verifiers` seat at `medium`, and the runtime's Modes section and the Summary table above say so. The decision has not changed the code or those passages.
 - **Light mode becomes the recommended choice under a usage limit.** That is the rule's last sentence. The trial supports the gate half of it. The saving the recommendation rests on is the design's estimate, which the trial did not test.
 - **The saving estimate does not change.** [Saving per change](#saving-per-change) counted no reasoning saving, so a gate at full level leaves its figures as they were.
 
 ### What the trial did not measure
 
-- **Cost.** Child activity counts were not collected for any of the 12 items, so the trial says nothing about the 45 to 60 percent estimate. A measurement needs, for each item, the sum of `itemCount` from `t3_thread_read` over the worker thread and every child task it launched, across all attempts, and the same sum for each gate review at each level. It also needs matched pairs of comparable size in the same playbook. T3 records no tokens or reasoning level, so the unit stays activity items and a reasoning cap's saving stays invisible. The counts for these 12 items can be taken after the fact only if T3 still holds their threads.
+- **Cost.** Child activity counts were not collected for any of the 12 items, so the trial says nothing about the 45 to 60 percent estimate. T3 records no tokens or reasoning level, so the unit stays activity items and a reasoning cap's saving stays invisible.
 - **The comparison on most items.** Paired reviews exist for 4 items and 8 heads. D97 and D106 are light items reviewed only by the free panel, because Codex was at its usage limit, so they give no comparison. D108 round 2 ran on the panel too, and D108 landed on that pass and not on the two Codex passes the protocol asks for.
 - **Run-to-run variance.** Each head had one review per level. No level ran twice, so a difference between two reviews may come from the run and not from the level. The two things the `medium` review reported alone are the evidence that variance is not zero.
 - **The review level.** The review files do not record the reasoning level. It comes from the file names and the `pass.tsv` notes, and T3 holds none.
