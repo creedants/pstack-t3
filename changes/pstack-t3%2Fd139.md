@@ -1,0 +1,2 @@
+- Synced to upstream pstack 0.15.17 ([cursor/plugins@978ca6e](https://github.com/cursor/plugins/commit/978ca6e9c0e012047cd5058b8e829240336e704e)). Upstream shortened its skill prompts.
+- Adds `$ketchup`. It catches you up on everything in the chat since your last message. pstack-t3 now builds 57 skills.
