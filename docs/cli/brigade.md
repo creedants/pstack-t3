@@ -85,7 +85,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
-| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads by source: upstream is urgent, report is low, every other source is normal |
+| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
 | `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
 | `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 
@@ -449,7 +449,7 @@ executive admin: copy each coordinator's new log rows into this log
 brigade.py [flags] status
 ```
 
-the thread line first, then counts, then workers, then reports to, mode, and owner when present
+the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present
 
 ## brigade.py close
 
