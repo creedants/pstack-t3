@@ -524,7 +524,8 @@ class Watch:
 
 def child_env(environ: dict[str, str], home: Path, start: Path) -> dict[str, str]:
     # shutil.get_terminal_size reads COLUMNS and LINES, argparse wraps help text at its width, and tests compare help text.
-    env = {name: value for name, value in environ.items() if name not in ("COLUMNS", "LINES")}
+    # A GIT_DIR or GIT_WORK_TREE from the caller names a repository that the git commands of a test then act on.
+    env = {name: value for name, value in environ.items() if name not in ("COLUMNS", "LINES") and not name.startswith("GIT_")}
     env.update(TMPDIR=str(home / "tmp"), XDG_STATE_HOME=str(home / "state"), XDG_CONFIG_HOME=str(home / "config"))
     env[ACTIVE] = str(start)
     return env
