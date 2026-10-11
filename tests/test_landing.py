@@ -4310,8 +4310,10 @@ os.execv({real!r}, [{real!r}, *args])
                                    "--reviewer", REVIEWER), f"E{number}")
 
     def queue_rows(self):
+        """Every row of every table in the store, by table name. The contract rows are sorted."""
         with self.raw_db() as db:
-            rows = {table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall() for table in ("contract", "entry", "lease", "log")}
+            tables = [name for name, in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+            rows = {table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall() for table in tables}
         return {**rows, "contract": sorted(rows["contract"])}
 
     def remember_then_configure(self, mode, before, after):
@@ -4326,19 +4328,24 @@ os.execv({real!r}, [{real!r}, *args])
 
     def assert_push_mode_pauses(self, before, after, now, last):
         self.remember_then_configure("push", before, after)
+        entries, refs = self.queue_rows()["entry"], self.on_origin("for-each-ref")
         self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause(now, last))
         self.assertEqual(self.origin_log(), ["init"])
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
         self.assertEqual(tuple(self.entry_fields(1, "state", "pr")), ("queued", ""))
+        self.assertEqual(self.queue_rows()["entry"], entries)
 
     def assert_human_mode_pauses(self, before, after, now, last):
         with self.fake_gh():
             self.remember_then_configure("human", before, after)
             calls = self.base / "gh-calls"
             before_calls = calls.read_text() if calls.exists() else None
+            entries, refs = self.queue_rows()["entry"], self.on_origin("for-each-ref")
             self.assertEqual(self.land("land"), "queue paused: " + self.identity_pause(now, last))
             self.assertEqual(calls.read_text() if calls.exists() else None, before_calls)
-        self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+        self.assertEqual(self.on_origin("for-each-ref"), refs)
         self.assertEqual(tuple(self.entry_fields(1, "state", "pr")), ("queued", ""))
+        self.assertEqual(self.queue_rows()["entry"], entries)
 
     OWNER = ("Owner", "owner@example.com")
     IDENTITY_CHANGES = {
@@ -4412,7 +4419,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.land("land"), f"queue paused: {reason}")
         return reason
 
-    def test_a_second_land_while_paused_for_the_identity_prints_the_stored_line_after_another_change_and_changes_no_row_and_no_origin_ref(self):
+    def test_a_second_land_while_paused_for_the_identity_prints_the_first_reason_after_another_change_and_changes_no_row_and_no_origin_ref(self):
         reason = self.land_one_then_pause_as_audit()
         self.configure_owner("third", "third@example.com")
         rows, refs = self.queue_rows(), self.on_origin("for-each-ref")
@@ -4436,7 +4443,10 @@ os.execv({real!r}, [{real!r}, *args])
                          "queue paused: " + self.identity_pause("Owner <owner@example.com>", "audit <audit@example.com>"))
 
     def assert_an_unset_identity_pauses(self, *config):
-        """E1 lands as Owner, each git config command in config runs, and E2 by t is queued. land must pause and change only the pause."""
+        """E1 lands as Owner, each git config command in config runs, and E2 by t is queued.
+
+        land must pause, set the paused row, add one log row, and change no other row and no origin ref.
+        """
         self.init(mode="push")
         self.configure_owner()
         self.queue_one_as("Owner", "owner@example.com")
@@ -4451,7 +4461,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(after["log"][:-1], before["log"])
         self.assertEqual(after["log"][-1][1:], ("queue", 0, "paused", reason))
         self.assertEqual(after["contract"], [(key, json.dumps(reason) if key == "paused" else value) for key, value in before["contract"]])
-        self.assertEqual((after["entry"], after["lease"]), (before["entry"], before["lease"]))
+        self.assertEqual({**after, "log": before["log"], "contract": before["contract"]}, before)
         self.assertEqual(self.on_origin("for-each-ref"), refs)
 
     def assert_resume_then_land_lands_and_stores_no_identity(self):
@@ -4459,7 +4469,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.land("land"), "landed E2 (r/D2)")
         self.assertIsNone(self.stored_identity())
 
-    def test_an_unset_user_name_pauses_and_changes_only_the_pause(self):
+    def test_an_unset_user_name_pauses_and_changes_no_row_but_the_paused_row_and_one_new_log_row_and_no_origin_ref(self):
         self.assert_an_unset_identity_pauses(("--unset", "user.name"))
         self.assertEqual((self.configured_value("user.name"), self.configured_value("user.email")), (None, "owner@example.com"))
 
