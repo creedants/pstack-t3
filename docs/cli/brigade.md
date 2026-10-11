@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -149,6 +149,61 @@ record the tracked paths each waiting ticket's summary quotes, on tickets that r
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--dry-run` |  |  |  | print what it would record; it changes no table |
+
+## brigade.py goal
+
+```text
+brigade.py [flags] goal <action>
+```
+
+add, change, or list goals; a goal is a named line of work
+
+`<action>` is one of `add`, `set`, `list`.
+
+## brigade.py goal add
+
+```text
+brigade.py [flags] goal add --name NAME --purpose PURPOSE --done DONE [--share SHARE]
+```
+
+record a new open goal and print its id; refused when an open or paused goal has the same name, where case, leading and trailing whitespace, and the length of a whitespace run do not count
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--name NAME` | yes |  |  | what the goal is called, such as "activity view" |
+| `--purpose PURPOSE` | yes |  |  | one sentence that says why this line of work exists |
+| `--done DONE` | yes |  |  | one sentence that states the test that shows the goal is reached |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, and it does not affect which tickets start |
+
+## brigade.py goal set
+
+```text
+brigade.py [flags] goal set [--state STATE] [--evidence EVIDENCE] [--name NAME] [--purpose PURPOSE] [--done DONE] [--share SHARE] id
+```
+
+change a goal's state, name, purpose, done test, or share
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
+| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused is recorded and printed. It does not affect which tickets start. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
+| `--evidence EVIDENCE` |  |  |  | one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; with --state done, what shows the done test is met; with --state dropped, why the goal is dropped; refused without --state done or --state dropped |
+| `--name NAME` |  |  |  | replaces the goal's name; refused when it is empty or only whitespace |
+| `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when it is empty or only whitespace |
+| `--done DONE` |  |  |  | replaces the goal's done test; refused when it is empty or only whitespace |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; "" clears it; goal list prints it, and it does not affect which tickets start |
+
+## brigade.py goal list
+
+```text
+brigade.py [flags] goal list [--all]
+```
+
+the state, name, counts, purpose, and done test of each open or paused goal and of each done or dropped goal that has a waiting ticket, an item in flight, or a ticket riding along, then the counts of unassigned work; waiting counts waiting tickets; in flight counts items in progress, in review, passed, sent back, blocked, or waiting to land; merged counts merged items; send-backs counts the send-back verdicts on the goal's items, in any state, that are not a panel member's row; riding along counts assigned tickets of the goal that are not in an item of the goal
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--all` |  |  |  | also print each other done or dropped goal |
 
 ## brigade.py fire
 

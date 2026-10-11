@@ -770,13 +770,16 @@ def one_of(words):
 
 @dataclass(frozen=True)
 class Goal:
-    """One row of goals.tsv as read_labels reads it. state is one of GOAL_STATES. share is None or a whole number of 1 or more."""
+    """One row of goals.tsv as read_labels reads it.
+
+    state is one of GOAL_STATES. share is the digits of a whole number of 1 or more with no leading zero, or "" for no limit.
+    """
     id: str
     state: str
     name: str
     purpose: str
     done: str
-    share: object
+    share: str
     closed: str
 
 
@@ -803,15 +806,18 @@ class Labels:
     faults: tuple
 
 
+def whole_share(text):
+    """The digits of a whole number of 1 or more with no leading zero, or "" when the text is not such a number."""
+    return text.lstrip("0") if text.isascii() and text.isdigit() else ""
+
+
 def read_goal(row, faults):
-    state, share = row["state"], None
+    state, share = row["state"], whole_share(row["share"])
     if state not in GOAL_STATES:
         faults.append((row["id"], f"{row['id']} has state {state!r}, which is not {one_of(GOAL_STATES)}; it reads as open; "
                                   f"run goal set {row['id']} --state <state>"))
         state = "open"
-    if row["share"].isascii() and row["share"].isdigit() and int(row["share"]) >= 1:
-        share = int(row["share"])
-    elif row["share"]:
+    if row["share"] and not share:
         faults.append((row["id"], f"{row['id']} has share {row['share']!r}, which is not a whole number of 1 or more; "
                                   f"it reads as no limit; run goal set {row['id']} --share <n>"))
     return Goal(row["id"], state, row["name"], row["purpose"], row["done"], share, row["closed"])
@@ -850,6 +856,196 @@ def read_labels(restaurant):
     tickets = {row["id"]: read_label("rail.tsv", row, goals, faults) for row in restaurant.rows("rail.tsv")}
     items = {row["id"]: read_label("dishes.tsv", row, goals, faults) for row in restaurant.rows("dishes.tsv")}
     return Labels(goals, tickets, items, tuple(faults))
+
+
+def shown_labels(restaurant):
+    """read_labels, and one warning line on standard error for each of its faults."""
+    labels = read_labels(restaurant)
+    for _, text in labels.faults:
+        print(f"brigade: warning: {text}", file=sys.stderr)
+    return labels
+
+
+@dataclass(frozen=True)
+class Tally:
+    """The work under one kind or one goal. waiting holds ticket ids. in_flight and merged hold item ids."""
+    waiting: tuple = ()
+    in_flight: tuple = ()
+    merged: tuple = ()
+    send_backs: int = 0
+
+
+@dataclass(frozen=True)
+class LabelCounts:
+    """kinds is {kind: Tally} and goals is {goal id: Tally}. The key "" holds the work with no kind, and the unassigned work.
+
+    riding is {goal id: ticket ids}. A key with no work is absent.
+    """
+    kinds: dict
+    goals: dict
+    riding: dict
+
+
+def count_labels(restaurant, labels):
+    """The counts by kind and by goal. Call it under the same hold of the store lock as the read_labels that made `labels`.
+
+    Each row counts under its own kind and its own goal as `labels` gives them.
+
+    - waiting. The rows of rail.tsv whose state is waiting.
+    - in flight. The rows of dishes.tsv whose state is in IN_FLIGHT_STATES.
+    - merged. The rows of dishes.tsv whose state is merged.
+    - send-backs. The rows of pass.tsv whose verdict is send-back, whose member cell is empty, and whose dish cell is the id of
+      a row of dishes.tsv. They count under that item's kind and goal, whatever the item's state.
+    - riding, for a goal. The rows of rail.tsv whose state is assigned and whose goal is that goal, where the dish cell is not
+      the id of an item under that goal.
+    """
+    kinds, goals, riding = {}, {}, {}
+
+    def add(label, field, ident):
+        for found, key in ((kinds, label.kind), (goals, label.goal)):
+            found.setdefault(key, {"waiting": [], "in_flight": [], "merged": [], "send_backs": []})[field].append(ident)
+
+    for row in restaurant.rows("rail.tsv"):
+        label = labels.tickets[row["id"]]
+        if row["state"] == "waiting":
+            add(label, "waiting", row["id"])
+        elif row["state"] == "assigned" and label.goal and labels.items.get(row["dish"], Label()).goal != label.goal:
+            riding.setdefault(label.goal, []).append(row["id"])
+    for row in restaurant.rows("dishes.tsv"):
+        if row["state"] in IN_FLIGHT_STATES:
+            add(labels.items[row["id"]], "in_flight", row["id"])
+        elif row["state"] == "merged":
+            add(labels.items[row["id"]], "merged", row["id"])
+    for row in restaurant.rows("pass.tsv"):
+        if row["verdict"] == "send-back" and not row["member"] and row["dish"] in labels.items:
+            add(labels.items[row["dish"]], "send_backs", row["dish"])
+
+    def tallies(found):
+        return {key: Tally(tuple(lists["waiting"]), tuple(lists["in_flight"]), tuple(lists["merged"]), len(lists["send_backs"]))
+                for key, lists in found.items()}
+
+    return LabelCounts(tallies(kinds), tallies(goals), {goal: tuple(ids) for goal, ids in riding.items()})
+
+
+def goal_share(text):
+    """--share as the cell to store. Empty text stays empty. Refuses text that is not a whole number of 1 or more."""
+    text = clean(text)
+    if text and not whole_share(text):
+        raise BrigadeError(f'--share takes a whole number of 1 or more, or "" for no limit, got {text!r}')
+    return whole_share(text)
+
+
+def add_goal(restaurant, name, purpose, done, share=""):
+    """Append one open goal and log it. Returns the new id.
+
+    Refuses when an open or paused goal has the same name by same_text, so a command run a second time adds no second goal.
+    """
+    name, purpose, done, share = clean(name), clean(purpose), clean(done), goal_share(share)
+    if not (name and purpose and done):
+        raise BrigadeError("goal add needs a nonempty --name, --purpose, and --done")
+    for goal in read_labels(restaurant).goals.values():
+        if goal.state not in CLOSED_GOAL_STATES and same_text(goal.name) == same_text(name):
+            raise BrigadeError(f"same name as {goal.id} ({goal.state}); nothing added")
+    ident = restaurant.next_id("goals.tsv")
+    restaurant.append("goals.tsv", {"id": ident, "at": now(), "state": "open", "name": name, "purpose": purpose,
+                                    "done": done, "share": share})
+    restaurant.log("goal", ident, "open", name)
+    return ident
+
+
+def goal_work(counted, ident):
+    """What keeps a goal from closing, as (words, advice) pairs. Empty when no ticket of the goal waits or rides along and no item is in flight."""
+    tally = counted.goals.get(ident, Tally())
+    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal or --no-goal"),
+            (tally.in_flight, "in flight", "finish or drop each item in flight"),
+            (counted.riding.get(ident, ()), "riding along", "finish or drop the item each of those tickets rides along in"))
+    return [(f"{', '.join(ids)} {words}", advice) for ids, words, advice in held if ids]
+
+
+def set_goal(restaurant, ident, name=None, purpose=None, done=None, share=None, state=None, evidence=None):
+    """Change one goal. Returns one line such as `G1 paused; share 2`.
+
+    GOAL_MOVES is the state machine. A state the goal's cell already holds is accepted and changes neither the state nor
+    the closed cell. A state cell that is not one of GOAL_STATES reads as open, and --state open rewrites it.
+    A move to done or dropped needs --evidence, and is refused while goal_work finds work under the goal.
+    One update call writes every change. It logs a goal row when the state changed.
+    """
+    labels = read_labels(restaurant)
+    goal = labels.goals.get(ident)
+    if goal is None:
+        raise BrigadeError(f"no goal {ident}; run goal list --all to see every goal")
+    if all(value is None for value in (name, purpose, done, share, state)):
+        raise BrigadeError("goal set needs --state, --name, --purpose, --done, or --share")
+    for flag, value in (("--name", name), ("--purpose", purpose), ("--done", done)):
+        if value is not None and not clean(value):
+            raise BrigadeError(f"goal set {flag} takes text; a goal keeps a name, a purpose, and a done test")
+    if evidence is not None and state not in CLOSED_GOAL_STATES:
+        raise BrigadeError("--evidence goes only with --state done or --state dropped")
+    if share is not None:
+        share = goal_share(share)
+    _, row = restaurant.find("goals.tsv", ident)
+    moving = state is not None and state != row["state"]
+    closing = moving and state in CLOSED_GOAL_STATES
+    if moving and state != goal.state and state not in GOAL_MOVES[goal.state]:
+        raise BrigadeError(f"{ident} is {goal.state}; a {goal.state} goal moves only to open; run goal set {ident} --state open first")
+    if closing:
+        if not clean(evidence):
+            raise BrigadeError(f"--state {state} needs --evidence <one line>")
+        work = goal_work(count_labels(restaurant, labels), ident)
+        if work:
+            raise BrigadeError(f"{ident} still has work: {'; '.join(words for words, _ in work)}; "
+                               f"{'; '.join(advice for _, advice in work)}; then run this again")
+    closed = None
+    if closing:
+        closed = f"{now()} {clean(evidence)}"
+    elif moving and goal.state in CLOSED_GOAL_STATES:
+        closed = ""
+    said = []
+    if state is not None:
+        said.append(state if moving else f"already {state}")
+    if name is not None:
+        said.append(f"name {clean(name)}")
+    if purpose is not None:
+        said.append("purpose changed")
+    if done is not None:
+        said.append("done test changed")
+    if share is not None:
+        said.append(f"share {share}" if share else "no share")
+    kept = clean(name) if name is not None else goal.name
+    restaurant.update("goals.tsv", ident, "goal", note=f"{kept}: {clean(evidence)}" if closing else kept,
+                      state=state, name=name, purpose=purpose, done=done, share=share, closed=closed)
+    return f"{ident} {'; '.join(said)}"
+
+
+def plural(count, word):
+    """`1 send-back`, `0 send-backs`, `2 send-backs`."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def tally_words(tally):
+    return (f"{len(tally.waiting)} waiting, {len(tally.in_flight)} in flight, {len(tally.merged)} merged, "
+            f"{plural(tally.send_backs, 'send-back')}")
+
+
+def goal_lines(labels, counted, every):
+    """The text of goal list.
+
+    A goal is listed when it is open or paused, or when it has a ticket waiting, an item in flight, or a ticket riding along.
+    `every` lists each other goal too. The unassigned line is last.
+    """
+    lines = []
+    for goal in labels.goals.values():
+        tally, riding = counted.goals.get(goal.id, Tally()), counted.riding.get(goal.id, ())
+        closed = goal.state in CLOSED_GOAL_STATES
+        if closed and not every and not (tally.waiting or tally.in_flight or riding):
+            continue
+        words = tally_words(tally) + (f", {len(riding)} riding along" if riding else "") + (f", share {goal.share}" if goal.share else "")
+        lines += [f"{goal.id} {goal.state} {goal.name}: {words}", f"  purpose: {goal.purpose}", f"  done when: {goal.done}"]
+        if closed:
+            lines.append(f"  closed: {goal.closed}")
+    if not lines:
+        lines.append("no goals" if every else "no open or paused goals")
+    return "\n".join([*lines, f"unassigned: {tally_words(counted.goals.get('', Tally()))}"])
 
 
 def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):
@@ -3276,6 +3472,45 @@ def parser():
                                     "is not counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
+    p = sub.add_parser("goal", help="add, change, or list goals; a goal is a named line of work")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("add", help="record a new open goal and print its id; refused when an open or paused goal has the same "
+                                 "name, where case, leading and trailing whitespace, and the length of a whitespace run "
+                                 "do not count")
+    a.add_argument("--name", required=True, help='what the goal is called, such as "activity view"')
+    a.add_argument("--purpose", required=True, help="one sentence that says why this line of work exists")
+    a.add_argument("--done", required=True, help="one sentence that states the test that shows the goal is reached")
+    a.add_argument("--share", default="",
+                   help="a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, "
+                        "and it does not affect which tickets start")
+    a = t.add_parser("set", help="change a goal's state, name, purpose, done test, or share")
+    a.add_argument("id")
+    a.add_argument("--state", choices=GOAL_STATES,
+                   help="paused is recorded and printed. It does not affect which tickets start. "
+                        "A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is "
+                        "waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting "
+                        "to land, or an assigned ticket of the goal is not in an item of the goal. "
+                        "A done or dropped goal moves only to open.")
+    a.add_argument("--evidence",
+                   help="one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; "
+                        "with --state done, what shows the done test is met; with --state dropped, why the goal is "
+                        "dropped; refused without --state done or --state dropped")
+    a.add_argument("--name", help="replaces the goal's name; refused when it is empty or only whitespace")
+    a.add_argument("--purpose", help="replaces the goal's purpose; refused when it is empty or only whitespace")
+    a.add_argument("--done", help="replaces the goal's done test; refused when it is empty or only whitespace")
+    a.add_argument("--share",
+                   help='a whole number of 1 or more, recorded as the goal\'s share of the worker slots; "" clears it; '
+                        "goal list prints it, and it does not affect which tickets start")
+    a = t.add_parser("list",
+                     help="the state, name, counts, purpose, and done test of each open or paused goal and of each done or "
+                          "dropped goal that has a waiting ticket, an item in flight, or a ticket riding along, then the "
+                          "counts of unassigned work; waiting counts waiting tickets; in flight counts items in progress, "
+                          "in review, passed, sent back, blocked, or waiting to land; merged counts merged items; "
+                          "send-backs counts the send-back verdicts on the goal's items, in any state, that are not a "
+                          "panel member's row; riding along counts assigned tickets of the goal that are not in an item "
+                          "of the goal")
+    a.add_argument("--all", action="store_true", help="also print each other done or dropped goal")
+
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
     p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
     p.add_argument("--station", required=True, help="the pstack playbook the worker runs")
@@ -3703,6 +3938,14 @@ def command(restaurant, args, contract=None, rails=None):
             return end_ruling(restaurant, args.id, args.state)
         rows = [row for row in restaurant.rows("rulings.tsv") if not args.state or row["state"] == args.state]
         return "\n".join(ruling_line(row) for row in rows) or "no rulings"
+
+    if args.command == "goal":
+        if args.action == "add":
+            return add_goal(restaurant, args.name, args.purpose, args.done, args.share)
+        if args.action == "set":
+            return set_goal(restaurant, args.id, args.name, args.purpose, args.done, args.share, args.state, args.evidence)
+        labels = shown_labels(restaurant)
+        return goal_lines(labels, count_labels(restaurant, labels), args.all)
 
     if args.command == "ticket":
         if args.action == "add":

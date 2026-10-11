@@ -237,6 +237,16 @@ def _race_child(mode, case, args):
             return real_write(fd, data)
 
         os.write = partial
+    elif mode == "die-inside-goal-append":
+        real_write = os.write
+
+        def partial(fd, data):
+            if data.startswith(b"G1\t"):
+                real_write(fd, data[:data.index(b"\topen\t") + len(b"\tope")])
+                os._exit(9)
+            return real_write(fd, data)
+
+        os.write = partial
     else:
         raise SystemExit(f"unknown mode {mode}")
     sys.exit(mod["main"](args))
@@ -6263,6 +6273,332 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], "# Perf report")
         self.assertFalse((self.at / "edits.tsv").exists())
 
+    def goal(self, name="activity view", *extra, ok=True, owner=True):
+        return self.brigade("goal", "add", "--name", name, "--purpose", "One page of activity", "--done", "The page ships", *extra,
+                            ok=ok, owner=owner)
+
+    def rows_of(self, table):
+        return [line.split("\t") for line in (self.at / table).read_text().splitlines()[1:]]
+
+    def goal_log(self):
+        return [row[2:] for row in self.rows_of("log.tsv") if row[1] == "goal"]
+
+    def hand_edit(self, table, ident, **cells):
+        """Change cells of one row the way an editor would, with no command."""
+        path = self.at / table
+        header, *lines = path.read_text().splitlines()
+        keys = header.split("\t")
+        rows = [dict(zip(keys, line.split("\t"))) for line in lines]
+        for row in rows:
+            if row["id"] == ident:
+                row.update(cells)
+        path.write_text("\n".join([header] + ["\t".join(row.get(key, "") for key in keys) for row in rows]) + "\n")
+
+    NO_UNASSIGNED_WORK = "unassigned: 0 waiting, 0 in flight, 0 merged, 0 send-backs"
+
+    def test_goal_add_prints_the_new_id_appends_one_open_row_and_logs_one_goal_row(self):
+        self.open()
+        self.assertEqual(self.goal("activity view", "--share", "2"), "G1")
+        self.assertEqual(self.goal("current with upstream"), "G2")
+        rows = self.rows_of("goals.tsv")
+        self.assertEqual([row[:1] + row[2:] for row in rows],
+                         [["G1", "open", "activity view", "One page of activity", "The page ships", "2", ""],
+                          ["G2", "open", "current with upstream", "One page of activity", "The page ships", "", ""]])
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"], ["G2", "open", "current with upstream"]])
+
+    def test_goal_add_refuses_a_name_a_purpose_or_a_done_test_that_is_only_whitespace_and_changes_no_file(self):
+        self.open()
+        before = self.store_files()
+        for flag in ("--name", "--purpose", "--done"):
+            words = {"--name": "n", "--purpose": "p", "--done": "d", flag: " \t\n"}
+            with self.subTest(flag=flag):
+                self.assertEqual(self.brigade("goal", "add", *[word for pair in words.items() for word in pair], ok=False),
+                                 "brigade: goal add needs a nonempty --name, --purpose, and --done")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_add_refuses_the_name_of_an_open_goal_and_of_a_paused_goal_and_adds_no_row(self):
+        self.open()
+        self.goal("Activity view")
+        before = self.store_files()
+        self.assertEqual(self.goal("activity view", ok=False), "brigade: same name as G1 (open); nothing added")
+        self.assertEqual(self.goal("  activity\tVIEW ", ok=False), "brigade: same name as G1 (open); nothing added")
+        self.assertEqual(self.store_files(), before)
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        self.assertEqual(self.goal("activity view", ok=False), "brigade: same name as G1 (paused); nothing added")
+        self.assertEqual(len(self.rows_of("goals.tsv")), 1)
+
+    def test_goal_add_takes_the_name_of_a_done_goal_and_of_a_dropped_goal(self):
+        self.open()
+        self.goal("activity view")
+        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "shipped")
+        self.assertEqual(self.goal("activity view"), "G2")
+        self.brigade("goal", "set", "G2", "--state", "dropped", "--evidence", "not wanted")
+        self.assertEqual(self.goal("activity view"), "G3")
+
+    def test_goal_add_and_goal_set_refuse_a_share_that_is_not_a_whole_number_of_1_or_more_and_change_no_file(self):
+        self.open()
+        self.goal("kept")
+        before = self.store_files()
+        for share in ("0", "00", "-1", "two", "1.5", "+2", "\u0663"):
+            refusal = f'brigade: --share takes a whole number of 1 or more, or "" for no limit, got {share!r}'
+            with self.subTest(share=share):
+                self.assertEqual(self.goal("new", f"--share={share}", ok=False), refusal)
+                self.assertEqual(self.brigade("goal", "set", "G1", f"--share={share}", ok=False), refusal)
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_add_and_goal_set_store_a_share_without_its_leading_zeros_and_an_empty_share_as_an_empty_cell(self):
+        self.open()
+        self.goal("a", "--share", "02")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["share"], "2")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--share", "010"), "G1 share 10")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["share"], "10")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--share", ""), "G1 no share")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["share"], "")
+
+    def test_goal_set_refuses_an_id_with_no_row_and_a_call_with_no_change_flag_and_changes_no_file(self):
+        self.open()
+        self.goal()
+        before = self.store_files()
+        self.assertEqual(self.brigade("goal", "set", "G7", "--state", "paused", ok=False),
+                         "brigade: no goal G7; run goal list --all to see every goal")
+        self.assertEqual(self.brigade("goal", "set", "G1", ok=False),
+                         "brigade: goal set needs --state, --name, --purpose, --done, or --share")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--evidence", "x", ok=False),
+                         "brigade: goal set needs --state, --name, --purpose, --done, or --share")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_refuses_a_name_a_purpose_or_a_done_test_that_is_only_whitespace_and_changes_no_file(self):
+        self.open()
+        self.goal()
+        before = self.store_files()
+        for flag in ("--name", "--purpose", "--done"):
+            with self.subTest(flag=flag):
+                self.assertEqual(self.brigade("goal", "set", "G1", flag, " ", "--state", "paused", ok=False),
+                                 f"brigade: goal set {flag} takes text; a goal keeps a name, a purpose, and a done test")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_refuses_evidence_beside_state_open_state_paused_or_no_state_and_changes_no_file(self):
+        self.open()
+        self.goal()
+        before = self.store_files()
+        for flags in (("--state", "paused"), ("--state", "open"), ("--name", "other")):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.brigade("goal", "set", "G1", *flags, "--evidence", "x", ok=False),
+                                 "brigade: --evidence goes only with --state done or --state dropped")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_refuses_a_move_to_done_and_a_move_to_dropped_with_no_evidence_or_with_evidence_that_is_only_whitespace(self):
+        self.open()
+        self.goal()
+        before = self.store_files()
+        for state in ("done", "dropped"):
+            with self.subTest(state=state):
+                self.assertEqual(self.brigade("goal", "set", "G1", "--state", state, ok=False),
+                                 f"brigade: --state {state} needs --evidence <one line>")
+                self.assertEqual(self.brigade("goal", "set", "G1", "--state", state, "--evidence", " ", ok=False),
+                                 f"brigade: --state {state} needs --evidence <one line>")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_state_done_and_state_dropped_store_the_time_and_the_evidence_in_the_closed_cell_and_log_the_name_and_the_evidence(self):
+        self.open()
+        self.goal("activity view")
+        self.goal("current with upstream")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "The page\tshipped in #170"), "G1 done")
+        self.assertEqual(self.brigade("goal", "set", "G2", "--state", "dropped", "--evidence", "Upstream is frozen"), "G2 dropped")
+        first, second = (self.table_row(self.at, "goals.tsv", ident) for ident in ("G1", "G2"))
+        self.assertEqual((first["state"], second["state"]), ("done", "dropped"))
+        stamp, evidence = first["closed"].split(" ", 1)
+        self.assertEqual(evidence, "The page shipped in #170")
+        self.assertEqual(datetime.fromisoformat(stamp).tzinfo, timezone.utc)
+        self.assertEqual(second["closed"].split(" ", 1)[1], "Upstream is frozen")
+        self.assertEqual(self.goal_log()[2:], [["G1", "done", "activity view: The page shipped in #170"],
+                                               ["G2", "dropped", "current with upstream: Upstream is frozen"]])
+
+    def test_goal_set_moves_an_open_goal_to_paused_and_a_paused_goal_to_open_and_logs_each_move(self):
+        self.open()
+        self.goal()
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "paused"), "G1 paused")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "paused")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "open"), "G1 open")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "open")
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"], ["G1", "paused", "activity view"],
+                                           ["G1", "open", "activity view"]])
+
+    def test_goal_set_closes_a_paused_goal_with_evidence(self):
+        self.open()
+        self.goal()
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "dropped", "--evidence", "not wanted"), "G1 dropped")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "dropped")
+
+    def test_goal_set_refuses_a_move_from_done_or_dropped_to_a_state_other_than_open_and_changes_no_file(self):
+        self.open()
+        self.goal("a")
+        self.goal("b")
+        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "shipped")
+        self.brigade("goal", "set", "G2", "--state", "dropped", "--evidence", "not wanted")
+        before = self.store_files()
+        for ident, state, flags in (("G1", "done", ("--state", "dropped", "--evidence", "x")), ("G1", "done", ("--state", "paused")),
+                                    ("G2", "dropped", ("--state", "done", "--evidence", "x")), ("G2", "dropped", ("--state", "paused"))):
+            with self.subTest(ident=ident, flags=flags):
+                self.assertEqual(self.brigade("goal", "set", ident, *flags, ok=False),
+                                 f"brigade: {ident} is {state}; a {state} goal moves only to open; "
+                                 f"run goal set {ident} --state open first")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_state_open_on_a_done_goal_and_on_a_dropped_goal_empties_the_closed_cell_and_logs_the_move(self):
+        self.open()
+        self.goal("a")
+        self.goal("b")
+        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "shipped")
+        self.brigade("goal", "set", "G2", "--state", "dropped", "--evidence", "not wanted")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "open"), "G1 open")
+        self.assertEqual(self.brigade("goal", "set", "G2", "--state", "open"), "G2 open")
+        for ident in ("G1", "G2"):
+            row = self.table_row(self.at, "goals.tsv", ident)
+            self.assertEqual((row["state"], row["closed"]), ("open", ""))
+        self.assertEqual(self.goal_log()[2:], [["G1", "done", "a: shipped"], ["G2", "dropped", "b: not wanted"],
+                                               ["G1", "open", "a"], ["G2", "open", "b"]])
+
+    def test_goal_set_with_the_state_the_goal_has_prints_already_and_changes_no_file(self):
+        self.open()
+        self.goal("a")
+        self.goal("b")
+        self.goal("c")
+        self.brigade("goal", "set", "G2", "--state", "paused")
+        self.brigade("goal", "set", "G3", "--state", "done", "--evidence", "shipped")
+        before = self.store_files()
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "open"), "G1 already open")
+        self.assertEqual(self.brigade("goal", "set", "G2", "--state", "paused"), "G2 already paused")
+        self.assertEqual(self.brigade("goal", "set", "G3", "--state", "done"), "G3 already done")
+        self.assertEqual(self.brigade("goal", "set", "G3", "--state", "done", "--evidence", "other words"), "G3 already done")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_prints_its_changes_in_the_order_state_name_purpose_done_test_share_and_writes_each(self):
+        self.open()
+        self.goal()
+        self.assertEqual(self.brigade("goal", "set", "G1", "--share", "3", "--done", "Two pages ship", "--purpose", "Why",
+                                      "--name", "Activity\tpage", "--state", "paused"),
+                         "G1 paused; name Activity page; purpose changed; done test changed; share 3")
+        row = self.table_row(self.at, "goals.tsv", "G1")
+        self.assertEqual([row[key] for key in ("state", "name", "purpose", "done", "share", "closed")],
+                         ["paused", "Activity page", "Why", "Two pages ship", "3", ""])
+        self.assertEqual(self.goal_log()[-1], ["G1", "paused", "Activity page"])
+
+    def test_goal_set_that_changes_no_state_adds_no_log_row(self):
+        self.open()
+        self.goal()
+        before = ((self.at / "log.tsv").read_bytes(), (self.at / "restaurant.json").read_bytes())
+        self.assertEqual(self.brigade("goal", "set", "G1", "--name", "other", "--share", "4"), "G1 name other; share 4")
+        self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "restaurant.json").read_bytes()), before)
+
+    def test_goal_list_in_a_store_with_no_goal_prints_that_and_the_unassigned_line(self):
+        self.open()
+        before = self.store_files()
+        self.assertEqual(self.run_raw("goal", "list"), (0, f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}\n", ""))
+        self.assertEqual(self.run_raw("goal", "list", "--all"), (0, f"no goals\n{self.NO_UNASSIGNED_WORK}\n", ""))
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_list_prints_each_open_and_paused_goal_in_file_order_with_its_share_and_all_adds_each_done_and_dropped_goal_with_its_closed_cell(self):
+        self.open()
+        self.goal("activity view", "--share", "2")
+        self.goal("old lint")
+        self.goal("current with upstream")
+        self.goal("windows port")
+        self.brigade("goal", "set", "G2", "--state", "done", "--evidence", "shipped in #12")
+        self.brigade("goal", "set", "G3", "--state", "paused")
+        self.brigade("goal", "set", "G4", "--state", "dropped", "--evidence", "no users")
+        closed = {ident: self.table_row(self.at, "goals.tsv", ident)["closed"] for ident in ("G2", "G4")}
+        self.assertEqual(closed["G2"].split(" ", 1)[1], "shipped in #12")
+        counts = "0 waiting, 0 in flight, 0 merged, 0 send-backs"
+        detail = ["  purpose: One page of activity", "  done when: The page ships"]
+        self.assertEqual(self.brigade("goal", "list").splitlines(),
+                         [f"G1 open activity view: {counts}, share 2", *detail,
+                          f"G3 paused current with upstream: {counts}", *detail,
+                          self.NO_UNASSIGNED_WORK])
+        self.assertEqual(self.brigade("goal", "list", "--all").splitlines(),
+                         [f"G1 open activity view: {counts}, share 2", *detail,
+                          f"G2 done old lint: {counts}", *detail, f"  closed: {closed['G2']}",
+                          f"G3 paused current with upstream: {counts}", *detail,
+                          f"G4 dropped windows port: {counts}", *detail, f"  closed: {closed['G4']}",
+                          self.NO_UNASSIGNED_WORK])
+
+    def test_goal_list_with_only_done_and_dropped_goals_prints_no_open_or_paused_goals(self):
+        self.open()
+        self.goal()
+        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "shipped")
+        self.assertEqual(self.brigade("goal", "list"), f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}")
+
+    def test_a_goal_state_that_is_none_of_the_four_reads_as_open_with_a_warning_and_goal_set_state_rewrites_the_cell(self):
+        self.open()
+        self.goal()
+        self.hand_edit("goals.tsv", "G1", state="finished")
+        warning = ("brigade: warning: G1 has state 'finished', which is not open, paused, done, or dropped; it reads as open; "
+                   "run goal set G1 --state <state>\n")
+        code, out, err = self.run_raw("goal", "list")
+        self.assertEqual((code, err), (0, warning))
+        self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
+        self.assertEqual(self.goal("activity view", ok=False), "brigade: same name as G1 (open); nothing added")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "open"), "G1 open")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "open")
+        self.assertEqual(self.run_raw("goal", "list")[2], "")
+        self.hand_edit("goals.tsv", "G1", state="finished")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "paused"), "G1 paused")
+        self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "paused")
+
+    def test_a_goal_share_that_is_not_a_whole_number_of_1_or_more_reads_as_no_limit_with_a_warning_and_goal_set_share_rewrites_the_cell(self):
+        self.open()
+        self.goal()
+        for share in ("lots", "0", "-3"):
+            with self.subTest(share=share):
+                self.hand_edit("goals.tsv", "G1", share=share)
+                code, out, err = self.run_raw("goal", "list")
+                self.assertEqual((code, err), (0, f"brigade: warning: G1 has share {share!r}, which is not a whole number of 1 or more; "
+                                                  "it reads as no limit; run goal set G1 --share <n>\n"))
+                self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--share", "2"), "G1 share 2")
+        code, out, err = self.run_raw("goal", "list")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs, share 2")
+
+    def test_a_goal_share_of_five_thousand_digits_is_read_and_printed(self):
+        self.open()
+        self.goal()
+        self.hand_edit("goals.tsv", "G1", share="7" * 5000)
+        code, out, err = self.run_raw("goal", "list")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.splitlines()[0].endswith(", share " + "7" * 5000))
+
+    def test_goal_list_in_a_store_with_no_goals_table_creates_none_and_the_first_goal_add_writes_the_table_with_its_header(self):
+        self.open()
+        (self.at / "goals.tsv").unlink()
+        self.assertEqual(self.brigade("goal", "list"), f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "paused", ok=False),
+                         "brigade: no goal G1; run goal list --all to see every goal")
+        self.assertFalse((self.at / "goals.tsv").exists())
+        self.assertEqual(self.goal(), "G1")
+        header, row = (self.at / "goals.tsv").read_text().splitlines()
+        self.assertEqual(header, "id\tat\tstate\tname\tpurpose\tdone\tshare\tclosed")
+        self.assertEqual(row.split("\t")[2:], ["open", "activity view", "One page of activity", "The page ships", "", ""])
+
+    def test_goal_add_and_goal_set_in_a_store_with_a_generation_need_the_owner_and_goal_list_does_not(self):
+        self.open()
+        self.brigade("set", "--thread", "t1")
+        refusal = "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status"
+        self.assertEqual(self.goal(owner=False, ok=False), refusal)
+        self.assertEqual(self.goal(), "G1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "paused", ok=False, owner=False), refusal)
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("goal", "list", owner=False).splitlines()[0],
+                         "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
+
+    def test_goal_set_state_refuses_a_state_that_is_none_of_the_four(self):
+        self.open()
+        self.goal()
+        self.assert_refused_choice(self.brigade("goal", "set", "G1", "--state", "finished", ok=False), "--state", "finished",
+                                   ("open", "paused", "done", "dropped"))
+
 
 class StoresTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""
@@ -6777,6 +7113,83 @@ def _land_has_rulings():
     return True
 
 
+class GoalWriteTest(StoresTest):
+    """A goal command that is killed or that fails partway through its writes."""
+
+    ADD = ("goal", "add", "--name", "activity view", "--purpose", "One page", "--done", "It ships")
+    NO_UNASSIGNED_WORK = "unassigned: 0 waiting, 0 in flight, 0 merged, 0 send-backs"
+
+    def goals(self):
+        return [row[:1] + row[2:] for row in self.rows("core", "goals.tsv")]
+
+    def goal_log(self):
+        return [row[2:] for row in self.rows("core", "log.tsv") if row[1] == "goal"]
+
+    def test_a_goal_add_killed_inside_its_append_leaves_a_tail_that_goal_list_skips_and_the_next_goal_add_drops(self):
+        self.open("core")
+        died = self.child("die-inside-goal-append", "core", *self.ADD)
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertRegex((self.dir("core") / "goals.tsv").read_text(), r"\tclosed\nG1\t[^\t\n]+\tope$")
+        self.assertEqual(self.brigade("core", "goal", "list"), f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}")
+        self.assertEqual(self.brigade("core", *self.ADD), "G1")
+        self.assertEqual(self.goals(), [["G1", "open", "activity view", "One page", "It ships", "", ""]])
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"]])
+
+    def test_a_goal_add_killed_before_its_log_row_leaves_the_goal_and_the_same_command_again_is_refused_and_adds_no_row(self):
+        self.open("core")
+        died = self.child("die-before-log", "core", *self.ADD)
+        self.assertEqual(died.returncode, 9, died.stderr)
+        self.assertEqual(self.goals(), [["G1", "open", "activity view", "One page", "It ships", "", ""]])
+        self.assertEqual(self.goal_log(), [])
+        self.assertEqual(self.brigade("core", *self.ADD, ok=False), "brigade: same name as G1 (open); nothing added")
+        self.assertEqual(len(self.goals()), 1)
+        self.assertEqual(self.goal_log(), [])
+        self.assertEqual(self.brigade("core", "goal", "list").splitlines()[0],
+                         "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
+
+    def test_a_goal_set_killed_before_its_log_row_leaves_the_new_state_and_the_same_command_again_prints_already(self):
+        self.open("core")
+        self.brigade("core", *self.ADD)
+        died = self.child("die-before-log", "core", "goal", "set", "G1", "--state", "done", "--evidence", "shipped")
+        self.assertEqual(died.returncode, 9, died.stderr)
+        state, closed = self.goals()[0][1], self.goals()[0][6]
+        self.assertEqual((state, closed.split(" ", 1)[1]), ("done", "shipped"))
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"]])
+        self.assertEqual(self.brigade("core", "goal", "set", "G1", "--state", "done", "--evidence", "shipped"), "G1 already done")
+        self.assertEqual(self.goals()[0][6], closed)
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"]])
+
+    def test_a_goal_set_whose_temp_file_write_fails_leaves_goals_tsv_and_the_log_as_they_were_and_no_temp_file(self):
+        self.open("core")
+        self.brigade("core", *self.ADD)
+        before = self.files("core")
+        module = runpy.run_path(str(SCRIPT))
+        glob = module["run"].__globals__
+
+        class FailingTempfile:
+            @staticmethod
+            def NamedTemporaryFile(*args, **kwargs):
+                handle = tempfile.NamedTemporaryFile(*args, **kwargs)
+                write = handle.write
+
+                def fail(text):
+                    write(text[:10])
+                    handle.flush()
+                    raise OSError(28, "No space left on device")
+
+                handle.write = fail
+                return handle
+
+        glob["tempfile"] = FailingTempfile
+        with self.assertRaises(OSError):
+            glob["run"](["--at", str(self.dir("core")), "goal", "set", "G1", "--state", "paused", "--share", "2"])
+        glob["tempfile"] = tempfile
+        self.assertEqual(self.files("core"), before)
+        self.assertEqual(self.brigade("core", "goal", "set", "G1", "--state", "paused", "--share", "2"), "G1 paused; share 2")
+        self.assertEqual(self.goals(), [["G1", "paused", "activity view", "One page", "It ships", "2", ""]])
+        self.assertEqual(self.goal_log(), [["G1", "open", "activity view"], ["G1", "paused", "activity view"]])
+
+
 class AdminTest(StoresTest):
     """The executive admin at `app/.admin`, beside the coordinators on the same root."""
 
@@ -6790,6 +7203,19 @@ class AdminTest(StoresTest):
 
     def meta(self, name):
         return json.loads((self.dir(name) / "restaurant.json").read_text())
+
+    def test_goal_add_goal_set_and_goal_list_work_in_the_executive_admins_store(self):
+        self.open_admin()
+        self.assertEqual(self.admin("goal", "add", "--name", "routing", "--purpose", "Requests reach an owner", "--done", "Standing",
+                                    "--share", "1"), "G1")
+        self.assertEqual(self.admin("goal", "set", "G1", "--state", "paused"), "G1 paused")
+        self.assertEqual(self.admin("goal", "list"), "\n".join([
+            "G1 paused routing: 0 waiting, 0 in flight, 0 merged, 0 send-backs, share 1",
+            "  purpose: Requests reach an owner",
+            "  done when: Standing",
+            "unassigned: 0 waiting, 0 in flight, 0 merged, 0 send-backs"]))
+        self.assertEqual([row[1:] for row in self.rows(".admin", "log.tsv") if row[1] == "goal"],
+                         [["goal", "G1", "open", "routing"], ["goal", "G1", "paused", "routing"]])
 
     def relays(self):
         """The admin's relay rows as (store@offset, the copied row)."""
