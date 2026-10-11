@@ -19,6 +19,28 @@ import roles  # noqa: E402
 CATALOG = json.loads((ROOT / "tests/fixtures/catalog.json").read_text())
 
 
+def fence_git_environment():
+    """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
+
+    A module cleanup restores os.environ to what it held at this call.
+    """
+    saved = dict(os.environ)
+
+    def restore():
+        os.environ.clear()
+        os.environ.update(saved)
+
+    unittest.addModuleCleanup(restore)
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        del os.environ[name]
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
+
+
+def setUpModule():
+    fence_git_environment()
+
+
 def config(budget="default", **assigned):
     return {"budget": budget, "roles": assigned, "sources": {name: "test" for name in assigned}}
 
