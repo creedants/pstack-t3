@@ -199,7 +199,7 @@ The store holds these files.
 - `menu.md`, with the headings `Purpose`, `What good looks like`, `Off the menu`, and `Budget`.
 - `house-rules.md`.
 - `restaurant.json`.
-- `rail.tsv`, `dishes.tsv`, `pass.tsv`, `86.tsv`, and `log.tsv`, each with a header and no rows.
+- `rail.tsv`, `dishes.tsv`, `pass.tsv`, `86.tsv`, `goals.tsv`, and `log.tsv`, each with a header and no rows.
 
 The opener drafts `menu.md` from the README, AGENTS.md, open work in the repository's tracker, and recent threads, and asks you for the purpose when evidence does not settle it. `brigade.py brief` refuses to write a worker brief while `Purpose` is empty or still the template. The opener appends standing orders to `house-rules.md`. They name forbidden paths, the verification bar, intake sources, and the repository's hot shared files. They do not restate the landing mode, which lives only in the repository's landing contract. The worker cap is `open --workers`, and `brigade.py fire` enforces it.
 
