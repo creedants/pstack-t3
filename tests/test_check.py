@@ -241,6 +241,24 @@ class PlaybookBulletCheckTest(unittest.TestCase):
                 (1, 'poteto-mode/SKILL.md: playbook "No such playbook" resolves to playbooks/no-such-playbook.md, which does not exist\n'),
             )
 
+    def test_the_command_accepts_an_indented_note_under_a_playbook_bullet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skills = Path(directory) / "skills"
+            skill = skills / "poteto-mode"
+            (skill / "playbooks").mkdir(parents=True)
+            (skill / "playbooks/bug-fix.md").write_text("ok\n")
+            (skill / "SKILL.md").write_text(
+                "---\nname: poteto-mode\ndescription: d\n---\n\n"
+                "## Playbooks\n"
+                "- **Bug fix.** File: `playbooks/bug-fix.md`.\n"
+                "    - Choose this when the defect is already reproduced.\n"
+            )
+            tests = tests_tree(directory, {})
+            output = io.StringIO()
+            with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
+                status = check.main([str(skills)])
+            self.assertEqual((status, output.getvalue()), (0, "ok\n"))
+
 
 class FrontmatterWithoutPyYamlTest(unittest.TestCase):
     def test_without_pyyaml_a_malformed_flow_sequence_is_not_reported(self):

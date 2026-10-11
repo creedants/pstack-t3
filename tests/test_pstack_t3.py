@@ -1275,7 +1275,6 @@ class BuildTest(unittest.TestCase):
         bad = [
             "- **No such playbook** Nothing.",
             "* **Star.** Nothing.",
-            "  - **Indented.** Nothing.",
             "- **Empty.**",
             "+ **Plus.** Nothing.",
         ]
@@ -1317,6 +1316,23 @@ class BuildTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     build.build(out, skip_lock=True)
             self.assertFalse(out.exists())
+
+    def test_build_accepts_an_indented_note_under_a_playbook_bullet(self):
+        import build
+        from unittest import mock
+        real = build.render
+        note = "    - Choose this when the defect is already reproduced.\n"
+
+        def render_with_an_indented_note(destination):
+            real(destination)
+            with (destination / "poteto-mode/SKILL.md").open("a") as skill:
+                skill.write(note)
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "skills"
+            with mock.patch.object(build, "render", render_with_an_indented_note):
+                self.assertEqual(build.build(out, skip_lock=True), out)
+            self.assertIn(note, (out / "poteto-mode/SKILL.md").read_text())
 
     def test_check_flags_cursor_leftovers(self):
         with tempfile.TemporaryDirectory() as directory:
