@@ -1188,6 +1188,7 @@ class BuildTest(unittest.TestCase):
                     build.replace_tree(base / "src", base / "dest")
             self.assertEqual((base / "dest/old").read_text(), "old")
 
+    @unittest.skipIf(check.yaml is None, "PyYAML is not installed, so the fallback frontmatter reader in scripts/check.py cannot reject invalid YAML")
     def test_check_rejects_invalid_yaml_frontmatter(self):
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "demo"
