@@ -53,6 +53,7 @@ PRIORITIES_BY_RANK = ("urgent", "normal", "low")
 AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 KINDS = ("feature", "fix", "polish", "upkeep", "study")
+KIND_CHOICE = f"<{'|'.join(KINDS)}>"
 # The kind fire gives an item when neither its lead ticket nor --kind gives one. A station not listed here gives none.
 STATION_KIND = {"bug-fix": "fix", "perf-issue": "fix", "investigation": "study"}
 GOAL_STATES = ("open", "paused", "done", "dropped")
@@ -927,6 +928,19 @@ def count_labels(restaurant, labels):
     return LabelCounts(tallies(kinds), tallies(goals), {goal: tuple(ids) for goal, ids in riding.items()})
 
 
+def open_goal(labels, ident):
+    """The goal a ticket is being given. Refuses an id with no row, and a goal that is done or dropped."""
+    if not ident:
+        raise BrigadeError('--goal "" names no goal; run goal list --all to see every goal')
+    goal = labels.goals.get(ident)
+    if goal is None:
+        raise BrigadeError(f"no goal {ident}; run goal list --all to see every goal")
+    if goal.state in CLOSED_GOAL_STATES:
+        raise BrigadeError(f"{ident} is {goal.state}; a ticket takes an open or paused goal; "
+                           f"run goal set {ident} --state open first, or pick another goal")
+    return goal
+
+
 def goal_share(text):
     """--share as the cell to store. Empty text stays empty. Refuses text that is not a whole number of 1 or more."""
     text = clean(text)
@@ -1048,7 +1062,8 @@ def goal_lines(labels, counted, every):
     return "\n".join([*lines, f"unassigned: {tally_words(counted.goals.get('', Tally()))}"])
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False,
+               kind="", goal=None):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -1070,14 +1085,22 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
                                    "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
-    return append_ticket(restaurant, summary, source, ref, priority, paths, decision)
+    with restaurant.guarded():
+        # The kind and goal checks run after the owner fence and after each refusal above, so a ticket add that was
+        # refused before kinds and goals existed is refused with the same words.
+        if not kind:
+            raise BrigadeError(f"ticket add needs --kind {KIND_CHOICE}")
+        if goal is not None:
+            open_goal(read_labels(restaurant), goal)
+        return append_ticket(restaurant, summary, source, ref, priority, paths, decision, kind, goal or "")
 
 
-def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False):
+def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False, kind="", goal=""):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
                                    "ref": ref, "summary": summary, "priority": priority,
-                                   "paths": ",".join(paths), "decision": "yes" if decision else ""})
+                                   "paths": ",".join(paths), "decision": "yes" if decision else "",
+                                   "kind": kind, "goal": goal})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
 
@@ -1556,13 +1579,23 @@ def same_text(value):
     return " ".join(value.split()).casefold()
 
 
+def follow_up_kind(item_kind, priority):
+    """The kind of a follow-up ticket. No kind when its item has none. Else fix at priority urgent or normal, and polish at low."""
+    if not item_kind:
+        return ""
+    return "polish" if priority == "low" else "fix"
+
+
 def file_follow_ups(restaurant, name, found, write, tracked):
     """One waiting ticket per follow-up whose text no ticket of this store holds, in any state.
 
     A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
     The ref ends in a position, which is not an identity, so the text is the only key and refuse_live_ref is not asked.
+    Each ticket takes the goal of the report's item, whatever that goal's state, and follow_up_kind of that item's kind.
     """
     restaurant.find("dishes.tsv", name[:-3])
+    label = read_labels(restaurant).items[name[:-3]]
+    kind = follow_up_kind(label.kind, priority_of({"priority": "", "source": "report"}))
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
     aside = [f"not filed, {reason}: {text}" if text else f"not filed, {reason}" for reason, text in found.asides]
@@ -1578,7 +1611,7 @@ def file_follow_ups(restaurant, name, found, write, tracked):
         if key in holders:
             lines.append(f"skipped {ref}, same text as {holders[key]}: {text}")
         elif write:
-            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked))
+            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked), kind=kind, goal=label.goal)
             holders[key] = f"{ident} (waiting)"
             lines.append(f"{ident} added from {ref}: {text}")
         else:
@@ -1622,12 +1655,16 @@ def move_ticket(restaurant, ident, to, rails):
     target_rows = rails.get(target)
     if target_rows is None:
         target_rows = Restaurant(target).rows("rail.tsv")
+    # The kind goes with the ticket. The goal stays, because a goal id names a row of this store's goals.tsv only.
+    label = read_labels(restaurant).tickets[ident]
     if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
             "priority": row["priority"], "paths": row["paths"], "decision": row["decision"],
+            **({"kind": label.kind} if label.kind else {}),
         }, indent=2) + "\n")
-    return f"{ident} moved to {name}; {tell(name, sibling)}"
+    left = f"; it leaves {label.goal} here and arrives unassigned" if label.goal else ""
+    return f"{ident} moved to {name}; {tell(name, sibling)}{left}"
 
 
 def take_tickets(restaurant):
@@ -1639,16 +1676,21 @@ def take_tickets(restaurant):
             raise BrigadeError(f"{path} is not valid JSON: {error}") from error
         source = handoff["handoff"]
         row = taken_row(restaurant.rows("rail.tsv"), source)
+        unknown = ""
         if row is None:
             rows = restaurant.rows("rail.tsv")
+            kind = handoff.get("kind") or ""
+            if kind not in KINDS:
+                unknown = f"; kind {clean(kind)} is not one this version knows, so it has no kind" if kind else ""
+                kind = ""
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
                    "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
-                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}}
+                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}, "kind": kind}
             restaurant.save_rows("rail.tsv", rows + [row])
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
         restaurant.remove(path)
-        lines.append(f"{row['id']} from {source}: {row['summary']}")
+        lines.append(f"{row['id']} from {source}: {row['summary']}{unknown}")
     return lines
 
 
@@ -3438,7 +3480,9 @@ def parser():
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
                      help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it "
-                          "and changes only the ticket table, the log, and lastActivityAt")
+                          "and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the "
+                          "report's item, and when that item has a kind the ticket takes fix at priority urgent or normal "
+                          "and polish at low; a follow-up is filed with no --priority, so it is low")
     a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it changes no table and no log")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
@@ -3452,6 +3496,10 @@ def parser():
     a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
     a.add_argument("--decision", action="store_true",
                    help="the ticket asks the owner to decide; the startable command never lists it as startable")
+    a.add_argument("--kind", choices=KINDS, help="the kind of work; a ticket added with --summary is refused without it")
+    a.add_argument("--goal", metavar="G<n>",
+                   help="with --summary: the goal this ticket belongs to, which must be open or paused; without it the "
+                        "ticket is unassigned")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -3461,6 +3509,13 @@ def parser():
     a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
     a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
                    help="mark or unmark the ticket as one that asks the owner to decide")
+    a.add_argument("--kind", choices=KINDS, help="replaces the kind of a waiting ticket; refused on a ticket in another state")
+    goal = a.add_mutually_exclusive_group()
+    goal.add_argument("--goal", metavar="G<n>",
+                      help="replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in "
+                           "another state")
+    goal.add_argument("--no-goal", action="store_true",
+                      help="clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state")
     a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
@@ -3826,6 +3881,8 @@ def run(argv):
             raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
         if args.priority or args.paths or args.decision:
             raise BrigadeError("--from-report takes no --priority, nonempty --paths, or --decision")
+        if args.kind or args.goal is not None:
+            raise BrigadeError("--from-report takes no --kind or --goal; each ticket's kind and goal follow from the report's item")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -3950,7 +4007,8 @@ def command(restaurant, args, contract=None, rails=None):
     if args.command == "ticket":
         if args.action == "add":
             return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again,
-                              priority=args.priority or "", paths=args.paths, decision=args.decision)
+                              priority=args.priority or "", paths=args.paths, decision=args.decision,
+                              kind=args.kind or "", goal=args.goal)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":
@@ -3958,6 +4016,11 @@ def command(restaurant, args, contract=None, rails=None):
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
+        if (args.kind or args.goal is not None or args.no_goal) and ticket["state"] != "waiting":
+            # fire copied the lead ticket's kind and goal onto the item, and no command writes the item's two cells after that.
+            kept = (f"; {ticket['dish']} keeps the kind and goal it took when it started"
+                    if ticket["state"] == "assigned" and ticket["dish"] else "")
+            raise BrigadeError(f"{args.id} is {ticket['state']}; --kind, --goal, and --no-goal change a waiting ticket only{kept}")
         changes, said = {}, []
         if args.state:
             changes["state"] = args.state
@@ -3971,8 +4034,17 @@ def command(restaurant, args, contract=None, rails=None):
         if args.decision is not None:
             changes["decision"] = "yes" if args.decision else ""
             said.append("decision" if args.decision else "no decision")
+        if args.kind:
+            changes["kind"] = args.kind
+            said.append(f"kind {args.kind}")
+        if args.goal is not None:
+            changes["goal"] = open_goal(read_labels(restaurant), args.goal).id
+            said.append(f"goal {args.goal}")
+        if args.no_goal:
+            changes["goal"] = ""
+            said.append("unassigned")
         if not said:
-            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, or --no-decision")
+            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, --no-decision, --kind, --goal, or --no-goal")
         restaurant.update("rail.tsv", args.id, "ticket", **changes)
         return f"{args.id} {'; '.join(said)}"
 

@@ -75,13 +75,13 @@ add, list, update, move, or take tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n>]
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
 | `--dry-run` |  |  |  | with --from-report: print what it would add; it changes no table and no log |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
@@ -90,6 +90,8 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
 | `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
 | `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the kind of work; a ticket added with --summary is refused without it |
+| `--goal G<n>` |  |  |  | with --summary: the goal this ticket belongs to, which must be open or paused; without it the ticket is unassigned |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -106,7 +108,7 @@ brigade.py [flags] ticket list [--state STATE]
 ## brigade.py ticket set
 
 ```text
-brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] id
+brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n> | --no-goal] id
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -116,6 +118,11 @@ brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PAT
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
 | `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
 | `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state |
+| `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state |
+| `--no-goal` |  |  |  | clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state |
+
+Give at most one of `--goal`, `--no-goal`.
 
 ## brigade.py ticket move
 
