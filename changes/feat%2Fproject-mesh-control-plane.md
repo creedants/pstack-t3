@@ -1,0 +1,1 @@
+- Add a persistent project interface and finite peer meshes with durable ordinary T3 threads, direct messaging, shared SQLite claims, and exact-commit Git integration. Poteto can select an execution strategy for each follow-up. Add reversible Codex and Claude activation, portable Windows check capacity, and capability-gated visual peer placement.
