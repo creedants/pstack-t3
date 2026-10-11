@@ -299,18 +299,25 @@ class Restaurant:
             self.warned.add(text)
             print(f"brigade: warning: {text}", file=sys.stderr)
 
-    def fence(self):
-        """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
+    def owner_block(self):
+        """The sentence fence raises, or None when this caller may use the store."""
         meta = self.meta
         if meta.get("generation") is None:
-            return
+            return None
         recorded = f"{meta.get('thread') or ''}@{meta['generation']}"
         if self.owner is None:
-            raise BrigadeError(f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status")
+            return f"this store is owned by {recorded}; pass --owner <thread>@<generation> from status"
         if self.owner != recorded:
-            raise BrigadeError(f"owner {self.owner} is stale; this store is owned by {recorded}")
+            return f"owner {self.owner} is stale; this store is owned by {recorded}"
         if not meta.get("thread"):
-            raise BrigadeError("this store has no recorded thread; it was retired, and only set --thread --expect restarts it")
+            return "this store has no recorded thread; it was retired, and only set --thread --expect restarts it"
+        return None
+
+    def fence(self):
+        """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
+        block = self.owner_block()
+        if block:
+            raise BrigadeError(block)
 
     def land_owner(self):
         """The --owner words for land.py: this store's holder prefix at the caller's generation."""
@@ -2317,13 +2324,19 @@ def section_lines(title, items, dishes, labels):
     return lines
 
 
-def report(restaurant, write=True):
-    meta = restaurant.meta
-    since = meta.get("lastReportAt") or ""
+def events_since(restaurant, since):
+    """The latest log row of each kind and id newer than since."""
     latest = {}
     for event in restaurant.rows("log.tsv"):
         if event["at"] > since:
             latest[(event["kind"], event["id"])] = event
+    return latest
+
+
+def report(restaurant, write=True):
+    meta = restaurant.meta
+    since = meta.get("lastReportAt") or ""
+    latest = events_since(restaurant, since)
     sections = {title: [] for title in SECTIONS.values()}
     for (kind, _), event in latest.items():
         title = SECTIONS.get((kind, event["state"]))
@@ -3168,6 +3181,34 @@ def open_item_decisions(rows):
     return decisions
 
 
+def dish_progress(restaurant, dish, moment, held=False):
+    """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
+
+    The report file's mtime is read here. Call this under the store lock.
+    """
+    if held or dish["state"] != "in-progress":
+        return []
+    starts = attempt_starts(restaurant, dish)
+    if not dish["thread"] and len(starts) > 1:
+        return [f"{dish['id']}: in progress with no worker thread; launch a fresh worker"]
+    start = starts[-1]
+    minutes = int((moment - start).total_seconds() // 60)
+    timebox = int(dish.get("timebox") or 60)
+    report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
+    where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
+    written = datetime.fromtimestamp(report_path.stat().st_mtime, timezone.utc) if report_path.exists() else None
+    if written and written >= start:
+        if dish.get("reported") == "yes":
+            ago = int((moment - written).total_seconds() // 60)
+            if ago > OPEN_RUN_MINUTES:
+                return [f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})"]
+            return [f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})"]
+        return [f"{dish['id']}: report written, no report-back ({where})"]
+    if minutes > timebox:
+        return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
+    return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
+
+
 def watch(restaurant):
     rails = sibling_rails(restaurant)
     with restaurant.checked():
@@ -3178,32 +3219,10 @@ def watch(restaurant):
         decisions = open_item_decisions(restaurant.rows("86.tsv"))
         debts = {dish["id"]: round_debt(restaurant, dish) for dish in dishes}
         for dish in dishes:
-            if dish["state"] != "in-progress":
-                continue
-            attempt = progress.setdefault(dish["id"], [])
-            starts = attempt_starts(restaurant, dish)
-            if not dish["thread"] and len(starts) > 1:
-                attempt.append(f"{dish['id']}: in progress with no worker thread; launch a fresh worker")
-                continue
-            start = starts[-1]
-            minutes = int((moment - start).total_seconds() // 60)
-            timebox = int(dish.get("timebox") or 60)
-            report = restaurant.dir / "reports" / f"{dish['id']}.md"
-            where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
-            written = datetime.fromtimestamp(report.stat().st_mtime, timezone.utc) if report.exists() else None
-            if written and written >= start:
-                if dish.get("reported") == "yes":
-                    ago = int((moment - written).total_seconds() // 60)
-                    if ago > OPEN_RUN_MINUTES:
-                        attempt.append(f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})")
-                    else:
-                        attempt.append(f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})")
-                else:
-                    attempt.append(f"{dish['id']}: report written, no report-back ({where})")
-            elif minutes > timebox:
-                attempt.append(f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})")
-            else:
-                attempt.append(f"{dish['id']}: running {minutes}m of {timebox}m ({where})")
+            held = bool(decisions.get(dish["id"]) or debts[dish["id"]])
+            sentences = dish_progress(restaurant, dish, moment, held)
+            if sentences:
+                progress[dish["id"]] = sentences
         lines = []
         for ticket in restaurant.rows("rail.tsv"):
             if ticket["state"] != "moved":
@@ -3228,7 +3247,7 @@ def watch(restaurant):
     for dish in dishes:
         decision = decisions.get(dish["id"])
         pending = debts[dish["id"]]
-        found = [] if decision or pending else progress.get(dish["id"], [])
+        found = list(progress.get(dish["id"], []))
         entry, submitted = entry_line(restaurant, dish) if dish["state"] in ("passed", "queued") else (None, False)
         # A submitted entry owns the lease now, so a released lease is not a reason to claim again.
         if dish["lease"] and dish["state"] in LEASED_STATES and not submitted:
