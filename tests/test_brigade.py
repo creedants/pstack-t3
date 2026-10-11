@@ -5615,8 +5615,53 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.verify(reviewed, head),
                          (1, "FAIL src/greeting.txt: Edit 1 overlaps another edit\n"
                              "FAIL src/greeting.txt: Edit 2 overlaps another edit\n"
-                             f"FAIL src/absent.txt: no file at {reviewed}",
+                             f"FAIL src/absent.txt: no regular file at {reviewed}",
                           self.not_verified(reviewed, head)))
+
+    def test_edits_verify_fails_an_edit_that_names_a_symbolic_link_at_the_reviewed_commit(self):
+        self.edits_store()
+        (self.project / "src/link.txt").symlink_to("greeting.txt")
+        reviewed = self.commit_files({})
+        self.edits_report(self.edit_block("1", "src/link.txt", "helo", "hello"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL src/link.txt: no regular file at {reviewed}", self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_reads_the_edits_section_and_not_an_edits_line_in_an_earlier_fence(self):
+        reviewed = self.edits_store()
+        quoted = "## Edits\n\n" + self.edit_block("1", "tools/check.py", "import", "export")
+        self.review_file("D1-review-1.md", f"Verdict: pass with edits\n\n## Blockers\n\n````\n{quoted}````\n\n## Edits\n\n"
+                         + self.edit_block("1", "src/greeting.txt", "helo", "hello") + "\n"
+                         + self.edit_block("2", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_edits_verify_refuses_a_build_command_that_names_a_program_that_does_not_exist(self):
+        command = "no-such-program-d152 gen"
+        reviewed = self.edits_store(build=command)
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        code, out, err = self.verify(reviewed, head)
+        self.assertEqual((code, out), (1, ""))
+        self.assertTrue(err.startswith(f"brigade: cannot run {command}: "), err)
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_refuses_a_to_and_a_from_that_name_a_commit_by_a_ref(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        refusal = "brigade: {} names a commit by something other than the start of its id; pass the commit id"
+        self.assertEqual(self.verify(reviewed, "HEAD"), (1, "", refusal.format("HEAD")))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.record_edits("main", "--edits", "D1-review-1.md")
+        self.assertEqual(self.verify("main", head), (1, "", refusal.format("main")))
+        self.assertEqual(self.edits_rows(), [])
 
     def test_edits_verify_fails_a_head_that_left_an_edit_unapplied(self):
         reviewed = self.edits_store()

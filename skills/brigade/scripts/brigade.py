@@ -812,7 +812,7 @@ NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
 NO_COMMAND = "none"
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
-    "missing": "FAIL {path}: no file at {sha}",
+    "missing": "FAIL {path}: no regular file at {sha}",
     "count": "FAIL {path}: old text of Edit {number} occurs {count} times at {sha}",
     "overlap": "FAIL {path}: Edit {number} overlaps another edit",
 }
@@ -893,12 +893,11 @@ class Edit:
     new: str
 
 
-def edit_parts(lines):
-    """The lines after the `## Edits` line as (kind, text) parts, up to the section's end.
+def report_parts(lines):
+    """A report's lines as (kind, text) parts.
 
     A `line` is one line outside a fence. A `fence` is the text between a fence's two lines.
     A fence that never closes ends the parts and gives none.
-    The section ends before the first line outside a fence that starts with `## `.
     """
     parts, index = [], 0
     while index < len(lines):
@@ -912,8 +911,6 @@ def edit_parts(lines):
             parts.append(("fence", "\n".join(lines[index + 1:close])))
             index = close + 1
             continue
-        if line.startswith("## "):
-            break
         parts.append(("line", line))
         index += 1
     return parts
@@ -939,12 +936,16 @@ def one_edit(number, parts):
 def parse_edits(text):
     """The edits of a review report's `## Edits` section, in the report's order.
 
+    The section starts after the first line outside a fence that is exactly `## Edits`.
+    It ends before the next line outside a fence that starts with `## `, or where the report's parts end.
     Raises EditsRefused when the section holds no edit, and for the first edit that does not fit.
     """
-    lines = text.split("\n")
+    parts = iter(report_parts(text.split("\n")))
     edits = []
-    if EDITS_HEADING in lines:
-        for kind, value in edit_parts(lines[lines.index(EDITS_HEADING) + 1:]):
+    if ("line", EDITS_HEADING) in parts:
+        for kind, value in parts:
+            if kind == "line" and value.startswith("## "):
+                break
             heading = EDIT_HEADING.fullmatch(value) if kind == "line" else None
             if heading:
                 edits.append((heading.group(1).rstrip(), []))
@@ -1534,6 +1535,8 @@ def commit_tree(project_root, sha):
     if found.returncode:
         raise BrigadeError(f"{sha} is not a commit in {project_root}")
     commit = found.stdout.decode().strip()
+    if not commit.startswith(sha.lower()):
+        raise BrigadeError(f"{sha} names a commit by something other than the start of its id; pass the commit id")
     tree = {}
     for record in git(project_root, "ls-tree", "-r", "-z", commit).stdout.split(b"\0")[:-1]:
         entry, _, path = record.partition(b"\t")
@@ -1588,7 +1591,8 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
         scratch = Path(directory)
         archive = git(project_root, "archive", "--format=tar", reviewed).stdout
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-            tar.extractall(scratch, filter="tar")
+            # extractall takes no filter argument before Python 3.10.12.
+            tar.extractall(scratch, **({"filter": "tar"} if hasattr(tarfile, "tar_filter") else {}))
         extracted = digests(scratch)
         files = {path for path, digest in extracted.items() if digest.kind == "file"}
         contents = {edit.path: (scratch / edit.path).read_bytes() if edit.path in files else None for edit in edits}
