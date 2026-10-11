@@ -1,5 +1,6 @@
 import ast
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -4340,6 +4341,49 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
+
+    def files_under(self, directory):
+        """The SHA-256 of every file under a directory, by relative path."""
+        return {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted(directory.rglob("*")) if path.is_file()}
+
+    def test_a_core_worktree_that_is_the_checkout_path_and_a_newline_stops_status_and_lease_claim(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
+        before = self.files_under(self.work / ".git"), self.files_under(self.base / "state")
+        for command in (["status"], ["lease", "claim", "--holder", "r/D1", "--paths", "a.txt"]):
+            with self.subTest(command=command[0]):
+                self.assertEqual(self.run_land(self.work, *command), (1, "", self.stray_worktree_line(str(self.work) + "\\n")))
+        self.assertEqual((self.files_under(self.work / ".git"), self.files_under(self.base / "state")), before)
+        with self.raw_db() as db:
+            self.assertEqual(db.execute("SELECT id FROM lease").fetchall(), [])
+
+    def test_the_printed_command_removes_a_core_worktree_that_is_the_checkout_path_and_a_newline(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
+        command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
+        subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_a_core_worktree_with_a_carriage_return_is_not_judged_as_the_directory_with_a_newline_there(self):
+        self.init()
+        (self.work / "a\nb").mkdir()
+        sh("git", "config", "core.worktree", str(self.work / "a\rb"), cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(str(self.work / "a") + "\\rb")))
+
+    def test_the_core_worktree_line_is_one_line_when_the_value_holds_line_breaks_and_a_backslash(self):
+        self.init()
+        gone = str(self.base / "gone")
+        sh("git", "config", "core.worktree", gone + "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\\", cwd=self.work)
+        status, printed, complaint = self.run_land(self.work, "status")
+        self.assertEqual((status, printed), (1, ""))
+        self.assertEqual(complaint, self.stray_worktree_line(gone + r"\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\\"))
+        self.assertEqual(len(complaint.splitlines()), 1)
+
+    def test_a_core_worktree_longer_than_a_file_name_can_be_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", "x" * 300, cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line("x" * 300)))
 
     def test_slot_runs_with_a_core_worktree_that_names_a_missing_directory(self):
         self.init()
