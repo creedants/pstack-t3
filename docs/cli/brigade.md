@@ -118,9 +118,9 @@ brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PAT
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
 | `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
 | `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
-| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state |
-| `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state |
-| `--no-goal` |  |  |  | clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+| `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+| `--no-goal` |  |  |  | clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
 
 Give at most one of `--goal`, `--no-goal`.
 

@@ -6464,6 +6464,38 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.store_files(), before)
         self.assertEqual(self.brigade("ticket", "set", "T1", "--priority", "low"), "T1 priority low")
 
+    def test_ticket_set_kind_goal_and_no_goal_are_refused_on_a_waiting_ticket_that_an_item_in_flight_names_and_change_no_file_and_priority_alone_is_accepted(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G2", "--priority", "low")
+        self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "feature", "--summary", "Build a")
+        for ticket in ("T1", "T2"):
+            self.assertEqual(self.brigade("ticket", "set", ticket, "--state", "waiting"), f"{ticket} waiting")
+        for state in ("in-progress", "in-review", "passed", "sent-back", "blocked", "queued"):
+            self.hand_edit("dishes.tsv", "D1", state=state)
+            before = self.store_files()
+            for ticket, flags in (("T1", ("--kind", "polish")), ("T1", ("--goal", "G2")), ("T1", ("--no-goal",)),
+                                  ("T1", ("--priority", "urgent", "--kind", "polish")), ("T2", ("--goal", "G1"))):
+                with self.subTest(state=state, ticket=ticket, flags=flags):
+                    self.assertEqual(self.brigade("ticket", "set", ticket, *flags, ok=False),
+                                     f"brigade: {ticket} is a ticket of D1, which is {state}; --kind, --goal, and --no-goal change "
+                                     "a waiting ticket that no item in flight names; D1 keeps the kind and goal it took when it "
+                                     f"started; drop D1 first, or leave {ticket} as it is")
+            self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--priority", "low"), "T1 priority low")
+
+    def test_ticket_set_kind_and_goal_change_a_ticket_set_back_to_waiting_whose_item_is_merged_or_dropped_and_leave_the_items_cells(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
+        self.brigade("ticket", "set", "T1", "--state", "waiting")
+        self.hand_edit("dishes.tsv", "D1", state="merged")
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--kind", "polish", "--goal", "G2"), "T1 kind polish; goal G2")
+        self.assertEqual((self.label("rail.tsv", "T1"), self.label("dishes.tsv", "D1")), (("polish", "G2"), ("fix", "G1")))
+        self.hand_edit("dishes.tsv", "D1", state="dropped")
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--kind", "upkeep", "--no-goal"), "T1 kind upkeep; unassigned")
+        self.assertEqual((self.label("rail.tsv", "T1"), self.label("dishes.tsv", "D1")), (("upkeep", ""), ("fix", "G1")))
+
     def test_goal_set_refuses_done_and_dropped_while_a_ticket_of_the_goal_waits_and_names_each_such_ticket(self):
         self.open()
         self.goal("activity view")
@@ -7485,6 +7517,7 @@ class BrigadeTest(unittest.TestCase):
 
     NOT_A_KIND = "which is not feature, fix, polish, upkeep, or study; it reads as no kind"
     NO_GOAL_ROW = "which has no row in goals.tsv; it reads as unassigned"
+    NOT_WHILE = "ticket set does not change this cell while"
 
     def test_a_waiting_ticket_whose_kind_cell_holds_no_kind_is_warned_of_by_each_printing_command_and_counts_as_untagged(self):
         self.open()
@@ -7502,12 +7535,65 @@ class BrigadeTest(unittest.TestCase):
         self.hand_edit("rail.tsv", "T1", kind="chore")
         self.hand_edit("dishes.tsv", "D1", kind="chore")
         out = self.assert_each_printing_command_warns(
-            f"T1 has kind 'chore', {self.NOT_A_KIND}; no command changes this cell; correct it in rail.tsv by hand",
+            f"T1 has kind 'chore', {self.NOT_A_KIND}; {self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand",
             f"D1 has kind 'chore', {self.NOT_A_KIND}; no command changes this cell; correct it in dishes.tsv by hand")
         self.assertEqual(len(out["status"].splitlines()), 3)
         self.assertEqual(out["ticket list"], "T1 assigned normal [user] s")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s"])
         self.assertNotIn("chore", "".join(out.values()))
+
+    def test_a_waiting_ticket_that_an_item_in_flight_names_is_warned_of_for_a_bad_kind_and_a_bad_goal_with_that_items_id_and_state(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "set", "T1", "--state", "waiting")
+        self.hand_edit("rail.tsv", "T1", kind="chore", goal="G9")
+        held = f"{self.NOT_WHILE} T1 is a ticket of D1, which is in-progress; correct it in rail.tsv by hand"
+        self.assert_each_printing_command_warns(f"T1 has kind 'chore', {self.NOT_A_KIND}; {held}",
+                                                f"T1 names goal 'G9', {self.NO_GOAL_ROW}; {held}")
+
+    def copy_goal_row(self, ident, name):
+        """Append to goals.tsv a copy of its first row with this id and this name, the way an editor would."""
+        path = self.at / "goals.tsv"
+        cells = path.read_text().splitlines()[1].split("\t")
+        cells[0], cells[3] = ident, name
+        path.write_text(path.read_text() + "\t".join(cells) + "\n")
+
+    def test_a_goals_tsv_row_with_no_id_is_warned_of_is_not_listed_as_a_goal_and_adds_nothing_to_the_unassigned_counts(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1")
+        self.copy_goal_row("", "no id")
+        out = self.assert_each_printing_command_warns("goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand")
+        self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 2 waiting", "goals: G1 1 waiting; unassigned 1 waiting"])
+        self.assertEqual(out["goal list"].splitlines()[::3],
+                         ["G1 open activity view: 1 waiting, 0 in flight, 0 merged, 0 send-backs",
+                          "G2 open current with upstream: 0 waiting, 0 in flight, 0 merged, 0 send-backs",
+                          "unassigned: 1 waiting, 0 in flight, 0 merged, 0 send-backs"])
+        self.assertEqual(out["close --dry-run"].count("T1: a"), 1)
+        self.assertNotIn("no id", "".join(out.values()))
+
+    def test_goal_set_refuses_an_empty_id_and_goal_add_gives_the_next_id_when_goals_tsv_has_a_row_with_no_id(self):
+        self.two_goals()
+        self.copy_goal_row("", "no id")
+        before = self.store_files()
+        self.assertEqual(self.brigade("goal", "set", "", "--name", "x", ok=False), "brigade: no goal ; run goal list --all to see every goal")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("goal", "add", "--name", "third", "--purpose", "p", "--done", "d"), "G3")
+
+    def test_a_goals_tsv_row_whose_id_an_earlier_row_has_is_warned_of_once_for_the_id_and_goal_list_prints_and_goal_set_changes_the_first_row(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.copy_goal_row("G1", "second")
+        self.copy_goal_row("G1", "third")
+        out = self.assert_each_printing_command_warns("goals.tsv has more than one row with id G1; the first is the goal and the "
+                                                      "others are not read; remove the others from goals.tsv by hand")
+        self.assertEqual(out["goal list"].splitlines()[::3],
+                         ["G1 open activity view: 1 waiting, 0 in flight, 0 merged, 0 send-backs",
+                          "G2 open current with upstream: 0 waiting, 0 in flight, 0 merged, 0 send-backs",
+                          self.NO_UNASSIGNED_WORK])
+        for name in ("second", "third"):
+            self.assertNotIn(name, "".join(out.values()))
+        self.assertEqual(self.brigade("goal", "set", "G1", "--name", "renamed"), "G1 name renamed")
+        self.assertEqual([row[3] for row in self.rows_of("goals.tsv")], ["renamed", "current with upstream", "second", "third"])
 
     def test_a_ticket_and_an_item_that_name_a_goal_with_no_row_are_warned_of_and_count_as_unassigned(self):
         self.two_goals()
@@ -7538,7 +7624,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
         (self.at / "goals.tsv").unlink()
         out = self.assert_each_printing_command_warns(
-            f"T1 names goal 'G1', {self.NO_GOAL_ROW}; no command changes this cell; correct it in rail.tsv by hand",
+            f"T1 names goal 'G1', {self.NO_GOAL_ROW}; {self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand",
             f"T2 names goal 'G1', {self.NO_GOAL_ROW}; run ticket set T2 --goal G<n> or --no-goal",
             f"D1 names goal 'G1', {self.NO_GOAL_ROW}; no command changes this cell; correct it in dishes.tsv by hand")
         self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 1 waiting, 1 in flight"])
