@@ -6491,6 +6491,483 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("ticket", "set", "T2", "--state", "done")
         self.assertEqual(self.brigade("goal", "set", "G1", "--state", "dropped", "--evidence", "why"), "G1 dropped")
 
+    KIND_CHOICE = "<feature|fix|polish|upkeep|study>"
+
+    def rail_before_kinds(self, *summaries):
+        """rail.tsv as the tool wrote it before kinds and goals. Each row is a waiting user ticket of ten cells."""
+        (self.at / "rail.tsv").write_text(
+            "id\tat\tstate\tsource\tref\tdish\tsummary\tpriority\tpaths\tdecision\n"
+            + "".join(f"T{number}\t2026-10-01T00:00:00+00:00\twaiting\tuser\t\t\t{summary}\t\t\t\n"
+                      for number, summary in enumerate(summaries, 1)))
+
+    def two_goals(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "9")
+        self.goal("activity view")
+        self.goal("current with upstream")
+
+    def fake_land(self):
+        """A land.py that records its words, waits at a claim until claim-proceed exists, and prints lease L7."""
+        case = Path(self.temporary.name)
+        (case / "land.py").write_text(
+            "import sys, time\nfrom pathlib import Path\n"
+            f"case = Path({str(case)!r})\n"
+            "with open(case / 'land-calls', 'a') as f:\n    f.write(' '.join(sys.argv[3:]) + '\\n')\n"
+            "if sys.argv[4] == 'claim':\n"
+            "    (case / 'claiming').touch()\n"
+            "    end = time.monotonic() + 30\n"
+            "    while not (case / 'claim-proceed').exists() and time.monotonic() < end:\n        time.sleep(0.01)\n"
+            "    print('L7')\n"
+            "else:\n    print('L7 released')\n")
+        return case
+
+    def fire_with_fake_land(self, case, *words):
+        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
+                                 "--store", str(self.store), "--at", str(self.at), "fire", *words],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc
+
+    def test_fire_gives_the_item_the_kind_and_goal_of_its_lead_ticket_and_leaves_that_tickets_two_cells_as_they_were(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "polish", "--goal", "G2")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"), "D1")
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("polish", "G2"))
+        self.assertEqual(self.label("rail.tsv", "T1"), ("polish", "G2"))
+
+    def test_fire_kind_gives_the_kind_to_the_item_and_to_a_lead_ticket_that_has_none(self):
+        self.open()
+        self.rail_before_kinds("a")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--kind", "upkeep"), "D1")
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("upkeep", ""))
+        self.assertEqual(self.label("rail.tsv", "T1"), ("upkeep", ""))
+
+    def test_fire_with_no_kind_from_the_ticket_or_the_flag_gives_the_item_and_the_lead_ticket_the_kind_of_its_station(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "9")
+        self.rail_before_kinds("a", "b", "c")
+        for number, (station, kind) in enumerate((("bug-fix", "fix"), ("perf-issue", "fix"), ("investigation", "study")), 1):
+            with self.subTest(station=station):
+                self.assertEqual(self.brigade("fire", "--tickets", f"T{number}", "--station", station, "--summary", f"Do {number}"),
+                                 f"D{number}")
+                self.assertEqual(self.label("dishes.tsv", f"D{number}"), (kind, ""))
+                self.assertEqual(self.label("rail.tsv", f"T{number}"), (kind, ""))
+
+    def test_fire_takes_the_lead_tickets_kind_over_the_kind_of_its_station(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "upkeep")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("upkeep", ""), ("upkeep", "")))
+
+    def test_fire_kind_is_taken_over_the_kind_of_the_station(self):
+        self.open()
+        self.rail_before_kinds("a")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a", "--kind", "polish")
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("polish", ""), ("polish", "")))
+
+    def test_fire_of_a_lead_ticket_with_no_kind_on_a_station_that_gives_none_is_refused_and_changes_no_file(self):
+        self.open()
+        self.rail_before_kinds("a")
+        before = self.store_files()
+        for station in ("feature", "refactoring", "docs"):
+            with self.subTest(station=station):
+                self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", station, "--summary", "Do a", ok=False),
+                                 f"brigade: T1 has no kind and station {station} gives none; pass --kind {self.KIND_CHOICE}")
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_with_paths_of_a_lead_ticket_with_no_kind_is_refused_before_it_claims_a_lease_and_changes_no_file(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.rail_before_kinds("a")
+        before = self.store_files()
+        proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--paths", "src")
+        _, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()),
+                         (1, f"brigade: T1 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}"))
+        self.assertFalse((case / "land-calls").exists())
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_with_no_ticket_needs_a_kind_from_the_flag_or_the_station(self):
+        self.open()
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", ",", "--station", "feature", "--summary", "No ticket", ok=False),
+                         "brigade: no ticket gives this item a kind and station feature gives none; "
+                         f"pass --kind {self.KIND_CHOICE}")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("fire", "--tickets", ",", "--station", "feature", "--summary", "No ticket", "--kind", "study"), "D1")
+        self.assertEqual(self.brigade("fire", "--tickets", ",", "--station", "bug-fix", "--summary", "No ticket"), "D2")
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("dishes.tsv", "D2")), (("study", ""), ("fix", "")))
+
+    def test_fire_kind_that_differs_from_the_lead_tickets_kind_is_refused_and_an_equal_one_is_accepted(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--kind", "feature", ok=False),
+                         "brigade: T1 has kind fix, and --kind feature does not match it; "
+                         "drop --kind, or run ticket set T1 --kind feature first")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--kind", "fix"), "D1")
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("fix", ""))
+
+    def test_fire_kind_refuses_a_word_that_is_none_of_the_five(self):
+        self.open()
+        self.rail_before_kinds("a")
+        before = self.store_files()
+        self.assert_refused_choice(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--kind", "chore",
+                                                ok=False), "--kind", "chore", ("feature", "fix", "polish", "upkeep", "study"))
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_refuses_a_ticket_after_the_lead_that_is_under_another_goal_and_takes_it_as_a_ride_along(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", ok=False),
+                         "brigade: T2 is under G2 and the lead ticket T1 is under G1; "
+                         "name T2 in --ride-along, or start it on its own")
+        self.assertEqual(self.store_files(), before)
+        rail = self.table_row(self.at, "rail.tsv", "T2")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both"),
+                         "D1")
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("fix", "G1"))
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T2"), {**rail, "state": "assigned", "dish": "D1"})
+        self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G2"))
+
+    def test_fire_refuses_a_ticket_under_a_goal_after_an_unassigned_lead_ticket_and_takes_it_as_a_ride_along(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G1", "--priority", "low")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", ok=False),
+                         "brigade: T2 is under G1 and the lead ticket T1 is unassigned; "
+                         "name T2 in --ride-along, or start it on its own")
+        self.assertEqual(self.store_files(), before)
+        self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both")
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T2")), (("fix", ""), ("polish", "G1")))
+
+    def test_fire_takes_a_ticket_of_the_lead_tickets_goal_and_an_unassigned_ticket_with_no_ride_along_and_each_keeps_its_two_cells(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "feature", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "polish")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2,T3", "--station", "bug-fix", "--summary", "Do all"), "D1")
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("fix", "G1"))
+        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T1", "T2", "T3")],
+                         [("fix", "G1"), ("feature", "G1"), ("polish", "")])
+
+    def test_fire_refuses_a_ride_along_id_that_is_not_in_tickets_and_one_that_is_the_lead_ticket(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1", "--priority", "low")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x", ok=False),
+                         "brigade: --ride-along names T2, which is not in --tickets; add it there or drop it")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T1,T2", "--station", "bug-fix", "--summary", "x",
+                                      ok=False),
+                         "brigade: T1 is the lead ticket, and the lead ticket cannot ride along; "
+                         "put the ticket whose goal the item takes first in --tickets")
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_refuses_a_ride_along_ticket_of_priority_normal_or_urgent(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G2")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "polish", "--goal", "G2", "--priority", "urgent")
+        before = self.store_files()
+        for ident, priority in (("T2", "normal"), ("T3", "urgent")):
+            with self.subTest(ident=ident):
+                self.assertEqual(self.brigade("fire", "--tickets", f"T1,{ident}", "--ride-along", ident, "--station", "bug-fix",
+                                              "--summary", "x", ok=False),
+                                 f"brigade: {ident} is {priority}; only a low ticket rides along; "
+                                 f"start it on its own, or run ticket set {ident} --priority low")
+        self.assertEqual(self.store_files(), before)
+        self.brigade("ticket", "set", "T2", "--priority", "low")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x"), "D1")
+
+    def test_fire_takes_a_report_ticket_with_an_empty_priority_cell_as_a_ride_along(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["priority"], "")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--goal", "G2")
+        self.assertEqual(self.brigade("fire", "--tickets", "T3,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x"), "D2")
+        self.assertEqual((self.label("dishes.tsv", "D2"), self.label("rail.tsv", "T2")), (("fix", "G2"), ("polish", "G1")))
+
+    def test_fire_refuses_a_ride_along_ticket_that_is_a_feature(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "feature", "--goal", "G2", "--priority", "low")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x",
+                                      ok=False),
+                         "brigade: T2 is a feature, and a feature does not ride along; start it as its own item")
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_refuses_a_low_feature_named_in_ride_along_that_is_under_the_lead_tickets_goal(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "feature", "--goal", "G1", "--priority", "low")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x",
+                                      ok=False),
+                         "brigade: T2 is a feature, and a feature does not ride along; start it as its own item")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "x"), "D1")
+
+    def test_a_goal_change_while_fire_claims_its_lease_is_caught_before_the_write_and_the_lease_is_released(self):
+        case = self.fake_land()
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1")
+        proc = self.fire_with_fake_land(case, "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", "--paths", "src")
+        _wait_for_path(case / "claiming")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--goal", "G2"), "T2 goal G2")
+        before = self.store_files()
+        (case / "claim-proceed").touch()
+        _, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()),
+                         (1, "brigade: nothing fired: T2 is under G2 and the lead ticket T1 is under G1; "
+                             "name T2 in --ride-along, or start it on its own"))
+        self.assertEqual((case / "land-calls").read_text().splitlines(),
+                         ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_of_a_lead_ticket_whose_kind_cell_holds_no_kind_warns_needs_a_kind_and_writes_it_over_the_cell(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.hand_edit("rail.tsv", "T1", kind="bugfix")
+        warning = ("brigade: warning: T1 has kind 'bugfix', which is not feature, fix, polish, upkeep, or study; it reads as no kind; "
+                   "run ticket set T1 --kind <kind>\n")
+        before = self.store_files()
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a"),
+                         (1, "", warning + f"brigade: T1 has no kind and station feature gives none; "
+                                           f"pass --kind {self.KIND_CHOICE}\n"))
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--kind", "polish"),
+                         (0, "D1\n", warning))
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("polish", ""), ("polish", "")))
+
+    def test_fire_of_a_lead_ticket_whose_kind_cell_holds_no_kind_writes_the_kind_of_its_station_over_the_cell(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.hand_edit("rail.tsv", "T1", kind="bugfix")
+        code, out, err = self.run_raw("fire", "--tickets", "T1", "--station", "investigation", "--summary", "Do a")
+        self.assertEqual((code, out), (0, "D1\n"))
+        self.assertIn("T1 has kind 'bugfix'", err)
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("study", ""), ("study", "")))
+
+    def test_fire_of_a_lead_ticket_whose_goal_has_no_row_warns_starts_an_unassigned_item_and_leaves_the_tickets_cell(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G2")
+        self.hand_edit("rail.tsv", "T1", goal="G9")
+        self.hand_edit("rail.tsv", "T2", goal="G8")
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"),
+                         (0, "D1\n", "brigade: warning: T1 names goal 'G9', which has no row in goals.tsv; it reads as unassigned; "
+                                     "run ticket set T1 --goal G<n> or --no-goal\n"))
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("fix", ""), ("fix", "G9")))
+
+    def test_fire_warns_of_a_bad_cell_on_a_ticket_after_the_lead_and_reads_that_ticket_as_unassigned(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G2")
+        self.hand_edit("rail.tsv", "T2", goal="G9")
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both"),
+                         (0, "D1\n", "brigade: warning: T2 names goal 'G9', which has no row in goals.tsv; it reads as unassigned; "
+                                     "run ticket set T2 --goal G<n> or --no-goal\n"))
+        self.assertEqual(self.label("rail.tsv", "T2"), ("fix", "G9"))
+
+    def test_fire_of_a_ticket_with_no_kind_prints_the_owner_refusal_and_the_not_waiting_refusal_first(self):
+        self.open()
+        self.rail_before_kinds("a", "b")
+        self.brigade("ticket", "set", "T2", "--state", "done")
+        self.brigade("set", "--thread", "t1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "x", ok=False, owner=False),
+                         "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
+        self.assertEqual(self.brigade("--owner", "t0@1", "fire", "--tickets", "T1", "--station", "feature", "--summary", "x", ok=False),
+                         "brigade: owner t0@1 is stale; this store is owned by t1@1")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "feature", "--summary", "x", ok=False),
+                         "brigade: T2 is done, not waiting")
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_of_a_ticket_with_no_kind_is_blocked_by_a_full_worker_cap_with_the_words_it_had_before_kinds(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.rail_before_kinds("a", "b")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "feature", "--summary", "Do b", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.blocked_note(self.at, "T2"),
+                         {"kind": "workers", "tickets": ["T2"], "station": "feature", "summary": "Do b", "paths": "", "timebox": 60})
+        self.brigade("dish", "D1", "--state", "sent-back")
+        line = "T2: unblocked; run fire --tickets=T2 --station=feature '--summary=Do b' --timebox=60"
+        self.assertIn(line, self.brigade("watch").splitlines())
+        ran = self.bash_unblocked(self.at, line)
+        self.assertEqual((ran.returncode, ran.stderr.strip()),
+                         (1, f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}"))
+
+    def test_fire_of_a_ticket_with_no_kind_on_paths_another_lease_holds_is_refused_for_the_kind_and_logs_no_block(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.rail_before_kinds("a")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            leases, before = self.land("lease", "list"), self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--paths", "src",
+                                          ok=False),
+                             f"brigade: T1 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}")
+            self.assertEqual((self.land("lease", "list"), self.store_files()), (leases, before))
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a", "--paths", "src",
+                                   "--kind", "upkeep", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
+            self.assertEqual(self.blocked_note(self.at, "T1"),
+                             {"kind": "lease", "tickets": ["T1"], "station": "feature", "summary": "Do a", "paths": "src",
+                              "timebox": 60, "work": "upkeep"})
+
+    def test_a_block_note_written_before_kinds_reprints_the_fire_line_it_printed_then(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "Fix the gate", "--kind", "fix")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        note = ('{"kind":"workers","tickets":["T2"],"station":"bug-fix","summary":"Fix the gate","paths":"","timebox":45,'
+                '"branch":"docs/gate","reason":"wide change"}')
+        with open(self.at / "log.tsv", "a") as log:
+            log.write(f"2026-10-01T00:00:00+00:00\tticket\tT2\tblocked\t{note}\n")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.assertIn("T2: unblocked; run fire --tickets=T2 --station=bug-fix '--summary=Fix the gate' --branch=docs/gate "
+                      "--timebox=45 --mode=full '--reason=wide change'", self.brigade("watch").splitlines())
+
+    def test_a_blocked_fire_with_no_kind_flag_and_no_ride_along_writes_the_note_keys_it_wrote_before_kinds(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Do b", "--branch", "docs/gate", ok=False)
+        self.assertEqual(self.blocked_note(self.at, "T2"),
+                         {"kind": "workers", "tickets": ["T2"], "station": "bug-fix", "summary": "Do b", "paths": "", "timebox": 60,
+                          "branch": "docs/gate"})
+
+    def test_a_blocked_fire_with_kind_and_ride_along_records_both_and_the_fire_line_watch_reprints_carries_them_and_runs(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.goal("activity view")
+        self.goal("current with upstream")
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1")
+        self.hand_edit("rail.tsv", "T2", kind="")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2,T3", "--ride-along", "T3", "--kind", "upkeep", "--station", "feature",
+                                      "--summary", "Do b and c", ok=False), "brigade: nothing fired: 1 of 1 workers running")
+        note = {"kind": "workers", "tickets": ["T2", "T3"], "station": "feature", "summary": "Do b and c", "paths": "", "timebox": 60,
+                "work": "upkeep", "ride_along": ["T3"]}
+        self.assertEqual((self.blocked_note(self.at, "T2"), self.blocked_note(self.at, "T3")), (note, note))
+        self.brigade("dish", "D1", "--state", "sent-back")
+        line = ("T2: unblocked; run fire --tickets=T2,T3 --station=feature '--summary=Do b and c' --timebox=60 --kind=upkeep "
+                "--ride-along=T3")
+        self.assertIn(line, self.brigade("watch").splitlines())
+        ran = self.bash_unblocked(self.at, line)
+        self.assertEqual((ran.returncode, ran.stdout.strip()), (0, "D2"), ran.stderr)
+        self.assertEqual((self.label("dishes.tsv", "D2"), self.label("rail.tsv", "T2"), self.label("rail.tsv", "T3")),
+                         (("upkeep", "G1"), ("upkeep", "G1"), ("polish", "G2")))
+
+    def test_a_dish_update_and_a_review_pass_leave_the_items_kind_and_goal_cells_as_fire_wrote_them(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc", "--thread", "w1")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T1")), (("feature", "G1"), ("feature", "G1")))
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "merged")
+
+    def test_a_dropped_items_lead_ticket_waits_again_with_the_kind_fire_wrote_on_it(self):
+        self.open()
+        self.rail_before_kinds("a")
+        self.brigade("fire", "--tickets", "T1", "--station", "investigation", "--summary", "Look at a")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+        row = self.table_row(self.at, "rail.tsv", "T1")
+        self.assertEqual((row["state"], row["kind"], row["goal"]), ("waiting", "study", ""))
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a"), "D2")
+        self.assertEqual(self.label("dishes.tsv", "D2"), ("study", ""))
+
+    def assert_goal_keeps_open(self, ident, held, advice):
+        before = self.store_files()
+        for state in ("done", "dropped"):
+            with self.subTest(goal=ident, state=state):
+                self.assertEqual(self.brigade("goal", "set", ident, "--state", state, "--evidence", "why", ok=False),
+                                 f"brigade: {ident} still has work: {held}; {advice}; then run this again")
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_set_refuses_done_and_dropped_while_an_item_of_the_goal_is_in_flight_and_names_the_item(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        for state in ("in-progress", "in-review", "sent-back", "blocked"):
+            with self.subTest(item=state):
+                self.brigade("dish", "D1", "--state", state, "--sha", "abc")
+                self.assert_goal_keeps_open("G1", "D1 in flight", "finish or drop each item in flight")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.assert_goal_keeps_open("G1", "D1 in flight", "finish or drop each item in flight")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.assert_goal_keeps_open("G1", "D1 in flight", "finish or drop each item in flight")
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged"), "G1 done")
+
+    def test_goal_set_refuses_done_and_dropped_while_a_ticket_of_the_goal_rides_along_in_another_goals_item(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both")
+        self.assert_goal_keeps_open("G2", "T2 riding along", "finish or drop the item each of those tickets rides along in")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1, T2 waiting again")
+        self.assert_goal_keeps_open("G2", "T2 waiting", "give each waiting ticket another goal with ticket set --goal or --no-goal")
+
+    def test_goal_set_names_the_waiting_tickets_the_items_in_flight_and_the_tickets_riding_along_in_one_refusal(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--goal", "G2")
+        self.brigade("ticket", "add", "--summary", "d", "--kind", "fix", "--goal", "G2")
+        self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do a and b")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Do c")
+        self.assert_goal_keeps_open(
+            "G2", "T4 waiting; D2 in flight; T2 riding along",
+            "give each waiting ticket another goal with ticket set --goal or --no-goal; finish or drop each item in flight; "
+            "finish or drop the item each of those tickets rides along in")
+
+    def test_from_report_gives_each_ticket_the_kind_polish_and_the_goal_of_the_reports_item(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G2")
+        self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
+        self.assertEqual(len(self.follow_ups_in(BULLETS).splitlines()), 3)
+        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T2", "T3", "T4")], [("polish", "G2")] * 3)
+
+    def test_from_report_on_an_item_with_no_kind_and_no_goal_files_tickets_with_no_kind_and_no_goal(self):
+        self.open()
+        self.rail_before_kinds("a")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
+        self.hand_edit("dishes.tsv", "D1", kind="")
+        self.follow_ups_in(BULLETS)
+        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T2", "T3", "T4")], [("", "")] * 3)
+
+    def test_from_report_files_a_ticket_under_the_goal_of_its_item_when_that_goal_is_done_and_goal_list_prints_that_goal(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "merged")
+        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
+        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
+        self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G1"))
+        self.assertEqual(self.brigade("goal", "list").splitlines()[0],
+                         "G1 done activity view: 1 waiting, 0 in flight, 1 merged, 0 send-backs")
+
+    def test_follow_up_kind_is_empty_for_an_item_with_no_kind_and_else_fix_at_urgent_or_normal_and_polish_at_low(self):
+        follow_up_kind = runpy.run_path(str(SCRIPT))["follow_up_kind"]
+        self.assertEqual([follow_up_kind("", priority) for priority in ("urgent", "normal", "low")], ["", "", ""])
+        self.assertEqual([follow_up_kind("feature", priority) for priority in ("urgent", "normal", "low")], ["fix", "fix", "polish"])
+
     def test_goal_add_prints_the_new_id_appends_one_open_row_and_logs_one_goal_row(self):
         self.open()
         self.assertEqual(self.goal("activity view", "--share", "2"), "G1")
@@ -6885,7 +7362,7 @@ class HandoffTest(StoresTest):
             (self.dir(name) / "reports" / "D1.md").write_text(body)
             self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
                              f"T2 added from {name}/reports/D1.md#1: Shared text.")
-        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", "", "", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", "", "polish", ""])
 
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")

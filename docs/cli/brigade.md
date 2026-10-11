@@ -215,14 +215,14 @@ the state, name, counts, purpose, and done test of each open or paused goal and 
 ## brigade.py fire
 
 ```text
-brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON]
+brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON] [--kind KIND] [--ride-along RIDE_ALONG]
 ```
 
 group tickets into one dish and assign it to a station
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids |
+| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, and its kind when it has one |
 | `--station STATION` | yes |  |  | the pstack playbook the worker runs |
 | `--summary SUMMARY` | yes |  |  |  |
 | `--task TASK` |  |  |  |  |
@@ -232,6 +232,8 @@ group tickets into one dish and assign it to a station
 | `--paths PATHS` |  |  |  | paths the dish will change; fire claims a landing lease on them first |
 | `--mode MODE` |  |  |  | full, to start the dish in full mode; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |
+| `--ride-along RIDE_ALONG` |  |  |  | comma-separated ids from --tickets, not the first, that may be under another goal than the first ticket's; each must have priority low and must not be a feature; every other ticket after the first must have the first ticket's goal or no goal |
 
 ## brigade.py brief
 

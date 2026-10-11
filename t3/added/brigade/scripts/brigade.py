@@ -2288,19 +2288,24 @@ def refusal_kind(message):
     return "lease"
 
 
-def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""):
+def block_note(kind, ids, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
+    """`kind` is the kind of block. `work` is the --kind fire was given, and `ride_along` the ids --ride-along named."""
     note = {"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
             "paths": paths, "timebox": timebox}
     if branch:
         note["branch"] = branch
     if reason:
         note["reason"] = reason
+    if work:
+        note["work"] = work
+    if ride_along:
+        note["ride_along"] = list(ride_along)
     return json.dumps(note, separators=(",", ":"))
 
 
-def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason=""):
+def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
-    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason)
+    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason, work, ride_along)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -2381,6 +2386,10 @@ def fire_command(ident, note):
     if note.get("paths"):
         pairs.append(("paths", note["paths"]))
     pairs.append(("timebox", note.get("timebox", 60)))
+    if note.get("work"):
+        pairs.append(("kind", note["work"]))
+    if note.get("ride_along"):
+        pairs.append(("ride-along", ",".join(note["ride_along"])))
     if note.get("reason"):
         pairs += [("mode", "full"), ("reason", note["reason"])]
     words = ["fire", *(f"--{name}={value}" for name, value in pairs)]
@@ -2577,7 +2586,68 @@ def unfireable(restaurant, ids):
     return None
 
 
-def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None):
+def fire_label(labels, rail, ids, station, kind, ride_along):
+    """The kind and goal the new item takes, as (Label, None), or (None, refusal). `rail` is {ticket id: row}.
+
+    Call it after unfireable has found each id in `ids` and found it waiting. The lead ticket is ids[0].
+    The item takes the lead ticket's goal, and no goal when `ids` is empty.
+    The kind is the first of these that gives one. The lead ticket's kind, then `kind`, then STATION_KIND[station].
+    `kind` beside a lead ticket of another kind is refused.
+    Each id in `ride_along` must be in `ids`, must not be the lead ticket, must have priority low, and must not be a feature.
+    Each other ticket after the lead must have the lead ticket's goal or no goal.
+    """
+    lead = ids[0] if ids else None
+    mine = labels.tickets[lead] if lead else Label()
+    if kind and mine.kind and kind != mine.kind:
+        return None, (f"{lead} has kind {mine.kind}, and --kind {kind} does not match it; "
+                      f"drop --kind, or run ticket set {lead} --kind {kind} first")
+    found = mine.kind or kind or STATION_KIND.get(station, "")
+    if not found:
+        return None, ((f"{lead} has no kind" if lead else "no ticket gives this item a kind")
+                      + f" and station {station} gives none; pass --kind {KIND_CHOICE}")
+    for ident in ride_along:
+        if ident not in ids:
+            return None, f"--ride-along names {ident}, which is not in --tickets; add it there or drop it"
+        if ident == lead:
+            return None, (f"{ident} is the lead ticket, and the lead ticket cannot ride along; "
+                          "put the ticket whose goal the item takes first in --tickets")
+        if priority_of(rail[ident]) != "low":
+            return None, (f"{ident} is {priority_of(rail[ident])}; only a low ticket rides along; "
+                          f"start it on its own, or run ticket set {ident} --priority low")
+        if labels.tickets[ident].kind == "feature":
+            return None, f"{ident} is a feature, and a feature does not ride along; start it as its own item"
+    for ident in ids[1:]:
+        theirs = labels.tickets[ident].goal
+        if ident not in ride_along and theirs and theirs != mine.goal:
+            return None, (f"{ident} is under {theirs} and the lead ticket {lead} is {'under ' + mine.goal if mine.goal else 'unassigned'}; "
+                          f"name {ident} in --ride-along, or start it on its own")
+    return Label(found, mine.goal), None
+
+
+def checked_fire_label(restaurant, ids, station, kind, ride_along, warned):
+    """fire_label on the store as it is now, read under the caller's lock.
+
+    It prints the warning for each bad kind or goal cell of a ticket in `ids`, once per text in `warned`.
+    """
+    labels = read_labels(restaurant)
+    for ident, text in labels.faults:
+        if ident in ids and text not in warned:
+            warned.add(text)
+            print(f"brigade: warning: {text}", file=sys.stderr)
+    rail = {row["id"]: row for row in restaurant.rows("rail.tsv")}
+    return fire_label(labels, rail, ids, station, kind, ride_along)
+
+
+def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=()):
+    """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
+
+    The kind and goal check runs under both locks. The first run comes after the owner check, unfireable, and the worker
+    cap, so a fire that one of those refuses or blocks gets the words it got before kinds and goals. It comes before the
+    lease claim, so a fire it refuses claims no lease. The second run sees a change made while the claim ran.
+    The lead ticket's kind cell takes the item's kind in the rewrite that assigns the tickets. No other kind or goal cell
+    of a ticket changes, so a ticket that rides along keeps its own.
+    """
+    warned = set()
     while True:
         with restaurant.checked():
             restaurant.fence()
@@ -2589,25 +2659,32 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             leased = with_fragment(paths, known) if paths else ""
             full = workers_full(restaurant)
             if full:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
                 raise BrigadeError(f"nothing fired: {full}")
+            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along, warned)
+            if refusal:
+                raise BrigadeError(refusal)
         # land.py can wait on the landing database, so the claim runs outside the store lock.
         # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
         try:
             lease = claim_lease(restaurant, dish, leased) if leased else ""
         except ClaimError as error:
             with restaurant.checked():
-                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
+                               kind, ride_along)
             raise BrigadeError(f"nothing fired: {error}") from error
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
             current = restaurant.next_id("dishes.tsv")
             full = None if refusal else workers_full(restaurant)
-            if not refusal and not full and current == dish:
+            label = None
+            if not refusal and not full:
+                label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along, warned)
+            if label and current == dish:
                 restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": station,
                                                  "tickets": ",".join(ids), "task": task, "thread": thread,
                                                  "branch": branch, "summary": summary, "timebox": timebox,
-                                                 "lease": lease, "paths": leased})
+                                                 "lease": lease, "paths": leased, "kind": label.kind, "goal": label.goal})
                 restaurant.log("dish", dish, "in-progress", summary)
                 if reason:
                     record_escalation(restaurant, dish, reason)
@@ -2615,13 +2692,15 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 for row in rows:
                     if row["id"] in ids:
                         row["state"], row["dish"] = "assigned", dish
+                    if row["id"] in ids[:1]:
+                        row["kind"] = label.kind
                 restaurant.save_rows("rail.tsv", rows)
                 for row in rows:
                     if row["id"] in ids:
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
                 return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
             if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
                 refusal = full
         if lease:
             release_lease(restaurant, lease)
@@ -3567,7 +3646,9 @@ def parser():
     a.add_argument("--all", action="store_true", help="also print each other done or dropped goal")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
-    p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
+    p.add_argument("--tickets", required=True,
+                   help="comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, "
+                        "and its kind when it has one")
     p.add_argument("--station", required=True, help="the pstack playbook the worker runs")
     p.add_argument("--summary", required=True)
     for field in ("task", "thread", "branch"):
@@ -3576,6 +3657,15 @@ def parser():
     p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
+    p.add_argument("--kind", choices=KINDS,
+                   help="the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no "
+                        "kind records it too; refused when the lead ticket has another kind; with no --kind and no kind "
+                        "from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, "
+                        "and fire is refused on any other station")
+    p.add_argument("--ride-along", default="",
+                   help="comma-separated ids from --tickets, not the first, that may be under another goal than the first "
+                        "ticket's; each must have priority low and must not be a feature; every other ticket after the "
+                        "first must have the first ticket's goal or no goal")
 
     p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
@@ -3861,8 +3951,9 @@ def run(argv):
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
+        ride_along = [ident.strip() for ident in args.ride_along.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
-                    args.paths, args.reason)
+                    args.paths, args.reason, args.kind or "", ride_along)
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "startable":
