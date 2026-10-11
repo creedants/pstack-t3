@@ -403,6 +403,57 @@ LONGER_THAN_A_NO_WORK_PHRASE = [
 ]
 
 
+REAL_FOLLOW_UPS = [
+    ('`docs/guide.md:246`. "`ticket add` refuses a source this coordinator does not own, and a ref that is still '
+     'open here or in a sibling." leaves out the same-summary refusal. Add after "So one issue becomes one '
+     'ticket.": "A request from you with no ref is refused while a waiting or assigned ticket of that coordinator '
+     'has the same summary, unless `--again` is passed."',
+     'docs/guide.md'),
+    ('`tests/test_pstack_t3.py:1869-1878` `test_history_states_the_thread_link_in_a_form_check_accepts` was written '
+     'when a literal thread link failed the link check. `check_tree` now accepts it. Lines 1877-1878 (the runtime '
+     'holds no link target starting `t3-thread:`) no longer guard anything. Once they go, the runtime can show the '
+     'literal `[title](t3-thread://v1/<threadId>)`. The test file is outside L136.',
+     'tests/test_pstack_t3.py'),
+    ('**`changes/pstack-t3%2Fd116.md`, third bullet, at release time.** Its sentence "Each line names a command to '
+     'run, or the entry or file to delete." is now true of each single sentence and each group head, and not of an '
+     'item line. Its last two sentences still hold. The release item corrects superseded bullets, so it can fold '
+     'this one into the D124 bullets.',
+     'changes/pstack-t3%2Fd116.md'),
+    ('`t3/scripts/roles.py`, `_resolve_inherit`, the excluded-parent refusal. For a parent on Claude Haiku 4.5 or a '
+     'fast Grok model whose provider the catalog marks not runnable, the error ends "`<provider>` has no other '
+     'model pstack may pick", even when that provider lists a pickable model. The true cause is that the provider '
+     'cannot run children. A parent the runtime mode blocks no longer reaches that text. The catalog-marked case '
+     'still does. The fix is to end that error with "`<provider>` is not runnable (`<constraints>`)" when '
+     '`runnable(provider)` is false, with a test on a fixture provider that has `canRunChildTask: false`, '
+     '`claude-haiku-4-5`, and one other model.',
+     't3/scripts/roles.py'),
+    ('**Move `OLD_INSTALLER` and the test wrappers to `tests/fixtures/`.** This is outside lease L104. '
+     '`tests/test_install.py` is 1,688 lines, 276 of them the embedded installer.',
+     'tests/fixtures,tests/test_install.py'),
+    ('**Own-thread wait coverage.** It is measured on Claude (with `runId`) and Codex (without `runId`). Grok, '
+     'Cursor, and ACP are untested.',
+     ''),
+    ("**`README.md`, `doctor`.** This replaces the `**`doctor` lists leftover records.**` bullet D116's second "
+     'follow-up proposed, which has not landed. Add it after the bullet that starts `**Nothing is overwritten.**`, '
+     "beside D116's `**A skipped step exits 3.**` bullet, which stands: ```markdown - **`doctor` lists leftover "
+     "records.** Under each harness, `doctor` prints this checkout's recorded links that it can prove neither at "
+     'their path nor in a recorded backup, backup records with nothing at their backup path, and owner files of '
+     'other checkouts whose checkout directory is missing. Each names a command to run, or the entry or file to '
+     'delete. Two or more under one harness with the same advice print as one group, a line with their count and '
+     'the advice and then one line per record. `doctor` writes nothing, and these lines do not change its exit '
+     'status. It names a record file it cannot read and still runs the checks that do not need that file. It exits '
+     "1 when that file is `install-manifest.json` or this checkout's owner file. ```",
+     'README.md'),
+    ('`t3/added/brigade/SKILL.md:81` quotes the old malformed line, and the file is leased to another item. Replace '
+     '``with `brigade: <table> line <n> is malformed; fix or remove it`.`` with ``with `brigade: '
+     '<project>/<restaurant>/<table> line <n> is malformed; fix or remove it`, where `<project>/<restaurant>` is '
+     'the last two parts of the restaurant directory that holds the table.``',
+     't3/added/brigade/SKILL.md'),
+]
+TRACKED = ("README.md", "changes/pstack-t3%2Fd116.md", "docs/guide.md", "t3/added/brigade/SKILL.md", "t3/runtime.md",
+           "t3/scripts/roles.py", "tests/fixtures/installer.py", "tests/test_install.py", "tests/test_pstack_t3.py")
+
+
 class BrigadeTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -430,6 +481,13 @@ class BrigadeTest(unittest.TestCase):
                                 capture_output=True, text=True, input=stdin)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if ok else result.stderr).strip()
+
+    def assert_refused_choice(self, output, flag, value, choices):
+        refusal = f"argument {flag}: invalid choice: '{value}'"
+        self.assertIn(refusal, output)
+        after = output[output.index(refusal) + len(refusal):]
+        for choice in choices:
+            self.assertIn(choice, after)
 
     def table_row(self, directory, table, ident):
         lines = [line for line in (directory / table).read_text().splitlines() if line]
@@ -476,7 +534,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Splash screen hangs"), "T2")
         self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "perf-issue", "--summary", "Cut cold start time"), "D1")
         self.assertEqual(self.brigade("ticket", "list"),
-                         "T1 assigned [github] Startup is slow on cold boot #12\nT2 assigned [user] Splash screen hangs")
+                         "T1 assigned normal [github] Startup is slow on cold boot #12\nT2 assigned normal [user] Splash screen hangs")
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "again", ok=False),
                          "brigade: T1 is assigned, not waiting")
 
@@ -490,10 +548,10 @@ class BrigadeTest(unittest.TestCase):
                          self.same_text_refusal("T1", "waiting"))
         self.assertEqual(self.brigade("ticket", "add", "--summary", "  Fix the\tlogin\npage  ", ok=False),
                          self.same_text_refusal("T1", "waiting"))
-        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the login page")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] Fix the login page")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the loginpage"), "T2")
         self.assertEqual(self.brigade("ticket", "list"),
-                         "T1 waiting [user] Fix the login page\nT2 waiting [user] Fix the loginpage")
+                         "T1 waiting normal [user] Fix the login page\nT2 waiting normal [user] Fix the loginpage")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "fix  the LOGIN page", "--again"), "T3")
 
     def test_ticket_add_refuses_a_user_request_with_the_summary_of_an_assigned_ticket(self):
@@ -538,7 +596,7 @@ class BrigadeTest(unittest.TestCase):
                          "brigade: request A2 is already T1; nothing added")
         self.assertEqual(self.brigade("ticket", "add", "--summary", "Fix the login page", "--source", "github", "--again", ok=False),
                          "brigade: no coordinator owns intake from github; the one that reads it runs set --intake github")
-        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user (request A2)] Fix the login page #12")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user (request A2)] Fix the login page #12")
 
     def test_the_skill_quotes_the_same_summary_refusal_ticket_add_prints(self):
         self.open()
@@ -570,9 +628,9 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued", "--sha", "def", ok=False),
                          "brigade: only reviewed work lands: D1 has no review verdict for def")
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, waiting to land: 1")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, waiting to land: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
-        self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done [user] s")
+        self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done normal [user] s")
 
     def test_send_back_blocks_landing(self):
         self.open()
@@ -817,7 +875,7 @@ class BrigadeTest(unittest.TestCase):
             f"T4 added from perf/reports/D1.md#3: {third}",
         ])
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1],
-                         f"T4 waiting [report] {third} perf/reports/D1.md#3")
+                         f"T4 waiting low [report] {third} perf/reports/D1.md#3")
         self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["summary"], first)
         self.assertIn(f"\tticket\tT4\twaiting\t{third}\n", (self.at / "log.tsv").read_text())
         before = (self.at / "rail.tsv").read_bytes()
@@ -1096,10 +1154,10 @@ class BrigadeTest(unittest.TestCase):
             "T3 added from perf/reports/D1.md#3: Other thing.",
         ])
 
-    def test_from_report_drops_a_list_item_with_no_text(self):
+    def test_from_report_dry_run_prints_a_list_item_with_no_text_as_not_filed(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- One thing.\n", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: One thing.")
+                         "would add from perf/reports/D1.md#1: One thing.\nnot filed, list item with no text")
 
     def test_from_report_takes_the_report_by_name_or_by_a_path_into_this_store(self):
         self.fired_bug_fix()
@@ -1513,7 +1571,7 @@ class BrigadeTest(unittest.TestCase):
         env = os.environ | {"COLUMNS": "200"}
         result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("status              the thread line first, then counts, then reports to, mode, and owner when present", result.stdout)
+        self.assertIn("status              the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present", result.stdout)
         self.assertNotIn("one line of counts", result.stdout)
 
     def test_status_and_walk_speak_plain_engineering_prose(self):
@@ -1522,7 +1580,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("ticket", "add", "--summary", "s")
         self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
         self.assertEqual(self.brigade("status"),
-                         "thread thread-1\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nowner thread-1@1")
+                         "thread thread-1\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner thread-1@1")
         self.assertEqual(self.brigade("walk"), "\n".join([
             f"{_shown_root(self.project)}: no landing contract",
             "  Perf (reports milestones): waiting tickets: 1, decisions for you: 1",
@@ -1536,11 +1594,11 @@ class BrigadeTest(unittest.TestCase):
     def test_status_without_a_contract_ignores_a_stored_landing_field(self):
         self.open()
         self.assertNotIn("landing", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         meta = json.loads((self.at / "restaurant.json").read_text())
         meta["landing"] = "merge"
         (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         walked = self.brigade("walk")
         self.assertEqual(walked.splitlines()[0], f"{_shown_root(self.project)}: no landing contract")
         self.assertNotIn("lands by", walked)
@@ -1576,7 +1634,7 @@ class BrigadeTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
             self.land("mode", "merge")
-            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge")
+            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
             header = self.brigade("walk").splitlines()[0]
             self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
             self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
@@ -1706,23 +1764,23 @@ class BrigadeTest(unittest.TestCase):
 
     def test_watch_reports_running_finished_and_overdue_work(self):
         self.open()
-        self.assertEqual(self.brigade("watch"), "no work in progress")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
         self.fire_one(timebox="30")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 30m (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 30m (thread thread-9)")
         log = self.at / "log.tsv"
         log.write_text(log.read_text().replace(f"{__import__('datetime').date.today().year}-", "2020-"))
         self.assertIn("D1: over its 30m timebox", self.brigade("watch"))
         (self.at / "reports").mkdir()
         (self.at / "reports/D1.md").write_text("done")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-9)")
         self.assertEqual(self.brigade("dish", "D1", "--reported"), "D1 in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
         self.brigade("dish", "D1", "--state", "sent-back")
         self.brigade("dish", "D1", "--state", "in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in progress with no worker thread; launch a fresh worker")
         self.brigade("dish", "D1", "--thread", "thread-10")
         (self.at / "reports/D1.md").write_text("second attempt")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-10)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-10)")
 
     def test_a_send_back_clears_the_worker_and_refuses_the_old_thread(self):
         self.open()
@@ -1741,7 +1799,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--state", "sent-back")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")
-        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in progress with no worker thread; launch a fresh worker")
         self.assertEqual(self.brigade("dish", "D1", "--thread", "thread-9", ok=False),
                          "brigade: thread thread-9 is an earlier attempt of D1; a send-back launches a fresh worker")
         self.assertEqual(self.brigade("dish", "D1", "--thread", "thread-10", ok=False),
@@ -1758,24 +1816,24 @@ class BrigadeTest(unittest.TestCase):
         report = self.at / "reports" / "D1.md"
         report.parent.mkdir()
         report.write_text("partial from the overdue worker")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-9)")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker"), "D1 in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread fresh-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (thread fresh-worker)")
         report.write_text("partial from the fresh worker")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread fresh-worker)")
         self.brigade("dish", "D1", "--timebox", "90", "--task", "t-2")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread fresh-worker)")
         self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread fresh-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread fresh-worker)")
         self.brigade("dish", "D1", "--reported")
-        self.assertEqual(self.brigade("watch"), "D1: report written 0m ago; review it even if the worker's run is still open (thread fresh-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 0m ago; review it even if the worker's run is still open (thread fresh-worker)")
         self.brigade("dish", "D1", "--thread", "worker-3")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 90m (thread worker-3)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 90m (thread worker-3)")
         self.assertEqual(self.brigade("dish", "D1", "--thread", "thread-9", ok=False),
                          "brigade: thread thread-9 is an earlier attempt of D1; a send-back launches a fresh worker")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "worker-3")
         report.write_text("partial from worker-3")
-        self.assertEqual(self.brigade("watch"), "D1: report written, no report-back (thread worker-3)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread worker-3)")
 
     def test_an_idle_replacement_with_an_earlier_report_reaches_the_nudge(self):
         self.open()
@@ -1786,7 +1844,7 @@ class BrigadeTest(unittest.TestCase):
         report.parent.mkdir()
         report.write_text("report from the replaced worker")
         self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker")
-        line = self.brigade("watch")
+        line = self.brigade("watch").splitlines()[1]
         text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
         section = text.split("## Liveness check", 1)[1].split("\n## ", 1)[0]
         step = next(row for row in section.splitlines() if row.startswith("5. "))
@@ -1816,7 +1874,7 @@ class BrigadeTest(unittest.TestCase):
                              "D1 (lease L1 held by perf/D1)")
             self.assertIn("nothing fired: paths overlap L1 held by perf/D1",
                           self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "s", "--paths", "src/x.py", ok=False))
-            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] two blocked: lease")
+            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] two blocked: lease")
             self.brigade("set", "--thread", "thread-coord")
             text = self.brigade("brief", "D1", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "refs/landing/lane")
             self.assertIn("leased to you as L1: src,changes/perf%2Fd1.md.", text)
@@ -1857,12 +1915,12 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
         self.assertEqual(calls.read_text().splitlines(),
                          ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, in progress: 1")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, in progress: 1\nworkers: 1 of 2 running, 1 idle, auto-start: normal")
 
     def test_tabs_and_newlines_in_input_cannot_break_a_table(self):
         self.open()
         self.brigade("ticket", "add", "--summary", "line one\nline\ttwo")
-        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] line one line two")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] line one line two")
 
     def test_commands_outside_a_restaurant_fail_with_the_fix(self):
         self.assertIn("run brigade.py open", self.brigade("status", ok=False))
@@ -1887,7 +1945,7 @@ class BrigadeTest(unittest.TestCase):
         meta = json.loads((self.at / "restaurant.json").read_text())
         self.assertEqual(meta["reporting"], "milestones")
         self.assertNotIn("landing", meta)
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
                                       "--reporting", "every-turn"), f"exists {self.at}")
@@ -1908,7 +1966,7 @@ class BrigadeTest(unittest.TestCase):
         self.open()
         self.brigade("set", "--reporting", "every-turn")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "every-turn")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: every-turn, no landing contract")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: every-turn, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         self.brigade("set", "--reporting", "digest")
         before = (self.at / "restaurant.json").read_text()
         error = self.brigade("set", "--reporting", "hourly", ok=False)
@@ -2047,7 +2105,7 @@ class BrigadeTest(unittest.TestCase):
         del meta["reporting"]
         (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
 
@@ -2064,7 +2122,7 @@ class BrigadeTest(unittest.TestCase):
         report.write_text("done")
         self.brigade("dish", "D1", "--reported")
         self.assertEqual(self.brigade("watch"),
-                         "D1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
+                         "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
         start = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(timespec="microseconds")
         log = self.at / "log.tsv"
         lines = log.read_text().splitlines()
@@ -2078,11 +2136,11 @@ class BrigadeTest(unittest.TestCase):
         log.write_text("\n".join(rewritten) + "\n")
         moment = datetime.now(timezone.utc) - timedelta(minutes=12, seconds=30)
         os.utime(report, (moment.timestamp(), moment.timestamp()))
-        self.assertEqual(self.brigade("watch"), "D1: reported 12m ago, not in review; read the thread (thread thread-9)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: reported 12m ago, not in review; read the thread (thread thread-9)")
         moment = datetime.now(timezone.utc) - timedelta(minutes=10, seconds=10)
         os.utime(report, (moment.timestamp(), moment.timestamp()))
         self.assertEqual(self.brigade("watch"),
-                         "D1: report written 10m ago; review it even if the worker's run is still open (thread thread-9)")
+                         "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 10m ago; review it even if the worker's run is still open (thread thread-9)")
 
     def test_hang_records_one_open_run_per_attempt(self):
         self.open()
@@ -2161,7 +2219,7 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "fix",
                                           "--paths", "a.py"), "D1 (lease L1 held by perf/D1)")
             self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
-            self.assertEqual(self.brigade("ticket", "list"), f"T1 waiting [github] bug {ref}")
+            self.assertEqual(self.brigade("ticket", "list"), f"T1 waiting normal [github] bug {ref}")
             self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["dish"], "")
             self.assertEqual([(row["kind"], row["id"], row["state"], row["note"]) for row in self.log_rows()][-2:],
                              [("dish", "D1", "dropped", "fix (released L1)"),
@@ -2184,7 +2242,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b")
         self.brigade("ticket", "set", "T2", "--state", "done")
         self.assertEqual(self.brigade("dish", "D2", "--state", "dropped"), "D2 dropped")
-        self.assertEqual(self.brigade("ticket", "list"), "T1 assigned [user] one\nT2 done [user] two")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 assigned normal [user] one\nT2 done normal [user] two")
 
     def test_blocked_counts_follow_the_block_that_holds_now(self):
         from unittest import mock
@@ -2195,14 +2253,14 @@ class BrigadeTest(unittest.TestCase):
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
             self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
                          "--paths", "src", ok=False)
-            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the gate blocked: lease")
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] Fix the gate blocked: lease")
             self.assertIn("Perf (reports milestones): waiting tickets: 1 (1 blocked)", self.brigade("walk"))
             self.land("lease", "release", "L1")
-            self.assertTrue(self.brigade("watch").startswith("T1: unblocked; run fire"))
-            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the gate")
+            self.assertTrue(self.brigade("watch").splitlines()[1].startswith("T1: unblocked; run fire"))
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] Fix the gate")
             self.assertIn("Perf (reports milestones): waiting tickets: 1\n", self.brigade("walk") + "\n")
             self.land("lease", "claim", "--holder", "engine/D2", "--paths", "src")
-            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the gate blocked: lease")
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] Fix the gate blocked: lease")
 
     def test_fire_and_watch_name_the_worker_cap_first_when_both_caps_hold(self):
         from unittest import mock
@@ -2216,12 +2274,12 @@ class BrigadeTest(unittest.TestCase):
                                    "--paths", "docs", ok=False)
             self.assertEqual(refused, "brigade: nothing fired: 1 of 1 workers running")
             self.assertEqual(self.brigade("watch").splitlines()[-1], "T2: waiting for a worker (1 of 1 running)")
-            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] two blocked: workers")
+            self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] two blocked: workers")
             self.brigade("set", "--workers", "2")
             self.assertEqual(self.brigade("watch").splitlines()[-1],
                              "T2: waiting for room in the repository (1 of 1 changes in flight)")
             self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"),
-                             "T2 waiting [user] two blocked: repository")
+                             "T2 waiting normal [user] two blocked: repository")
 
     def renamed(self, hook=None):
         """Fire D1 on perf/d1, then run dish D1 --branch perf/d1-r2 in this process, calling hook at its lease list."""
@@ -2283,7 +2341,7 @@ class BrigadeTest(unittest.TestCase):
             refused = self.brigade("dish", "D1", "--lease", "L2", "--paths", "src", ok=False)
             self.assertEqual(refused, "brigade: D1 is dropped; it holds no lease")
             self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src"), "L2")
-            self.assertEqual(self.brigade("watch"), "no work in progress")
+            self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
 
     def test_a_branch_rename_by_a_replaced_owner_claims_nothing(self):
         from unittest import mock
@@ -2548,18 +2606,18 @@ class BrigadeTest(unittest.TestCase):
             refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
                                    "--paths", "src", "--timebox", "60", ok=False)
             self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
-            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] Fix the gate blocked: lease")
-            self.assertEqual(self.brigade("watch"), "T1: waiting on L1 (engine/D1)")
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] Fix the gate blocked: lease")
+            self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting on L1 (engine/D1)")
             self.land("lease", "release", "L1")
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
-            self.assertEqual(self.brigade("watch"), "T1: waiting on L2 (engine/D1)")
+            self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting on L2 (engine/D1)")
             self.land("lease", "release", "L2")
             line = "T1: unblocked; run fire --tickets=T1 --station=bug-fix '--summary=Fix the gate' --paths=src --timebox=60"
-            self.assertEqual(self.brigade("watch"), line)
+            self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + line)
             started = self.brigade(*shlex.split(line.split("run ", 1)[1]))
             self.assertEqual(started, "D1 (lease L3 held by perf/D1)")
             self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src,changes/perf%2Fd1.md")
-            self.assertEqual(self.brigade("ticket", "list"), "T1 assigned [user] Fix the gate")
+            self.assertEqual(self.brigade("ticket", "list"), "T1 assigned normal [user] Fix the gate")
 
     def test_an_unblocked_command_round_trips_through_bash(self):
         from unittest import mock
@@ -2701,7 +2759,8 @@ class BrigadeTest(unittest.TestCase):
                                   "--store", str(self.store), "--at", str(self.at), "watch"],
                                  capture_output=True, text=True)
         self.assertEqual(watched.returncode, 0, watched.stderr)
-        self.assertEqual(watched.stdout.strip(), "T1: waiting on the landing queue (queue database is locked)")
+        self.assertEqual(watched.stdout.strip(),
+                         "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting on the landing queue (queue database is locked)")
 
     def test_a_repository_cap_refusal_prints_the_repository_line(self):
         from unittest import mock
@@ -2714,7 +2773,7 @@ class BrigadeTest(unittest.TestCase):
                                    "--paths", "src", ok=False)
             self.assertIn("nothing fired: repository at its cap: 1 of 1 changes in flight", refused)
             self.assertIn("blocked: repository", self.brigade("ticket", "list"))
-            self.assertEqual(self.brigade("watch"), "T1: waiting for room in the repository (1 of 1 changes in flight)")
+            self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting for room in the repository (1 of 1 changes in flight)")
 
     def test_the_worker_cap_defaults_to_two_and_a_later_fire_clears_the_block(self):
         self.open()
@@ -2726,7 +2785,7 @@ class BrigadeTest(unittest.TestCase):
         refused = self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "c", ok=False)
         self.assertIn("nothing fired: 2 of 2 workers running", refused)
         self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"),
-                         "T3 waiting [user] three blocked: workers")
+                         "T3 waiting normal [user] three blocked: workers")
         self.assertIn("T3: waiting for a worker (2 of 2 running)", self.brigade("watch"))
         self.brigade("set", "--workers", "3")
         self.assertEqual(self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "c"), "D3")
@@ -2872,7 +2931,7 @@ class BrigadeTest(unittest.TestCase):
         finally:
             watching.kill()
         self.assertEqual(watching.returncode, 0, err)
-        self.assertEqual(out.strip(), "T1: waiting on L1 (engine/D1)")
+        self.assertEqual(out.strip(), "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting on L1 (engine/D1)")
 
     def landing_env(self):
         from unittest import mock
@@ -2972,7 +3031,7 @@ class BrigadeTest(unittest.TestCase):
         self.land("lease", "renew", "L1", "--ttl-hours", "0.01")
         before = json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"]
         self.assertLess(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (no worker recorded)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (no worker recorded)")
         self.assertGreater(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
         self.assertGreater(json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"], before)
 
@@ -2981,11 +3040,12 @@ class BrigadeTest(unittest.TestCase):
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
         expired = self.lease_row(1)["expires"]
         self.assertEqual(self.brigade("watch").splitlines(),
-                         ["D1: running 0m of 60m (no worker recorded)",
+                         ["workers: 1 of 2 running, 1 idle, auto-start: normal",
+                          "D1: running 0m of 60m (no worker recorded)",
                           "D1: lease L1 expired; stop its worker, then run lease renew L1"])
         self.assertEqual(self.lease_row(1)["expires"], expired)
         self.assertEqual(self.land("lease", "renew", "L1"), "L1 renewed")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (no worker recorded)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (no worker recorded)")
 
     def test_re_admitting_an_expired_lease_names_the_holder_that_claimed_its_paths(self):
         self.started()
@@ -2999,20 +3059,20 @@ class BrigadeTest(unittest.TestCase):
         self.started()
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
         self.land("lease", "release", "L1")
-        self.assertEqual(self.brigade("watch"), "D1: lease L1 was released; claim again before submitting")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: lease L1 was released; claim again before submitting")
         before = (self.at / "restaurant.json").read_text()
         (Path(self.temporary.name) / "state").rename(Path(self.temporary.name) / "moved")
         self.assertEqual(self.brigade("watch"),
-                         f"D1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
+                         f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
 
     def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line_and_renew(self):
         self.started()
         verdict = ("pass", "record", "D1", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
-        steps = [(("dish", "D1", "--state", "in-review", "--sha", "abc1234"), "D1: in review"),
-                 ((*verdict, "send-back"), "D1: sent back"),
-                 ((*verdict, "blocked"), "D1: parked"),
-                 ((*verdict, "pass"), "D1: passed, not submitted")]
+        steps = [(("dish", "D1", "--state", "in-review", "--sha", "abc1234"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review"),
+                 ((*verdict, "send-back"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back"),
+                 ((*verdict, "blocked"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: parked"),
+                 ((*verdict, "pass"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")]
         for command, line in steps:
             self.brigade(*command)
             self.land("lease", "renew", "L1", "--ttl-hours", "0.01")
@@ -3041,14 +3101,14 @@ class BrigadeTest(unittest.TestCase):
     def test_the_third_send_back_refuses_another_fix_round(self):
         self.started()
         self.assertEqual(self.sent_back(2), "D1 sent-back")
-        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back")
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.send_back("a3"), "D1 sent-back; 3 send-backs, decision pending")
         before = tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "log.tsv", "86.tsv"))
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "w9", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "log.tsv", "86.tsv")), before)
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
 
@@ -3068,6 +3128,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual((self.at / "86.tsv").read_bytes(), table)
         self.assertEqual(self.brigade("watch").splitlines(), [
+            "workers: 0 of 2 running, 2 idle, auto-start: normal",
             self.PENDING,
             f"D1: open decision Q1: {self.ROUND_QUESTION} Findings: reports/D1-review-3.md.; "
             "launch no worker or verifier until 86 answer Q1",
@@ -3107,7 +3168,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"),
                          "Q1 still open; D1 stays held until 86 answer Q1 --answer 'known limits' or redesign or drop")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("watch").splitlines()[0], self.PENDING)
+        self.assertEqual(self.brigade("watch").splitlines()[1], self.PENDING)
 
     def round_decision_lifts_the_refusal(self, answer, stored):
         self.started()
@@ -3115,7 +3176,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", answer), "Q1 answered")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q1")["answer"], stored)
-        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
                          "brigade: D1 has 0 send-backs since its last pass or round decision; the decision opens at 3")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
@@ -3139,7 +3200,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.send_back("a6"), "D1 sent-back; 3 send-backs, decision pending")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["question"], self.ROUND_QUESTION)
 
@@ -3150,14 +3211,14 @@ class BrigadeTest(unittest.TestCase):
         self.started()
         self.assertEqual(self.sent_back(3), "D1 sent-back; 3 send-backs, decision pending")
         self.assertEqual(self.brigade(*self.PASS, "a3"), "D1 passed")
-        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")
         self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False),
                          "brigade: D1 is passed; brief a dish that is in progress or sent back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("passed"))
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("queued"))
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "bounce-worker"), "D1 in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread bounce-worker)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (thread bounce-worker)")
         self.assertEqual(self.send_back("a4"), "D1 sent-back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
                          "brigade: D1 has 1 send-back since its last pass or round decision; the decision opens at 3")
@@ -3173,25 +3234,25 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
         for sha in ("m1", "m2", "m3"):
             self.assertEqual(self.send_back(sha, "--late"), "D1: late send-back on record; D1 stays merged")
-        self.assertEqual(self.brigade("watch"), "no work in progress")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("merged"))
         self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "waiting"), "T1 waiting")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
         self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
                                       "--verifier", CLAUDE), "D2 sent-back")
-        self.assertEqual(self.brigade("watch"), "D2: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD2: sent back")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
 
     def test_a_dropped_item_owes_nothing_and_its_ticket_starts_a_new_count(self):
         self.started()
         self.sent_back(3)
         self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
-        self.assertEqual(self.brigade("watch"), "no work in progress")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("dropped"))
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
         self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
                                       "--verifier", CLAUDE), "D2 sent-back")
-        self.assertEqual(self.brigade("watch"), "D2: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD2: sent back")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
 
     def test_a_dropped_item_put_back_in_progress_owes_its_decision_again(self):
@@ -3199,7 +3260,7 @@ class BrigadeTest(unittest.TestCase):
         self.sent_back(3)
         self.brigade("dish", "D1", "--state", "dropped")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
-        self.assertEqual(self.brigade("watch").splitlines()[0], self.PENDING)
+        self.assertEqual(self.brigade("watch").splitlines()[1], self.PENDING)
         self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
@@ -3211,7 +3272,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.send_back("a0", "--late"),
                          "D1: late send-back on record; D1 stays in-progress; 3 send-backs, decision pending")
         self.passed("a3")
-        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.send_back("a4"), "D1 sent-back")
@@ -3223,11 +3284,11 @@ class BrigadeTest(unittest.TestCase):
         self.passed("a1")
         for sha in ("m1", "m2", "m3"):
             self.assertEqual(self.send_back(sha, "--late"), "D1: late send-back on record; D1 stays passed")
-        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("passed"))
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade("dish", "D1", "--thread", "bounce-worker", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "known limits"), "Q1 answered")
@@ -3243,33 +3304,33 @@ class BrigadeTest(unittest.TestCase):
         self.started()
         self.sent_back(3)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         before = self.unchanged()
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker", ok=False),
                          self.NO_FIX_ROUND)
         self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade("dish", "D1", "--task", "fresh-task", ok=False), self.NO_FIX_ROUND)
         self.unchanged(before)
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
 
     def test_watch_names_the_pending_decision_in_review_and_parked(self):
         self.started()
         self.sent_back(3)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a3", "--verdict", "blocked", "--author", CODEX,
                                       "--verifier", CLAUDE), "D1 blocked")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
 
     def test_a_late_third_send_back_holds_an_item_in_progress(self):
         self.started()
         self.sent_back(2)
         self.brigade("dish", "D1", "--state", "in-progress", "--thread", "w3")
-        self.assertEqual(self.brigade("watch"), "D1: running 0m of 60m (thread w3)")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (thread w3)")
         self.assertEqual(self.send_back("a0", "--late"),
                          "D1: late send-back on record; D1 stays in-progress; 3 send-backs, decision pending")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         before = self.unchanged()
         self.assertEqual(self.brigade("dish", "D1", "--thread", "fresh-worker", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(self.brigade("dish", "D1", "--task", "fresh-task", ok=False), self.NO_FIX_ROUND)
@@ -3277,14 +3338,14 @@ class BrigadeTest(unittest.TestCase):
         self.unchanged(before)
         self.assertEqual(self.brigade("dish", "D1", "--thread", "w3", "--reported"), "D1 in-progress")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
 
     def test_a_late_send_back_below_the_budget_names_no_decision(self):
         self.started()
         self.sent_back(1)
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.send_back("a0", "--late"), "D1: late send-back on record; D1 stays in-progress")
-        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in progress with no worker thread; launch a fresh worker")
         self.assertEqual(self.brigade("dish", "D1", "--thread", "w2"), "D1 in-progress")
 
     FIRE_AGAIN = ("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fourth fix", "--thread", "fresh-worker")
@@ -3299,7 +3360,7 @@ class BrigadeTest(unittest.TestCase):
         before = self.unchanged()
         self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
         self.unchanged(before)
-        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting [user] one")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] one")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q1")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN, ok=False), self.NO_FIRE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
@@ -3346,7 +3407,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "redesign"), "Q1 answered")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q1")["kind"], "")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["kind"], "round-budget")
         self.assertEqual(self.brigade("86", "answer", "Q2", "--answer", "redesign"), "Q2 answered")
@@ -3363,7 +3424,7 @@ class BrigadeTest(unittest.TestCase):
         row = self.table_row(self.at, "86.tsv", "Q1")
         self.assertGreater(row["answered"], self.pass_rows()[-1][0])
         self.assertGreater(row["answered"], row["at"])
-        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.send_back("missed7", "--late"), "D1: late send-back on record; D1 stays in-progress")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
@@ -3402,7 +3463,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
         self.assertNotEqual(self.table_row(self.at, "86.tsv", "Q1")["answered"], "")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
-        self.assertEqual(self.brigade("watch"), self.PENDING)
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade(*self.ROUND_BUDGET), "Q2")
 
     def test_member_send_backs_do_not_count_toward_the_round_budget(self):
@@ -3412,7 +3473,7 @@ class BrigadeTest(unittest.TestCase):
             self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a2", "--verdict", "send-back", "--author", CODEX,
                                           "--verifier", seat, "--member"),
                              "D1: member send-back on record; D1 stays sent-back")
-        self.assertEqual(self.brigade("watch"), "D1: sent back")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
                          "brigade: D1 has 2 send-backs since its last pass or round decision; the decision opens at 3")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
@@ -3425,7 +3486,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertLess(self.lease_row(1)["expires"], (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
         self.assertEqual(self.park_item(), "Q1")
         before = json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"]
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertGreater(self.lease_row(1)["expires"],
                            (datetime.now(timezone.utc) + timedelta(hours=5.9)).isoformat())
         self.assertGreater(json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"], before)
@@ -3435,19 +3496,20 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.park_item(), "Q1")
         self.brigade("dish", "D1", "--state", "sent-back")
         self.brigade("dish", "D1", "--state", "in-progress")
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_an_open_item_decision_replaces_the_in_review_line(self):
         self.started()
         self.assertEqual(self.park_item(), "Q1")
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_an_expired_lease_under_a_held_item_follows_the_decision_line(self):
         self.started()
         self.assertEqual(self.park_item(), "Q1")
         self.land("lease", "renew", "L1", "--ttl-hours", "0")
         self.assertEqual(self.brigade("watch").splitlines(), [
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
             HELD_LINE,
             "D1: lease L1 expired; stop its worker, then run lease renew L1",
         ])
@@ -3457,11 +3519,12 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--timebox", "30")
         self.backdate_attempt(45)
         self.park_item()
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
         self.assertRegex(
             self.brigade("watch"),
-            r"^D1: over its 30m timebox at \d+m with no report; read its thread and decide \(no worker recorded\)$",
+            r"^workers: 1 of 2 running, 1 idle, auto-start: normal\n"
+            r"D1: over its 30m timebox at \d+m with no report; read its thread and decide \(no worker recorded\)$",
         )
 
     def test_answering_an_item_decision_restores_the_no_worker_line(self):
@@ -3469,17 +3532,17 @@ class BrigadeTest(unittest.TestCase):
         self.park_item()
         self.brigade("dish", "D1", "--state", "sent-back")
         self.brigade("dish", "D1", "--state", "in-progress")
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
-        self.assertEqual(self.brigade("watch"), "D1: in progress with no worker thread; launch a fresh worker")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in progress with no worker thread; launch a fresh worker")
 
     def test_answering_an_item_decision_restores_the_in_review_line(self):
         self.started()
         self.park_item()
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
-        self.assertEqual(self.brigade("watch"), "D1: in review")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
 
     def test_86_list_names_the_item_and_keeps_a_blank_dish_in_the_old_format(self):
         self.started()
@@ -3495,7 +3558,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
         self.assertEqual(self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no"), "Q1")
         self.assertEqual(self.brigade("86", "list"), "Q1: Ship it? Options: yes, no. Default: no.")
-        self.assertEqual(self.brigade("watch"), "D1: in review")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
 
     def test_a_second_86_add_for_a_held_item_prints_the_open_id_and_appends_nothing(self):
         self.started()
@@ -3508,8 +3571,8 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.park_item(other), "Q1")
         self.assertEqual((self.at / "86.tsv").read_text(), table)
         self.assertEqual([row for row in self.log_rows() if row["kind"] == "decision"], decisions)
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_keep_parked_leaves_the_item_decision_open_and_writes_nothing(self):
         self.started()
@@ -3517,7 +3580,7 @@ class BrigadeTest(unittest.TestCase):
         before = self.store_bytes()
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
         self.assertEqual(self.store_bytes(), before)
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_a_relayed_keep_parked_leaves_the_item_held(self):
         self.started()
@@ -3528,7 +3591,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("inbox", "take"), "A1: answer perf Q1: keep parked")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), STILL_OPEN)
         self.assertEqual(self.brigade("inbox", "done", "A1"), "A1 done")
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertEqual((self.at / "86.tsv").read_bytes(), before)
 
     def test_a_replayed_keep_parked_relay_logs_inbox_done_once(self):
@@ -3552,7 +3615,7 @@ class BrigadeTest(unittest.TestCase):
     def test_moved_closes_an_item_decision_and_a_later_answer_writes_nothing(self):
         self.started()
         ordinary = self.brigade("watch")
-        self.assertEqual(ordinary, "D1: running 0m of 60m (no worker recorded)")
+        self.assertEqual(ordinary, "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (no worker recorded)")
         self.park_item()
         opened = [row for row in self.log_rows() if row["kind"] == "decision"]
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "Moved."), "Q1 answered")
@@ -3583,7 +3646,7 @@ class BrigadeTest(unittest.TestCase):
         before = self.store_bytes()
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "I moved it"), STILL_OPEN)
         self.assertEqual(self.store_bytes(), before)
-        self.assertEqual(self.brigade("watch"), HELD_LINE)
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_an_item_decision_needs_a_default_and_a_closing_option(self):
         self.started()
@@ -3639,7 +3702,7 @@ class BrigadeTest(unittest.TestCase):
                                       "--options", "yes", "--default", "no"), "Q2")
         self.assertEqual(self.brigade("86", "answer", "Q2", "--answer", "whatever"), "Q2 answered")
         self.assertEqual(self.table_row(self.at, "86.tsv", "Q2")["answer"], "whatever")
-        self.assertEqual(self.brigade("watch"), "D1: in review")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
 
     def test_a_legacy_item_row_with_no_closing_option_closes_on_any_answer(self):
         self.started()
@@ -3651,7 +3714,7 @@ class BrigadeTest(unittest.TestCase):
         path.write_text(header + "\n" + row + "\n")
         self.assertEqual(
             self.brigade("watch"),
-            f"D1: open decision Q1: {question}; launch no worker or verifier until 86 answer Q1",
+            f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: open decision Q1: {question}; launch no worker or verifier until 86 answer Q1",
         )
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), "Q1 answered")
         stored = self.table_row(self.at, "86.tsv", "Q1")
@@ -3663,7 +3726,7 @@ class BrigadeTest(unittest.TestCase):
         sha = self.worker_commit("perf/d1", {"README.md": "fast\n"})
         self.passed(sha)
         self.assertEqual(self.submit(sha), "E1")
-        self.assertEqual(self.brigade("watch"), "D1: E1 already submitted; mark it queued")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: E1 already submitted; mark it queued")
 
     def test_a_passed_item_whose_entry_landed_is_not_told_to_claim_again(self):
         self.started()
@@ -3671,7 +3734,7 @@ class BrigadeTest(unittest.TestCase):
         self.passed(sha)
         self.submit(sha)
         self.land("land")
-        self.assertEqual(self.brigade("watch"), "D1: E1 already submitted; mark it queued")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: E1 already submitted; mark it queued")
 
     def test_dropping_a_queued_item_whose_entry_bounced_releases_its_lease(self):
         self.started("--check", "test ! -e BROKEN", paths="README.md,BROKEN")
@@ -3691,11 +3754,11 @@ class BrigadeTest(unittest.TestCase):
         self.passed(sha)
         self.submit(sha)
         self.brigade("dish", "D1", "--state", "queued")
-        self.assertEqual(self.brigade("watch"), "D1: E1 queued")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: E1 queued")
         self.land("land")
         landed = subprocess.run(["git", "rev-parse", "refs/landing/lane"], cwd=self.project, capture_output=True,
                                 text=True, check=True).stdout.strip()
-        self.assertEqual(self.brigade("watch"), f"D1: landed as E1 ({landed[:12]}); mark it merged")
+        self.assertEqual(self.brigade("watch"), f"workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: landed as E1 ({landed[:12]}); mark it merged")
 
     def test_an_old_bounced_entry_is_ignored_for_the_current_sha(self):
         self.started("--check", "test ! -e BROKEN", paths="README.md,BROKEN")
@@ -3704,7 +3767,7 @@ class BrigadeTest(unittest.TestCase):
         self.submit(old)
         self.brigade("dish", "D1", "--state", "queued")
         self.land("land")
-        self.assertRegex(self.brigade("watch"), r"^D1: E1 bounced: checks failed")
+        self.assertRegex(self.brigade("watch").splitlines()[1], r"^D1: E1 bounced: checks failed")
         self.brigade("dish", "D1", "--thread", "worker-1")
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")
@@ -3716,7 +3779,7 @@ class BrigadeTest(unittest.TestCase):
         self.passed(new)
         self.assertEqual(self.submit(new), "E2")
         self.brigade("dish", "D1", "--state", "queued")
-        self.assertEqual(self.brigade("watch"), "D1: E2 queued")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: E2 queued")
 
     def test_an_old_bounce_at_a_sha_sharing_the_items_prefix_is_ignored(self):
         self.started()
@@ -3728,7 +3791,7 @@ class BrigadeTest(unittest.TestCase):
             db.execute("UPDATE entry SET sha = ?, state = 'bounced', note = 'old different SHA' WHERE id = 1",
                        (self.same_prefix(sha),))
             db.execute("UPDATE lease SET state = 'active' WHERE id = 1")
-        self.assertEqual(self.brigade("watch"), "D1: passed, not submitted")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")
 
     def test_a_later_bounce_sharing_the_prefix_does_not_hide_the_queued_entry(self):
         self.started()
@@ -3739,7 +3802,7 @@ class BrigadeTest(unittest.TestCase):
         self.seed_entry(self.same_prefix(sha), "bounced", "other SHA")
         self.assertEqual(self.land("status", "--holder", "perf/D1").splitlines()[1],
                          f"E2 bounced (perf/D1, {sha[:12]}): other SHA")
-        self.assertEqual(self.brigade("watch"), "D1: E1 queued")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: E1 queued")
 
     def test_a_drop_waits_for_the_worker_and_then_releases_the_lease(self):
         self.started()
@@ -3867,14 +3930,14 @@ class BrigadeTest(unittest.TestCase):
                       "to light mode.\n", (self.at / "menu.md").read_text())
         self.brigade("set", "--thread", "c1")
         self.assertEqual(self.brigade("status"),
-                         "thread c1\nreporting: milestones, no landing contract\nmode light\nowner c1@1")
+                         "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nmode light\nowner c1@1")
         self.assertIn("  Perf (reports milestones, mode light): nothing on record", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
                          f"exists {self.at}\nthread c1 already recorded\nmode stays light; change it with set --mode")
         self.assertEqual(json.loads(self.brigade("set", "--mode", "full"))["mode"], "full")
         self.assertEqual(self.brigade("set", "--mode", "fast", ok=False), 'brigade: --mode takes full, light, or ""')
         self.assertNotIn("mode", json.loads(self.brigade("set", "--mode", "")))
-        self.assertEqual(self.brigade("status"), "thread c1\nreporting: milestones, no landing contract\nowner c1@1")
+        self.assertEqual(self.brigade("status"), "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner c1@1")
         self.assertIn("  Perf (reports milestones): nothing on record", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
                          f"exists {self.at}\nthread c1 already recorded\nmode stays unset; change it with set --mode")
@@ -3902,7 +3965,7 @@ class BrigadeTest(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual((result.returncode, result.stderr.strip()), (1, message), args)
         self.assertEqual((self.at / "log.tsv").read_bytes(), before)
-        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting [user] t")
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] t")
 
     def test_dish_mode_full_twice_keeps_the_first_reason(self):
         self.fired_bug_fix()
@@ -4268,6 +4331,703 @@ class BrigadeTest(unittest.TestCase):
         self.assertFalse((self.at / "briefs/D1.md").exists())
 
 
+    def cells(self, ident):
+        row = self.table_row(self.at, "rail.tsv", ident)
+        return row["priority"], row["paths"], row["decision"]
+
+    def old_rail(self, stamp="2026-10-01T00:00:00+00:00"):
+        (self.at / "rail.tsv").write_text(
+            "id\tat\tstate\tsource\tref\tdish\tsummary\n"
+            f"T1\t{stamp}\twaiting\tuser\t\t\tFix login\n"
+            f"T2\t{stamp}\twaiting\treport\tperf/reports/D1.md#1\t\tTidy the guide\n"
+            f"T3\t{stamp}\twaiting\tupstream\tabc123\t\tSync upstream\n")
+
+    def test_ticket_list_prints_the_priority_that_ticket_add_or_ticket_set_recorded(self):
+        self.open()
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "a", "--priority", "urgent"), "T1")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "b", "--priority", "low"), "T2")
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "c", "--priority", "normal"), "T3")
+        self.assertEqual(self.brigade("ticket", "list"),
+                         "T1 waiting urgent [user] a\nT2 waiting low [user] b\nT3 waiting normal [user] c")
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--priority", "low"), "T1 priority low")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--priority", "urgent"), "T2 priority urgent")
+        self.assertEqual(self.brigade("ticket", "list"),
+                         "T1 waiting low [user] a\nT2 waiting urgent [user] b\nT3 waiting normal [user] c")
+        self.assertEqual([self.cells(ident)[0] for ident in ("T1", "T2", "T3")], ["low", "urgent", "normal"])
+
+    def test_ticket_add_and_ticket_set_refuse_a_priority_outside_urgent_normal_and_low(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a")
+        choices = ("urgent", "normal", "low")
+        self.assert_refused_choice(
+            self.brigade("ticket", "add", "--summary", "b", "--priority", "high", ok=False), "--priority", "high", choices)
+        self.assert_refused_choice(
+            self.brigade("ticket", "set", "T1", "--priority", "high", ok=False), "--priority", "high", choices)
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal [user] a")
+
+    def test_a_ticket_with_an_empty_priority_cell_reads_urgent_from_upstream_low_from_report_and_normal_from_other_sources(self):
+        self.open()
+        self.brigade("set", "--intake", "upstream,report,github")
+        self.brigade("ticket", "add", "--summary", "a", "--source", "upstream")
+        self.brigade("ticket", "add", "--summary", "b", "--source", "report")
+        self.brigade("ticket", "add", "--summary", "c", "--source", "github")
+        self.brigade("ticket", "add", "--summary", "d")
+        self.brigade("ticket", "add", "--summary", "e", "--source", "upstream", "--request", "A1")
+        self.assertEqual(self.brigade("ticket", "list").splitlines(), [
+            "T1 waiting urgent [upstream] a",
+            "T2 waiting low [report] b",
+            "T3 waiting normal [github] c",
+            "T4 waiting normal [user] d",
+            "T5 waiting urgent [upstream (request A1)] e",
+        ])
+        self.assertEqual([self.cells(f"T{number}") for number in range(1, 6)], [("", "", "")] * 5)
+
+    def test_a_recorded_priority_wins_over_the_default_of_the_source(self):
+        self.open()
+        self.brigade("set", "--intake", "upstream")
+        self.brigade("ticket", "add", "--summary", "a", "--source", "upstream", "--priority", "low")
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting low [upstream] a")
+
+    def test_ticket_list_reads_rail_rows_written_before_the_priority_paths_and_decision_cells(self):
+        self.open()
+        self.old_rail()
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.brigade("ticket", "list").splitlines(), [
+            "T1 waiting normal [user] Fix login",
+            "T2 waiting low [report] Tidy the guide perf/reports/D1.md#1",
+            "T3 waiting urgent [upstream] Sync upstream abc123",
+        ])
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+        self.assertEqual(self.brigade("ticket", "add", "--summary", "New", "--priority", "urgent", "--paths", "a.txt"), "T4")
+        self.assertEqual((self.at / "rail.tsv").read_bytes()[:len(before)], before)
+        self.assertEqual(self.brigade("ticket", "list").splitlines()[-1], "T4 waiting urgent [user] New")
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[-1].split("\t")[5:], ["", "New", "urgent", "a.txt", ""])
+
+    def test_a_rail_row_with_six_fields_or_eleven_is_malformed(self):
+        self.open()
+        stamp = "2026-10-01T00:00:00+00:00"
+        for fields in (["T1", stamp, "waiting", "user", "", ""], ["T1", stamp, "waiting", "user", "", "", "s", "", "", "", ""]):
+            (self.at / "rail.tsv").write_text("id\n" + "\t".join(fields) + "\n")
+            self.assertEqual(self.brigade("ticket", "list", ok=False),
+                             "brigade: bridge-kit/perf/rail.tsv line 2 is malformed; fix or remove it")
+
+    def test_a_priority_paths_or_decision_change_adds_no_log_row_and_keeps_a_blocked_ticket_blocked(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.brigade("ticket", "add", "--summary", "one")
+        self.brigade("ticket", "add", "--summary", "two")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "one")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "two", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] two blocked: workers")
+        before = ((self.at / "log.tsv").read_bytes(), (self.at / "restaurant.json").read_bytes())
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--priority", "urgent"), "T2 priority urgent")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--paths", "a.txt"), "T2 paths a.txt")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--decision"), "T2 decision")
+        self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "restaurant.json").read_bytes()), before)
+        self.assertEqual(self.cells("T2"), ("urgent", "a.txt", "yes"))
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting urgent [user] two blocked: workers")
+
+    def test_ticket_set_prints_each_given_change_in_one_line_and_refuses_a_call_with_none(self):
+        self.open()
+        for summary in ("a", "b", "c"):
+            self.brigade("ticket", "add", "--summary", summary)
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "dropped"), "T1 dropped")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--state", "dropped", "--priority", "normal"),
+                         "T2 dropped; priority normal")
+        self.assertEqual(self.brigade("ticket", "set", "T3", "--decision", "--paths", "b,a", "--priority", "low",
+                                      "--state", "waiting"), "T3 waiting; priority low; paths a,b; decision")
+        self.assertEqual(self.cells("T3"), ("low", "a,b", "yes"))
+        self.assertEqual(self.brigade("ticket", "set", "T3", "--paths", "", "--no-decision"), "T3 no paths; no decision")
+        self.assertEqual(self.cells("T3"), ("low", "", ""))
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "set", "T3", ok=False),
+                         "brigade: ticket set needs --state, --priority, --paths, --decision, or --no-decision")
+        self.assertEqual(self.brigade("ticket", "set", "T9", ok=False), "brigade: no T9 in rail.tsv")
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_add_and_ticket_set_record_paths_sorted_normalized_and_without_repeats(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--paths", "src/b.py, docs/,src/b.py,./a.txt")
+        self.assertEqual(self.cells("T1"), ("", "a.txt,docs,src/b.py", ""))
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--paths", "x\\y,/abs/z,new/file.py"),
+                         "T1 paths abs/z,new/file.py,x/y")
+        self.assertEqual(self.cells("T1"), ("", "abs/z,new/file.py,x/y", ""))
+
+    def test_ticket_set_with_empty_paths_clears_the_recorded_paths(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--paths", "a.txt")
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--paths", ""), "T1 no paths")
+        self.assertEqual(self.cells("T1"), ("", "", ""))
+
+    def test_ticket_add_and_ticket_set_refuse_a_path_that_is_empty_or_the_repository_or_outside_it(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--paths", "a.txt")
+        before = self.store_files()
+        for value, part in (("..", ".."), ("src,../x", "../x"), ("a,,b", ""), (".", "."), ("/", "/"), ("a/../..", "a/../.."),
+                            (" ", " "), ("a, ./", " ./")):
+            refusal = f"brigade: --paths takes files or directories inside the repository, got {part!r}"
+            self.assertEqual(self.brigade("ticket", "add", "--summary", "b", "--paths", value, ok=False), refusal, value)
+            self.assertEqual(self.brigade("ticket", "set", "T1", "--paths", value, ok=False), refusal, value)
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_add_and_ticket_set_record_and_clear_the_decision_cell(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--decision")
+        self.brigade("ticket", "add", "--summary", "b")
+        self.assertEqual([self.cells("T1"), self.cells("T2")], [("", "", "yes"), ("", "", "")])
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--no-decision"), "T1 no decision")
+        self.assertEqual(self.brigade("ticket", "set", "T2", "--decision"), "T2 decision")
+        self.assertEqual([self.cells("T1"), self.cells("T2")], [("", "", ""), ("", "", "yes")])
+
+    def test_status_prints_the_workers_line_third_before_reports_to_mode_and_owner(self):
+        self.open()
+        self.assertEqual(self.brigade("status"),
+                         "thread not recorded\nreporting: milestones, no landing contract\n"
+                         "workers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.brigade("set", "--thread", "t1", "--reports-to", "admin-thread", "--mode", "light")
+        self.brigade("ticket", "add", "--summary", "a")
+        self.assertEqual(self.brigade("status").splitlines(), [
+            "thread t1",
+            "reporting: milestones, no landing contract, waiting tickets: 1",
+            "workers: 0 of 2 running, 2 idle, auto-start: normal",
+            "reports to admin-thread",
+            "mode light",
+            "owner t1@1",
+        ])
+
+    def test_set_autofire_records_each_level_and_status_prints_it_as_auto_start(self):
+        self.open()
+        for level in ("off", "urgent", "normal", "low"):
+            self.assertEqual(json.loads(self.brigade("set", "--autofire", level))["autofire"], level)
+            status = self.brigade("status")
+            self.assertEqual(status.splitlines()[2], f"workers: 0 of 2 running, 2 idle, auto-start: {level}")
+            self.assertNotIn("autofire", status)
+
+    def test_set_autofire_refuses_a_value_outside_off_urgent_normal_and_low(self):
+        self.open()
+        before = (self.at / "restaurant.json").read_bytes()
+        self.assert_refused_choice(self.brigade("set", "--autofire", "high", ok=False), "--autofire", "high",
+                                   ("off", "urgent", "normal", "low"))
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_a_missing_or_empty_autofire_key_reads_as_normal(self):
+        self.open()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        self.assertNotIn("autofire", meta)
+        line = "workers: 0 of 2 running, 2 idle, auto-start: normal"
+        self.assertEqual(self.brigade("status").splitlines()[2], line)
+        (self.at / "restaurant.json").write_text(json.dumps(meta | {"autofire": ""}, indent=2) + "\n")
+        self.assertEqual(self.brigade("status").splitlines()[2], line)
+
+    def test_the_executive_admin_status_has_no_workers_line(self):
+        self.open_admin()
+        self.assertEqual(self.admin("status"), "thread not recorded\nreporting: milestones, no landing contract")
+
+    def test_status_and_watch_count_items_in_progress_and_in_review_as_running_workers(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "3")
+        for summary in ("a", "b", "c"):
+            self.brigade("ticket", "add", "--summary", summary)
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "a")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b")
+        self.brigade("dish", "D2", "--state", "in-review", "--sha", "abc1234")
+        workers = "workers: 2 of 3 running, 1 idle, auto-start: normal"
+        self.assertEqual(self.brigade("status"),
+                         "thread not recorded\n"
+                         "reporting: milestones, no landing contract, waiting tickets: 1, in progress: 1, in review: 1\n"
+                         + workers)
+        self.assertEqual(self.brigade("watch"), workers + "\nD1: running 0m of 60m (no worker recorded)\nD2: in review")
+        self.brigade("pass", "record", "D2", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict", "send-back")
+        workers = "workers: 1 of 3 running, 2 idle, auto-start: normal"
+        self.assertEqual(self.brigade("status").splitlines()[2], workers)
+        self.assertEqual(self.brigade("watch"), workers + "\nD1: running 0m of 60m (no worker recorded)\nD2: sent back")
+
+    def test_the_workers_line_prints_no_idle_worker_when_more_run_than_the_cap(self):
+        self.open()
+        for ticket in ("T1", "T2"):
+            self.brigade("ticket", "add", "--summary", ticket)
+            self.brigade("fire", "--tickets", ticket, "--station", "bug-fix", "--summary", ticket)
+        self.brigade("set", "--workers", "1")
+        workers = "workers: 2 of 1 running, 0 idle, auto-start: normal"
+        self.assertEqual(self.brigade("status").splitlines()[2], workers)
+        self.assertEqual(self.brigade("watch").splitlines()[0], workers)
+
+    def tracked_project(self, *files):
+        for name in files:
+            path = self.project / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n")
+        run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
+        run("git", "init", "-q", "-b", "main")
+        run("git", "add", "-A")
+        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    def paths_cells(self):
+        return {row[0]: row[8] for row in (line.split("\t") for line in (self.at / "rail.tsv").read_text().splitlines()[1:])}
+
+    def test_from_report_records_the_tracked_paths_each_real_follow_up_quotes(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        printed = self.follow_ups_in("## Follow-ups\n\n" + "".join(f"- {text}\n" for text, _ in REAL_FOLLOW_UPS))
+        self.assertEqual(printed.splitlines(), [f"T{number} added from perf/reports/D1.md#{number - 1}: {text}"
+                                                for number, (text, _) in enumerate(REAL_FOLLOW_UPS, 2)])
+        self.assertEqual(self.paths_cells(), {"T1": "", **{f"T{number}": paths
+                                                           for number, (_, paths) in enumerate(REAL_FOLLOW_UPS, 2)}})
+
+    def test_from_report_records_the_directory_before_the_first_marked_component_of_a_pattern_that_matches(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- Reword `t3/**/*.md` and `tests/test_*.py`.\n"
+                           "- Nothing matches `docs/*.rst`, `**` or `*.md` has no directory, and `src/*.py` is not tracked.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "t3,tests", "T3": ""})
+
+    def test_from_report_records_the_paths_quoted_beside_a_double_backtick_code_span(self):
+        self.tracked_project("src/a/one.py", "src/b/two.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- Replace ``with `x` `` in `src/a/one.py` and `src/b/two.py`\n"
+                           "- Change ``rows[0]`` in `src/a/one.py`\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/a/one.py,src/b/two.py", "T3": "src/a/one.py"})
+
+    def test_from_report_skips_absolute_dot_dot_repository_and_non_numeric_suffix_quotes_and_records_the_normalized_path_of_a_line_suffixed_or_directory_quote(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- See `../README.md`, `/README.md`, `.`, `docs/../README.md`, "
+                           "and `docs/guide.md:x`.\n- Fix `./docs//guide.md:7` and `docs/`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "docs,docs/guide.md"})
+
+    def test_from_report_records_no_paths_when_the_project_is_not_a_git_repository(self):
+        (self.project / "docs").mkdir()
+        (self.project / "docs/guide.md").write_text("x\n")
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `docs/guide.md`.\n"),
+                         "T2 added from perf/reports/D1.md#1: Fix `docs/guide.md`.")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    def test_from_report_records_a_quoted_path_in_a_repository_that_tracks_a_file_name_that_is_not_utf_8(self):
+        try:
+            with open(os.fsencode(self.project) + b"/\xff.md", "wb") as handle:
+                handle.write(b"x\n")
+        except OSError:
+            self.skipTest("the file system refuses a file name that is not UTF-8")
+        self.tracked_project("guide.md")
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `guide.md`.\n"),
+                         "T2 added from perf/reports/D1.md#1: Fix `guide.md`.")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "guide.md"})
+
+    def test_from_report_dry_run_in_a_git_project_changes_no_store_file(self):
+        self.tracked_project(*TRACKED)
+        self.fired_bug_fix()
+        self.review_file("D1.md", "## Follow-ups\n\n- Fix `docs/guide.md`.\n")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: Fix `docs/guide.md`.")
+        self.assertEqual(self.store_files(), before)
+
+    def unrecorded_tickets(self):
+        self.tracked_project(*TRACKED)
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `docs/guide.md:246` and `tests/test_install.py`")
+        self.brigade("ticket", "add", "--summary", "Cover the `runId` wait")
+        self.brigade("ticket", "add", "--summary", "Reword `README.md`", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--summary", "Drop `t3/scripts/roles.py`")
+        self.brigade("ticket", "set", "T4", "--state", "dropped")
+
+    def test_ticket_paths_records_quoted_paths_on_waiting_tickets_that_record_none_and_logs_nothing(self):
+        self.unrecorded_tickets()
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths"),
+                         "T1 paths docs/guide.md,tests/test_install.py\nT2 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": "docs/guide.md,tests/test_install.py", "T2": "", "T3": "t3/runtime.md", "T4": ""})
+        after = self.store_files()
+        self.assertEqual(sorted(name for name in after if after[name] != before[name]), ["rail.tsv"])
+
+    def test_a_second_ticket_paths_run_changes_no_store_file(self):
+        self.unrecorded_tickets()
+        self.brigade("ticket", "paths")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths"), "T2 quotes no tracked path")
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_paths_dry_run_prints_what_it_would_record_and_changes_no_store_file(self):
+        self.unrecorded_tickets()
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths", "--dry-run", owner=False),
+                         "T1 would record docs/guide.md,tests/test_install.py\nT2 quotes no tracked path")
+        self.assertEqual(self.store_files(), before)
+
+    def test_ticket_paths_says_so_when_every_waiting_ticket_records_paths(self):
+        self.tracked_project(*TRACKED)
+        self.open()
+        self.assertEqual(self.brigade("ticket", "paths"), "every waiting ticket records paths")
+        self.brigade("ticket", "add", "--summary", "Reword `README.md`", "--paths", "t3/runtime.md")
+        self.assertEqual(self.brigade("ticket", "paths"), "every waiting ticket records paths")
+
+    def test_ticket_paths_refuses_a_project_that_is_not_a_git_repository_and_changes_no_store_file(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `docs/guide.md`")
+        before = self.store_files()
+        for flags in ((), ("--dry-run",)):
+            self.assertEqual(self.brigade("ticket", "paths", *flags, ok=False),
+                             f"brigade: cannot list tracked files in {self.project}")
+        self.assertEqual(self.store_files(), before)
+
+    NONE_RUNNING = "workers: 0 of 2 running, 2 idle, auto-start: normal"
+
+    def queue(self, *open_flags):
+        self.init_landing()
+        self.landing_env()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *open_flags)
+
+    def filed(self, summary, *flags):
+        return self.brigade("ticket", "add", "--summary", summary, *flags)
+
+    def refile(self, ident, **ago):
+        stamp = (datetime.now(timezone.utc) - timedelta(**ago)).isoformat()
+        rail = self.at / "rail.tsv"
+        lines = [line.split("\t") for line in rail.read_text().splitlines()]
+        for fields in lines[1:]:
+            if fields[0] == ident:
+                fields[1] = stamp
+        rail.write_text("".join("\t".join(fields) + "\n" for fields in lines))
+
+    def landing_rows(self):
+        from contextlib import closing
+        with closing(self.landing_db()) as db:
+            return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+                    for table in ("lease", "log", "reservation", "owner", "entry")}
+
+    def test_startable_lists_a_ticket_whose_paths_are_free_as_startable_with_its_summary(self):
+        self.queue()
+        self.filed("Fix a", "--paths", "a.txt")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, startable: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+        ]))
+
+    def test_startable_names_the_lease_and_holder_that_block_a_ticket(self):
+        self.queue()
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, blocked: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+        ]))
+
+    def test_startable_lists_a_ticket_that_records_no_paths_as_unknown(self):
+        self.queue()
+        self.filed("Fix something")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, unknown: 1",
+            "T1 normal, 0m: unknown, no paths recorded",
+        ]))
+
+    def test_startable_lists_a_decision_ticket_as_a_decision_with_or_without_paths(self):
+        self.queue()
+        self.filed("Pick a name", "--decision", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Pick a color", "--decision")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, decisions: 2",
+            "T1 urgent, 0m: decision for the owner; a.txt",
+            "T2 normal, 0m: decision for the owner",
+        ]))
+
+    def test_startable_lists_free_tickets_below_the_auto_start_level_as_below_it(self):
+        self.queue()
+        self.brigade("set", "--autofire", "urgent")
+        self.filed("Sync", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.filed("Tidy c", "--paths", "c.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: urgent",
+            "waiting tickets: 3, startable: 1, below auto-start: 2",
+            "T1 urgent, 0m: startable; a.txt",
+            "  Sync",
+            "T2 normal, 0m: below auto-start; b.txt",
+            "T3 low, 0m: below auto-start; c.txt",
+        ]))
+
+    def test_startable_lists_no_ticket_as_startable_at_level_off(self):
+        self.queue()
+        self.brigade("set", "--autofire", "off")
+        self.filed("Sync", "--paths", "a.txt", "--priority", "urgent")
+        self.filed("Tidy c", "--paths", "c.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: off",
+            "waiting tickets: 2, below auto-start: 2",
+            "T1 urgent, 0m: below auto-start; a.txt",
+            "T2 low, 0m: below auto-start; c.txt",
+        ]))
+
+    def test_startable_lists_a_low_ticket_on_a_startable_ticket_file_or_under_its_directory_as_riding_with_it(self):
+        self.queue()
+        self.filed("Fix the guide and the scripts", "--paths", "docs/guide.md,scripts")
+        self.filed("Tidy the guide", "--paths", "docs/guide.md", "--priority", "low")
+        self.filed("Tidy the installer", "--paths", "scripts/install.py", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, riding: 2",
+            "T1 normal, 0m: startable; docs/guide.md,scripts",
+            "  Fix the guide and the scripts",
+            "T2 low, 0m: rides with T1; docs/guide.md",
+            "  Tidy the guide",
+            "T3 low, 0m: rides with T1; scripts/install.py",
+            "  Tidy the installer",
+        ]))
+
+    def test_startable_blocks_a_second_normal_ticket_that_shares_a_path_with_a_startable_one(self):
+        self.queue()
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix a and b", "--paths", "a.txt,b.txt")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 normal, 0m: blocked, starts after T1; a.txt,b.txt",
+        ]))
+
+    def test_startable_blocks_a_low_ticket_that_shares_paths_with_two_startable_tickets_and_names_both(self):
+        self.queue("--workers", "3")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.filed("Tidy both", "--paths", "a.txt,b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 3 running, 3 idle, auto-start: normal",
+            "waiting tickets: 3, startable: 2, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 normal, 0m: startable; b.txt",
+            "  Fix b",
+            "T3 low, 0m: blocked, starts after T1, T2; a.txt,b.txt",
+        ]))
+
+    def test_startable_blocks_a_low_ticket_with_one_path_on_a_startable_ticket_file_and_one_path_outside_its_paths(self):
+        self.queue()
+        self.filed("Fix the guide", "--paths", "docs/guide.md")
+        self.filed("Tidy the docs", "--paths", "docs/guide.md,docs/cli.md", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: startable; docs/guide.md",
+            "  Fix the guide",
+            "T2 low, 0m: blocked, starts after T1; docs/cli.md,docs/guide.md",
+        ]))
+
+    def test_startable_blocks_a_low_ticket_on_a_directory_above_a_startable_ticket_file_at_a_cap_of_one(self):
+        self.queue("--workers", "1")
+        self.filed("Fix one", "--paths", "src/a/one.py", "--priority", "urgent")
+        self.filed("Fix two", "--paths", "src/b/two.py")
+        self.filed("Tidy the source", "--paths", "src", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: normal",
+            "waiting tickets: 3, startable: 1, blocked: 2",
+            "T1 urgent, 0m: startable; src/a/one.py",
+            "  Fix one",
+            "T2 normal, 0m: blocked, waiting for an idle worker; src/b/two.py",
+            "T3 low, 0m: blocked, starts after T1; src",
+        ]))
+
+    def test_startable_blocks_a_free_ticket_when_the_worker_cap_is_reached(self):
+        self.queue("--workers", "1")
+        self.filed("Running")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Running")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 1 running, 0 idle, auto-start: normal",
+            "waiting tickets: 1, blocked: 1",
+            "T2 normal, 0m: blocked, waiting for an idle worker; b.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_that_would_take_the_last_idle_worker(self):
+        self.queue()
+        self.brigade("set", "--autofire", "low")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, held back: 1",
+            "T1 low, 0m: startable; a.txt",
+            "  Tidy a",
+            "T2 low, 0m: held back, low tickets leave 1 worker idle; b.txt",
+        ]))
+
+    def test_startable_flags_a_low_ticket_filed_more_than_seven_days_ago_and_no_other(self):
+        self.queue()
+        self.filed("Old and low", "--paths", "a.txt", "--priority", "low")
+        self.filed("Low", "--paths", "b.txt", "--priority", "low")
+        self.filed("Old", "--paths", "c.txt")
+        self.refile("T1", days=7, minutes=1)
+        self.refile("T2", days=6, hours=23)
+        self.refile("T3", days=9)
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, below auto-start: 2",
+            "T3 normal, 9d: startable; c.txt",
+            "  Old",
+            "T1 low, 7d (over a week): below auto-start; a.txt",
+            "T2 low, 6d: below auto-start; b.txt",
+        ]))
+
+    def test_startable_with_no_waiting_ticket_prints_the_workers_line_and_says_so(self):
+        self.queue()
+        self.filed("Done already")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        self.assertEqual(self.brigade("startable"), self.NONE_RUNNING + "\nno waiting tickets")
+
+    def test_startable_orders_tickets_by_priority_then_oldest_filed_then_the_number_in_the_id(self):
+        self.open()
+        stamp = (datetime.now(timezone.utc) - timedelta(hours=5, minutes=1)).isoformat()
+        rows = [("T10", stamp, "", "ten"), ("T9", stamp, "", "nine"), ("T11", stamp, "low", "eleven"),
+                ("T12", datetime.now(timezone.utc).isoformat(), "urgent", "twelve"),
+                ("T13", (datetime.now(timezone.utc) - timedelta(days=2, minutes=1)).isoformat(), "", "thirteen")]
+        (self.at / "rail.tsv").write_text("id\tat\tstate\tsource\tref\tdish\tsummary\tpriority\tpaths\tdecision\n" + "".join(
+            f"{ident}\t{at}\twaiting\tuser\t\t\t{summary}\t{priority}\t\t\n" for ident, at, priority, summary in rows))
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 5, unknown: 5",
+            "T12 urgent, 0m: unknown, no paths recorded",
+            "T13 normal, 2d: unknown, no paths recorded",
+            "T9 normal, 5h: unknown, no paths recorded",
+            "T10 normal, 5h: unknown, no paths recorded",
+            "T11 low, 5h: unknown, no paths recorded",
+        ]))
+
+    def test_startable_lists_rail_rows_written_before_the_paths_cell_as_unknown(self):
+        self.open()
+        self.old_rail((datetime.now(timezone.utc) - timedelta(days=3, minutes=1)).isoformat())
+        before = (self.at / "rail.tsv").read_bytes()
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, unknown: 3",
+            "T3 urgent, 3d: unknown, no paths recorded",
+            "T1 normal, 3d: unknown, no paths recorded",
+            "T2 low, 3d: unknown, no paths recorded",
+        ]))
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_startable_without_an_owner_changes_no_store_file_and_no_landing_row(self):
+        self.queue()
+        self.brigade("set", "--thread", "t1")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Fix something")
+        store, landing = self.store_files(), self.landing_rows()
+        self.assertEqual(self.brigade("startable", owner=False), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, blocked: 1, unknown: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+            "T2 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T3 normal, 0m: unknown, no paths recorded",
+        ]))
+        self.assertEqual((self.store_files(), self.landing_rows()), (store, landing))
+        self.assertEqual(len(landing["lease"]), 1)
+
+    def test_startable_agrees_with_lease_check_on_a_directory_lease_and_on_a_name_that_shares_its_prefix(self):
+        self.queue()
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix x", "--paths", "src/app/x.py")
+        self.filed("Fix srcx", "--paths", "srcx")
+        checks = [subprocess.run([sys.executable, str(ROOT / "t3/added/landing/scripts/land.py"), "--repo", str(self.project),
+                                  "lease", "check", "--holder", holder, "--paths", paths],
+                                 capture_output=True, text=True, env=self.land_env())
+                  for holder, paths in (("perf/T1", "src/app/x.py"), ("perf/T2", "srcx"))]
+        self.assertEqual([(check.returncode, check.stdout.strip()) for check in checks],
+                         [(1, "L1 held by engine/D1 on src"), (0, "free")])
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app/x.py",
+            "T2 normal, 0m: startable; srcx",
+            "  Fix srcx",
+        ]))
+
+    def test_startable_prints_one_line_for_a_ticket_the_landing_queue_refuses_in_a_project_that_is_not_a_git_repository(self):
+        self.open()
+        self.filed("Fix a", "--paths", "src/a.py")
+        lines = self.brigade("startable").splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[2].startswith("T1 normal, 0m: blocked, waiting on the landing queue ("), lines[2])
+
+    def test_startable_is_refused_in_the_executive_admin_store(self):
+        self.open_admin()
+        self.assertEqual(self.admin("startable", ok=False), "brigade: the executive admin routes work and never runs it")
+
+    def test_from_report_prints_a_list_item_with_no_text_as_not_filed_and_gives_it_no_number(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n- \n*   \n1. \n- Fix b.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "T3 added from perf/reports/D1.md#2: Fix b.",
+            "not filed, list item with no text",
+            "not filed, list item with no text",
+            "not filed, list item with no text",
+        ])
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting").splitlines(), [
+            "T2 waiting low [report] Fix a. perf/reports/D1.md#1",
+            "T3 waiting low [report] Fix b. perf/reports/D1.md#2",
+        ])
+
+    def test_from_report_on_a_report_whose_only_follow_up_is_a_list_item_with_no_text_adds_nothing(self):
+        self.fired_bug_fix()
+        before = self.tables()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n"),
+                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
+        self.assertEqual(self.tables(), before)
+
+    def test_from_report_prints_a_line_that_is_only_a_list_marker_as_a_list_item_with_no_text_and_adds_nothing(self):
+        self.fired_bug_fix()
+        before = self.tables()
+        for marker in ("-", "*", "1."):
+            with self.subTest(marker=marker):
+                self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{marker}\n"),
+                                 "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
+                self.assertEqual(self.tables(), before)
+
+    def test_from_report_files_a_line_that_is_only_three_hyphens_as_a_follow_up(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n---\n"), "T2 added from perf/reports/D1.md#1: ---")
+
+    def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Reword the guide.",
+            "not filed, list item with no text",
+        ])
+
+    def test_a_paragraph_above_a_list_item_with_no_text_and_then_a_list_item_introduces_the_list(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nTwo things remain.\n\n- \n- Fix a.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "not filed, prose that introduces a list: Two things remain.",
+            "not filed, list item with no text",
+        ])
+
+    def test_a_paragraph_below_a_list_item_with_no_text_that_follows_the_last_list_item_with_text_closes_the_section(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n\n- \n\nThat is all.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "not filed, list item with no text",
+            "not filed, prose after the last list item: That is all.",
+        ])
+
+    def test_from_report_refuses_priority_nonempty_paths_and_decision(self):
+        self.fired_bug_fix()
+        before = self.store_files()
+        for extra in (("--priority", "low"), ("--paths", "a.txt"), ("--decision",)):
+            self.assertEqual(self.follow_ups_in(BULLETS, *extra, ok=False),
+                             "brigade: --from-report takes no --priority, nonempty --paths, or --decision", extra)
+        self.review_file("D1.md", BULLETS)
+        self.assertEqual({name: data for name, data in self.store_files().items() if name != "reports/D1.md"}, before)
+
+
 class StoresTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""
 
@@ -4358,7 +5118,7 @@ class HandoffTest(StoresTest):
             (self.dir(name) / "reports" / "D1.md").write_text(body)
             self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
                              f"T2 added from {name}/reports/D1.md#1: Shared text.")
-        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text."])
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", ""])
 
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")
@@ -4422,27 +5182,28 @@ class HandoffTest(StoresTest):
         self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", "R7")
         self.assertEqual(self.brigade("core", "ticket", "move", "T1", "--to", "engine"),
                          "T1 moved to engine; tell thread thread-engine")
-        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved [github] Fix the cache R7")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved normal [github] Fix the cache R7")
         self.assertEqual(self.brigade("core", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "x", ok=False),
                          "brigade: T1 is moved, not waiting")
         self.assertEqual(self.brigade("core", "ticket", "set", "T1", "--state", "waiting", ok=False),
                          "brigade: T1 moved to engine; it is that coordinator's ticket now")
         self.assertEqual(json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()),
-                         {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "github", "ref": "R7"})
-        self.assertEqual(self.brigade("core", "watch"), "T1: moved to engine, waiting for ticket take")
-        self.assertEqual(self.brigade("engine", "watch"), "handed to you: 1; run ticket take")
+                         {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "github", "ref": "R7",
+                          "priority": "", "paths": "", "decision": ""})
+        self.assertEqual(self.brigade("core", "watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: moved to engine, waiting for ticket take")
+        self.assertEqual(self.brigade("engine", "watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nhanded to you: 1; run ticket take")
         self.assertEqual(self.brigade("engine", "status"),
-                         "thread thread-engine\nreporting: milestones, no landing contract, handed to you: 1\nowner thread-engine@1")
+                         "thread thread-engine\nreporting: milestones, no landing contract, handed to you: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner thread-engine@1")
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
-        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [github (from app/core/T1)] Fix the cache R7")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting normal [github (from app/core/T1)] Fix the cache R7")
         self.assertEqual(self.inbox("engine"), [])
-        self.assertEqual(self.brigade("core", "watch"), "no work in progress")
-        self.assertEqual(self.brigade("engine", "watch"), "no work in progress")
+        self.assertEqual(self.brigade("core", "watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
+        self.assertEqual(self.brigade("engine", "watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
         self.assertIn("## Handed to another coordinator\n\n- T1: Fix the cache (to engine)",
                       self.brigade("core", "close", "--dry-run"))
         self.assertEqual(self.brigade("engine", "ticket", "take"), "nothing handed to you")
         (self.dir("engine") / "inbox" / "app~core~T1.json").write_text("{}")
-        self.assertEqual(self.brigade("core", "watch"), "no work in progress")
+        self.assertEqual(self.brigade("core", "watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
 
     def test_a_moved_ref_stays_live_through_each_move_until_the_end_of_the_chain_finishes(self):
         ref = "R7"
@@ -4457,7 +5218,7 @@ class HandoffTest(StoresTest):
         self.brigade("docs", "ticket", "move", "T1", "--to", "engine")
         self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref, ok=False), refused)
         self.brigade("engine", "ticket", "take")
-        self.assertEqual(self.brigade("engine", "ticket", "list"), f"T1 waiting [github (from app/docs/T1)] s {ref}")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), f"T1 waiting normal [github (from app/docs/T1)] s {ref}")
         self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref, ok=False), refused)
         self.brigade("engine", "ticket", "set", "T1", "--state", "done")
         self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "s", "--source", "github", "--ref", ref), "T2")
@@ -4516,10 +5277,10 @@ class HandoffTest(StoresTest):
         self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--source", "github", "--ref", "R7")
         died = self.child("die-before-publish", "core", "ticket", "move", "T1", "--to", "engine")
         self.assertEqual(died.returncode, 9, died.stderr)
-        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved [github] Fix the cache R7")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 moved normal [github] Fix the cache R7")
         self.assertEqual(self.inbox("engine"), [])
         self.assertEqual(self.brigade("core", "watch"),
-                         "T1: moved to engine, not delivered; run ticket move T1 --to engine again")
+                         "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: moved to engine, not delivered; run ticket move T1 --to engine again")
         self.brigade("core", "ticket", "move", "T1", "--to", "engine")
         self.brigade("core", "ticket", "move", "T1", "--to", "engine")
         self.assertEqual(self.inbox("engine"), ["app~core~T1.json"])
@@ -4531,7 +5292,7 @@ class HandoffTest(StoresTest):
     def test_watch_says_undelivered_when_the_inbox_file_is_deleted_before_take(self):
         self.handoff().unlink()
         self.assertEqual(self.brigade("core", "watch"),
-                         "T1: moved to engine, not delivered; run ticket move T1 --to engine again")
+                         "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: moved to engine, not delivered; run ticket move T1 --to engine again")
 
     def test_take_twice_with_the_file_copied_back_files_one_ticket(self):
         inbox = self.handoff()
@@ -4544,9 +5305,50 @@ class HandoffTest(StoresTest):
                          [[self.rows("engine", "log.tsv")[0][0], "ticket", "T1", "waiting", "from app/core/T1"]])
         self.assertEqual(self.inbox("engine"), [])
 
+    def test_a_moved_ticket_keeps_its_priority_paths_and_decision_after_ticket_take(self):
+        self.open("core")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Fix the cache", "--priority", "urgent",
+                     "--paths", "src/cache.py,docs", "--decision")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.assertEqual(json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()),
+                         {"handoff": "app/core/T1", "summary": "Fix the cache", "source": "user", "ref": "",
+                          "priority": "urgent", "paths": "docs,src/cache.py", "decision": "yes"})
+        self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
+                         ["waiting", "user (from app/core/T1)", "", "", "Fix the cache", "urgent", "docs,src/cache.py", "yes"])
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent [user (from app/core/T1)] Fix the cache")
+
+    def test_a_moved_ticket_with_an_empty_priority_cell_reads_the_default_of_its_source_after_ticket_take(self):
+        self.open("core", "--intake", "upstream")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Sync", "--source", "upstream")
+        self.brigade("core", "ticket", "move", "T1", "--to", "engine")
+        self.brigade("engine", "ticket", "take")
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][7:], ["", "", ""])
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent [upstream (from app/core/T1)] Sync")
+
+    def test_ticket_take_files_a_handoff_written_without_priority_paths_and_decision(self):
+        self.open("core")
+        self.open("engine")
+        inbox = self.dir("engine") / "inbox"
+        inbox.mkdir()
+        (inbox / "app~core~T1.json").write_text(json.dumps(
+            {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "report", "ref": "core/reports/D1.md#1"}))
+        self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
+                         ["waiting", "report (from app/core/T1)", "core/reports/D1.md#1", "", "Tidy the guide", "", "", ""])
+        self.assertEqual(self.brigade("engine", "ticket", "list"),
+                         "T1 waiting low [report (from app/core/T1)] Tidy the guide core/reports/D1.md#1")
+
+    def test_ticket_set_with_no_flag_on_a_moved_ticket_prints_the_moved_refusal(self):
+        self.handoff()
+        self.assertEqual(self.brigade("core", "ticket", "set", "T1", ok=False),
+                         "brigade: T1 moved to engine; it is that coordinator's ticket now")
+
     def assert_one_handed_ticket(self, name="engine"):
         self.assertEqual([row[2:] for row in self.rows(name, "rail.tsv")],
-                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache"]])
+                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache", "", "", ""]])
         log = (self.dir(name) / "log.tsv").read_text()
         self.assertTrue(log.endswith("\n"))
         self.assertTrue(all(len(line.split("\t")) == 5 for line in log.splitlines()))
@@ -4608,9 +5410,9 @@ class HandoffTest(StoresTest):
         log.write_text(log.read_text() + f"{stamp}\tticket\tT6\twaiting\tfro{stamp}\tticket\tT7\twaiting\tnote\n")
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 3 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"fro{stamp}\tticket\tT7\twaiting\tnote", "fro"))
-        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting normal [user] a")
         log.write_text(log.read_text() + f"{stamp[:19]}\tticket")
-        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting normal [user] a")
         log.write_text(log.read_text() + f"{stamp}\tticket\tT8\twaiting\tnote\n")
         self.assertEqual(self.brigade("core", "ticket", "list", ok=False), "brigade: app/core/log.tsv line 4 is malformed; fix or remove it")
         log.write_text(log.read_text().replace(f"{stamp[:19]}\tticket{stamp}", "2026-10-06"))
@@ -4640,20 +5442,54 @@ class HandoffTest(StoresTest):
                                     capture_output=True, text=True, cwd=cwd)
             self.assertEqual((result.returncode, result.stderr.strip()), (1, line), words)
 
+    def test_walk_prints_every_other_store_and_exits_1_when_one_store_has_a_malformed_table(self):
+        for name in ("core", "docs", "engine"):
+            self.open(name)
+        self.brigade("core", "ticket", "add", "--summary", "a")
+        self.brigade("docs", "ticket", "add", "--summary", "b")
+        rail = self.dir("docs") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
+            f"{_shown_root(self.project)}: no landing contract",
+            "  core (reports milestones): waiting tickets: 1",
+            "    thread not recorded",
+            "  docs: app/docs/rail.tsv line 3 is malformed; fix or remove it",
+            "  engine (reports milestones): nothing on record",
+            "    thread not recorded",
+        ]) + "\n", "brigade: app/docs/rail.tsv line 3 is malformed; fix or remove it\n"))
+
+    def test_walk_names_each_malformed_table_on_stderr_when_two_stores_have_one(self):
+        for name in ("core", "docs", "engine"):
+            self.open(name)
+        rail = self.dir("core") / "rail.tsv"
+        rail.write_text(rail.read_text() + "not a row\n")
+        verdicts = self.dir("engine") / "pass.tsv"
+        verdicts.write_text(verdicts.read_text() + "not a row\n")
+        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
+            f"{_shown_root(self.project)}: no landing contract",
+            "  core: app/core/rail.tsv line 2 is malformed; fix or remove it",
+            "  docs (reports milestones): nothing on record",
+            "    thread not recorded",
+            "  engine: app/engine/pass.tsv line 2 is malformed; fix or remove it",
+        ]) + "\n", "brigade: app/core/rail.tsv line 2 is malformed; fix or remove it\n"
+                   "brigade: app/engine/pass.tsv line 2 is malformed; fix or remove it\n"))
+
     def test_a_tail_cut_inside_a_multi_byte_character_is_skipped_by_a_read_and_dropped_by_the_next_append(self):
         self.open("core")
         self.brigade("core", "ticket", "add", "--summary", "a")
         rail = self.dir("core") / "rail.tsv"
         complete = rail.read_bytes()
         rail.write_bytes(complete + "T9\t2026-10-10T00:00:00+00:00\twaiting\tuser\t\tcafé".encode()[:-1])
-        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting [user] a")
+        self.assertEqual(self.brigade("core", "ticket", "list"), "T1 waiting normal [user] a")
         self.assertEqual(self.brigade("core", "ticket", "add", "--summary", "b"), "T2")
         after = rail.read_bytes()
         self.assertEqual(after[:len(complete)], complete)
         added = after[len(complete):].decode()
         self.assertEqual((added.count("\n"), added[-1]), (1, "\n"))
         fields = added[:-1].split("\t")
-        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b"])
+        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b", "", "", ""])
 
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock
@@ -4882,7 +5718,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.admin("ticket", "move", "T1", "--to", "engine"), "T1 moved to engine; no thread recorded for engine")
         refused(".admin", "T1", " (moved)")
         self.assertEqual(self.brigade("engine", "inbox", "take"), "T1 from app/.admin/T1: Fix login")
-        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting [beads (from app/.admin/T1)] Fix login app-7f3")
+        self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting normal [beads (from app/.admin/T1)] Fix login app-7f3")
         refused("engine", "T1", " (waiting)")
         refused(".admin", "T1", " (moved)")
 
@@ -5087,7 +5923,7 @@ class AdminTest(StoresTest):
         self.assertEqual(self.brigade("docs", "ticket", "add", "--summary", "Add a FAQ", "--request", "A1", ok=False), refusal)
         self.brigade("docs", "ticket", "set", "T1", "--state", "done")
         self.assertEqual(self.brigade("docs", "ticket", "add", "--summary", "Add a FAQ", "--request", "A1", ok=False), refusal)
-        self.assertEqual(self.brigade("docs", "ticket", "list"), "T1 done [user (request A1)] Add a FAQ")
+        self.assertEqual(self.brigade("docs", "ticket", "list"), "T1 done normal [user (request A1)] Add a FAQ")
         self.assertEqual(self.brigade("docs", "ticket", "add", "--summary", "Other", "--request", "A2"), "T2")
 
     # Sync.
@@ -5379,10 +6215,10 @@ class AdminTest(StoresTest):
         self.brigade("docs", "set", "--reports-to", "th-admin")
         self.assertEqual(self.meta("docs")["reportsTo"], "th-admin")
         self.assertEqual(self.brigade("docs", "status"),
-                         "thread th-docs\nreporting: milestones, no landing contract\nreports to th-admin\nowner th-docs@1")
+                         "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nreports to th-admin\nowner th-docs@1")
         self.brigade("docs", "set", "--reports-to", "")
         self.assertNotIn("reportsTo", self.meta("docs"))
-        self.assertEqual(self.brigade("docs", "status"), "thread th-docs\nreporting: milestones, no landing contract\nowner th-docs@1")
+        self.assertEqual(self.brigade("docs", "status"), "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner th-docs@1")
 
     # The owner fence.
 

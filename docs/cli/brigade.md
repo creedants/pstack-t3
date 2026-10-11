@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -41,7 +41,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--autofire AUTOFIRE]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -58,6 +58,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
+| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 
 ## brigade.py ticket
 
@@ -67,12 +68,12 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, or take tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`.
 
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -84,6 +85,9 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
+| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
+| `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
+| `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -100,13 +104,16 @@ brigade.py [flags] ticket list [--state STATE]
 ## brigade.py ticket set
 
 ```text
-brigade.py [flags] ticket set --state STATE id
+brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] id
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `id` | yes |  |  |  |
-| `--state STATE` | yes | `waiting`, `assigned`, `done`, `dropped` |  |  |
+| `--state STATE` |  | `waiting`, `assigned`, `done`, `dropped` |  |  |
+| `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
+| `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
+| `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
 
 ## brigade.py ticket move
 
@@ -128,6 +135,18 @@ brigade.py [flags] ticket take
 ```
 
 file every ticket a sibling handed to this coordinator
+
+## brigade.py ticket paths
+
+```text
+brigade.py [flags] ticket paths [--dry-run]
+```
+
+record the tracked paths each waiting ticket's summary quotes, on tickets that record none
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--dry-run` |  |  |  | print what it would record; it changes no table |
 
 ## brigade.py fire
 
@@ -177,6 +196,14 @@ brigade.py [flags] watch
 ```
 
 liveness: which dishes have reports, are running, or are over their timebox
+
+## brigade.py startable
+
+```text
+brigade.py [flags] startable
+```
+
+waiting tickets in the order they should start, each with why it can or cannot start now; it starts nothing
 
 ## brigade.py hang
 
@@ -422,7 +449,7 @@ executive admin: copy each coordinator's new log rows into this log
 brigade.py [flags] status
 ```
 
-the thread line first, then counts, then reports to, mode, and owner when present
+the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present
 
 ## brigade.py close
 

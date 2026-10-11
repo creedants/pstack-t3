@@ -10,9 +10,11 @@ Kitchen words name files and commands. Output is plain engineering prose.
 
 import argparse
 import fcntl
+import fnmatch
 import functools
 import json
 import os
+import posixpath
 import re
 import runpy
 import shlex
@@ -23,8 +25,8 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
 
 TICKET_STATES = ("waiting", "assigned", "moved", "done", "dropped")
 LIVE_TICKET_STATES = ("waiting", "assigned")
@@ -41,9 +43,33 @@ ROUND_DECISIONS = ("known limits", "redesign", "drop")
 ROUND_PARKED = "keep parked"
 ROUND_KIND = "round-budget"
 OPEN_RUN_MINUTES = 10
+PRIORITIES_BY_RANK = ("urgent", "normal", "low")
+AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
+SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
+LOW_RESERVE = 1
+LOW_FLAG_DAYS = 7
+
+
+@dataclass(frozen=True)
+class StandingText:
+    count_label: str
+    line_words: str
+
+
+STANDINGS = {
+    "start": StandingText("startable", "startable"),
+    "rides": StandingText("riding", "rides with {why}"),
+    "blocked": StandingText("blocked", "blocked, {why}"),
+    "unknown": StandingText("unknown", "unknown, no paths recorded"),
+    "decision": StandingText("decisions", "decision for the owner"),
+    "below": StandingText("below auto-start", "below auto-start"),
+    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
+}
+NO_WORKER = "waiting for an idle worker"
+STARTS_AFTER = "starts after {tickets}"
 
 TABLES = {
-    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary"),
+    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
@@ -51,11 +77,11 @@ TABLES = {
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
-ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2}
+ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch")
+WORK_COMMANDS = ("fire", "brief", "dish", "pass", "watch", "startable")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -128,6 +154,10 @@ class BrigadeError(Exception):
     pass
 
 
+class MalformedTable(BrigadeError):
+    pass
+
+
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -173,10 +203,7 @@ def is_timestamp(value):
 
 
 def parse_row(table, line):
-    """One complete line of a table as a row, or None when its field count or timestamp is wrong.
-
-    A row written before a table gained its `ADDED_COLUMNS` is read padded and never rewritten.
-    """
+    """One complete line of a table as a row, or None when its field count or timestamp is wrong."""
     header = TABLES[table]
     fields = line.split("\t")
     missing = len(header) - len(fields)
@@ -372,7 +399,7 @@ class Restaurant:
                 text = None
             row = text if header or text is None else parse_row(table, text)
             if row is None:
-                raise BrigadeError(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
+                raise MalformedTable(f"{store_path(self.dir.resolve())}/{table} line {number} is malformed; fix or remove it")
             if not header:
                 rows.append(row)
         return rows
@@ -543,6 +570,86 @@ def base_source(source):
     return re.split(r" \((?:from|request) ", source, maxsplit=1)[0]
 
 
+def priority_of(row):
+    return row["priority"] or SOURCE_PRIORITY.get(base_source(row["source"]), "normal")
+
+
+def paths_of(row):
+    return tuple(part for part in row["paths"].split(",") if part)
+
+
+def ticket_paths(text):
+    if text == "":
+        return ()
+    found = set()
+    for part in text.split(","):
+        path = posixpath.normpath(part.strip().replace("\\", "/")).lstrip("/")
+        if path in ("", ".", "..") or path.startswith("../"):
+            raise BrigadeError(f"--paths takes files or directories inside the repository, got {part!r}")
+        found.add(path)
+    return tuple(sorted(found))
+
+
+@dataclass(frozen=True)
+class Tracked:
+    files: frozenset
+    directories: frozenset
+
+
+def tracked_paths(project_root):
+    try:
+        result = subprocess.run(["git", "-C", str(project_root), "ls-files", "-z"], capture_output=True,
+                                encoding="utf-8", errors="surrogateescape")
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    files = frozenset(name for name in result.stdout.split("\0") if name)
+    directories = frozenset(str(above) for name in files for above in PurePosixPath(name).parents if str(above) != ".")
+    return Tracked(files, directories)
+
+
+def pattern_directory(parts):
+    marked = next(index for index, part in enumerate(parts) if re.search(r"[*?\[]", part))
+    return "/".join(parts[:marked])
+
+
+def quoted_paths(text, tracked):
+    if tracked is None:
+        return ()
+    found = set()
+    for quote in re.finditer(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", text):
+        span = re.sub(r":\d+(?:-\d+)?$", "", quote.group(2).strip())
+        if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
+            continue
+        span = posixpath.normpath(span)
+        if not re.search(r"[*?\[]", span):
+            if span != "." and (span in tracked.files or span in tracked.directories):
+                found.add(span)
+            continue
+        directory = pattern_directory(span.split("/"))
+        if directory and fnmatch.filter(tracked.files, span):
+            found.add(directory)
+    return tuple(sorted(found))
+
+
+def record_paths(restaurant, tracked, write):
+    rows = restaurant.rows("rail.tsv")
+    lines, recorded = [], False
+    for row in rows:
+        if row["state"] != "waiting" or paths_of(row):
+            continue
+        paths = ",".join(quoted_paths(row["summary"], tracked))
+        if paths:
+            lines.append(f"{row['id']} {'paths' if write else 'would record'} {paths}")
+            row["paths"], recorded = paths, True
+        else:
+            lines.append(f"{row['id']} quotes no tracked path")
+    if write and recorded:
+        restaurant.save_rows("rail.tsv", rows)
+    return "\n".join(lines) or "every waiting ticket records paths"
+
+
 def set_intake(restaurant, sources):
     meta = restaurant.meta
     refuse_owned_intake(restaurant.dir, meta.get("projectRoot"), sources)
@@ -616,7 +723,7 @@ def refuse_live_ref(restaurant, ref, rails):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False):
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -638,13 +745,14 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
                                    "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
-    return append_ticket(restaurant, summary, source, ref)
+    return append_ticket(restaurant, summary, source, ref, priority, paths, decision)
 
 
-def append_ticket(restaurant, summary, source, ref):
+def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
-                                   "ref": ref, "summary": summary})
+                                   "ref": ref, "summary": summary, "priority": priority,
+                                   "paths": ",".join(paths), "decision": "yes" if decision else ""})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
 
@@ -755,6 +863,9 @@ def follow_ups(text):
     The text of a heading deeper than the open follow-ups heading that does not itself say follow-ups is an aside too,
     whatever it says. It is the line after its opening `#` marks, without surrounding whitespace. Such a heading with no
     text is an aside with no text. A paragraph with only such headings between it and a list item is directly above that item.
+
+    A list item with no text is an aside with no text. It is not the list item a paragraph is directly above, and it is
+    not its section's last list item. A paragraph looks past it as it looks past such a heading.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -778,7 +889,7 @@ def follow_ups(text):
         elif not line.strip():
             blank = plain
         else:
-            marker = plain and re.match(r"(?:[-*+]|\d+[.)])\s+", line)
+            marker = plain and re.match(r"(?:[-*+]|\d+[.)])(?:\s+|$)", line)
             if marker or block is None or plain and blank and not line[0].isspace():
                 block = ("item" if marker else "para", [])
                 sections[-1].append(block)
@@ -789,7 +900,8 @@ def follow_ups(text):
     items, asides = [], []
     for blocks in sections:
         blocks = [(kind, " ".join(part.strip() for part in lines).strip()) for kind, lines in blocks]
-        blocks = [(kind, text) for kind, text in blocks if text or kind == "subheading"]
+        blocks = [("bare" if kind == "item" and not text else kind, text) for kind, text in blocks]
+        blocks = [(kind, text) for kind, text in blocks if text or kind in ("subheading", "bare")]
         kinds = [kind for kind, _ in blocks] + ["end"]
         last = max((index for index, kind in enumerate(kinds) if kind == "item"), default=len(kinds))
         for index, (kind, text) in enumerate(blocks):
@@ -797,9 +909,11 @@ def follow_ups(text):
                 asides.append(("text on the heading line", text))
             elif kind == "subheading":
                 asides.append(("heading inside the section" if text else "heading inside the section with no text", text))
+            elif kind == "bare":
+                asides.append(("list item with no text", ""))
             elif says_no_work(text):
                 asides.append(("says no work is needed", text))
-            elif kind == "para" and next(below for below in kinds[index + 1:] if below != "subheading") == "item":
+            elif kind == "para" and next(below for below in kinds[index + 1:] if below not in ("subheading", "bare")) == "item":
                 asides.append(("prose that introduces a list", text))
             elif kind == "para" and index > last:
                 asides.append(("prose after the last list item", text))
@@ -812,7 +926,7 @@ def same_text(value):
     return " ".join(value.split()).casefold()
 
 
-def file_follow_ups(restaurant, name, found, write):
+def file_follow_ups(restaurant, name, found, write, tracked):
     """One waiting ticket per follow-up whose text no ticket of this store holds, in any state.
 
     A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
@@ -834,7 +948,7 @@ def file_follow_ups(restaurant, name, found, write):
         if key in holders:
             lines.append(f"skipped {ref}, same text as {holders[key]}: {text}")
         elif write:
-            ident = append_ticket(restaurant, text, "report", ref)
+            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked))
             holders[key] = f"{ident} (waiting)"
             lines.append(f"{ident} added from {ref}: {text}")
         else:
@@ -881,6 +995,7 @@ def move_ticket(restaurant, ident, to, rails):
     if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
+            "priority": row["priority"], "paths": row["paths"], "decision": row["decision"],
         }, indent=2) + "\n")
     return f"{ident} moved to {name}; {tell(name, sibling)}"
 
@@ -897,7 +1012,8 @@ def take_tickets(restaurant):
         if row is None:
             rows = restaurant.rows("rail.tsv")
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
-                   "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"]}
+                   "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
+                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}}
             restaurant.save_rows("rail.tsv", rows + [row])
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
@@ -1275,6 +1391,15 @@ def worker_cap(meta):
     return int(value)
 
 
+def autofire_of(meta):
+    return meta.get("autofire") or "normal"
+
+
+def workers_line(meta, running):
+    cap = worker_cap(meta)
+    return f"workers: {running} of {cap} running, {max(0, cap - running)} idle, auto-start: {autofire_of(meta)}"
+
+
 def require_workers(workers):
     if workers is not None and workers < 1:
         raise BrigadeError("workers must be 1 or more")
@@ -1412,6 +1537,19 @@ def fire_command(ident, note):
     return " ".join(shlex.quote(str(word)) for word in words)
 
 
+def lease_block(project_root, holder_name, paths, fallback_kind="lease"):
+    code, out, err = lease_check(project_root, holder_name, paths)
+    if code == 0:
+        return None
+    held = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
+    if held:
+        return "lease", "waiting on " + ", ".join(f"{lease} ({held_by})" for lease, held_by in held)
+    room = re.search(r"(\d+ of \d+ changes in flight)", out)
+    if room:
+        return "repository", f"waiting for room in the repository ({room.group(1)})"
+    return fallback_kind, f"waiting on the landing queue ({out or err or 'lease check failed'})"
+
+
 def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     """The block on a waiting ticket that holds now, as (kind, text), or None. Workers come first, as in fire."""
     if running >= cap:
@@ -1420,16 +1558,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    code, out, err = lease_check(project_root, f"{prefix}/{ident}", with_fragment(requested, known))
-    if code == 0:
-        return None
-    overlap = re.findall(r"^(L\d+) held by (\S+) on ", out, re.M)
-    if overlap:
-        return "lease", "waiting on " + ", ".join(f"{lease} ({holder_name})" for lease, holder_name in overlap)
-    room = re.search(r"(\d+ of \d+ changes in flight)", out)
-    if room:
-        return "repository", f"waiting for room in the repository ({room.group(1)})"
-    return note.get("kind") or "lease", f"waiting on the landing queue ({out or err or 'lease check failed'})"
+    return lease_block(project_root, f"{prefix}/{ident}", with_fragment(requested, known), note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):
@@ -1451,12 +1580,130 @@ def holding_blocks(restaurant):
     return {ident: held for ident, _, held in recheck_blocks(restaurant, inputs) if held}
 
 
+def paths_overlap(first, second):
+    return any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in first for b in second)
+
+
+def paths_inside(paths, within):
+    return all(any(a == b or a.startswith(b + "/") for b in within) for a in paths)
+
+
+@dataclass(frozen=True)
+class Waiting:
+    id: str
+    priority: str
+    filed: datetime
+    paths: tuple
+    decision: bool
+    summary: str
+
+
+@dataclass(frozen=True)
+class Standing:
+    ticket: Waiting
+    kind: str
+    why: str
+    overdue: bool
+
+
+def waiting_ticket(row):
+    filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
+    if filed.tzinfo is None:
+        filed = filed.replace(tzinfo=timezone.utc)
+    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"])
+
+
+def plan(tickets, running, cap, level, refusals, now):
+    allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
+    idle = max(0, cap - running)
+    priorities = {ticket.id: ticket.priority for ticket in tickets}
+    started = {}
+    standings = []
+    for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
+                                                     int(ticket.id[1:]) if ticket.id[1:].isdigit() else 0)):
+        low = ticket.priority == "low"
+        shared = [ident for ident, paths in started.items() if paths_overlap(ticket.paths, paths)]
+        kind, why = "start", ""
+        if ticket.decision:
+            kind = "decision"
+        elif not ticket.paths:
+            kind = "unknown"
+        elif ticket.id in refusals:
+            kind, why = "blocked", refusals[ticket.id]
+        elif low and len(shared) == 1 and priorities[shared[0]] != "low" and paths_inside(ticket.paths, started[shared[0]]):
+            kind, why = "rides", shared[0]
+        elif shared:
+            kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))
+        elif ticket.priority not in allowed:
+            kind = "below"
+        elif not idle:
+            kind, why = "blocked", NO_WORKER
+        elif low and idle <= LOW_RESERVE:
+            kind = "reserve"
+        else:
+            idle -= 1
+            started[ticket.id] = ticket.paths
+        standings.append(Standing(ticket, kind, why, low and now - ticket.filed > timedelta(days=LOW_FLAG_DAYS)))
+    return standings
+
+
+def lease_refusals(meta, tickets, next_dish):
+    root, prefix = meta["projectRoot"], slug(meta["restaurant"])
+    asked, refusals = {}, {}
+    for ticket in tickets:
+        if ticket.decision or not ticket.paths:
+            continue
+        if ticket.paths not in asked:
+            asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
+                                              with_fragment(",".join(ticket.paths), f"{prefix}/{next_dish.lower()}"))
+        if asked[ticket.paths]:
+            refusals[ticket.id] = clean(asked[ticket.paths][1])
+    return refusals
+
+
+def age(delta):
+    seconds = max(0, int(delta.total_seconds()))
+    if seconds >= 86400:
+        return f"{seconds // 86400}d"
+    if seconds >= 3600:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 60}m"
+
+
+def startable_lines(standings, meta, running, now):
+    lines = [workers_line(meta, running)]
+    if not standings:
+        return "\n".join([*lines, "no waiting tickets"])
+    kinds = [standing.kind for standing in standings]
+    lines.append(", ".join([f"waiting tickets: {len(standings)}",
+                            *(f"{text.count_label}: {kinds.count(kind)}" for kind, text in STANDINGS.items() if kind in kinds)]))
+    for standing in standings:
+        ticket = standing.ticket
+        flag = " (over a week)" if standing.overdue else ""
+        paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
+        words = STANDINGS[standing.kind].line_words.format(why=standing.why)
+        lines.append(f"{ticket.id} {ticket.priority}, {age(now - ticket.filed)}{flag}: {words}{paths}")
+        if standing.kind in ("start", "rides"):
+            lines.append(f"  {ticket.summary}")
+    return "\n".join(lines)
+
+
+def startable(restaurant):
+    with restaurant.checked():
+        meta = restaurant.meta
+        tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
+    refusals = lease_refusals(meta, tickets, next_dish)
+    moment = datetime.now(timezone.utc)
+    return startable_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), refusals, moment), meta, running, moment)
+
+
 def ticket_lines(restaurant, state, held):
     lines = []
     for row in restaurant.rows("rail.tsv"):
         if state and row["state"] != state:
             continue
-        line = f"{row['id']} {row['state']} [{row['source']}] {row['summary']}"
+        line = f"{row['id']} {row['state']} {priority_of(row)} [{row['source']}] {row['summary']}"
         if row["ref"]:
             line += f" {row['ref']}"
         if row["state"] == "waiting" and row["id"] in held:
@@ -1857,6 +2104,7 @@ def watch(restaurant):
         if handed:
             lines.append(f"handed to you: {handed}; run ticket take")
         inputs = block_inputs(restaurant)
+        workers = workers_line(restaurant.meta, inputs[1])
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -1884,7 +2132,7 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=now())
-    return "\n".join(item_lines + lines) or "no work in progress"
+    return "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
 
 
 def drop(restaurant, ident, stopped):
@@ -2072,9 +2320,9 @@ def walk(root, stale_hours=24, repo=None):
         groups.setdefault(project, []).append(restaurant)
     if not groups:
         if wanted is not None:
-            return f"no restaurants for {wanted}"
-        return f"no restaurants under {root}"
-    lines = []
+            return f"no restaurants for {wanted}", []
+        return f"no restaurants under {root}", []
+    lines, failures = [], []
     for project in sorted(groups):
         # The executive admin comes first in its repository.
         coordinators = sorted(groups[project], key=lambda restaurant: (not is_admin(restaurant.meta),
@@ -2087,8 +2335,14 @@ def walk(root, stale_hours=24, repo=None):
             meta = restaurant.meta
             age = datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastActivityAt"])
             idle = f", idle {int(age.total_seconds() // 3600)}h" if age.total_seconds() > stale_hours * 3600 else ""
-            counts = status_line(restaurant)
-            blocked = len(holding_blocks(restaurant))
+            try:
+                counts = status_line(restaurant)
+                blocked = len(holding_blocks(restaurant))
+                questions = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
+            except MalformedTable as error:
+                lines.append(f"  {meta['restaurant']}: {error}")
+                failures.append(str(error))
+                continue
             if blocked:
                 counts = re.sub(r"(waiting tickets: \d+)", rf"\1 ({blocked} blocked)", counts, count=1)
             mode = f", mode {meta['mode']}" if meta.get("mode") else ""
@@ -2096,9 +2350,9 @@ def walk(root, stale_hours=24, repo=None):
             leases = leases_for(listing, holder_prefix(meta))
             lease_text = f", leases {', '.join(leases)}" if leases else ""
             lines.append(f"    thread {meta.get('thread') or 'not recorded'}{lease_text}")
-            for question in (row for row in restaurant.rows("86.tsv") if row["state"] == "open"):
+            for question in questions:
                 lines.append(f"    {question['id']}: {question['question']}")
-    return "\n".join(lines)
+    return "\n".join(lines), failures
 
 
 REQUEST_NOTE = re.compile(r"^to (\S+): (.*)$")
@@ -2340,6 +2594,8 @@ def parser():
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
+    p.add_argument("--autofire", choices=AUTOFIRE,
+                   help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
     p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -2357,15 +2613,26 @@ def parser():
                    help="with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store "
                         "has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run "
                         "do not count")
+    a.add_argument("--priority", choices=PRIORITIES_BY_RANK,
+                   help="missing reads as urgent from upstream, low from report, and normal from every other source")
+    a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
+    a.add_argument("--decision", action="store_true",
+                   help="the ticket asks the owner to decide; the startable command never lists it as startable")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
     a.add_argument("id")
-    a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"], required=True)
+    a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"])
+    a.add_argument("--priority", choices=PRIORITIES_BY_RANK)
+    a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
+    a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
+                   help="mark or unmark the ticket as one that asks the owner to decide")
     a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
+    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none")
+    a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
     p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
@@ -2390,6 +2657,8 @@ def parser():
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
+    sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
+                                     "it starts nothing")
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
     p.add_argument("id")
@@ -2477,7 +2746,7 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then reports to, mode, and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
@@ -2576,7 +2845,11 @@ def run(argv):
                 lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
         return "\n".join(lines)
     if args.command == "walk":
-        return walk(root, args.stale_hours, args.repo)
+        text, failures = walk(root, args.stale_hours, args.repo)
+        if failures:
+            print(text)
+            raise BrigadeError("\nbrigade: ".join(failures))
+        return text
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)
@@ -2624,6 +2897,8 @@ def run(argv):
                     args.paths, args.reason)
     if args.command == "watch":
         return watch(restaurant)
+    if args.command == "startable":
+        return startable(restaurant)
     if args.command == "ticket" and args.action == "list":
         held = holding_blocks(restaurant)
         with restaurant.checked():
@@ -2636,15 +2911,27 @@ def run(argv):
     if args.command == "ticket" and args.action == "add" and args.from_report is not None:
         if args.source != "user" or args.ref or args.request or args.again:
             raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
+        if args.priority or args.paths or args.decision:
+            raise BrigadeError("--from-report takes no --priority, nonempty --paths, or --decision")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
         except UnicodeDecodeError as error:
             raise BrigadeError(f"reports/{name} is not UTF-8 text; nothing added") from error
+        tracked = tracked_paths(restaurant.meta["projectRoot"])
         with restaurant.checked():
-            return file_follow_ups(restaurant, name, found, not args.dry_run)
+            return file_follow_ups(restaurant, name, found, not args.dry_run, tracked)
+    if args.command == "ticket" and args.action == "paths":
+        project = restaurant.meta["projectRoot"]
+        tracked = tracked_paths(project)
+        if tracked is None:
+            raise BrigadeError(f"cannot list tracked files in {project}")
+        with restaurant.checked():
+            return record_paths(restaurant, tracked, not args.dry_run)
     if args.command == "ticket" and args.action == "add" and args.dry_run:
         raise BrigadeError("--dry-run needs --from-report")
+    if args.command == "ticket" and args.action in ("add", "set") and args.paths is not None:
+        args.paths = ticket_paths(args.paths)
     rails = None
     if args.command == "ticket" and (args.action == "move" or args.action == "add" and args.ref):
         rails = sibling_rails(restaurant)
@@ -2683,6 +2970,8 @@ def command(restaurant, args, contract=None, rails=None):
                 drop.append("mode")
             else:
                 raise BrigadeError('--mode takes full, light, or ""')
+        if args.autofire:
+            changes["autofire"] = args.autofire
         if args.reports_to is not None:
             if clean(args.reports_to):
                 changes["reportsTo"] = clean(args.reports_to)
@@ -2728,7 +3017,8 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "ticket":
         if args.action == "add":
-            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again)
+            return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again,
+                              priority=args.priority or "", paths=args.paths, decision=args.decision)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":
@@ -2736,8 +3026,23 @@ def command(restaurant, args, contract=None, rails=None):
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
-        restaurant.update("rail.tsv", args.id, "ticket", state=args.state)
-        return f"{args.id} {args.state}"
+        changes, said = {}, []
+        if args.state:
+            changes["state"] = args.state
+            said.append(args.state)
+        if args.priority:
+            changes["priority"] = args.priority
+            said.append(f"priority {args.priority}")
+        if args.paths is not None:
+            changes["paths"] = ",".join(args.paths)
+            said.append(f"paths {changes['paths']}" if args.paths else "no paths")
+        if args.decision is not None:
+            changes["decision"] = "yes" if args.decision else ""
+            said.append("decision" if args.decision else "no decision")
+        if not said:
+            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, or --no-decision")
+        restaurant.update("rail.tsv", args.id, "ticket", **changes)
+        return f"{args.id} {'; '.join(said)}"
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
@@ -2866,6 +3171,8 @@ def command(restaurant, args, contract=None, rails=None):
         # The thread comes first, so a service's fence step compares it before anything else.
         lines = [f"thread {thread}" if thread else "thread not recorded",
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
+        if not is_admin(meta):
+            lines.append(workers_line(meta, running_workers(restaurant)))
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")
         if meta.get("mode"):

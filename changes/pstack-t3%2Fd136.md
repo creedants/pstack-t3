@@ -1,0 +1,15 @@
+- `brigade.py` tickets carry a priority of `urgent`, `normal`, or `low`, set with `ticket add --priority` or `ticket set --priority`.
+- A ticket with no recorded priority reads `urgent` from source `upstream`, `low` from source `report`, and `normal` from every other source.
+- `brigade.py ticket list` prints the priority after the state, as in `T1 waiting normal [user] <summary>`.
+- `brigade.py ticket add --paths` and `ticket set --paths` record comma-separated files and directories inside the repository on a ticket.
+- `brigade.py ticket add --decision` and `ticket set --decision` mark a ticket that asks the owner to decide, and `ticket set --no-decision` removes the mark.
+- `brigade.py ticket set` takes any of `--state`, `--priority`, `--paths`, `--decision`, and `--no-decision`, and exits 1 with none of them.
+- `brigade.py ticket move` and `ticket take` carry a ticket's recorded priority, paths, and decision mark.
+- `rail.tsv` has three more columns at its end, and a `brigade.py` from before this change reads a row written with them as malformed.
+- `brigade.py set --autofire off|urgent|normal|low` records the auto-start level, which reads as `normal` when none is recorded.
+- `brigade.py status` prints `workers: <running> of <cap> running, <idle> idle, auto-start: <level>` as its third line outside the executive admin's store, and `watch` prints it as its first line.
+- `brigade.py ticket add --from-report` records on each ticket it files the tracked files, and the directories above a tracked file, that its text quotes in backticks.
+- `brigade.py ticket paths` records the same quoted paths on each waiting ticket that records none.
+- `brigade.py startable` lists the waiting tickets by priority and then by age, each with why it can or cannot start now, and starts nothing.
+- `brigade.py walk` prints every other store and exits 1 when one store has a malformed table.
+- `brigade.py ticket add --from-report` prints `not filed, list item with no text` for a list item that is only its marker.
