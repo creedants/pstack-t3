@@ -55,7 +55,7 @@ It leaves a word of one segment that starts with a slash, such as /review, unles
 A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
-Different work items can print the same id, summary, state, and link.
+Different work items can print the same id, summary, state, and link. Each is still listed or counted as its own work item.
 """
 
 import argparse
@@ -279,6 +279,8 @@ class Item:
     pr: str
     in_flight: bool
     no_link: str = ""
+    # The work item's position in the store's table, so two work items that print alike stay two. No form prints it.
+    key: int = 0
 
 
 @dataclass(frozen=True)
@@ -1160,10 +1162,10 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy):
+def item_of(unit, privacy, key):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why)
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key)
 
 
 def build_page(store, t3, window, privacy):
@@ -1182,6 +1184,7 @@ def build_page(store, t3, window, privacy):
 
     placed = assign(store, t3)
     units = {unit.id: unit for unit in store.units}
+    keys = {unit.id: key for key, unit in enumerate(store.units)}
     members = {}
     for thread, assignment in placed.items():
         members.setdefault(assignment.unit, []).append(t3.agents[thread])
@@ -1192,7 +1195,7 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy) if unit else None, rows, len(active) - subagents, subagents))
+        groups.append(Group(item_of(units[unit], privacy, keys[unit]) if unit else None, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1210,7 +1213,7 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id]) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
     return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 
