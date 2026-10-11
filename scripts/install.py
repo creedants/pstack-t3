@@ -554,7 +554,7 @@ def plan_uninstall(view, root, selected, holds):
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
     for row in view.backups:
-        if unreached(row) and set(row.harnesses) <= chosen:
+        if unreached(row) and set(row.harnesses) <= chosen and held_beside(row.backup) is None:
             occupied.append(KEPT_UNREACHED.format(backup=row.backup, original=row.original))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
@@ -1088,6 +1088,18 @@ def contested_by(backup):
         aside = os.path.join(directory, name)
         if os.path.lexists(aside) and not one_entry(aside, backup):
             return aside
+    return None
+
+
+def held_beside(backup):
+    """Return the path of an entry named os.path.basename(backup) in a HOLDER directory in os.path.dirname(backup), or None. Reads only."""
+    parent, name = os.path.split(backup)
+    # os.listdir raises ValueError for a path that holds a NUL byte.
+    with suppress(ValueError):
+        for _holder, directory in holders(parent):
+            aside = os.path.join(directory, name)
+            if os.path.lexists(aside):
+                return aside
     return None
 
 
@@ -1732,7 +1744,8 @@ def audit(args, scope, user, names):
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
-            stale.append(row_finding(args, state, row, held_for.get(row.backup)))
+            aside = held_for.get(row.backup) or (None if os.path.isabs(row.backup) else held_beside(row.backup))
+            stale.append(row_finding(args, state, row, aside))
     return Audit(tuple(stale + away), tuple(unread))
 
 
