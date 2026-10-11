@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -75,13 +75,13 @@ add, list, update, move, or take tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n>]
 ```
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
 | `--dry-run` |  |  |  | with --from-report: print what it would add; it changes no table and no log |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
@@ -90,6 +90,8 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
 | `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
 | `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the kind of work; a ticket added with --summary is refused without it |
+| `--goal G<n>` |  |  |  | with --summary: the goal this ticket belongs to, which must be open or paused; without it the ticket is unassigned |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -106,7 +108,7 @@ brigade.py [flags] ticket list [--state STATE]
 ## brigade.py ticket set
 
 ```text
-brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] id
+brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n> | --no-goal] id
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -116,6 +118,11 @@ brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PAT
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
 | `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
 | `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+| `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+| `--no-goal` |  |  |  | clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+
+Give at most one of `--goal`, `--no-goal`.
 
 ## brigade.py ticket move
 
@@ -150,17 +157,72 @@ record the tracked paths each waiting ticket's summary quotes, on tickets that r
 | --- | --- | --- | --- | --- |
 | `--dry-run` |  |  |  | print what it would record; it changes no table |
 
+## brigade.py goal
+
+```text
+brigade.py [flags] goal <action>
+```
+
+add, change, or list goals; a goal is a named line of work
+
+`<action>` is one of `add`, `set`, `list`.
+
+## brigade.py goal add
+
+```text
+brigade.py [flags] goal add --name NAME --purpose PURPOSE --done DONE [--share SHARE]
+```
+
+record a new open goal and print its id; refused when an open or paused goal has the same name, where case, leading and trailing whitespace, and the length of a whitespace run do not count
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--name NAME` | yes |  |  | what the goal is called, such as "activity view" |
+| `--purpose PURPOSE` | yes |  |  | one sentence that says why this line of work exists |
+| `--done DONE` | yes |  |  | one sentence that states the test that shows the goal is reached |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, and it does not affect which tickets start |
+
+## brigade.py goal set
+
+```text
+brigade.py [flags] goal set [--state STATE] [--evidence EVIDENCE] [--name NAME] [--purpose PURPOSE] [--done DONE] [--share SHARE] id
+```
+
+change a goal's state, name, purpose, done test, or share
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
+| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused is recorded and printed. It does not affect which tickets start. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
+| `--evidence EVIDENCE` |  |  |  | one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; with --state done, what shows the done test is met; with --state dropped, why the goal is dropped; refused without --state done or --state dropped |
+| `--name NAME` |  |  |  | replaces the goal's name; refused when it is empty or only whitespace |
+| `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when it is empty or only whitespace |
+| `--done DONE` |  |  |  | replaces the goal's done test; refused when it is empty or only whitespace |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; "" clears it; goal list prints it, and it does not affect which tickets start |
+
+## brigade.py goal list
+
+```text
+brigade.py [flags] goal list [--all]
+```
+
+the state, name, counts, purpose, and done test of each open or paused goal and of each done or dropped goal that has a waiting ticket, an item in flight, or a ticket riding along, then the counts of unassigned work; waiting counts waiting tickets; in flight counts items in progress, in review, passed, sent back, blocked, or waiting to land; merged counts merged items; send-backs counts the send-back verdicts on the goal's items, in any state, that are not a panel member's row; riding along counts assigned tickets of the goal that are not in an item of the goal
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--all` |  |  |  | also print each other done or dropped goal |
+
 ## brigade.py fire
 
 ```text
-brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON]
+brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON] [--kind KIND] [--ride-along RIDE_ALONG]
 ```
 
 group tickets into one dish and assign it to a station
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids |
+| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, and its kind when it has one |
 | `--station STATION` | yes |  |  | the pstack playbook the worker runs |
 | `--summary SUMMARY` | yes |  |  |  |
 | `--task TASK` |  |  |  |  |
@@ -170,6 +232,8 @@ group tickets into one dish and assign it to a station
 | `--paths PATHS` |  |  |  | paths the dish will change; fire claims a landing lease on them first |
 | `--mode MODE` |  |  |  | full, to start the dish in full mode; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
+| `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |
+| `--ride-along RIDE_ALONG` |  |  |  | comma-separated ids from --tickets, not the first, that may be under another goal than the first ticket's; each must have priority low and must not be a feature; every other ticket after the first must have the first ticket's goal or no goal |
 
 ## brigade.py brief
 
@@ -489,7 +553,7 @@ executive admin: copy each coordinator's new log rows into this log
 brigade.py [flags] status
 ```
 
-the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present
+the thread line first, then counts, then workers outside the executive admin's store, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to, mode, and owner when present
 
 ## brigade.py close
 

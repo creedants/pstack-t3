@@ -37,6 +37,8 @@ DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "qu
 COUNTED_STATES = ("in-progress", "in-review")
 # A dish in one of these holds an active lease that watch keeps renewing. A queued dish's lease is the queue's.
 LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
+# A dish in one of these has started and is neither merged nor dropped.
+IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
 EDITS_VERDICT = "pass-with-edits"
@@ -50,6 +52,15 @@ OPEN_RUN_MINUTES = 10
 PRIORITIES_BY_RANK = ("urgent", "normal", "low")
 AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
+KIND_CHOICE = f"<{'|'.join(KINDS)}>"
+# The kind fire gives an item when neither its lead ticket nor --kind gives one. A station not listed here gives none.
+STATION_KIND = {"bug-fix": "fix", "perf-issue": "fix", "investigation": "study"}
+GOAL_STATES = ("open", "paused", "done", "dropped")
+CLOSED_GOAL_STATES = ("done", "dropped")
+# The states a goal may move to from each state.
+GOAL_MOVES = {"open": ("paused", "done", "dropped"), "paused": ("open", "done", "dropped"),
+              "done": ("open",), "dropped": ("open",)}
 LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
 GENERATED_ROOT = "skills/"
@@ -76,17 +87,20 @@ NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
 
 TABLES = {
-    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision"),
-    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
+    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision", "kind", "goal"),
+    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported",
+                   "kind", "goal"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
     "edits.tsv": ("at", "dish", "from", "to", "report"),
+    "goals.tsv": ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
-ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
-PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
+# How many trailing cells a row of each table may lack. A missing cell reads as empty.
+ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
+PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
 WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
@@ -117,6 +131,8 @@ SECTIONS = {
     ("dish", "dropped"): "Dropped",
     ("ticket", "dropped"): "Dropped",
 }
+# The report sections whose lines print a kind and can be grouped by goal.
+GROUPED_SECTIONS = tuple(SECTIONS[key] for key in (("dish", "merged"), ("dish", "in-progress"), ("ticket", "waiting")))
 
 MENU = """# Menu: {restaurant}
 
@@ -193,6 +209,22 @@ def clean(value):
     return re.sub(r"[\t\r\n]+", " ", str(value if value is not None else "")).strip()
 
 
+# The cells save_rows and append write as they are given. read_labels decides whether each holds a legal value, and
+# clean changes no legal value, so cleaning one could only make a cell that is not legal read as legal after a rewrite.
+KEPT_CELLS = {"rail.tsv": ("kind", "goal"), "dishes.tsv": ("kind", "goal"), "goals.tsv": ("id",)}
+
+
+def stored(table, key, value):
+    """The text save_rows and append write into one cell.
+
+    A cell in KEPT_CELLS is written as it is given when it is text with no tab and no newline. That is every value a
+    table read gives. Every other value is written as clean gives it.
+    """
+    if key in KEPT_CELLS.get(table, ()) and isinstance(value, str) and "\t" not in value and "\n" not in value:
+        return value
+    return clean(value)
+
+
 def write_atomic(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as handle:
@@ -258,6 +290,14 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+        # The warning texts this command has printed. One command makes one Restaurant for its own store.
+        self.warned = set()
+
+    def warn(self, text):
+        """Print one warning line on standard error. A text this command has printed is not printed again."""
+        if text not in self.warned:
+            self.warned.add(text)
+            print(f"brigade: warning: {text}", file=sys.stderr)
 
     def fence(self):
         """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
@@ -417,11 +457,11 @@ class Restaurant:
 
     def save_rows(self, table, rows):
         header = TABLES[table]
-        body = ["\t".join(header)] + ["\t".join(clean(row.get(key, "")) for key in header) for row in rows]
+        body = ["\t".join(header)] + ["\t".join(stored(table, key, row.get(key, "")) for key in header) for row in rows]
         self.write(table, "\n".join(body) + "\n")
 
     def append(self, table, row):
-        data = ("\t".join(clean(row.get(key, "")) for key in TABLES[table]) + "\n").encode()
+        data = ("\t".join(stored(table, key, row.get(key, "")) for key in TABLES[table]) + "\n").encode()
         path = self.dir / table
         with self.guarded():
             if not path.exists():
@@ -456,14 +496,14 @@ class Restaurant:
                 return rows, row
         raise BrigadeError(f"no {ident} in {table}")
 
-    def update(self, table, ident, kind, note=None, **fields):
+    def update(self, table, ident, log_kind, note=None, **fields):
         rows, row = self.find(table, ident)
         changed = {key: value for key, value in fields.items() if value is not None}
         moved = "state" in changed and changed["state"] != row.get("state")
         row.update(changed)
         self.save_rows(table, rows)
         if moved:
-            self.log(kind, ident, changed["state"], note or row.get("summary") or row.get("question", ""))
+            self.log(log_kind, ident, changed["state"], note or row.get("summary") or row.get("question", ""))
         return row
 
 
@@ -750,7 +790,418 @@ def refuse_live_ref(restaurant, ref, rails):
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
 
 
-def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):
+def one_of(words):
+    """`a, b, or c` from three or more words."""
+    return ", ".join(words[:-1]) + f", or {words[-1]}"
+
+
+@dataclass(frozen=True)
+class Goal:
+    """One row of goals.tsv as read_labels reads it.
+
+    state is one of GOAL_STATES. share is the digits of a whole number of 1 or more with no leading zero, or "" for no limit.
+    """
+    id: str
+    state: str
+    name: str
+    purpose: str
+    done: str
+    share: str
+    closed: str
+
+
+@dataclass(frozen=True)
+class Label:
+    """A ticket's or an item's kind and goal as read_labels reads them.
+
+    kind is one of KINDS, or "" for no kind. goal is a key of Labels.goals, or "" for unassigned.
+    """
+    kind: str = ""
+    goal: str = ""
+
+
+@dataclass(frozen=True)
+class Fault:
+    """One warning of read_labels. table is the table the row is in, id is the row's id cell, and text is the warning."""
+    table: str
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ActsOn:
+    """The rows of rail.tsv and dishes.tsv whose kind and goal a command acts on.
+
+    read_labels prints the warnings of these rows. tickets holds ticket ids and items holds item ids.
+    every is true for a command that lists or counts every row.
+    """
+    tickets: tuple = ()
+    items: tuple = ()
+    every: bool = False
+
+    def covers(self, fault):
+        """True when read_labels prints this fault. Every fault of goals.tsv is printed."""
+        return (fault.table == "goals.tsv" or self.every
+                or fault.id in {"rail.tsv": self.tickets, "dishes.tsv": self.items}[fault.table])
+
+
+EVERY_ROW = ActsOn(every=True)
+GOALS_ONLY = ActsOn()
+
+
+@dataclass(frozen=True)
+class Labels:
+    """The kinds and goals of one store, read under one hold of the store lock.
+
+    goals is {goal id: Goal} in file order. tickets is {ticket id: Label} for the rows of rail.tsv, and items is
+    {item id: Label} for the rows of dishes.tsv. faults is one Fault per cell whose value is not legal,
+    and one per id of goals.tsv with a row that is not a goal.
+    """
+    goals: dict
+    tickets: dict
+    items: dict
+    faults: tuple
+
+
+def whole_share(text):
+    """The digits of a whole number of 1 or more with no leading zero, or "" when the text is not such a number."""
+    return text.lstrip("0") if text.isascii() and text.isdigit() else ""
+
+
+def read_goal(row, faults):
+    state, share = row["state"], whole_share(row["share"])
+    if state not in GOAL_STATES:
+        faults.append(Fault("goals.tsv", row["id"], f"{row['id']} has state {state!r}, which is not {one_of(GOAL_STATES)}; "
+                                                    f"it reads as open; run goal set {row['id']} --state <state>"))
+        state = "open"
+    if row["share"] and not share:
+        faults.append(Fault("goals.tsv", row["id"], f"{row['id']} has share {row['share']!r}, which is not a whole number of "
+                                                    f"1 or more; it reads as no limit; run goal set {row['id']} --share <n>"))
+    return Goal(row["id"], state, row["name"], row["purpose"], row["done"], share, row["closed"])
+
+
+def in_flight_tickets(restaurant):
+    """{ticket id: the first row of dishes.tsv whose state is in IN_FLIGHT_STATES and whose tickets cell names the id}."""
+    found = {}
+    for item in restaurant.rows("dishes.tsv"):
+        if item["state"] in IN_FLIGHT_STATES:
+            for ident in item["tickets"].split(","):
+                found.setdefault(ident, item)
+    return found
+
+
+def frozen_label(ticket, held):
+    """Why ticket set does not change this ticket's kind and goal now, or "" when it does. `held` is in_flight_tickets().
+
+    It changes them when the ticket is waiting and no item in flight names it. fire wrote an item's kind and goal when the
+    item started, and no command writes the item's two cells after that.
+    """
+    if ticket["state"] != "waiting":
+        return f"{ticket['id']} is {ticket['state']}"
+    item = held.get(ticket["id"])
+    return f"{ticket['id']} is a ticket of {item['id']}, which is {item['state']}" if item else ""
+
+
+def read_label(table, row, goals, faults, by_hand):
+    """One row's Label. `by_hand` is the end of the warning for a bad cell of a row whose cells ticket set does not change now.
+
+    It is "" for any other row, and the warning then ends with the ticket set line to run.
+    """
+    ident = row["id"]
+    kind = row["kind"] if row["kind"] in KINDS else ""
+    goal = row["goal"] if row["goal"] in goals else ""
+    if row["kind"] and not kind:
+        faults.append(Fault(table, ident, f"{ident} has kind {row['kind']!r}, which is not {one_of(KINDS)}; it reads as no kind; "
+                                          + (by_hand or f"run ticket set {ident} --kind <kind>")))
+    if row["goal"] and not goal:
+        faults.append(Fault(table, ident, f"{ident} names goal {row['goal']!r}, which has no row in goals.tsv; it reads as unassigned; "
+                                          + (by_hand or f"run ticket set {ident} --goal G<n> or --no-goal")))
+    return Label(kind, goal)
+
+
+def read_labels(restaurant, acts_on):
+    """The one reader of the kind and goal cells of rail.tsv and dishes.tsv, and of goals.tsv. It writes nothing to the store.
+
+    It prints one warning line on standard error for each fault of goals.tsv and for each fault of a row in `acts_on`.
+    A command prints a warning once, however many times it reads.
+    Call it under the store lock. A goals.tsv that does not exist reads as no goals.
+    A row of goals.tsv with an empty id is not a goal. Neither is a row whose id clean changes, which is an id with white
+    space at an end or a carriage return in it. Of the other rows of goals.tsv with one id, the first is the goal.
+    The rows with an empty id add one Fault between them. So do the rows with one id that are not a goal.
+    A kind cell, a goal cell, and an id of goals.tsv are read as they are in the file, and stored writes each back as it
+    is, so a rewrite changes the reading of none that the command did not set.
+    A cell whose value is not legal reads as follows and adds one Fault.
+
+    - A kind that is not one of KINDS reads as no kind.
+    - A goal that is not the id of a goal reads as unassigned.
+    - A goal's state that is not one of GOAL_STATES reads as open.
+    - A goal's share that is not empty and not a whole number of 1 or more reads as no limit.
+    """
+    goals, faults, extra = {}, [], []
+    for row in restaurant.rows("goals.tsv"):
+        if row["id"] and clean(row["id"]) == row["id"] and row["id"] not in goals:
+            goals[row["id"]] = read_goal(row, faults)
+        elif row["id"] not in extra:
+            extra.append(row["id"])
+    for ident in extra:
+        if not ident:
+            text = "goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand"
+        elif clean(ident) != ident:
+            text = (f"goals.tsv has a row with id {ident!r}, which has white space at an end or a carriage return in it; "
+                    "it is not a goal; correct the id in goals.tsv by hand to an id no other row has, or remove the row")
+        else:
+            text = (f"goals.tsv has more than one row with id {ident}; the first is the goal and the others are not read; "
+                    "remove the others from goals.tsv by hand")
+        faults.append(Fault("goals.tsv", ident, text))
+    held, tickets = in_flight_tickets(restaurant), {}
+    for row in restaurant.rows("rail.tsv"):
+        frozen = frozen_label(row, held)
+        tickets[row["id"]] = read_label("rail.tsv", row, goals, faults,
+                                        frozen and f"ticket set does not change this cell while {frozen}; correct it in rail.tsv by hand")
+    items = {row["id"]: read_label("dishes.tsv", row, goals, faults, "no command changes this cell; correct it in dishes.tsv by hand")
+             for row in restaurant.rows("dishes.tsv")}
+    for fault in faults:
+        if acts_on.covers(fault):
+            restaurant.warn(fault.text)
+    return Labels(goals, tickets, items, tuple(faults))
+
+
+@dataclass(frozen=True)
+class Tally:
+    """The work under one kind or one goal. waiting holds ticket ids. in_flight and merged hold item ids."""
+    waiting: tuple = ()
+    in_flight: tuple = ()
+    merged: tuple = ()
+    send_backs: int = 0
+
+
+@dataclass(frozen=True)
+class LabelCounts:
+    """kinds is {kind: Tally} and goals is {goal id: Tally}. The key "" holds the work with no kind, and the unassigned work.
+
+    riding is {goal id: ticket ids}. A key with no work is absent.
+    """
+    kinds: dict
+    goals: dict
+    riding: dict
+
+
+def count_labels(restaurant, labels):
+    """The counts by kind and by goal. Call it under the same hold of the store lock as the read_labels that made `labels`.
+
+    Each row counts under its own kind and its own goal as `labels` gives them.
+
+    - waiting. The rows of rail.tsv whose state is waiting.
+    - in flight. The rows of dishes.tsv whose state is in IN_FLIGHT_STATES.
+    - merged. The rows of dishes.tsv whose state is merged.
+    - send-backs. The rows of pass.tsv whose verdict is send-back, whose member cell is empty, and whose dish cell is the id of
+      a row of dishes.tsv. They count under that item's kind and goal, whatever the item's state.
+    - riding, for a goal. The rows of rail.tsv whose state is assigned and whose goal is that goal, where the dish cell is not
+      the id of an item under that goal.
+    """
+    kinds, goals, riding = {}, {}, {}
+
+    def add(label, field, ident):
+        for found, key in ((kinds, label.kind), (goals, label.goal)):
+            found.setdefault(key, {"waiting": [], "in_flight": [], "merged": [], "send_backs": []})[field].append(ident)
+
+    for row in restaurant.rows("rail.tsv"):
+        label = labels.tickets[row["id"]]
+        if row["state"] == "waiting":
+            add(label, "waiting", row["id"])
+        elif row["state"] == "assigned" and label.goal and labels.items.get(row["dish"], Label()).goal != label.goal:
+            riding.setdefault(label.goal, []).append(row["id"])
+    for row in restaurant.rows("dishes.tsv"):
+        if row["state"] in IN_FLIGHT_STATES:
+            add(labels.items[row["id"]], "in_flight", row["id"])
+        elif row["state"] == "merged":
+            add(labels.items[row["id"]], "merged", row["id"])
+    for row in restaurant.rows("pass.tsv"):
+        if row["verdict"] == "send-back" and not row["member"] and row["dish"] in labels.items:
+            add(labels.items[row["dish"]], "send_backs", row["dish"])
+
+    def tallies(found):
+        return {key: Tally(tuple(lists["waiting"]), tuple(lists["in_flight"]), tuple(lists["merged"]), len(lists["send_backs"]))
+                for key, lists in found.items()}
+
+    return LabelCounts(tallies(kinds), tallies(goals), {goal: tuple(ids) for goal, ids in riding.items()})
+
+
+def open_goal(labels, ident):
+    """The goal a ticket is being given. Refuses an id with no row, and a goal that is done or dropped."""
+    if not ident:
+        raise BrigadeError('--goal "" names no goal; run goal list --all to see every goal')
+    goal = labels.goals.get(ident)
+    if goal is None:
+        raise BrigadeError(f"no goal {ident}; run goal list --all to see every goal")
+    if goal.state in CLOSED_GOAL_STATES:
+        raise BrigadeError(f"{ident} is {goal.state}; a ticket takes an open or paused goal; "
+                           f"run goal set {ident} --state open first, or pick another goal")
+    return goal
+
+
+def goal_share(text):
+    """--share as the cell to store. Empty text stays empty. Refuses text that is not a whole number of 1 or more."""
+    text = clean(text)
+    if text and not whole_share(text):
+        raise BrigadeError(f'--share takes a whole number of 1 or more, or "" for no limit, got {text!r}')
+    return whole_share(text)
+
+
+def add_goal(restaurant, name, purpose, done, share=""):
+    """Append one open goal and log it. Returns the new id.
+
+    Refuses when an open or paused goal has the same name by same_text, so a command run a second time adds no second goal.
+    """
+    name, purpose, done, share = clean(name), clean(purpose), clean(done), goal_share(share)
+    if not (name and purpose and done):
+        raise BrigadeError("goal add needs a nonempty --name, --purpose, and --done")
+    for goal in read_labels(restaurant, GOALS_ONLY).goals.values():
+        if goal.state not in CLOSED_GOAL_STATES and same_text(goal.name) == same_text(name):
+            raise BrigadeError(f"same name as {goal.id} ({goal.state}); nothing added")
+    ident = restaurant.next_id("goals.tsv")
+    restaurant.append("goals.tsv", {"id": ident, "at": now(), "state": "open", "name": name, "purpose": purpose,
+                                    "done": done, "share": share})
+    restaurant.log("goal", ident, "open", name)
+    return ident
+
+
+def goal_work(counted, ident):
+    """What keeps a goal from closing, as (words, advice) pairs. Empty when no ticket of the goal waits or rides along and no item is in flight."""
+    tally = counted.goals.get(ident, Tally())
+    held = ((tally.waiting, "waiting", "give each waiting ticket another goal with ticket set --goal, or none with --no-goal; "
+             "a waiting ticket that an item in flight names keeps its goal until that item is merged or dropped"),
+            (tally.in_flight, "in flight", "finish or drop each item in flight"),
+            (counted.riding.get(ident, ()), "riding along", "finish or drop the item each of those tickets rides along in"))
+    return [(f"{', '.join(ids)} {words}", advice) for ids, words, advice in held if ids]
+
+
+def set_goal(restaurant, ident, name=None, purpose=None, done=None, share=None, state=None, evidence=None):
+    """Change one goal. Returns one line such as `G1 paused; share 2`.
+
+    GOAL_MOVES is the state machine. A state the goal's cell already holds is accepted and changes neither the state nor
+    the closed cell. A state cell that is not one of GOAL_STATES reads as open, and --state open rewrites it.
+    A move to done or dropped needs --evidence, and is refused while goal_work finds work under the goal.
+    One update call writes every change. It logs a goal row when the state changed.
+    """
+    labels = read_labels(restaurant, EVERY_ROW if state in CLOSED_GOAL_STATES else GOALS_ONLY)
+    goal = labels.goals.get(ident)
+    if goal is None:
+        raise BrigadeError(f"no goal {ident}; run goal list --all to see every goal")
+    if all(value is None for value in (name, purpose, done, share, state)):
+        raise BrigadeError("goal set needs --state, --name, --purpose, --done, or --share")
+    for flag, value in (("--name", name), ("--purpose", purpose), ("--done", done)):
+        if value is not None and not clean(value):
+            raise BrigadeError(f"goal set {flag} takes text; a goal keeps a name, a purpose, and a done test")
+    if evidence is not None and state not in CLOSED_GOAL_STATES:
+        raise BrigadeError("--evidence goes only with --state done or --state dropped")
+    if share is not None:
+        share = goal_share(share)
+    _, row = restaurant.find("goals.tsv", ident)
+    moving = state is not None and state != row["state"]
+    closing = moving and state in CLOSED_GOAL_STATES
+    if moving and state != goal.state and state not in GOAL_MOVES[goal.state]:
+        raise BrigadeError(f"{ident} is {goal.state}; a {goal.state} goal moves only to open; run goal set {ident} --state open first")
+    if closing:
+        if not clean(evidence):
+            raise BrigadeError(f"--state {state} needs --evidence <one line>")
+        work = goal_work(count_labels(restaurant, labels), ident)
+        if work:
+            raise BrigadeError(f"{ident} still has work: {'; '.join(words for words, _ in work)}; "
+                               f"{'; '.join(advice for _, advice in work)}; then run this again")
+    closed = None
+    if closing:
+        closed = f"{now()} {clean(evidence)}"
+    elif moving and goal.state in CLOSED_GOAL_STATES:
+        closed = ""
+    said = []
+    if state is not None:
+        said.append(state if moving else f"already {state}")
+    if name is not None:
+        said.append(f"name {clean(name)}")
+    if purpose is not None:
+        said.append("purpose changed")
+    if done is not None:
+        said.append("done test changed")
+    if share is not None:
+        said.append(f"share {share}" if share else "no share")
+    kept = clean(name) if name is not None else goal.name
+    restaurant.update("goals.tsv", ident, "goal", note=f"{kept}: {clean(evidence)}" if closing else kept,
+                      state=state, name=name, purpose=purpose, done=done, share=share, closed=closed)
+    return f"{ident} {'; '.join(said)}"
+
+
+def plural(count, word):
+    """`1 send-back`, `0 send-backs`, `2 send-backs`."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def tally_words(tally):
+    return (f"{len(tally.waiting)} waiting, {len(tally.in_flight)} in flight, {len(tally.merged)} merged, "
+            f"{plural(tally.send_backs, 'send-back')}")
+
+
+def goal_lines(labels, counted, every):
+    """The text of goal list.
+
+    A goal is listed when it is open or paused, or when it has a ticket waiting, an item in flight, or a ticket riding along.
+    `every` lists each other goal too. The unassigned line is last.
+    """
+    lines = []
+    for goal in labels.goals.values():
+        tally, riding = counted.goals.get(goal.id, Tally()), counted.riding.get(goal.id, ())
+        closed = goal.state in CLOSED_GOAL_STATES
+        if closed and not every and not (tally.waiting or tally.in_flight or riding):
+            continue
+        words = tally_words(tally) + (f", {len(riding)} riding along" if riding else "") + (f", share {goal.share}" if goal.share else "")
+        lines += [f"{goal.id} {goal.state} {goal.name}: {words}", f"  purpose: {goal.purpose}", f"  done when: {goal.done}"]
+        if closed:
+            lines.append(f"  closed: {goal.closed}")
+    if not lines:
+        lines.append("no goals" if every else "no open or paused goals")
+    return "\n".join([*lines, f"unassigned: {tally_words(counted.goals.get('', Tally()))}"])
+
+
+def label_words(label):
+    """What a ticket line prints for a label. ` fix G1`, ` fix`, ` G1`, or nothing for no kind and no goal."""
+    return "".join(f" {word}" for word in (label.kind, label.goal) if word)
+
+
+def status_label_lines(labels, counted):
+    """Up to three lines of status. The counts by kind, the counts by goal, and the waiting tickets with no kind.
+
+        kinds: feature 1 waiting; fix 1 waiting, 1 in flight; upkeep 1 in flight
+        goals: G1 2 waiting, 1 in flight; G2 paused, 1 in flight; unassigned 2 waiting, 1 in flight
+        untagged: 1
+
+    An entry holds the waiting count and the in flight count that are not 0, and is absent when both are 0.
+    kinds has an entry per kind in KINDS order. An item in flight with no kind is absent from kinds.
+    goals has an entry per goal in file order and then one for unassigned work. A goal that is not open has its state
+    after its id. The line is absent when goals.tsv has no row.
+    A line with no entry is absent, and so is untagged at 0.
+    """
+    def entry(name, tally):
+        found = [f"{len(ids)} {word}" for ids, word in ((tally.waiting, "waiting"), (tally.in_flight, "in flight")) if ids]
+        return [f"{name} {', '.join(found)}"] if found else []
+
+    lines = []
+    kinds = [text for kind in KINDS for text in entry(kind, counted.kinds.get(kind, Tally()))]
+    if kinds:
+        lines.append(f"kinds: {'; '.join(kinds)}")
+    goals = [text for goal in labels.goals.values()
+             for text in entry(goal.id if goal.state == "open" else f"{goal.id} {goal.state},", counted.goals.get(goal.id, Tally()))]
+    if labels.goals:
+        goals += entry("unassigned", counted.goals.get("", Tally()))
+    if goals:
+        lines.append(f"goals: {'; '.join(goals)}")
+    untagged = len(counted.kinds.get("", Tally()).waiting)
+    if untagged:
+        lines.append(f"untagged: {untagged}")
+    return lines
+
+
+def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False,
+               kind="", goal=None):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -772,14 +1223,22 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
                                    "pass --again to file a second ticket")
     if request:
         source = f"{source} (request {request})"
-    return append_ticket(restaurant, summary, source, ref, priority, paths, decision)
+    with restaurant.guarded():
+        # The kind and goal checks run after the owner fence and after each refusal above, so a ticket add that was
+        # refused before kinds and goals existed is refused with the same words.
+        if not kind:
+            raise BrigadeError(f"ticket add needs --kind {KIND_CHOICE}")
+        if goal is not None:
+            open_goal(read_labels(restaurant, GOALS_ONLY), goal)
+        return append_ticket(restaurant, summary, source, ref, priority, paths, decision, kind, goal or "")
 
 
-def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False):
+def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False, kind="", goal=""):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": now(), "state": "waiting", "source": source,
                                    "ref": ref, "summary": summary, "priority": priority,
-                                   "paths": ",".join(paths), "decision": "yes" if decision else ""})
+                                   "paths": ",".join(paths), "decision": "yes" if decision else "",
+                                   "kind": kind, "goal": goal})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
 
@@ -1258,13 +1717,23 @@ def same_text(value):
     return " ".join(value.split()).casefold()
 
 
+def follow_up_kind(item_kind, priority):
+    """The kind of a follow-up ticket. No kind when its item has none. Else fix at priority urgent or normal, and polish at low."""
+    if not item_kind:
+        return ""
+    return "polish" if priority == "low" else "fix"
+
+
 def file_follow_ups(restaurant, name, found, write, tracked):
     """One waiting ticket per follow-up whose text no ticket of this store holds, in any state.
 
     A done or dropped ticket counts, so a rerun on the same report after the coordinator dropped one files nothing.
     The ref ends in a position, which is not an identity, so the text is the only key and refuse_live_ref is not asked.
+    Each ticket takes the goal of the report's item, whatever that goal's state, and follow_up_kind of that item's kind.
     """
     restaurant.find("dishes.tsv", name[:-3])
+    label = read_labels(restaurant, ActsOn(items=(name[:-3],))).items[name[:-3]]
+    kind = follow_up_kind(label.kind, priority_of({"priority": "", "source": "report"}))
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
     aside = [f"not filed, {reason}: {text}" if text else f"not filed, {reason}" for reason, text in found.asides]
@@ -1280,7 +1749,7 @@ def file_follow_ups(restaurant, name, found, write, tracked):
         if key in holders:
             lines.append(f"skipped {ref}, same text as {holders[key]}: {text}")
         elif write:
-            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked))
+            ident = append_ticket(restaurant, text, "report", ref, paths=quoted_paths(text, tracked), kind=kind, goal=label.goal)
             holders[key] = f"{ident} (waiting)"
             lines.append(f"{ident} added from {ref}: {text}")
         else:
@@ -1324,12 +1793,16 @@ def move_ticket(restaurant, ident, to, rails):
     target_rows = rails.get(target)
     if target_rows is None:
         target_rows = Restaurant(target).rows("rail.tsv")
+    # The kind goes with the ticket. The goal stays, because a goal id names a row of this store's goals.tsv only.
+    label = read_labels(restaurant, ActsOn(tickets=(ident,))).tickets[ident]
     if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
             "priority": row["priority"], "paths": row["paths"], "decision": row["decision"],
+            **({"kind": label.kind} if label.kind else {}),
         }, indent=2) + "\n")
-    return f"{ident} moved to {name}; {tell(name, sibling)}"
+    left = f"; it leaves {label.goal} here and arrives unassigned" if label.goal else ""
+    return f"{ident} moved to {name}; {tell(name, sibling)}{left}"
 
 
 def take_tickets(restaurant):
@@ -1343,9 +1816,15 @@ def take_tickets(restaurant):
         row = taken_row(restaurant.rows("rail.tsv"), source)
         if row is None:
             rows = restaurant.rows("rail.tsv")
+            given = handoff.get("kind") or ""
+            kind = given if given in KINDS else ""
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
                    "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
-                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}}
+                   **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}, "kind": kind}
+            if given and not kind:
+                # The warning comes before the write, so a take killed after the write has printed it.
+                restaurant.warn(f"{row['id']} came from {source} with kind {given!r}, which is not one this version knows, "
+                                f"so it has no kind; run ticket set {row['id']} --kind {KIND_CHOICE}")
             restaurant.save_rows("rail.tsv", rows + [row])
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
@@ -1811,6 +2290,33 @@ def unclaimed_reports(restaurant):
     return unclaimed
 
 
+def section_lines(title, items, dishes, labels):
+    """The lines of one report section under its title.
+
+    A line of a section in GROUPED_SECTIONS has the kind of its item or ticket before the id, when it has one.
+    When a line of such a section has a goal, the section prints its lines under one `### <goal id> <goal name>` heading
+    per goal in goals.tsv order, then `### Unassigned`. A heading with no line is absent.
+    """
+    grouped, bullets = title in GROUPED_SECTIONS, []
+    for event in items:
+        of_item = event["kind"] in ("dish", "mode")
+        dish = dishes.get(event["id"], {}) if of_item else {}
+        tickets = f" ({dish['tickets'].replace(',', ', ')})" if dish.get("tickets") else ""
+        pr = f" {dish['pr']}" if dish.get("pr") else ""
+        label = (labels.items if of_item else labels.tickets).get(event["id"], Label())
+        kind = f"{label.kind} " if grouped and label.kind else ""
+        bullets.append((label.goal, f"- {kind}{event['id']}{tickets}: {event['note']}{pr}"))
+    if not grouped or not any(goal for goal, _ in bullets):
+        return [*(text for _, text in bullets), ""]
+    lines = []
+    headings = [*((goal.id, f"### {goal.id} {goal.name}") for goal in labels.goals.values()), ("", "### Unassigned")]
+    for goal, heading in headings:
+        under = [text for found, text in bullets if found == goal]
+        if under:
+            lines += [heading, "", *under, ""]
+    return lines
+
+
 def report(restaurant, write=True):
     meta = restaurant.meta
     since = meta.get("lastReportAt") or ""
@@ -1824,18 +2330,12 @@ def report(restaurant, write=True):
         if title:
             sections[title].append(event)
     dishes = {row["id"]: row for row in restaurant.rows("dishes.tsv")}
+    labels = read_labels(restaurant, EVERY_ROW)
     stamp = now()
     lines = [f"# {meta['restaurant']} report", "", f"Since {since or 'opening'}. {status_line(restaurant)}.", ""]
     for title, items in sections.items():
-        if not items:
-            continue
-        lines += [f"## {title}", ""]
-        for event in items:
-            dish = dishes.get(event["id"], {}) if event["kind"] in ("dish", "mode") else {}
-            tickets = f" ({dish['tickets'].replace(',', ', ')})" if dish.get("tickets") else ""
-            pr = f" {dish['pr']}" if dish.get("pr") else ""
-            lines.append(f"- {event['id']}{tickets}: {event['note']}{pr}")
-        lines.append("")
+        if items:
+            lines += [f"## {title}", "", *section_lines(title, items, dishes, labels)]
     if is_admin(meta):
         lines += admin_sections(restaurant, since)
     questions = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
@@ -1948,19 +2448,24 @@ def refusal_kind(message):
     return "lease"
 
 
-def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""):
+def block_note(kind, ids, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
+    """`kind` is the kind of block. `work` is the --kind fire was given, and `ride_along` the ids --ride-along named."""
     note = {"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
             "paths": paths, "timebox": timebox}
     if branch:
         note["branch"] = branch
     if reason:
         note["reason"] = reason
+    if work:
+        note["work"] = work
+    if ride_along:
+        note["ride_along"] = list(ride_along)
     return json.dumps(note, separators=(",", ":"))
 
 
-def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason=""):
+def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
-    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason)
+    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason, work, ride_along)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -2041,6 +2546,10 @@ def fire_command(ident, note):
     if note.get("paths"):
         pairs.append(("paths", note["paths"]))
     pairs.append(("timebox", note.get("timebox", 60)))
+    if note.get("work"):
+        pairs.append(("kind", note["work"]))
+    if note.get("ride_along"):
+        pairs.append(("ride-along", ",".join(note["ride_along"])))
     if note.get("reason"):
         pairs += [("mode", "full"), ("reason", note["reason"])]
     words = ["fire", *(f"--{name}={value}" for name, value in pairs)]
@@ -2106,6 +2615,7 @@ class Waiting:
     paths: tuple
     decision: bool
     summary: str
+    label: Label = Label()
 
 
 @dataclass(frozen=True)
@@ -2116,11 +2626,11 @@ class Standing:
     overdue: bool
 
 
-def waiting_ticket(row):
+def waiting_ticket(row, label=Label()):
     filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
     if filed.tzinfo is None:
         filed = filed.replace(tzinfo=timezone.utc)
-    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"])
+    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label)
 
 
 def plan(tickets, running, cap, level, refusals, now):
@@ -2193,7 +2703,7 @@ def startable_lines(standings, meta, running, now):
         flag = " (over a week)" if standing.overdue else ""
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
         words = STANDINGS[standing.kind].line_words.format(why=standing.why)
-        lines.append(f"{ticket.id} {ticket.priority}, {age(now - ticket.filed)}{flag}: {words}{paths}")
+        lines.append(f"{ticket.id} {ticket.priority}{label_words(ticket.label)}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
             lines.append(f"  {ticket.summary}")
     return "\n".join(lines)
@@ -2201,8 +2711,8 @@ def startable_lines(standings, meta, running, now):
 
 def startable(restaurant):
     with restaurant.checked():
-        meta = restaurant.meta
-        tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
+        tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
     refusals = lease_refusals(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
@@ -2210,11 +2720,11 @@ def startable(restaurant):
 
 
 def ticket_lines(restaurant, state, held):
-    lines = []
+    labels, lines = read_labels(restaurant, EVERY_ROW), []
     for row in restaurant.rows("rail.tsv"):
         if state and row["state"] != state:
             continue
-        line = f"{row['id']} {row['state']} {priority_of(row)} [{row['source']}] {row['summary']}"
+        line = f"{row['id']} {row['state']} {priority_of(row)}{label_words(labels.tickets[row['id']])} [{row['source']}] {row['summary']}"
         if row["ref"]:
             line += f" {row['ref']}"
         if row["state"] == "waiting" and row["id"] in held:
@@ -2237,7 +2747,77 @@ def unfireable(restaurant, ids):
     return None
 
 
-def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None):
+def fire_label(labels, rail, ids, station, kind, ride_along):
+    """The kind and goal the new item takes, as (Label, None), or (None, refusal). `rail` is {ticket id: row}.
+
+    Call it after unfireable has found each id in `ids` and found it waiting. The lead ticket is ids[0].
+    The item takes the lead ticket's goal, and no goal when `ids` is empty.
+    The kind is the first of these that gives one. The lead ticket's kind, then `kind`, then STATION_KIND[station].
+    `kind` beside a lead ticket of another kind is refused.
+    Each id in `ride_along` must be in `ids`, must not be the lead ticket, must have priority low, and must not be a feature.
+    Each other ticket after the lead must have the lead ticket's goal or no goal.
+    """
+    lead = ids[0] if ids else None
+    mine = labels.tickets[lead] if lead else Label()
+    if kind and mine.kind and kind != mine.kind:
+        return None, (f"{lead} has kind {mine.kind}, and --kind {kind} does not match it; "
+                      f"drop --kind, or run ticket set {lead} --kind {kind} first when no item in flight names {lead}")
+    found = mine.kind or kind or STATION_KIND.get(station, "")
+    if not found:
+        return None, ((f"{lead} has no kind" if lead else "no ticket gives this item a kind")
+                      + f" and station {station} gives none; pass --kind {KIND_CHOICE}")
+    for ident in ride_along:
+        if ident not in ids:
+            return None, f"--ride-along names {ident}, which is not in --tickets; add it there or drop it"
+        if ident == lead:
+            return None, (f"{ident} is the lead ticket, and the lead ticket cannot ride along; "
+                          "put the ticket whose goal the item takes first in --tickets")
+        if priority_of(rail[ident]) != "low":
+            return None, (f"{ident} is {priority_of(rail[ident])}; only a low ticket rides along; "
+                          f"start it on its own, or run ticket set {ident} --priority low")
+        if labels.tickets[ident].kind == "feature":
+            return None, f"{ident} is a feature, and a feature does not ride along; start it as its own item"
+    for ident in ids[1:]:
+        theirs = labels.tickets[ident].goal
+        if ident not in ride_along and theirs and theirs != mine.goal:
+            return None, (f"{ident} is under {theirs} and the lead ticket {lead} is {'under ' + mine.goal if mine.goal else 'unassigned'}; "
+                          f"name {ident} in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
+    return Label(found, mine.goal), None
+
+
+def checked_fire_label(restaurant, ids, station, kind, ride_along):
+    """fire_label on the store as it is now, read under the caller's lock.
+
+    read_labels prints the warnings of goals.tsv and of the tickets in `ids`.
+    """
+    labels = read_labels(restaurant, ActsOn(tickets=tuple(ids)))
+    rail = {row["id"]: row for row in restaurant.rows("rail.tsv")}
+    return fire_label(labels, rail, ids, station, kind, ride_along)
+
+
+def write_lead_kind(restaurant, ids, kind):
+    """Write `kind` into the kind cell of the lead ticket, ids[0], when the cell holds another value. It logs nothing.
+
+    fire calls it before it appends the item row. A fire killed after it leaves no item whose kind its lead ticket lacks.
+    """
+    rows = restaurant.rows("rail.tsv")
+    changed = [row for row in rows if row["id"] in ids[:1] and row["kind"] != kind]
+    for row in changed:
+        row["kind"] = kind
+    if changed:
+        restaurant.save_rows("rail.tsv", rows)
+
+
+def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=()):
+    """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
+
+    The kind and goal check runs twice, each time under the store lock. The first run comes after the owner check, unfireable, and the worker
+    cap, so a fire that one of those refuses or blocks gets the words it got before kinds and goals. It comes before the
+    lease claim, so a fire it refuses claims no lease. The second run sees a change made while the claim ran.
+    The lead ticket's kind cell takes the item's kind in a rewrite of its own, before the item row is appended. A fire
+    killed between its writes leaves no item whose kind its lead ticket lacks. No other kind or goal cell
+    of a ticket changes, so a ticket that rides along keeps its own.
+    """
     while True:
         with restaurant.checked():
             restaurant.fence()
@@ -2249,25 +2829,33 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             leased = with_fragment(paths, known) if paths else ""
             full = workers_full(restaurant)
             if full:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
                 raise BrigadeError(f"nothing fired: {full}")
+            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+            if refusal:
+                raise BrigadeError(refusal)
         # land.py can wait on the landing database, so the claim runs outside the store lock.
         # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
         try:
             lease = claim_lease(restaurant, dish, leased) if leased else ""
         except ClaimError as error:
             with restaurant.checked():
-                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
+                               kind, ride_along)
             raise BrigadeError(f"nothing fired: {error}") from error
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
             current = restaurant.next_id("dishes.tsv")
             full = None if refusal else workers_full(restaurant)
-            if not refusal and not full and current == dish:
+            label = None
+            if not refusal and not full:
+                label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+            if label and current == dish:
+                write_lead_kind(restaurant, ids, label.kind)
                 restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": station,
                                                  "tickets": ",".join(ids), "task": task, "thread": thread,
                                                  "branch": branch, "summary": summary, "timebox": timebox,
-                                                 "lease": lease, "paths": leased})
+                                                 "lease": lease, "paths": leased, "kind": label.kind, "goal": label.goal})
                 restaurant.log("dish", dish, "in-progress", summary)
                 if reason:
                     record_escalation(restaurant, dish, reason)
@@ -2281,7 +2869,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
                 return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
             if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
                 refusal = full
         if lease:
             release_lease(restaurant, lease)
@@ -3140,7 +3728,9 @@ def parser():
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
                      help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it "
-                          "and changes only the ticket table, the log, and lastActivityAt")
+                          "and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the "
+                          "report's item, and when that item has a kind the ticket takes fix at priority urgent or normal "
+                          "and polish at low; a follow-up is filed with no --priority, so it is low")
     a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it changes no table and no log")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
@@ -3154,6 +3744,10 @@ def parser():
     a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
     a.add_argument("--decision", action="store_true",
                    help="the ticket asks the owner to decide; the startable command never lists it as startable")
+    a.add_argument("--kind", choices=KINDS, help="the kind of work; a ticket added with --summary is refused without it")
+    a.add_argument("--goal", metavar="G<n>",
+                   help="with --summary: the goal this ticket belongs to, which must be open or paused; without it the "
+                        "ticket is unassigned")
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -3163,6 +3757,15 @@ def parser():
     a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
     a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
                    help="mark or unmark the ticket as one that asks the owner to decide")
+    a.add_argument("--kind", choices=KINDS, help="replaces the kind of a waiting ticket; refused on a ticket in another state, "
+                        "and on a waiting ticket that an item in flight names")
+    goal = a.add_mutually_exclusive_group()
+    goal.add_argument("--goal", metavar="G<n>",
+                      help="replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in "
+                           "another state, and on a waiting ticket that an item in flight names")
+    goal.add_argument("--no-goal", action="store_true",
+                      help="clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state, "
+                           "and on a waiting ticket that an item in flight names")
     a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
@@ -3174,8 +3777,49 @@ def parser():
                                     "is not counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
+    p = sub.add_parser("goal", help="add, change, or list goals; a goal is a named line of work")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("add", help="record a new open goal and print its id; refused when an open or paused goal has the same "
+                                 "name, where case, leading and trailing whitespace, and the length of a whitespace run "
+                                 "do not count")
+    a.add_argument("--name", required=True, help='what the goal is called, such as "activity view"')
+    a.add_argument("--purpose", required=True, help="one sentence that says why this line of work exists")
+    a.add_argument("--done", required=True, help="one sentence that states the test that shows the goal is reached")
+    a.add_argument("--share", default="",
+                   help="a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, "
+                        "and it does not affect which tickets start")
+    a = t.add_parser("set", help="change a goal's state, name, purpose, done test, or share")
+    a.add_argument("id")
+    a.add_argument("--state", choices=GOAL_STATES,
+                   help="paused is recorded and printed. It does not affect which tickets start. "
+                        "A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is "
+                        "waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting "
+                        "to land, or an assigned ticket of the goal is not in an item of the goal. "
+                        "A done or dropped goal moves only to open.")
+    a.add_argument("--evidence",
+                   help="one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; "
+                        "with --state done, what shows the done test is met; with --state dropped, why the goal is "
+                        "dropped; refused without --state done or --state dropped")
+    a.add_argument("--name", help="replaces the goal's name; refused when it is empty or only whitespace")
+    a.add_argument("--purpose", help="replaces the goal's purpose; refused when it is empty or only whitespace")
+    a.add_argument("--done", help="replaces the goal's done test; refused when it is empty or only whitespace")
+    a.add_argument("--share",
+                   help='a whole number of 1 or more, recorded as the goal\'s share of the worker slots; "" clears it; '
+                        "goal list prints it, and it does not affect which tickets start")
+    a = t.add_parser("list",
+                     help="the state, name, counts, purpose, and done test of each open or paused goal and of each done or "
+                          "dropped goal that has a waiting ticket, an item in flight, or a ticket riding along, then the "
+                          "counts of unassigned work; waiting counts waiting tickets; in flight counts items in progress, "
+                          "in review, passed, sent back, blocked, or waiting to land; merged counts merged items; "
+                          "send-backs counts the send-back verdicts on the goal's items, in any state, that are not a "
+                          "panel member's row; riding along counts assigned tickets of the goal that are not in an item "
+                          "of the goal")
+    a.add_argument("--all", action="store_true", help="also print each other done or dropped goal")
+
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
-    p.add_argument("--tickets", required=True, help="comma-separated ticket ids")
+    p.add_argument("--tickets", required=True,
+                   help="comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, "
+                        "and its kind when it has one")
     p.add_argument("--station", required=True, help="the pstack playbook the worker runs")
     p.add_argument("--summary", required=True)
     for field in ("task", "thread", "branch"):
@@ -3184,6 +3828,15 @@ def parser():
     p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
+    p.add_argument("--kind", choices=KINDS,
+                   help="the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no "
+                        "kind records it too; refused when the lead ticket has another kind; with no --kind and no kind "
+                        "from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, "
+                        "and fire is refused on any other station")
+    p.add_argument("--ride-along", default="",
+                   help="comma-separated ids from --tickets, not the first, that may be under another goal than the first "
+                        "ticket's; each must have priority low and must not be a feature; every other ticket after the "
+                        "first must have the first ticket's goal or no goal")
 
     p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
@@ -3311,7 +3964,9 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, "
+                                  "then a kinds line, a goals line, and an untagged line when each has something to count, "
+                                  "then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
@@ -3469,8 +4124,9 @@ def run(argv):
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
+        ride_along = [ident.strip() for ident in args.ride_along.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
-                    args.paths, args.reason)
+                    args.paths, args.reason, args.kind or "", ride_along)
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "startable":
@@ -3489,6 +4145,8 @@ def run(argv):
             raise BrigadeError("--from-report takes no --source, --ref, --request, or --again")
         if args.priority or args.paths or args.decision:
             raise BrigadeError("--from-report takes no --priority, nonempty --paths, or --decision")
+        if args.kind or args.goal is not None:
+            raise BrigadeError("--from-report takes no --kind or --goal; each ticket's kind and goal follow from the report's item")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -3602,10 +4260,19 @@ def command(restaurant, args, contract=None, rails=None):
         rows = [row for row in restaurant.rows("rulings.tsv") if not args.state or row["state"] == args.state]
         return "\n".join(ruling_line(row) for row in rows) or "no rulings"
 
+    if args.command == "goal":
+        if args.action == "add":
+            return add_goal(restaurant, args.name, args.purpose, args.done, args.share)
+        if args.action == "set":
+            return set_goal(restaurant, args.id, args.name, args.purpose, args.done, args.share, args.state, args.evidence)
+        labels = read_labels(restaurant, EVERY_ROW)
+        return goal_lines(labels, count_labels(restaurant, labels), args.all)
+
     if args.command == "ticket":
         if args.action == "add":
             return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails or {}, again=args.again,
-                              priority=args.priority or "", paths=args.paths, decision=args.decision)
+                              priority=args.priority or "", paths=args.paths, decision=args.decision,
+                              kind=args.kind or "", goal=args.goal)
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails or {})
         if args.action == "take":
@@ -3613,6 +4280,17 @@ def command(restaurant, args, contract=None, rails=None):
         _, ticket = restaurant.find("rail.tsv", args.id)
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
+        held = in_flight_tickets(restaurant)
+        frozen = frozen_label(ticket, held)
+        if (args.kind or args.goal is not None or args.no_goal) and frozen:
+            if ticket["state"] != "waiting":
+                kept = (f"; {ticket['dish']} keeps the kind and goal it took when it started"
+                        if ticket["state"] == "assigned" and ticket["dish"] else "")
+                raise BrigadeError(f"{frozen}; --kind, --goal, and --no-goal change a waiting ticket only{kept}")
+            item = held[args.id]["id"]
+            raise BrigadeError(f"{frozen}; --kind, --goal, and --no-goal change a waiting ticket that no item in flight names; "
+                               f"{item} keeps the kind and goal it took when it started; drop {item}, and every other item in flight that names {args.id}, first, "
+                               f"or leave {args.id} as it is")
         changes, said = {}, []
         if args.state:
             changes["state"] = args.state
@@ -3626,8 +4304,17 @@ def command(restaurant, args, contract=None, rails=None):
         if args.decision is not None:
             changes["decision"] = "yes" if args.decision else ""
             said.append("decision" if args.decision else "no decision")
+        if args.kind:
+            changes["kind"] = args.kind
+            said.append(f"kind {args.kind}")
+        if args.goal is not None:
+            changes["goal"] = open_goal(read_labels(restaurant, GOALS_ONLY), args.goal).id
+            said.append(f"goal {args.goal}")
+        if args.no_goal:
+            changes["goal"] = ""
+            said.append("unassigned")
         if not said:
-            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, or --no-decision")
+            raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, --no-decision, --kind, --goal, or --no-goal")
         restaurant.update("rail.tsv", args.id, "ticket", **changes)
         return f"{args.id} {'; '.join(said)}"
 
@@ -3760,6 +4447,8 @@ def command(restaurant, args, contract=None, rails=None):
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
         if not is_admin(meta):
             lines.append(workers_line(meta, running_workers(restaurant)))
+        labels = read_labels(restaurant, EVERY_ROW)
+        lines += status_label_lines(labels, count_labels(restaurant, labels))
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")
         if meta.get("mode"):

@@ -299,6 +299,65 @@ class StoreTest(ActivityCase):
             table.write("D8\ttoo few fields\n")
         self.assertEqual(self.fails(1), "activity: line 3 of the store's work item table is malformed; fix or remove it")
 
+    def widened(self, cells):
+        """Rewrite the work item table with each row's extra cells from `cells` by item id appended to its 15 cells."""
+        path = self.fixture.store / "dishes.tsv"
+        header, *rows = path.read_text().splitlines()
+        path.write_text("\n".join([header, *("\t".join([row, *cells.get(row.split("\t")[0], ())]) for row in rows)]) + "\n")
+
+    def brigade_rows(self, table):
+        return runpy.run_path(str(SCRIPT.with_name("brigade.py")))["Restaurant"](self.fixture.store).rows(table)
+
+    def kinds_and_goals(self):
+        return [(row["id"], row["kind"], row["goal"]) for row in MOD["read_table"](self.fixture.store, "dishes.tsv")]
+
+    def test_work_item_table_of_15_cell_rows_is_read_with_an_empty_kind_and_goal_on_each_row(self):
+        one_running(self.fixture).write()
+        self.assertEqual([len(line.split("\t")) for line in (self.fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 15])
+        self.assertEqual(self.kinds_and_goals(), [("D7", "", ""), ("D6", "", "")])
+        self.assertEqual(MOD["read_table"](self.fixture.store, "dishes.tsv"), self.brigade_rows("dishes.tsv"))
+
+    def test_work_item_table_of_17_cell_rows_is_read_with_the_kind_and_goal_each_row_holds(self):
+        one_running(self.fixture).write()
+        self.widened({"D7": ("feature", "G1"), "D6": ("fix", "")})
+        self.assertEqual(self.kinds_and_goals(), [("D7", "feature", "G1"), ("D6", "fix", "")])
+        self.assertEqual(MOD["read_table"](self.fixture.store, "dishes.tsv"), self.brigade_rows("dishes.tsv"))
+
+    def test_work_item_table_that_mixes_15_cell_and_17_cell_rows_is_read_with_the_rows_brigade_reads(self):
+        one_running(self.fixture).write()
+        self.widened({"D6": ("polish", "G2")})
+        self.assertEqual([len(line.split("\t")) for line in (self.fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 17])
+        self.assertEqual(self.kinds_and_goals(), [("D7", "", ""), ("D6", "polish", "G2")])
+        self.assertEqual(MOD["read_table"](self.fixture.store, "dishes.tsv"), self.brigade_rows("dishes.tsv"))
+
+    def test_work_item_row_of_16_cells_lacks_one_trailing_cell_and_is_read_with_an_empty_goal_as_brigade_reads_it(self):
+        one_running(self.fixture).write()
+        self.widened({"D7": ("upkeep",)})
+        self.assertEqual(self.kinds_and_goals(), [("D7", "upkeep", ""), ("D6", "", "")])
+        self.assertEqual(MOD["read_table"](self.fixture.store, "dishes.tsv"), self.brigade_rows("dishes.tsv"))
+
+    def test_page_and_text_for_17_cell_work_item_rows_equal_those_for_the_same_rows_with_the_kind_and_goal_cells_removed(self):
+        fixture = one_running(self.fixture).write()
+        narrow = (fixture.stdout_bytes(), fixture.stdout_bytes("--text"))
+        self.widened({"D7": ("feature", "G1"), "D6": ("fix", "G2")})
+        self.assertEqual(self.kinds_and_goals(), [("D7", "feature", "G1"), ("D6", "fix", "G2")])
+        self.assertEqual((fixture.stdout_bytes(), fixture.stdout_bytes("--text")), narrow)
+        self.assertIn(b"Agent activity page", narrow[0])
+        self.assertEqual(narrow[1].split(b"\n")[0], b"Agent activity for kit, last 3h")
+
+    def test_work_item_row_of_14_cells_or_18_cells_exits_1_with_its_line_number(self):
+        for extra in (None, ("feature", "G1", "one more")):
+            with self.subTest(extra):
+                fixture = self.fixture = one_running(Fixture(self.root / str(len(extra or ())))).write()
+                if extra is None:
+                    path = fixture.store / "dishes.tsv"
+                    header, first, second = path.read_text().splitlines()
+                    path.write_text("\n".join([header, first, second.rsplit("\t", 1)[0]]) + "\n")
+                else:
+                    self.widened({"D6": extra})
+                self.assertEqual(len((fixture.store / "dishes.tsv").read_text().splitlines()[2].split("\t")), 14 if extra is None else 18)
+                self.assertEqual(self.fails(1), "activity: line 3 of the store's work item table is malformed; fix or remove it")
+
     def test_log_row_that_is_not_utf8_exits_1_with_its_line_number(self):
         self.fixture.write()
         with open(self.fixture.store / "log.tsv", "ab") as table:
