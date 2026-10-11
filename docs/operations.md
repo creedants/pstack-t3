@@ -31,7 +31,7 @@ t3-nightly-update.sh: no config file at <file>. Copy ops/config.example to that 
 
 That holds for every argument list, `--help` and no arguments included. Every other config problem is also one line on standard error and exit 78. `--config` with no file after it prints `<script>: --config needs a file` and exits 2.
 
-Keep the real config outside the checkout. The repository's `.gitignore` has no entry for `ops/`, so git shows a config saved there as a new file to commit.
+Keep the real config outside the checkout. The repository's `.gitignore` has no entry for `ops/`, so nothing in the repository keeps git from adding a config saved there.
 
 ## Config file
 
@@ -62,7 +62,7 @@ ops/t3-nightly-update.sh stage
 setsid -f ops/t3-nightly-update.sh restart </dev/null >/dev/null 2>&1
 ```
 
-The script runs one step per call, and only the step you name. With no step or an unknown step it prints its usage and exits 2. Every line a step logs goes to standard output and to `t3-nightly-update.log` in `NIGHTLY_APPS_DIR`, with the time in front.
+The script runs one step per call, and only the step you name. With no step or an unknown step it prints its usage and exits 2. A step logs a line by writing it, with the time in front, to standard output and to `t3-nightly-update.log` in `NIGHTLY_APPS_DIR`. `check` logs nothing.
 
 `restart` stops T3 Code, so it stops every T3 thread, the one that started it included. Start it detached, as the fourth line does. That line discards the output, so it does not show a config refusal. Run `check` in the foreground after every config edit.
 
@@ -72,7 +72,7 @@ The script runs one step per call, and only the step you name. With no step or a
 
 - The installed version. It is the content of `.nightly-version` in the installed build. Without that file it is the last, in sort order, of the version strings that `strings` finds in `resources/app.asar`.
 - The latest nightly. `gh release list -R pingdotgg/t3code --limit 40` is filtered to the tags that contain `-nightly.`, and the one published last is taken.
-- The staged version, only when a staged build exists. It is `unknown` when the staged build has no `.nightly-version`.
+- The staged version, only when the staged build's directory exists. It is `unknown` when the staged build has no `.nightly-version`.
 - The output of `mise outdated` for the tools in `NIGHTLY_MISE_TOOLS`, run with `MISE_MINIMUM_RELEASE_AGE=0`.
 - The `cursor-cli` version that `pacman -Q cursor-cli` reports.
 
@@ -107,7 +107,7 @@ A failed upgrade does not change the exit status. `clis` exits 1 when the last c
 
 When step 5 or step 6 finds no running build, `restart` rolls back. See [Rollback](#rollback).
 
-When the first move of step 4 fails, `restart` logs `restart: could not move the old build aside; starting it again`, starts the installed build as in step 5, and exits 1. When the second move fails, it moves the previous build back, logs `restart: swap FAILED, old build restored`, starts it as in step 5, and exits 1.
+When the first move of step 4 fails, `restart` logs `restart: could not move the old build aside; starting it again`, starts the installed build as in step 5, and exits 1. When the second move fails, it tries to move the previous build back and logs `restart: swap FAILED, old build restored`, whether or not that move worked. Then it runs the start of step 5 and exits 1.
 
 ## Order of a nightly run
 
@@ -159,7 +159,7 @@ The state file is `t3-nightly-update.state` in `NIGHTLY_APPS_DIR`. It holds `key
 
 ### By hand
 
-After a good restart the previous build stays where step 2 of `restart` put it, and the `prev` line of the state file holds that path. The script never deletes a `.prev-` directory or a `.failed-` directory.
+After a good restart the previous build stays where step 4 of `restart` put it, and the `prev` line of the state file holds that path. The script never deletes a `.prev-` directory or a `.failed-` directory.
 
 The script has no step for a rollback by hand. Do it in this order.
 
@@ -195,7 +195,7 @@ Run it from inside a T3 agent session. It archives through T3's own `t3_thread_o
 | `--config FILE` | The config file. It counts only as the first two arguments. |
 | `--project TITLE` | Required. The project's title, compared without regard to case. Exactly one project must have it. |
 | `--older-than-hours N` | The age a thread needs before it is archived. A number, 24 when the flag is absent. |
-| `--coordinator ID` | A top-level thread. Threads under it are not skipped while it has a run in progress, and `--top-level-settled` never archives it. |
+| `--coordinator ID` | A top-level thread. A run in progress in it does not put the threads under it in `under a running thread`. `--top-level-settled` never archives it. |
 | `--keep ID` | A thread to leave alone. It can be given more than once. |
 | `--top-level-settled` | Also archive settled top-level threads. |
 | `--dry-run` | Choose and print. Archive nothing. |
@@ -240,7 +240,11 @@ A run in progress is a run whose status is running, queued, starting, preparing,
 - When the file `NIGHTLY_RESTART_ENV` names is missing, bash prints an error and T3 Code is started without it.
 - A value outside its key's characters is refused, so a path with a space in it cannot be configured.
 - `--help` and the usage text need a valid config, like every other call.
-- The nightly script never deletes a downloaded AppImage, a `.bad` file, or its log.
+- The nightly script never deletes its log or an AppImage it finished downloading. A `.bad` file stays until a later `.bad` file of the same name replaces it.
+- `restart` logs `restart: swap FAILED, old build restored` without checking that the previous build moved back.
+- After a rollback whose first move failed, the new build is the one started. When it runs, the log line `restart: rolled back, running <previous version>`, the `result=rolled-back` line, and the notification are those of a rollback that worked. When it does not run, `restart` logs `restart: T3 Code is DOWN after rollback` and the notification says that the rollback did not start, though no build was moved back.
+- The rollback notification says the new build did not start. It says so also when the build started and was gone 15 seconds later.
+- `stage` logs `stage: unpacked tree has no t3code` also when that file is there and is not executable.
 - A thread row with no update time ends the archive script with a traceback and exit 1 when its age is compared.
 - A missing database ends the archive script with a traceback and exit 1. So does a missing `server-runtime.json` or a missing `T3_CODE_MCP_AUTHORIZATION` when there is a thread to archive and the run is not a dry run.
 
@@ -250,9 +254,9 @@ A run in progress is a run whose status is running, queued, starting, preparing,
 - The real `gh` and its network, the filter that picks the latest nightly included.
 - The real `mise`, `yay`, `pacman`, `strings`, and `notify-send`.
 - The unpack of a real AppImage.
-- A real environment file.
+- The operator's environment file.
 - A run with `HOME` not set.
 - T3's live database, which T3 Code has open while the script reads it.
 - The real tool endpoint and its credential.
 
-The activity prototype is not in `ops/`, because the brigade skill's `activity.py` replaces it.
+The operator's third script, the agent activity view, is not in `ops/`. The repository already holds it as the brigade skill's `scripts/activity.py`.

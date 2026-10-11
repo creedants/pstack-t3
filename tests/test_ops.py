@@ -293,7 +293,7 @@ class Sandbox:
         self.install(None)
         (self.app / "resources").mkdir()
         (self.app / "resources/app.asar").write_bytes(
-            b"\x00\x01" + version_in_app_asar.encode() + b"\x00\xff0.0.1-nightly.19990101.1\x00short\x00")
+            b"\x00\x010.0.0-nightly.19980101.1\x00\xfe" + version_in_app_asar.encode() + b"\x00\xff0.0.1-nightly.19990101.1\x00short\x00")
 
     def stage(self, version, behavior=UP):
         self._build(self.new, version, behavior)
@@ -869,17 +869,17 @@ class ConfigTest(OpsTest):
         path = "It must start with / and use only the characters A-Za-z0-9._/-."
         word = "It must start with [A-Za-z0-9] and use only the characters "
         cases = (
-            ("NIGHTLY_APPS_DIR", "a/apps", "the value 'a/apps'. " + path),
-            ("NIGHTLY_APPS_DIR", '"/a/apps"', "the value '\"/a/apps\"'. " + path),
-            ("NIGHTLY_APPS_DIR", "/a/my apps", "the value '/a/my apps'. " + path),
-            ("NIGHTLY_RESTART_ENV", "$HOME/restart.env", "the value '$HOME/restart.env'. " + path),
-            ("NIGHTLY_APP_NAME", "..", "the value '..'. " + word + "A-Za-z0-9._-."),
-            ("NIGHTLY_APP_NAME", "a/b", "the value 'a/b'. " + word + "A-Za-z0-9._-."),
-            ("NIGHTLY_MISE_TOOLS", "alpha -rf", "the value '-rf'. " + word + "A-Za-z0-9._:@/+-."),
-            ("NIGHTLY_MISE_TOOLS", "alpha *", "the value '*'. " + word + "A-Za-z0-9._:@/+-."),
-            ("NIGHTLY_VERSION_COMMANDS", "alpha /bin/beta", "the value '/bin/beta'. " + word + "A-Za-z0-9._+-."),
-            ("NIGHTLY_MISE_TOOLS", "", "no value"),
-            ("NIGHTLY_VERSION_COMMANDS", " \t", "no value"),
+            ("NIGHTLY_APPS_DIR", "a/apps", "puts 'a/apps' in NIGHTLY_APPS_DIR. " + path),
+            ("NIGHTLY_APPS_DIR", '"/a/apps"', "puts '\"/a/apps\"' in NIGHTLY_APPS_DIR. " + path),
+            ("NIGHTLY_APPS_DIR", "/a/my apps", "puts '/a/my apps' in NIGHTLY_APPS_DIR. " + path),
+            ("NIGHTLY_RESTART_ENV", "$HOME/restart.env", "puts '$HOME/restart.env' in NIGHTLY_RESTART_ENV. " + path),
+            ("NIGHTLY_APP_NAME", "..", "puts '..' in NIGHTLY_APP_NAME. " + word + "A-Za-z0-9._-."),
+            ("NIGHTLY_APP_NAME", "a/b", "puts 'a/b' in NIGHTLY_APP_NAME. " + word + "A-Za-z0-9._-."),
+            ("NIGHTLY_MISE_TOOLS", "alpha -rf", "puts '-rf' in NIGHTLY_MISE_TOOLS. " + word + "A-Za-z0-9._:@/+-."),
+            ("NIGHTLY_MISE_TOOLS", "alpha *", "puts '*' in NIGHTLY_MISE_TOOLS. " + word + "A-Za-z0-9._:@/+-."),
+            ("NIGHTLY_VERSION_COMMANDS", "alpha /bin/beta", "puts '/bin/beta' in NIGHTLY_VERSION_COMMANDS. " + word + "A-Za-z0-9._+-."),
+            ("NIGHTLY_MISE_TOOLS", "", "gives NIGHTLY_MISE_TOOLS no value"),
+            ("NIGHTLY_VERSION_COMMANDS", " \t", "gives NIGHTLY_VERSION_COMMANDS no value"),
         )
         box = self.arrange("restart")
         before = box.tree()
@@ -887,7 +887,7 @@ class ConfigTest(OpsTest):
             with self.subTest(key=key, value=value):
                 file = box.write_config(**{key: value})
                 for step in ("check", "restart"):
-                    self.assertRefused(box.run(NIGHTLY, step), NIGHTLY, f"config file {file} gives {key} {problem}")
+                    self.assertRefused(box.run(NIGHTLY, step), NIGHTLY, f"config file {file} {problem}")
                 self.assertEqual(box.calls(), [])
                 self.assertEqual(box.tree(), before)
 
@@ -897,7 +897,7 @@ class ConfigTest(OpsTest):
             with self.subTest(value=value):
                 file = world.sandbox.write_config(ARCHIVE_T3_HOME=value)
                 self.assertRefused(world.sandbox.run(ARCHIVE, "--project", "fixture project"), ARCHIVE,
-                                   f"config file {file} gives ARCHIVE_T3_HOME the value '{value}'. "
+                                   f"config file {file} puts '{value}' in ARCHIVE_T3_HOME. "
                                    "It must start with / and use only the characters A-Za-z0-9._/-.")
                 self.assertEqual(world.stub.requests, [])
 
@@ -1344,7 +1344,7 @@ class ArchiveTest(OpsTest):
         self.assertEqual(world.database.read_bytes(), before)
         self.assertEqual(sorted(path.name for path in world.database.parent.iterdir()), ["server-runtime.json", "statev2.sqlite"])
 
-    def test_every_request_carries_the_session_credential_and_the_session_id(self):
+    def test_every_request_carries_the_credential_and_every_request_after_the_first_carries_the_session_id(self):
         world = self.world()
         done = world.run(ARCHIVE)
         requests = world.stub.requests
@@ -1416,7 +1416,7 @@ class ArchiveTest(OpsTest):
 
 
 class ScanTest(OpsTest):
-    def test_ops_files_and_the_operations_doc_hold_none_of_this_machines_values(self):
+    def test_ops_files_and_the_operations_doc_hold_no_home_directory_and_no_user_or_host_name_in_a_path_or_address(self):
         files = scanned_files()
         self.assertEqual({NIGHTLY, ARCHIVE, EXAMPLE, DOC} - set(files), set())
         identity = machine_identity()

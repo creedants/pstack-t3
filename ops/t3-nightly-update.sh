@@ -23,7 +23,7 @@ check_words() {
     case "$word" in
       $first_glob*) case "$word" in *[!$allowed_set]*) ;; *) continue ;; esac ;;
     esac
-    config_error "gives $key the value '$word'. It must start with $first_glob and use only the characters $allowed_set."
+    config_error "puts '$word' in $key. It must start with $first_glob and use only the characters $allowed_set."
   done
 }
 

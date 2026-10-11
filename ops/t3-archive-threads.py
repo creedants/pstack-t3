@@ -13,7 +13,7 @@ T3_CODE_MCP_AUTHORIZATION. It reads T3's state database read-only to choose the
 threads and never writes to it.
 
 What it archives. A sub-agent thread that is not archived, has no run that is
-running, queued, starting, preparing, or waiting, and was last updated more than
+running, queued, starting, preparing, or waiting, and was last updated at least
 --older-than-hours ago. A thread under a top-level thread that has such a run is
 skipped unless that top-level thread is archived or is named with --coordinator,
 whose finished children are archived by age like any other. With
@@ -88,7 +88,7 @@ def read_config(path):
             bad(f"does not set {key}")
     home = own["ARCHIVE_T3_HOME"]
     if not re.fullmatch(r"/[A-Za-z0-9._/-]*", home):
-        bad(f"gives ARCHIVE_T3_HOME the value '{home}'. It must start with / and use only the characters A-Za-z0-9._/-.")
+        bad(f"puts '{home}' in ARCHIVE_T3_HOME. It must start with / and use only the characters A-Za-z0-9._/-.")
     return own
 
 
@@ -178,7 +178,7 @@ def main():
     file, argv = config_file_and_other_arguments(sys.argv[1:], os.environ)
     userdata = Path(read_config(file)["ARCHIVE_T3_HOME"]) / "userdata"
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--project", required=True, help="exact project title")
+    ap.add_argument("--project", required=True, help="project title, compared without regard to case")
     ap.add_argument("--older-than-hours", type=float, default=24)
     ap.add_argument("--coordinator", default="", help="a long-running top-level thread whose finished children may go")
     ap.add_argument("--keep", action="append", default=[], help="thread id to leave alone. A top-level id that is not the --coordinator also keeps every thread under it")

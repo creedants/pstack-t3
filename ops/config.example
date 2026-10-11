@@ -13,7 +13,7 @@ NIGHTLY_APPS_DIR=/path/to/apps
 # Name of the installed build's directory inside NIGHTLY_APPS_DIR.
 NIGHTLY_APP_NAME=t3code
 # File that restart sources before it starts T3 Code. It can hold credentials. Keep it out of this repository.
-NIGHTLY_RESTART_ENV=/path/to/apps/t3-restart.env
+NIGHTLY_RESTART_ENV=/path/to/restart.env
 # mise tools that check passes to mise outdated and clis passes to mise upgrade, both with MISE_MINIMUM_RELEASE_AGE=0.
 NIGHTLY_MISE_TOOLS=first-tool second-tool npm:@scope/third-tool
 # Commands whose first --version line clis logs after the upgrade. A command that is not installed is skipped.
