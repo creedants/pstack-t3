@@ -15,6 +15,7 @@ GROK_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"rea
 OPUS_SEAT = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
 GROK_MEDIUM = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}
 OPUS_MEDIUM = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}
+OPUS_HIGH = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}}
 HAIKU_5_MEDIUM = {"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "medium"}}
 NO_CATALOG_INFO = (
     "info: light mode caps reasoning at medium, but show had no catalog, "
@@ -1055,7 +1056,7 @@ class ModeCliTest(unittest.TestCase):
         )
         self.assertNotIn("a seat that does not match the catalog", text)
 
-    def test_coordinator_mode_light_caps_a_configured_verifier(self):
+    def test_coordinator_mode_light_keeps_a_configured_xhigh_verifier_at_xhigh(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.put(repo.project, {"mode": "full", "roles": {"verifiers": [OPUS_SEAT, GROK_SEAT]}})
@@ -1070,8 +1071,89 @@ class ModeCliTest(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["mode"], "light")
         self.assertEqual(payload["modeSource"], "restaurant.json")
-        self.assertEqual(payload["roles"]["verifiers"]["seats"], [OPUS_MEDIUM, GROK_MEDIUM])
+        self.assertEqual(payload["roles"]["verifiers"]["seats"], [OPUS_SEAT, GROK_SEAT])
         self.assertEqual(completed.stderr, "")
+
+    def show_role(self, repo, *args):
+        return repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5", *args)
+
+    def test_brief_mode_light_keeps_a_configured_high_verifier_at_high(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"verifiers": [OPUS_HIGH]}})
+            completed = self.show_role(repo, "--brief-mode", "light", "--role", "verifiers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["roles"]["verifiers"]["seats"], [OPUS_HIGH])
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_with_small_budget_caps_a_high_verifier_at_medium_as_full_does(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"budget": "small", "roles": {"verifiers": [OPUS_HIGH]}})
+            light = self.show_role(repo, "--brief-mode", "light", "--role", "verifiers")
+            full = self.show_role(repo, "--brief-mode", "full", "--role", "verifiers")
+        for completed in (light, full):
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["roles"]["verifiers"]["seats"], [OPUS_MEDIUM])
+
+    def test_light_default_verifiers_panel_equals_the_full_panel(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            light = self.show_role(repo, "--brief-mode", "light", "--role", "verifiers")
+            full = self.show_role(repo, "--brief-mode", "full", "--role", "verifiers")
+        self.assertEqual(light.returncode, 0, light.stderr)
+        self.assertEqual(full.returncode, 0, full.stderr)
+        entry = json.loads(light.stdout)["roles"]["verifiers"]
+        self.assertEqual(entry, json.loads(full.stdout)["roles"]["verifiers"])
+        self.assertEqual(entry, {"source": "default", "seats": [
+            "inherit",
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+            {"providerInstanceId": "grok", "model": "grok-4.7"},
+        ]})
+
+    def test_light_caps_a_configured_review_backups_seat_at_medium(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"review backups": [OPUS_SEAT, GROK_SEAT]}})
+            completed = self.show_role(repo, "--brief-mode", "light", "--role", "review backups")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["review backups"]["seats"], [OPUS_MEDIUM, GROK_MEDIUM])
+
+    def test_light_show_of_every_role_caps_bug_fix_and_keeps_a_high_verifier(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"verifiers": [OPUS_HIGH]}})
+            completed = self.show_role(repo, "--brief-mode", "light")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        shown = json.loads(completed.stdout)["roles"]
+        self.assertEqual(shown["bug-fix"]["seats"], [GROK_MEDIUM])
+        self.assertEqual(shown["verifiers"]["seats"], [OPUS_HIGH])
+
+    def test_light_verifiers_without_parent_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "verifiers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_verifiers_without_catalog_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--role", "verifiers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_verifiers_and_bug_fix_without_parent_prints_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "verifiers", "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, NO_PARENT_INFO)
 
     def test_brief_mode_full_keeps_a_configured_verifier(self):
         with self.open_repo() as directory:
@@ -2797,6 +2879,73 @@ class BackupCliTest(unittest.TestCase):
             "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
             "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
+
+    HIGH_VERIFIER = (
+        "--role", "verifiers",
+        "--provider", "codex",
+        "--model", "gpt-6.1-sol",
+        "--options", '{"reasoningEffort": "high"}',
+        "--brief-mode", "light",
+    )
+
+    def grok_relaunch(self, level):
+        return {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {
+                "providerInstanceId": "grok",
+                "model": "grok-4.7",
+                "options": {"reasoningEffort": level, "fastMode": False},
+            },
+            "report": f"verifiers: codex/gpt-6.1-sol hit its usage limit; relaunched on grok/grok-4.7 at {level}",
+        }
+
+    def test_light_mode_relaunches_a_high_verifier_at_high(self):
+        completed = self.backup(*self.HIGH_VERIFIER, "--author", "claude-opus-5-5")
+        self.assert_backup(completed, self.grok_relaunch("high"))
+
+    def test_light_mode_with_small_budget_relaunches_a_high_verifier_at_medium(self):
+        completed = self.backup(*self.HIGH_VERIFIER, "--author", "claude-opus-5-5", roles_file={"budget": "small"})
+        self.assert_backup(completed, self.grok_relaunch("medium"))
+
+    def test_light_mode_resumes_a_high_verifier_at_high(self):
+        completed = self.backup(*self.HIGH_VERIFIER, "--author", "claude-opus-5-5", "--resume")
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "verifiers",
+            "failed": "codex/gpt-6.1-sol",
+            "seat": {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+            "report": "verifiers: codex/gpt-6.1-sol resumed on codex/gpt-6.1-sol at high after the reset",
+        })
+
+    def test_light_mode_caps_an_effort_seat_of_the_verifiers_backup_panel_at_medium(self):
+        catalog = backup_catalog()
+        catalog["providers"].extend(
+            {
+                "providerInstanceId": provider,
+                "canRunChildTask": True,
+                "constraints": [],
+                "models": [{"id": model, "options": [_select("reasoningEffort", _GROK_LEVELS)]}],
+            }
+            for provider, model in (("kilo", "kilo-1"), ("openrouter", "muse-lite-2"))
+        )
+        completed = self.backup(
+            *VERIFIER_OUT,
+            "--brief-mode", "light",
+            catalog=catalog,
+            roles_file={"roles": {"review backups": [
+                {"providerInstanceId": "kilo", "model": "kilo-1", "options": {"reasoningEffort": "xhigh"}},
+                {"providerInstanceId": "openrouter", "model": "muse-lite-2", "options": {"reasoningEffort": "high"}},
+            ]}},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "panel")
+        self.assertEqual(payload["seats"], [
+            {"providerInstanceId": "kilo", "model": "kilo-1", "options": {"reasoningEffort": "medium"}},
+            {"providerInstanceId": "openrouter", "model": "muse-lite-2", "options": {"reasoningEffort": "medium"}},
+        ])
 
     def test_codex_ultra_lands_on_max(self):
         completed = self.backup(
