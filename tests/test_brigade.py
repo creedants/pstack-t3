@@ -5640,6 +5640,51 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.verify(reviewed, head),
                          (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
 
+    QUOTED_APPLIED = "hello wrold\nsecond line\n"
+    SECTION_APPLIED = "helo world\nsecond line\n"
+
+    def quoting_report(self, opening, closing):
+        """A report whose Notes section quotes an Edits section with one edit inside one fence, above an Edits section with another edit."""
+        quoted = "## Edits\n" + self.edit_block("8", "src/greeting.txt", "helo", "hello")
+        return self.review_file("D1-review-1.md", f"Verdict: pass with edits\n\n## Notes\n\n{opening}\n{quoted}{closing}\n\n## Edits\n"
+                                + self.edit_block("1", "src/greeting.txt", "wrold", "world"))
+
+    def assert_the_quoted_edit_is_not_read(self, opening, closing):
+        reviewed = self.edits_store()
+        self.quoting_report(opening, closing)
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, "FAIL out/greeting.txt: differs from what the build writes\n"
+                             f"FAIL src/greeting.txt: differs from {reviewed} with the edits applied",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+        applied = self.head_commit(self.SECTION_APPLIED)
+        self.assertEqual(self.verify(reviewed, applied),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, applied)}", ""))
+
+    def test_edits_verify_fails_a_head_that_applied_an_edit_quoted_in_a_tilde_fence_and_not_the_edit_of_the_edits_section(self):
+        self.assert_the_quoted_edit_is_not_read("~~~text", "~~~")
+
+    def test_edits_verify_fails_a_head_that_applied_an_edit_quoted_in_a_backtick_fence_with_two_info_words_and_not_the_edit_of_the_edits_section(self):
+        self.assert_the_quoted_edit_is_not_read("````text title", "````")
+
+    def test_edits_verify_and_pass_record_refuse_a_report_with_a_fence_that_starts_after_three_spaces(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        self.quoting_report("   ````", "   ````")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        refusal = ("brigade: reports/D1-review-1.md: line 5 has three backticks or tildes after one to three spaces; "
+                   "start each fence at the first column")
+        self.assertEqual(self.verify(reviewed, head), (1, "", refusal))
+        self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.assertEqual(self.record_edits(head, "--edits", "D1-review-1.md", ok=False), refusal)
+        self.assertEqual(len(self.pass_rows()), 1)
+
     def test_edits_verify_refuses_a_build_command_that_names_a_program_that_does_not_exist(self):
         command = "no-such-program-d152 gen"
         reviewed = self.edits_store(build=command)
