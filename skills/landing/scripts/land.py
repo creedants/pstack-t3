@@ -345,6 +345,52 @@ def committer(repo):
     return ["-c", "user.name=pstack landing", "-c", "user.email=landing@localhost"]
 
 
+Identity = namedtuple("Identity", "name email")
+CREDIT_LINE = re.compile(r"Based on #[0-9]+ by @[A-Za-z0-9-]+\.?")
+
+
+def configured_identity(repo):
+    """git config user.name and user.email read in repo, or None unless both print a value."""
+    name, email = (git("config", key, cwd=repo, check=False).stdout.strip() for key in ("user.name", "user.email"))
+    return Identity(name, email) if name and email else None
+
+
+def entry_commits(repo, entry):
+    """The id, author, and Co-authored-by values of each reviewed commit of an entry, oldest first."""
+    fields = "%H%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,unfold,separator=%x01)%x02"
+    listed = git("log", "--reverse", f"--format={fields}", f"{entry['base']}..{pin_ref(entry['sha'])}", cwd=repo).stdout
+    for record in listed.split("\x02")[:-1]:
+        sha, name, email, credits = record.lstrip("\n").split("\x00")
+        yield sha, Identity(name, email), credits.split("\x01")
+
+
+def pr_body(store, entry):
+    """The body ensure_pr passes to gh pr create. With no submitted body it is the message body of the reviewed commit."""
+    return entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
+
+
+def foreign_author(store, entry):
+    """Why this entry cannot land on authorship, or None.
+
+    The check runs when configured_identity gives a value. A reviewed commit passes when its author name and
+    email equal the configured ones. A commit with another author passes when both of these hold. A line of
+    pr_body, with surrounding whitespace removed, matches CREDIT_LINE. The commit has a Co-authored-by trailer
+    equal to its own author as name <email>. The reason names the oldest commit that fails.
+    """
+    identity = configured_identity(store.repo)
+    if identity is None:
+        return None
+    foreign = [(sha, author, credits) for sha, author, credits in entry_commits(store.repo, entry) if author != identity]
+    if not foreign:
+        return None
+    credited = any(CREDIT_LINE.fullmatch(line.strip()) for line in pr_body(store, entry).splitlines())
+    for sha, author, credits in foreign:
+        if not (credited and f"{author.name} <{author.email}>" in credits):
+            return (f"commit {sha[:12]} has author {author.name} <{author.email}>, not the configured "
+                    f"{identity.name} <{identity.email}>; recommit it as the configured author")
+    return None
+
+
 def git_reason(stderr):
     """The useful line of a git failure: what the remote said, else the last line."""
     lines = [line.strip() for line in stderr.strip().splitlines() if line.strip()]
@@ -1007,7 +1053,10 @@ class Integration:
         if fingerprint(self.path, before, self.head()) != entry["fingerprint"]:
             self.git("reset", "--hard", before)
             return "the rebased change differs from the reviewed one; review it again"
-        return None
+        reason = foreign_author(self.store, entry)
+        if reason:
+            self.git("reset", "--hard", before)
+        return reason
 
     def check(self):
         """Run setup and checks on the candidate. Returns None, or the failure. Raises when the run left the tree dirty."""
@@ -1291,8 +1340,8 @@ def ensure_pr(store, entry):
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
-        body = entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
-        created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title, "--body", body, cwd=store.repo)
+        created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title,
+                     "--body", pr_body(store, entry), cwd=store.repo)
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())
         url = created.stdout.strip().splitlines()[-1]
@@ -1791,6 +1840,12 @@ def take_pr(store, entry, landed, bounced):
 def poll(store, entry, out):
     merging = store.contract["mode"] == "merge"
     if not entry["pr"]:
+        reason = foreign_author(store, entry)
+        if reason:
+            with store.tx() as db:
+                settle_bounced(store, db, entry["id"], reason)
+            out.bounced.append(entry["id"])
+            return
         outcome = ensure_pr(store, entry)
         (out.adopted if outcome == "adopted" else out.opened).append(entry["id"])
         if merging:
