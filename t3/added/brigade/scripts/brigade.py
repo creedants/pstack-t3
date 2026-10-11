@@ -2684,7 +2684,7 @@ def fire_label(labels, rail, ids, station, kind, ride_along):
         theirs = labels.tickets[ident].goal
         if ident not in ride_along and theirs and theirs != mine.goal:
             return None, (f"{ident} is under {theirs} and the lead ticket {lead} is {'under ' + mine.goal if mine.goal else 'unassigned'}; "
-                          f"name {ident} in --ride-along, or start it on its own")
+                          f"name {ident} in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
     return Label(found, mine.goal), None
 
 
@@ -2705,7 +2705,7 @@ def checked_fire_label(restaurant, ids, station, kind, ride_along, warned):
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=()):
     """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
 
-    The kind and goal check runs under both locks. The first run comes after the owner check, unfireable, and the worker
+    The kind and goal check runs twice, each time under the store lock. The first run comes after the owner check, unfireable, and the worker
     cap, so a fire that one of those refuses or blocks gets the words it got before kinds and goals. It comes before the
     lease claim, so a fire it refuses claims no lease. The second run sees a change made while the claim ran.
     The lead ticket's kind cell takes the item's kind in the rewrite that assigns the tickets. No other kind or goal cell
@@ -4174,7 +4174,8 @@ def command(restaurant, args, contract=None, rails=None):
         if ticket["state"] == "moved":
             raise BrigadeError(f"{args.id} moved to {ticket['dish'].removeprefix('to:')}; it is that coordinator's ticket now")
         if (args.kind or args.goal is not None or args.no_goal) and ticket["state"] != "waiting":
-            # fire copied the lead ticket's kind and goal onto the item, and no command writes the item's two cells after that.
+            # fire wrote the item's kind and goal when it started, from the lead ticket, --kind, or the station, and no command
+            # writes the item's two cells after that.
             kept = (f"; {ticket['dish']} keeps the kind and goal it took when it started"
                     if ticket["state"] == "assigned" and ticket["dish"] else "")
             raise BrigadeError(f"{args.id} is {ticket['state']}; --kind, --goal, and --no-goal change a waiting ticket only{kept}")

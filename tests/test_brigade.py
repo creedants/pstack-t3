@@ -6625,7 +6625,7 @@ class BrigadeTest(unittest.TestCase):
         before = self.store_files()
         self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", ok=False),
                          "brigade: T2 is under G2 and the lead ticket T1 is under G1; "
-                         "name T2 in --ride-along, or start it on its own")
+                         "name T2 in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
         self.assertEqual(self.store_files(), before)
         rail = self.table_row(self.at, "rail.tsv", "T2")
         self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both"),
@@ -6641,7 +6641,7 @@ class BrigadeTest(unittest.TestCase):
         before = self.store_files()
         self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", ok=False),
                          "brigade: T2 is under G1 and the lead ticket T1 is unassigned; "
-                         "name T2 in --ride-along, or start it on its own")
+                         "name T2 in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
         self.assertEqual(self.store_files(), before)
         self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "Do both")
         self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T2")), (("fix", ""), ("polish", "G1")))
@@ -6727,7 +6727,7 @@ class BrigadeTest(unittest.TestCase):
         _, err = proc.communicate(timeout=20)
         self.assertEqual((proc.returncode, err.strip()),
                          (1, "brigade: nothing fired: T2 is under G2 and the lead ticket T1 is under G1; "
-                             "name T2 in --ride-along, or start it on its own"))
+                             "name T2 in --ride-along, which takes a low ticket that is not a feature, or start it on its own"))
         self.assertEqual((case / "land-calls").read_text().splitlines(),
                          ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
         self.assertEqual(self.store_files(), before)
@@ -7427,7 +7427,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("fire", "--tickets", "T4", "--station", "refactoring", "--summary", "Follow the nightly")
         self.brigade("fire", "--tickets", "T5", "--station", "bug-fix", "--summary", "Fix the splash")
 
-    def test_close_groups_merged_in_progress_and_new_tickets_by_goal_and_prints_the_kind_on_their_lines(self):
+    def test_close_groups_in_progress_and_new_tickets_by_goal_and_prints_the_kind_on_the_lines_of_merged_in_progress_and_new_tickets(self):
         self.close_setup()
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
         self.record("abc", "pass")
@@ -7473,7 +7473,7 @@ class BrigadeTest(unittest.TestCase):
     def assert_each_printing_command_warns(self, *warnings):
         """Each of the five commands exits 0 with exactly these warnings on standard error, and changes no file.
 
-        Returns {command: its standard output with the last newline cut}.
+        Returns {command: its standard output with leading and trailing whitespace cut}.
         """
         before = self.store_files()
         printed = self.printed()
@@ -7552,7 +7552,7 @@ class BrigadeTest(unittest.TestCase):
     def store_from_before_kinds(self, rows=True):
         """A store as the tool wrote it before kinds and goals. Ticket rows of 10 cells, item rows of 15, and no goals.tsv.
 
-        With `rows` it holds a ticket in each state, an item in each state, review rows, and an open and an answered decision.
+        With `rows` it holds a ticket in each state but moved, an item in each state, review rows, and an open and an answered decision.
         """
         self.queue()
         (self.at / "goals.tsv").unlink(missing_ok=True)
@@ -7607,7 +7607,7 @@ class BrigadeTest(unittest.TestCase):
                   "blocked: 1, merged: 1, decisions for you: 1")
     OLD_WORKERS = "workers: 2 of 2 running, 0 idle, auto-start: normal"
 
-    def test_each_reading_command_prints_for_a_store_from_before_kinds_what_the_tool_printed_before_kinds_and_changes_no_table(self):
+    def test_ticket_list_startable_watch_86_list_close_walk_pass_check_and_contract_print_for_a_store_from_before_kinds_what_the_tool_printed_before_kinds_and_change_no_table(self):
         self.store_from_before_kinds()
         before = self.tables()
         waiting = ["T8 waiting normal [user] Importer crashes",
@@ -7680,7 +7680,7 @@ class BrigadeTest(unittest.TestCase):
                          "no open or paused goals\nunassigned: 5 waiting, 6 in flight, 1 merged, 1 send-back")
         self.assertEqual(self.store_files(), before)
 
-    def test_each_reading_command_prints_for_an_empty_store_from_before_kinds_what_the_tool_printed_before_kinds_and_changes_no_table(self):
+    def test_status_ticket_list_startable_watch_86_list_close_and_walk_print_for_an_empty_store_from_before_kinds_what_the_tool_printed_before_kinds_and_change_no_table(self):
         self.store_from_before_kinds(rows=False)
         before = self.tables()
         idle = "workers: 0 of 2 running, 2 idle, auto-start: normal"
