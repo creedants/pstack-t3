@@ -81,7 +81,7 @@ def check_lock(update):
         if rel not in locked:
             problems.append(f"{rel}: override not in overrides.lock.json (run build.py --update-lock after reviewing)")
         elif locked[rel] != digest:
-            problems.append(f"{rel}: upstream changed since this override was written; re-port it, then --update-lock")
+            problems.append(f"{rel}: upstream changed since this override was written; review or re-port it, then --update-lock")
     for rel in locked:
         if rel not in current:
             problems.append(f"{rel}: locked but no override exists (run --update-lock)")
@@ -125,9 +125,9 @@ def build(destination, update_lock=False, skip_lock=False):
         render(staged)
         sys.path.insert(0, str(ROOT / "scripts"))
         from check import check_tree
-        from catalog import missing_playbooks, write
+        from catalog import write
 
-        findings = check_tree(staged) + missing_playbooks(staged)
+        findings = check_tree(staged)
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, destination)

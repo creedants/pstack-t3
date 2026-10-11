@@ -60,6 +60,19 @@ LIGHT_MODE_NAME = re.compile(r"(?i:\blight mode\b)|Mode: light")
 TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
 
 
+_catalog_module = None
+
+
+def _catalog():
+    global _catalog_module
+    if _catalog_module is None:
+        spec = importlib.util.spec_from_file_location("pstack_catalog", Path(__file__).resolve().parent / "catalog.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _catalog_module = module
+    return _catalog_module
+
+
 def light_waiver_cells():
     spec = importlib.util.spec_from_file_location("pstack_roles", ROLES_PY)
     roles = importlib.util.module_from_spec(spec)
@@ -163,6 +176,8 @@ def check_tree(root):
                     continue
                 if path and not (file.parent / path).resolve().exists():
                     findings.append(f"{rel}: broken link {target}")
+    if (root / "poteto-mode/SKILL.md").is_file():
+        findings.extend(_catalog().missing_playbooks(root))
     return findings
 
 
