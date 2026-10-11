@@ -95,6 +95,8 @@ NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contrac
 SNAPSHOT_CHUNK = 1 << 16
 REVIEW_FILE = re.compile(r"(D\d+)-review(-.+)?\.md")
 ITEM_REPORT = re.compile(r"(D\d+)\.md")
+CLAIMS_LINE = re.compile(r"^[ \t#>*+\-_`\d.)]*Claims check", re.M)
+CLAIMS_STATES = ("in-review", "passed")
 # A report shows each ticket and dish once, under the latest state it reached since the last report.
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -1319,6 +1321,22 @@ def unrecorded_reviews(restaurant):
         if kind != "missing":
             unrecorded.append((path.name, kind))
     return unrecorded
+
+
+def unclaimed_reports(restaurant):
+    """(id, state) of each dish in CLAIMS_STATES whose reports/<id>.md is a `file` with no line CLAIMS_LINE matches.
+
+    The report is decoded as UTF-8 with replacement. An entry that report_stat does not call a `file` is not read.
+    """
+    unclaimed = []
+    for dish in restaurant.rows("dishes.tsv"):
+        name = f"{dish['id']}.md"
+        if dish["state"] not in CLAIMS_STATES or report_entry(restaurant, name) != "file":
+            continue
+        text = (restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace")
+        if not CLAIMS_LINE.search(text):
+            unclaimed.append((dish["id"], dish["state"]))
+    return unclaimed
 
 
 def report(restaurant, write=True):
@@ -3257,6 +3275,8 @@ def command(restaurant, args, contract=None, rails=None):
                 kind = "elsewhere" if linked else kind
                 print(f"brigade: warning: reports/{name} {NOT_A_REPORT[kind]} and no review row of {dish} names it; {REPAIR[kind]}",
                       file=sys.stderr)
+        for ident, state in unclaimed_reports(restaurant):
+            print(f"brigade: warning: reports/{ident}.md has no Claims check line; {ident} is {state}", file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text

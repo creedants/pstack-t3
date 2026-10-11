@@ -1331,6 +1331,81 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], "# Perf report")
         self.assertNotIn("warning", out)
 
+    def no_claims(self, state, dish="D1"):
+        return f"brigade: warning: reports/{dish}.md has no Claims check line; {dish} is {state}"
+
+    def test_close_warns_about_the_report_of_an_item_in_review_that_has_no_claims_check_line(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n\nThe Claims check found nothing.\nclaims check: 3 statements\n")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        code, before, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        code, out, err = self.close_run("--to-file")
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        self.assertEqual(Path(out).read_text().strip(), before)
+        code, out, err = self.close_run()
+        self.assertEqual((code, err), (0, self.no_claims("in-review")))
+        self.assertNotIn("warning", out)
+        self.assertEqual(self.close_run()[2], self.no_claims("in-review"))
+
+    def test_close_warns_about_the_report_of_a_passed_item_that_has_no_claims_check_line(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n")
+        self.record("abc", "pass")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("passed")))
+
+    def test_close_prints_the_claims_check_warning_after_the_warning_for_an_unrecorded_review(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.review_file("D1-review-1.md")
+        self.assertEqual(self.close_run("--dry-run")[::2],
+                         (0, self.no_row("D1-review-1.md") + "\n" + self.no_claims("in-review")))
+
+    def test_close_accepts_each_shape_of_a_claims_check_line(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        for line in ("Claims check: 14 statements checked, 2 corrected", "## Claims check", "### Claims check",
+                     "- Claims check: 3 statements checked", "**Claims check.**", "1. **Claims check**",
+                     "  > Claims check: none", "2) `Claims check`", "_Claims check_"):
+            self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{line}\n\nMore.\n")
+            self.assertEqual(self.close_run("--dry-run")[::2], (0, ""), line)
+
+    def test_close_reads_a_report_that_is_not_utf8_for_its_claims_check_line(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        report = self.review_file("D1.md")
+        report.write_bytes(b"# D1 \xff\xfe\n\nStatus: done\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("in-review")))
+        report.write_bytes(b"# D1 \xff\xfe\n\n## Claims check\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_close_prints_no_claims_check_warning_for_an_item_in_another_state(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "# D1\n\nStatus: done\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "send-back")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "blocked")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        self.record("abc", "pass")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("passed")))
+        self.brigade("dish", "D1", "--state", "merged")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_close_prints_no_claims_check_warning_for_a_report_that_is_missing_or_a_link(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        target = Path(self.temporary.name) / "elsewhere.md"
+        target.write_text("# D1\n")
+        (self.at / "reports").mkdir()
+        (self.at / "reports" / "D1.md").symlink_to(target)
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+        (self.at / "reports" / "D1.md").unlink()
+        self.review_file("D1.md", "# D1\n")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("in-review")))
+
     def test_close_does_not_warn_about_a_report_a_row_names(self):
         self.fired_bug_fix()
         self.aged("D1-review-1.md", 2099)
