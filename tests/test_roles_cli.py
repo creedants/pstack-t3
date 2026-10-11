@@ -1113,13 +1113,36 @@ class ModeCliTest(unittest.TestCase):
             {"providerInstanceId": "grok", "model": "grok-4.7"},
         ]})
 
-    def test_light_caps_a_configured_review_backups_seat_at_medium(self):
+    def test_light_keeps_a_configured_review_backups_seat_at_xhigh(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"roles": {"review backups": [OPUS_SEAT, GROK_SEAT]}})
             completed = self.show_role(repo, "--brief-mode", "light", "--role", "review backups")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout)["roles"]["review backups"]["seats"], [OPUS_MEDIUM, GROK_MEDIUM])
+        self.assertEqual(json.loads(completed.stdout)["roles"]["review backups"]["seats"], [OPUS_SEAT, GROK_SEAT])
+
+    def test_brief_mode_light_keeps_a_configured_high_review_backups_seat_at_high(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"roles": {"review backups": [OPUS_HIGH, GROK_SEAT]}})
+            completed = self.show_role(repo, "--brief-mode", "light", "--role", "review backups")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["roles"]["review backups"]["seats"], [OPUS_HIGH, GROK_SEAT])
+        self.assertEqual(payload["mode"], "light")
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_with_small_budget_caps_a_high_review_backups_seat_at_medium_as_full_does(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"budget": "small", "roles": {"review backups": [OPUS_HIGH, GROK_SEAT]}})
+            light = self.show_role(repo, "--brief-mode", "light", "--role", "review backups")
+            full = self.show_role(repo, "--brief-mode", "full", "--role", "review backups")
+        for completed in (light, full):
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(
+                json.loads(completed.stdout)["roles"]["review backups"]["seats"], [OPUS_MEDIUM, GROK_MEDIUM]
+            )
 
     def test_light_show_of_every_role_caps_bug_fix_and_keeps_a_high_verifier(self):
         with self.open_repo() as directory:
@@ -1144,6 +1167,22 @@ class ModeCliTest(unittest.TestCase):
             repo = Repo(directory)
             repo.put(repo.user, {"mode": "light"})
             completed = repo.run("show", "--role", "verifiers")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_review_backups_without_parent_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--catalog", str(CATALOG), "--role", "review backups")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+
+    def test_light_review_backups_without_catalog_prints_no_info(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"mode": "light"})
+            completed = repo.run("show", "--role", "review backups")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stderr, "")
 
@@ -2917,7 +2956,7 @@ class BackupCliTest(unittest.TestCase):
             "report": "verifiers: codex/gpt-6.1-sol resumed on codex/gpt-6.1-sol at high after the reset",
         })
 
-    def test_light_mode_caps_an_effort_seat_of_the_verifiers_backup_panel_at_medium(self):
+    def test_light_mode_keeps_each_effort_seat_of_the_verifiers_backup_panel_at_its_level(self):
         catalog = backup_catalog()
         catalog["providers"].extend(
             {
@@ -2941,8 +2980,8 @@ class BackupCliTest(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["decision"], "panel")
         self.assertEqual(payload["seats"], [
-            {"providerInstanceId": "kilo", "model": "kilo-1", "options": {"reasoningEffort": "medium"}},
-            {"providerInstanceId": "openrouter", "model": "muse-lite-2", "options": {"reasoningEffort": "medium"}},
+            {"providerInstanceId": "kilo", "model": "kilo-1", "options": {"reasoningEffort": "xhigh"}},
+            {"providerInstanceId": "openrouter", "model": "muse-lite-2", "options": {"reasoningEffort": "high"}},
         ])
 
     def test_codex_ultra_lands_on_max(self):
