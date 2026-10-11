@@ -16,6 +16,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -84,12 +85,21 @@ def state_home():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pstack-t3"
 
 
-def git(*args, cwd, check=True, stdin=None):
-    """Run git with LC_ALL=C. Callers parse English diagnostics such as CONFLICT."""
+def git(*args, cwd, check=True, stdin=None, exact=False):
+    """Run git with LC_ALL=C. Callers parse English diagnostics such as CONFLICT.
+
+    Python's text mode turns a carriage return in the output, with or without a newline after it, into one newline.
+    With exact, the output is decoded with no such change.
+    """
     env = os.environ.copy()
     env["LC_ALL"] = "C"
-    result = subprocess.run(["git", *args], cwd=cwd, input=stdin, capture_output=True, text=True,
-                            encoding="utf-8", errors="surrogateescape", env=env)
+    if exact:
+        result = subprocess.run(["git", *args], cwd=cwd, input=None if stdin is None else stdin.encode("utf-8", "surrogateescape"),
+                                capture_output=True, env=env)
+        result.stdout, result.stderr = (stream.decode("utf-8", "surrogateescape") for stream in (result.stdout, result.stderr))
+    else:
+        result = subprocess.run(["git", *args], cwd=cwd, input=stdin, capture_output=True, text=True,
+                                encoding="utf-8", errors="surrogateescape", env=env)
     if check and result.returncode != 0:
         raise LandError(f"git {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
     return result
@@ -100,10 +110,57 @@ def git_push(*args, cwd, check=False):
     return git("push", "--no-follow-tags", *args, cwd=cwd, check=check)
 
 
+# Override core.worktree while finding the common directory and reading its config.
+IGNORE_CORE_WORKTREE = ("--work-tree=.",)
+
+
+# The characters that end a line for str.splitlines.
+LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+ESCAPED = re.compile("[\\\\" + LINE_BREAKS + "]")
+
+
+def one_line(text):
+    """text with each backslash and each LINE_BREAKS character written as its Python escape."""
+    return ESCAPED.sub(lambda found: found.group().encode("unicode_escape").decode("ascii"), text)
+
+
+def shell_word(text):
+    """A shell word that expands to text and holds no LINE_BREAKS character. text must not end in a newline.
+
+    It is shlex.quote(text) when text holds none. Otherwise it is a printf %b command substitution in double quotes,
+    and a shell drops newlines from the end of one. Its argument writes each byte of a backslash or a LINE_BREAKS
+    character as a backslash, a zero, and three octal digits.
+    """
+    if not set(LINE_BREAKS) & set(text):
+        return shlex.quote(text)
+    octal = ESCAPED.sub(lambda found: "".join(f"\\0{byte:03o}" for byte in os.fsencode(found.group())), text)
+    return f'"$(printf %b {shlex.quote(octal)})"'
+
+
+def refuse_stray_worktree(common):
+    """Stop when the common config file sets core.worktree to a non-empty value where git does not find this repository."""
+    config = common / "config"
+    # -z ends the value with a NUL, so a newline before the NUL belongs to the value.
+    value = git(*IGNORE_CORE_WORKTREE, "config", "--file", str(config), "-z", "--get", "core.worktree",
+                cwd=common, check=False, exact=True).stdout.removesuffix("\0")
+    if not value:
+        return
+    # git resolves a relative core.worktree against the git directory.
+    found = git("-C", os.path.join(common, value), "rev-parse", "--path-format=absolute", "--git-common-dir",
+                cwd=common, check=False, exact=True)
+    if found.returncode != 0 or Path(found.stdout.removesuffix("\n")).resolve() != common:
+        raise LandError(f"{one_line(str(config))} sets core.worktree to {one_line(value)}, where git does not find this repository; "
+                        f"remove it with git --work-tree=. config --file {shell_word(str(config))} --unset-all core.worktree")
+
+
 def common_dir(path):
     """The git common directory identifies a repository across all of its worktrees."""
-    top = git("rev-parse", "--show-toplevel", cwd=path).stdout.strip()
-    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=top).stdout.strip()).resolve()
+    found = git(*IGNORE_CORE_WORKTREE, "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path, exact=True)
+    common = Path(found.stdout.removesuffix("\n")).resolve()
+    refuse_stray_worktree(common)
+    # Require git rev-parse --show-toplevel to succeed.
+    git("rev-parse", "--show-toplevel", cwd=path)
+    return common
 
 
 def canonical(path, kind="lease"):
@@ -343,6 +400,54 @@ def committer(repo):
     if git("config", "user.email", cwd=repo, check=False).stdout.strip():
         return []
     return ["-c", "user.name=pstack landing", "-c", "user.email=landing@localhost"]
+
+
+Identity = namedtuple("Identity", "name email")
+CREDIT_LINE = re.compile(r"Based on #[0-9]+ by @[A-Za-z0-9-]+\.?")
+
+
+def configured_identity(repo):
+    """git config user.name and user.email read in repo, with no character removed. None unless both have a non-empty value."""
+    # -z ends a value with a NUL, which no value holds.
+    name, email = (git("config", "-z", "--get", key, cwd=repo, check=False, exact=True).stdout.removesuffix("\0")
+                   for key in ("user.name", "user.email"))
+    return Identity(name, email) if name and email else None
+
+
+def entry_commits(repo, entry):
+    """The id, author, and Co-authored-by values of each reviewed commit of an entry, oldest first."""
+    fields = "%H%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x01)%x02"
+    listed = git("log", "--reverse", f"--format={fields}", f"{entry['base']}..{pin_ref(entry['sha'])}", cwd=repo, exact=True).stdout
+    for record in listed.split("\x02")[:-1]:
+        sha, name, email, credits = record.lstrip("\n").split("\x00")
+        yield sha, Identity(name, email), credits.split("\x01")
+
+
+def pr_body(store, entry):
+    """The body ensure_pr passes to gh pr create. With no submitted body it is the message body of the reviewed commit."""
+    return entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
+
+
+def foreign_author(store, entry):
+    """Why this entry cannot land on authorship, or None.
+
+    The check runs when configured_identity gives a value. A reviewed commit passes when its author name and
+    email equal the configured ones. A commit with another author passes when both of these hold. A line of
+    pr_body, with surrounding whitespace removed, matches CREDIT_LINE. The commit has a Co-authored-by trailer
+    equal to its own author as name <email>. The reason names the oldest commit that fails.
+    """
+    identity = configured_identity(store.repo)
+    if identity is None:
+        return None
+    foreign = [(sha, author, credits) for sha, author, credits in entry_commits(store.repo, entry) if author != identity]
+    if not foreign:
+        return None
+    credited = any(CREDIT_LINE.fullmatch(line.strip()) for line in pr_body(store, entry).splitlines())
+    for sha, author, credits in foreign:
+        if not (credited and f"{author.name} <{author.email}>" in credits):
+            return (f"commit {sha[:12]} has author {one_line(f'{author.name} <{author.email}>')}, not the configured "
+                    f"{one_line(f'{identity.name} <{identity.email}>')}; recommit it as the configured author")
+    return None
 
 
 def git_reason(stderr):
@@ -1007,7 +1112,10 @@ class Integration:
         if fingerprint(self.path, before, self.head()) != entry["fingerprint"]:
             self.git("reset", "--hard", before)
             return "the rebased change differs from the reviewed one; review it again"
-        return None
+        reason = foreign_author(self.store, entry)
+        if reason:
+            self.git("reset", "--hard", before)
+        return reason
 
     def check(self):
         """Run setup and checks on the candidate. Returns None, or the failure. Raises when the run left the tree dirty."""
@@ -1291,8 +1399,8 @@ def ensure_pr(store, entry):
     if not url:
         publish_absent_branch(store, entry, branch)
         title = entry["title"] or git("log", "-1", "--format=%s", entry["sha"], cwd=store.repo).stdout.strip()
-        body = entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
-        created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title, "--body", body, cwd=store.repo)
+        created = gh("pr", "create", "--base", contract["trunk"], "--head", branch, "--title", title,
+                     "--body", pr_body(store, entry), cwd=store.repo)
         if created.returncode != 0:
             raise Infrastructure("gh pr create failed: " + created.stderr.strip())
         url = created.stdout.strip().splitlines()[-1]
@@ -1791,6 +1899,12 @@ def take_pr(store, entry, landed, bounced):
 def poll(store, entry, out):
     merging = store.contract["mode"] == "merge"
     if not entry["pr"]:
+        reason = foreign_author(store, entry)
+        if reason:
+            with store.tx() as db:
+                settle_bounced(store, db, entry["id"], reason)
+            out.bounced.append(entry["id"])
+            return
         outcome = ensure_pr(store, entry)
         (out.adopted if outcome == "adopted" else out.opened).append(entry["id"])
         if merging:

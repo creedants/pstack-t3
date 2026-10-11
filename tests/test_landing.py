@@ -1,5 +1,6 @@
 import ast
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -24,6 +25,28 @@ import land  # noqa: E402
 
 REVIEWER = "codex/gpt-6.1-sol"
 ADMIN = ("--owner", ".admin/@1")
+
+
+def fence_git_environment():
+    """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
+
+    A module cleanup restores os.environ to what it held at this call.
+    """
+    saved = dict(os.environ)
+
+    def restore():
+        os.environ.clear()
+        os.environ.update(saved)
+
+    unittest.addModuleCleanup(restore)
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        del os.environ[name]
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
+
+
+def setUpModule():
+    fence_git_environment()
 
 
 def stamp_in(hours):
@@ -4093,6 +4116,341 @@ os.execv({real!r}, [{real!r}, *args])
                              "E1 already awaiting-merge")
             self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
                              "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
+
+    def configure_owner(self, name="Owner", email="owner@example.com"):
+        sh("git", "config", "user.name", name, cwd=self.work)
+        sh("git", "config", "user.email", email, cwd=self.work)
+
+    def foreign_bounce(self, sha, author="t <t@t>", configured="Owner <owner@example.com>"):
+        return (f"bounced E1 (r/D1): commit {sha[:12]} has author {author}, not the configured {configured}; "
+                "recommit it as the configured author")
+
+    def land_one_by(self, author, *message, body=None, owner=("Owner", "owner@example.com")):
+        """Submit one commit by this author under the owner identity in push mode, then run land. Returns the commit id and what land printed."""
+        self.init(mode="push")
+        self.configure_owner(*owner)
+        self.worker("w1", {"a.txt": "agent\n"})
+        sh("git", "commit", "-q", "--amend", "--author", author, *message, cwd=self.base / "w1")
+        sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w1")
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        submitted = []
+        if body is not None:
+            (self.base / "body.md").write_text(body)
+            submitted = ["--body-file", str(self.base / "body.md")]
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER, *submitted)
+        return sha, self.land("land")
+
+    def test_human_mode_bounces_an_entry_with_a_foreign_commit_author_and_opens_no_pr(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.configure_owner()
+            self.queue_one()
+            sha = sh("git", "rev-parse", "w1", cwd=self.work)
+            self.assertEqual(self.land("land"), self.foreign_bounce(sha))
+        self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+        self.assertFalse((self.base / "gh-calls").exists())
+
+    def test_human_mode_opens_a_pr_for_an_entry_by_the_configured_author(self):
+        with self.fake_gh():
+            self.init(mode="human")
+            self.configure_owner()
+            self.worker("w1", {"a.txt": "agent\n"})
+            sh("git", "commit", "-q", "--amend", "--author", "Owner <owner@example.com>", "-m", "w1", cwd=self.base / "w1")
+            sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w1")
+            self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+            self.assertEqual(self.land("land"), "opened PRs for E1 (r/D1) https://github.com/o/r/pull/9")
+        self.assertEqual(self.created_heads(), ["landing/e1"])
+
+    def test_push_mode_bounces_an_entry_with_a_foreign_commit_author_and_leaves_trunk(self):
+        sha, printed = self.land_one_by("t <t@t>", "-m", "w1")
+        self.assertEqual(printed, self.foreign_bounce(sha))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_push_mode_lands_an_entry_by_the_configured_author(self):
+        _, printed = self.land_one_by("Owner <owner@example.com>", "-m", "w1")
+        self.assertEqual(printed, "landed E1 (r/D1)")
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae> %s", "main"), "Owner <owner@example.com> w1")
+
+    def test_an_author_with_the_configured_email_and_another_name_bounces(self):
+        sha, printed = self.land_one_by("Other <owner@example.com>", "-m", "w1")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Other <owner@example.com>"))
+
+    def test_a_configured_name_with_surrounding_spaces_bounces_an_author_without_them(self):
+        sha, printed = self.land_one_by("Owner <owner@example.com>", "-m", "w1", owner=(" Owner ", "owner@example.com"))
+        self.assertEqual(printed, self.foreign_bounce(sha, "Owner <owner@example.com>", " Owner  <owner@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_a_configured_email_with_surrounding_spaces_bounces_an_author_without_them(self):
+        sha, printed = self.land_one_by("Owner <owner@example.com>", "-m", "w1", owner=("Owner", " owner@example.com "))
+        self.assertEqual(printed, self.foreign_bounce(sha, "Owner <owner@example.com>", "Owner < owner@example.com >"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_an_author_name_with_a_carriage_return_bounces_under_a_configured_name_with_a_newline_there(self):
+        sha, printed = self.land_one_by("A\rB <owner@example.com>", "-m", "w1", owner=("A\nB", "owner@example.com"))
+        self.assertEqual(printed, self.foreign_bounce(sha, r"A\rB <owner@example.com>", r"A\nB <owner@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_without_a_configured_identity_an_entry_by_any_author_lands(self):
+        self.init(mode="push")
+        for key in ("user.name", "user.email"):
+            self.assertEqual(self.git_raw("config", key, cwd=self.work).returncode, 1)
+        self.queue_one()
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "t <t@t>")
+
+    def test_with_user_name_set_and_no_user_email_an_entry_by_any_author_lands(self):
+        self.init(mode="push")
+        sh("git", "config", "user.name", "Owner", cwd=self.work)
+        self.queue_one()
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_a_foreign_author_with_a_co_authored_by_trailer_and_a_based_on_line_lands(self):
+        _, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                      "-m", "Co-authored-by: Ann Lee <ann@example.com>")
+        self.assertEqual(printed, "landed E1 (r/D1)")
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "Ann Lee <ann@example.com>")
+
+    def test_a_based_on_line_with_a_final_period_counts(self):
+        _, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee.",
+                                      "-m", "Co-authored-by: Ann Lee <ann@example.com>")
+        self.assertEqual(printed, "landed E1 (r/D1)")
+
+    def test_a_based_on_line_inside_a_longer_line_does_not_count(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee, with fixes",
+                                        "-m", "Co-authored-by: Ann Lee <ann@example.com>")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+
+    def test_a_co_authored_by_trailer_without_a_based_on_line_bounces(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Co-authored-by: Ann Lee <ann@example.com>")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_a_based_on_line_without_a_co_authored_by_trailer_bounces(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+
+    def test_a_co_authored_by_trailer_folded_over_two_lines_bounces(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                        "-m", "Co-authored-by: Ann Lee\n <ann@example.com>")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_a_co_authored_by_trailer_that_names_someone_else_bounces(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                        "-m", "Co-authored-by: Bo Chen <bo@example.com>")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+
+    def test_a_based_on_line_in_the_submitted_body_counts(self):
+        _, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Co-authored-by: Ann Lee <ann@example.com>",
+                                      body="Ports the parser.\n\nBased on #12 by @ann-lee\n")
+        self.assertEqual(printed, "landed E1 (r/D1)")
+
+    def test_a_submitted_body_without_the_based_on_line_bounces_though_the_commit_has_it(self):
+        sha, printed = self.land_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                        "-m", "Co-authored-by: Ann Lee <ann@example.com>", body="Ports the parser.\n")
+        self.assertEqual(printed, self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+
+    def test_an_entry_whose_second_commit_has_a_foreign_author_bounces_and_names_that_commit(self):
+        self.init(mode="push")
+        self.configure_owner()
+        self.worker("w1", {"a.txt": "one\n"})
+        path = self.base / "w1"
+        sh("git", "commit", "-q", "--amend", "--author", "Owner <owner@example.com>", "-m", "first", cwd=path)
+        (path / "a.txt").write_text("two\n")
+        second = self.commit("second", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", second, "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), self.foreign_bounce(second))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_an_entry_left_awaiting_merge_without_a_pr_bounces_on_the_next_run_when_its_author_is_foreign(self):
+        with self.fake_gh():
+            self.require_pr_head_on_origin()
+            self.init(mode="human")
+            self.queue_one()
+            sha = sh("git", "rev-parse", "w1", cwd=self.work)
+            (self.base / "pr-create-fails").write_text("")
+            self.assertEqual(self.land("land"),
+                             "queue paused: gh pr create failed: gh: not authenticated. Fix it, then run land.py resume")
+            self.assertEqual(tuple(self.entry_fields(1, "state", "pr")), ("awaiting-merge", ""))
+            (self.base / "pr-create-fails").unlink()
+            self.configure_owner()
+            self.assertEqual(self.land("resume"), "queue resumed")
+            self.assertEqual(self.land("land"), self.foreign_bounce(sha))
+        self.assertEqual(self.created_heads(), [])
+        self.assertFalse((self.base / "prs.json").exists())
+
+    def stray_worktree_line(self, value, quoted=None, shown=None):
+        config = (self.work / ".git").resolve() / "config"
+        return (f"land: {shown or config} sets core.worktree to {value}, where git does not find this repository; "
+                f"remove it with git --work-tree=. config --file {quoted or config} --unset-all core.worktree\n")
+
+    def run_land(self, repo, *args):
+        """Run land.py with --repo set to repo. Returns its exit status, stdout, and stderr."""
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), *args],
+                                capture_output=True, text=True, env=os.environ.copy())
+        return result.returncode, result.stdout, result.stderr
+
+    def test_a_core_worktree_that_names_a_missing_directory_stops_status_land_resume_lease_init_and_submit(self):
+        self.init()
+        sha = self.worker("w1", {"a.txt": "agent\n"})
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        config = self.work / ".git" / "config"
+        before = config.read_bytes()
+        commands = (["status"], ["land"], ["resume"], ["lease", "list"],
+                    ["init", "--trunk", "main", "--mode", "auto", "--check", "./check.sh"],
+                    ["submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER])
+        for repo in (self.work, self.base / "w1"):
+            for command in commands:
+                with self.subTest(repo=repo.name, command=command[0]):
+                    self.assertEqual(self.run_land(repo, *command), (1, "", self.stray_worktree_line(gone)))
+        self.assertEqual(config.read_bytes(), before)
+
+    def test_a_core_worktree_that_names_a_directory_outside_the_repository_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.base), cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(self.base)))
+
+    def test_the_printed_command_quotes_a_config_path_that_has_a_space(self):
+        self.work = self.base / "spaced work"
+        sh("git", "clone", "-q", "origin.git", "spaced work", cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        quoted = "'" + str((self.work / ".git").resolve() / "config") + "'"
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone, quoted)))
+
+    def test_a_core_worktree_that_names_the_checkout_does_not_stop_status(self):
+        self.init()
+        for value in (str(self.work), ".."):
+            with self.subTest(value=value):
+                sh("git", "config", "core.worktree", value, cwd=self.work)
+                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_a_relative_core_worktree_that_names_a_missing_directory_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", "../gone", cwd=self.work)
+        for repo in (self.work, self.base):
+            with self.subTest(cwd=repo.name):
+                result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "status"], cwd=repo,
+                                        capture_output=True, text=True, env=os.environ.copy())
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", self.stray_worktree_line("../gone")))
+
+    def test_the_printed_command_run_in_the_checkout_removes_a_relative_core_worktree(self):
+        self.init()
+        sh("git", "config", "core.worktree", "../gone", cwd=self.work)
+        command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
+        subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_the_last_core_worktree_value_decides(self):
+        self.init()
+        gone = self.base / "gone"
+        sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
+        sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(self.work), cwd=self.base)
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
+
+    def files_under(self, directory):
+        """The SHA-256 of every file under a directory, by relative path."""
+        return {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted(directory.rglob("*")) if path.is_file()}
+
+    def test_a_core_worktree_that_is_the_checkout_path_and_a_newline_stops_status_and_lease_claim(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
+        before = self.files_under(self.work / ".git"), self.files_under(self.base / "state")
+        for command in (["status"], ["lease", "claim", "--holder", "r/D1", "--paths", "a.txt"]):
+            with self.subTest(command=command[0]):
+                self.assertEqual(self.run_land(self.work, *command), (1, "", self.stray_worktree_line(str(self.work) + "\\n")))
+        self.assertEqual((self.files_under(self.work / ".git"), self.files_under(self.base / "state")), before)
+        with self.raw_db() as db:
+            self.assertEqual(db.execute("SELECT id FROM lease").fetchall(), [])
+
+    def test_the_printed_command_removes_a_core_worktree_that_is_the_checkout_path_and_a_newline(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
+        command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
+        subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+
+    def test_a_core_worktree_with_a_carriage_return_is_not_judged_as_the_directory_with_a_newline_there(self):
+        self.init()
+        (self.work / "a\nb").mkdir()
+        sh("git", "config", "core.worktree", str(self.work / "a\rb"), cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(str(self.work / "a") + "\\rb")))
+
+    def test_the_core_worktree_line_is_one_line_when_the_value_holds_line_breaks_and_a_backslash(self):
+        self.init()
+        gone = str(self.base / "gone")
+        sh("git", "config", "core.worktree", gone + "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\\", cwd=self.work)
+        status, printed, complaint = self.run_land(self.work, "status")
+        self.assertEqual((status, printed), (1, ""))
+        self.assertEqual(complaint, self.stray_worktree_line(gone + r"\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\\"))
+        self.assertEqual(len(complaint.splitlines()), 1)
+
+    def test_a_core_worktree_of_300_letters_stops_status(self):
+        self.init()
+        sh("git", "config", "core.worktree", "x" * 300, cwd=self.work)
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line("x" * 300)))
+
+    def test_the_printed_command_is_one_line_and_runs_when_the_config_path_holds_a_newline_and_a_backslash(self):
+        self.work = self.base / "new\nline\\work"
+        sh("git", "clone", "-q", "origin.git", str(self.work), cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        top = str(self.base.resolve())
+        shown = top + r"/new\nline\\work/.git/config"
+        quoted = "\"$(printf %b '" + top + r"/new\0012line\0134work/.git/config" + "')\""
+        status, printed, complaint = self.run_land(self.work, "status")
+        self.assertEqual((status, printed, complaint), (1, "", self.stray_worktree_line(gone, quoted, shown)))
+        self.assertEqual(len(complaint.splitlines()), 1)
+        subprocess.run(complaint.rstrip("\n").split("remove it with ", 1)[1], shell=True, cwd=self.work, check=True, env=os.environ.copy())
+        self.assertEqual(self.git_raw("config", "--get-all", "core.worktree", cwd=self.work).returncode, 1)
+
+    def test_a_git_directory_whose_name_ends_in_a_space_is_read_under_that_name(self):
+        self.work = self.base / "apart"
+        store = self.base / "store "
+        sh("git", "clone", "-q", "--separate-git-dir", str(store), "origin.git", "apart", cwd=self.base)
+        gone = self.base / "gone"
+        sh("git", "config", "core.worktree", str(gone), cwd=self.work)
+        config = str(store.resolve() / "config")
+        self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone, "'" + config + "'", config)))
+
+    def test_slot_runs_with_a_core_worktree_that_names_a_missing_directory(self):
+        self.init()
+        sh("git", "config", "core.worktree", str(self.base / "gone"), cwd=self.work)
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", "echo ran"],
+                                cwd=self.work, capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "ran\n", ""))
+
+
+def repository_state(repo):
+    """Config bytes, HEAD, and every ref of a repository."""
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname) %(objectname)"], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout
+    return (repo / ".git/config").read_bytes(), (repo / ".git/HEAD").read_text(), refs
+
+
+class GitEnvironmentFenceTest(unittest.TestCase):
+    def test_a_fixture_test_leaves_a_repository_named_by_the_callers_git_variables_unchanged(self):
+        for names in (("GIT_DIR", "GIT_WORK_TREE"), ("GIT_DIR",)):
+            with self.subTest(leaked=names), tempfile.TemporaryDirectory() as tmp:
+                victim = Path(tmp) / "victim"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(victim)], check=True)
+                subprocess.run(["git", "-c", "user.name=v", "-c", "user.email=v@v", "commit", "-q", "--allow-empty", "-m", "init"],
+                               cwd=victim, check=True)
+                before = repository_state(victim)
+                leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
+                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "LandingTest.test_a_conflict_rerere_resolved_to_trunk_bounces"],
+                                       env={**os.environ, **{name: leaked[name] for name in names}},
+                                       capture_output=True, text=True, timeout=300)
+                self.assertEqual(repository_state(victim), before)
+                self.assertEqual(child.returncode, 0, child.stderr)
+
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--paused-child"]:

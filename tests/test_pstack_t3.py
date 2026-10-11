@@ -19,6 +19,28 @@ import roles  # noqa: E402
 CATALOG = json.loads((ROOT / "tests/fixtures/catalog.json").read_text())
 
 
+def fence_git_environment():
+    """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
+
+    A module cleanup restores os.environ to what it held at this call.
+    """
+    saved = dict(os.environ)
+
+    def restore():
+        os.environ.clear()
+        os.environ.update(saved)
+
+    unittest.addModuleCleanup(restore)
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        del os.environ[name]
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
+
+
+def setUpModule():
+    fence_git_environment()
+
+
 def config(budget="default", **assigned):
     return {"budget": budget, "roles": assigned, "sources": {name: "test" for name in assigned}}
 
@@ -2780,6 +2802,30 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
         import catalog
         group = catalog.render(ROOT / "skills").split("\n## Plan and run long work\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("| [`brigade-admin`](../skills/brigade-admin/SKILL.md) |", group)
+
+
+def repository_state(repo):
+    """Config bytes, HEAD, and every ref of a repository."""
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname) %(objectname)"], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout
+    return (repo / ".git/config").read_bytes(), (repo / ".git/HEAD").read_text(), refs
+
+
+class GitEnvironmentFenceTest(unittest.TestCase):
+    def test_a_fixture_test_leaves_a_repository_named_by_the_callers_git_variables_unchanged(self):
+        for names in (("GIT_DIR", "GIT_WORK_TREE"), ("GIT_DIR",)):
+            with self.subTest(leaked=names), tempfile.TemporaryDirectory() as tmp:
+                victim = Path(tmp) / "victim"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(victim)], check=True)
+                subprocess.run(["git", "-c", "user.name=v", "-c", "user.email=v@v", "commit", "-q", "--allow-empty", "-m", "init"],
+                               cwd=victim, check=True)
+                before = repository_state(victim)
+                leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
+                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "WorktreeAuditTest.test_flag_and_env_replace_the_configured_directory"],
+                                       env={**os.environ, **{name: leaked[name] for name in names}},
+                                       capture_output=True, text=True, timeout=300)
+                self.assertEqual(repository_state(victim), before)
+                self.assertEqual(child.returncode, 0, child.stderr)
 
 
 if __name__ == "__main__":
