@@ -19,31 +19,47 @@ Its control characters are read as spaces, and it is compared with each characte
 The identifiers are the thread ids, the sub-agent ids, and the work items' task values in the store and in T3's turn and sub-agent rows.
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
-A form of fewer than 4 characters, or of spaces only, is not private text either.
+A form of spaces only is not private text either. Neither is an identifier form of fewer than 4 characters.
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
 Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
+A path form of 4 or more characters is private text anywhere in a word.
+A path form of fewer than 4 characters is read without the slashes that end it, and a form of slashes only is read as one slash. It is private text only as a whole word.
+That word starts with a slash that starts the string or follows one of the characters the last path shape below can follow, and it ends before the next space, quotation mark, or backtick.
+The word is also the form when it is the form before one or more of a slash, a closing round, square, curly, or angle bracket, and the marks . , ; : ! ? |.
 
 Private text is also text of one of these shapes, with upper and lower case letters read alike.
 A UUID.
 One of mcp, thread, node, run, task, run-attempt, provider-turn, provider-session, context-transfer, and context-handoff anywhere in a word, then a colon, then a letter, a digit, an underscore, or a percent sign.
-An email address, which is an at sign between a local part and a domain name that holds a dot before two or more letters.
-The local part ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
+An email address, which is an at sign between a local part and a domain.
+The domain is a name that holds a dot before two or more letters. Or it is square brackets around four numbers of 1 to 3 digits joined by dots, or around `IPv6:` and one or more hexadecimal digits, colons, and dots.
+The local part is 1 to 62 characters other than a straight double quotation mark between two such marks.
+Or it is 1 to 62 characters between two such marks, read from the left with a backslash and the character after it as a pair, where the last pair ends before the closing mark and each such mark among the characters is the second character of a pair.
+Or it ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
 A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
-Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.
+Such a path starts with a slash before a character other than a space, a slash, a quotation mark, or a backtick, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.
+It can start with two or more slashes instead when no colon stands before them.
 Or it starts with a tilde before a slash or a backslash, with a tilde and a name that starts with a letter or an underscore before one, with $HOME or ${HOME} before one, or with two backslashes before a letter, a digit, an underscore, or a dot.
 A path after an opening quotation mark or a backtick is private text up to the mark that closes it.
 Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash and does not start with a slash.
 
+Private text is also the request name of a delegated task when that name holds a hyphen.
+The request names are the text after the last `delegate-task:` of each identifier this run read, with the identifier's percent escapes decoded once and without the spaces that start and end that text.
+A name that is runs of letters and digits joined by single hyphens is private text only as a whole such run, compared in lower case as an identifier is.
+A longer such run that holds the name is not the name. Neither is the name after a slash that starts the string or follows one of the characters the last path shape above can follow, such as /code-review.
+Any other name with a hyphen is read as it is and with its percent escapes decoded once and twice, each form without the spaces that start and end it. It is compared as a path this run read is.
+A form of 4 or more characters is private text anywhere in a word.
+A form of fewer than 4 characters is private text only where no letter, digit, underscore, or hyphen stands directly before or after it.
+A request name with no hyphen is not private text.
+
 The filter removes a word for no other reason.
 The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
-It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.
+It leaves a word of one segment that starts with a slash, such as /review, unless it holds private text.
 A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
-The filter looks for that name in other text only when it is a work item's task value and does not read as ordinary words.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
-Different work items can print the same id, summary, state, and link.
+Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 """
 
 import argparse
@@ -267,6 +283,8 @@ class Item:
     pr: str
     in_flight: bool
     no_link: str = ""
+    # The work item's position among the store's work items, so two work items that print alike stay two. No form prints it.
+    key: int = 0
 
 
 @dataclass(frozen=True)
@@ -618,17 +636,27 @@ def touches(start, end, window):
     return start <= window.end and (end is None or end >= window.start)
 
 
-def check_parents(parent_of):
-    """Refuse a thread that is its own parent or its own ancestor. The rows below a coordinator are drawn as a tree."""
+def check_parents(parents_of):
+    """Refuse a row that makes a thread its own parent, and rows that make a thread its own ancestor. The rows below a coordinator are drawn as a tree.
+    parents_of holds every parent each child has in any row, whichever row read_t3 then uses for the tree.
+    """
     clear = set()
-    for thread in parent_of:
-        chain = set()
-        while thread in parent_of and thread not in clear:
-            if thread in chain:
+    for start in parents_of:
+        if start in clear:
+            continue
+        chain, stack = {start}, [(start, iter(parents_of[start]))]
+        while stack:
+            thread, parents = stack[-1]
+            parent = next(parents, None)
+            if parent is None:
+                stack.pop()
+                chain.discard(thread)
+                clear.add(thread)
+            elif parent in chain:
                 raise SourceError(f"T3's {SUBAGENTS} makes a thread its own ancestor; {CHANGED}")
-            chain.add(thread)
-            thread = parent_of[thread]
-        clear |= chain
+            elif parent in parents_of and parent not in clear:
+                chain.add(parent)
+                stack.append((parent, iter(parents_of[parent])))
 
 
 def same_project(connection, threads, coordinators):
@@ -649,7 +677,7 @@ def same_project(connection, threads, coordinators):
 
 
 def read_t3(connection, window, roots, coordinators=()):
-    parent_of, delegations, nodes, unstarted, seen = {}, {}, {}, [], set()
+    parent_of, parents_of, delegations, nodes, unstarted, seen = {}, {}, {}, {}, [], set()
     for node, parent, child, status, started, completed in connection.execute(
             f"select subagent_id, thread_id, child_thread_id, status, started_at, completed_at from {SUBAGENTS}"):
         node, parent, status = (text_in(value, SUBAGENTS, column) for value, column in ((node, "subagent_id"), (parent, "thread_id"), (status, "status")))
@@ -661,13 +689,14 @@ def read_t3(connection, window, roots, coordinators=()):
         child = text_in(child, SUBAGENTS, "child_thread_id")
         seen.add(child)
         nodes[node] = child
+        parents_of.setdefault(child, set()).add(parent)
         if start is None:
             parent_of.setdefault(child, parent)
             unstarted.append((parent, child))
         elif child not in delegations or start >= delegations[child].start:
             parent_of[child] = parent
             delegations[child] = Delegation(parse_status(status, end is not None), start, end)
-    check_parents(parent_of)
+    check_parents(parents_of)
     # Every turn is read and compared as an instant. A filter on the stored text would hide a row whose text sorts before the window.
     turns, ran = {}, set()
     for thread, status, requested, completed in connection.execute(f"select thread_id, status, requested_at, completed_at from {RUNS}"):
@@ -724,12 +753,21 @@ T3_KINDS = ("mcp", "thread", "node", "run", "task", "run-attempt", "provider-tur
 OPENS = r"(?:^|(?<=[\s\"'`“”‘’(\[{<>=:,;|]))"
 QUOTES = "\"'`“”‘’"
 # One segment after a slash is a slash command such as /review, so a path that starts with a slash needs a second segment.
-PATH = rf"(?:{OPENS}(?:/(?=[\w.~][^\s/{QUOTES}]*/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
+# A colon before two slashes is a URL's.
+SEGMENT = rf"[^\s/{QUOTES}]"
+PATH = rf"(?:{OPENS}(?:(?:/|(?<!:)/{{2,}})(?={SEGMENT}+/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
 # The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
 SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:(?=[\w/\\.~%])", re.IGNORECASE)
-LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
+LOCAL = re.compile(r"(?:[^\s@<>()\[\]\"',;:&]+|\"[^\"]+\"|\"(?:\\.|[^\"\\])+\")\Z", re.DOTALL)
 LOCAL_CHARS = 64
-DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
+DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}|\[(?:\d{1,3}(?:\.\d{1,3}){3}|IPv6:[0-9A-Fa-f:.]+)\]", re.IGNORECASE)
+TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
+# The slash that starts a word belongs to its token, so /code-review is not code-review.
+NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
+SLASH_WORD = re.compile(rf"{OPENS}/[^\s{QUOTES}]*")
+# A form of fewer than 4 characters of a request name that is not one TOKEN is not private text with one of these directly before or after it.
+BESIDE = r"[\w-]"
+CLOSERS = "/)]}>.,;:!?|"
 CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
 NEXT_PATH_WORD = re.compile(r"\s+(?!/)\S*[/\\]\S*")
@@ -853,24 +891,57 @@ class Privacy:
     field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
 
-    def __init__(self, identifiers=(), paths=()):
-        index = {}
-        for value, path in (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in paths)):
+    def __init__(self, identifiers=(), paths=(), requests=()):
+        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
+        roots holds each shorter form of a path that is not blank, in lower case, without the slashes that end it. A form of slashes only is `/`.
+        names holds each request name that is one TOKEN, in lower case.
+        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
+        A request name, and each form of one that is not one TOKEN, is read without the spaces that start and end it. A request name with no hyphen is in none of the four.
+        """
+        index, roots, shorts = {}, set(), set()
+        requests = {plain(value).strip() for value in requests if "-" in value}
+        tokens = {value for value in requests if re.fullmatch(TOKEN, value)}
+        self.names = frozenset(map(lowered, tokens))
+        known = (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in paths))
+        for value, path in known:
             for _ in range(3):
                 low = lowered(value)
                 if len(low) >= ANCHOR and low.strip() and (path or not ordinary(value)):
                     index.setdefault(low[:ANCHOR], set()).add(low)
+                elif path and low.strip():
+                    roots.add(low.rstrip("/") or "/")
                 value = unescaped(value)[0]
+        for value in requests - tokens:
+            for _ in range(3):
+                low = lowered(value).strip()
+                if len(low) >= ANCHOR:
+                    index.setdefault(low[:ANCHOR], set()).add(low)
+                else:
+                    shorts.add(low)
+                value = unescaped(value)[0]
+        self.roots = frozenset(roots)
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
+        self.shorts = re.compile(rf"(?<!{BESIDE})(?=({'|'.join(map(re.escape, sorted(shorts, key=len, reverse=True)))})(?!{BESIDE}))") if shorts else None
         self.cache = {}
 
     def found(self, text):
-        """The spans of text that hold an indexed identifier or path in any case, or text of a private shape."""
+        """The spans of text that hold an indexed form, a token that is one of names, a form shorts matches, or a word that is one of roots, each in any case, or text of a private shape."""
         low = lowered(text)
         for at in range(len(low) - ANCHOR + 1 if self.index else 0):
             for form in self.index.get(low[at:at + ANCHOR], ()):
                 if low.startswith(form, at):
                     yield at, at + len(form)
+        for match in NAME.finditer(low) if self.names else ():
+            if match.group() in self.names:
+                yield match.span()
+        for match in self.shorts.finditer(low) if self.shorts else ():
+            yield match.span(1)
+        for match in SLASH_WORD.finditer(low) if self.roots else ():
+            word = match.group()
+            while word not in self.roots and len(word) > 1 and word[-1] in CLOSERS:
+                word = word[:-1]
+            if word in self.roots:
+                yield match.start(), match.start() + len(word)
         covered = 0
         for match in SHAPES.finditer(text):
             if match.start() >= covered:
@@ -938,6 +1009,7 @@ class Privacy:
 def privacy_of(store, t3, paths=()):
     """The filter for one run. Its identifiers are the thread ids, sub-agent ids, and task values of the store and of T3's rows.
     Its paths are the project root the store records and the given paths.
+    Its request names are the names request_name() reads from those identifiers.
     """
     ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
@@ -945,7 +1017,7 @@ def privacy_of(store, t3, paths=()):
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
-    return Privacy(ids, places)
+    return Privacy(ids, places, filter(None, map(request_name, ids)))
 
 
 def short(text, limit):
@@ -1109,10 +1181,10 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy):
+def item_of(unit, privacy, key):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why)
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key)
 
 
 def build_page(store, t3, window, privacy):
@@ -1131,6 +1203,7 @@ def build_page(store, t3, window, privacy):
 
     placed = assign(store, t3)
     units = {unit.id: unit for unit in store.units}
+    keys = {unit.id: key for key, unit in enumerate(store.units)}
     members = {}
     for thread, assignment in placed.items():
         members.setdefault(assignment.unit, []).append(t3.agents[thread])
@@ -1141,7 +1214,7 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy) if unit else None, rows, len(active) - subagents, subagents))
+        groups.append(Group(item_of(units[unit], privacy, keys[unit]) if unit else None, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1159,7 +1232,7 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id]) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
     return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
 

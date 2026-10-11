@@ -1,5 +1,6 @@
 import fcntl
 import hashlib
+import html
 import json
 import os
 import random
@@ -1001,8 +1002,71 @@ class FilterTest(unittest.TestCase):
 
     def test_clean_removes_a_word_that_holds_an_email_address_and_keeps_an_at_sign_with_no_address_around_it(self):
         self.assertEqual(self.clean("mail acct-homemarker@example.test and <a.b@c.org>, x=USER@EXAMPLE.TEST and user%40example.test now"), "mail and and now")
-        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and \"jd\"@example.test and (jd)@example.test"
+        self.assertEqual(self.clean("mail \"jd\"@example.test now"), "mail now")
+        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and (jd)@example.test"
         self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_the_listed_addresses_with_a_quoted_local_part_of_1_to_62_characters_or_a_bracketed_host_and_keeps_the_listed_neighbours(self):
+        for word in ('"auditor"@example.test', "auditor@[127.0.0.1]", "auditor@[IPv6:2001:db8::1]", "AUDITOR@[ipv6:2001:DB8::1]", '"a.b"@[127.0.0.1]', "<auditor@[127.0.0.1]>", "%22auditor%22%40example.test", '"abc\\"@example.test'):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"mail {word} now"), "mail now")
+        self.assertEqual(self.clean('mail "the auditor"@example.test now'), "mail now")
+        long = f'"{"a" * 63}"@example.test'
+        self.assertEqual((self.clean(f"mail {long[0]}{long[2:]} now"), self.clean(f"mail {long} now")), ("mail now", f"mail {long} now"))
+        kept = "bump react@18.2.0 for @handle on user@host and (jd)@example.test with list[0]@[a] or x@[1] and x@[1.2.3] then x@[1234.1.1.1] and x@[IPv6:] or \"\"@example.test and \"jd\" @example.test now"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_the_listed_addresses_whose_quoted_local_part_of_1_to_62_characters_holds_a_backslash_and_the_character_after_it_as_a_pair_and_keeps_the_listed_neighbours(self):
+        words = ('"audit\\""@example.test', '"a\\"b"@example.test', '"a\\"b\\"c"@example.test', '"\\""@example.test', '"a\\\\b"@example.test', '"ab\\\\"@example.test', '"ab\\\\\\""@example.test',
+                 '"audit\\""@[127.0.0.1]', '"audit\\""@[IPv6:2001:db8::1]', '"AUDIT\\""@EXAMPLE.TEST', '<"audit\\""@example.test>', "%22audit%5C%22%22%40example.test", "%2522audit%255C%2522%2522%2540example.test",
+                 '"a\\%0Ab\\""@example.test')
+        for word in words:
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"mail {word} now"), "mail now")
+        self.assertEqual(self.clean('mail "the\\ audit\\" one"@example.test now'), "mail now")
+        full, over = (f'"{"a" * count}\\""@example.test' for count in (60, 61))
+        self.assertEqual((self.clean(f"mail {full} now"), self.clean(f"mail {over} now")), ("mail now", f"mail {over} now"))
+        kept = 'see \\"@example.test and "ab\\\\""@example.test with "a\\"b" @example.test or "a\\"b"@host and \\" @example.test now'
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_a_request_name_with_a_hyphen_as_a_whole_token_in_any_case_and_keeps_a_longer_token_the_token_after_a_slash_that_starts_a_word_and_a_name_with_no_hyphen(self):
+        clean = MOD["Privacy"](requests={"kit-d7-audit-task", "code-review", "queue", "a-b"}).clean
+        self.assertEqual(clean("see kit-d7-audit-task now and KIT-D7-AUDIT-TASK. or x.kit-d7-audit-task, with (code-review) then x_code-review and a-b end"), "see now and or with then and end")
+        self.assertEqual(clean("id=kit%2Dd7%2Daudit%2Dtask and &quot;code-review&quot; and src/code-review end"), "and and end")
+        kept = "Run /code-review today on the queue for kit-d7-audit-task-2 and prekit-d7-audit-taskpost with x=/code-review and (/code-review) or code review and pre-code-review of a-b-c"
+        self.assertEqual(clean(kept), kept)
+        self.assertEqual(MOD["Privacy"]().clean("see kit-d7-audit-task now"), "see kit-d7-audit-task now")
+
+    def test_clean_removes_a_request_name_with_a_hyphen_and_an_underscore_a_dot_or_a_doubled_hyphen_anywhere_in_a_word_when_it_is_4_or_more_characters(self):
+        clean = MOD["Privacy"](requests={"odd_name-1", "v1.2-check", "two--parts"}).clean
+        self.assertEqual(clean("see odd_name-1 and preODD_NAME-1post and v1.2-check-2 and odd%5Fname%2D1 and xtwo--partsx end"), "see and and and and end")
+        self.assertEqual(clean("see odd_name and v1.2 check end"), "see odd_name and v1.2 check end")
+
+    def test_clean_removes_a_request_name_of_fewer_than_4_characters_with_a_hyphen_that_is_not_letters_and_digits_joined_by_single_hyphens_only_where_no_letter_digit_underscore_or_hyphen_is_directly_before_or_after_it(self):
+        clean = MOD["Privacy"](requests={"a-_", "A-."}).clean
+        for word in ("a-_", "A-_", "(a-_)", '"a-_"', "x=a-_", "a-_,", "a-_.", "a-_:", "/a-_", "src/a-_", "a-_/x", "x.a-_", "a%2D_", "a%2D%5F", "a%252D_", "a-.", "a-..", "(A-.)", "a%2D%2E"):
+            with self.subTest(word):
+                self.assertEqual(clean(f"see {word} now"), "see now")
+        kept = "see xa-_ and a-_b with a-__ or a-_-2 then pre-a-_ and _a-_ for a-.py at 1a-. and a- with a - _ and a_- now"
+        self.assertEqual(clean(kept), kept)
+        self.assertEqual(MOD["Privacy"]().clean("see a-_ and a-. now"), "see a-_ and a-. now")
+
+    def test_clean_removes_a_request_name_that_is_one_hyphen_two_hyphens_or_a_letter_before_or_after_a_hyphen_only_where_no_letter_digit_underscore_or_hyphen_is_directly_before_or_after_it(self):
+        cases = {"-": ("a - b and (-) or -. end", "a b and or end", "a well-known -5 with -- and -v or a- then a-b and _- now"),
+                 "--": ("a -- b and (--) end", "a b and end", "a --flag with a--b or --- and - then a-b now"),
+                 "x-": ("a x- b and X-. or (x-) end", "a b and or end", "a x-ray with x-- or ax- and x-_ then x - and x now"),
+                 "-y": ("a -y b and -Y, or =-y end", "a b and or end", "a x-y with -yes or --y and _-y then - y and y now")}
+        for name, (text, left, kept) in cases.items():
+            with self.subTest(name):
+                clean = MOD["Privacy"](requests={name}).clean
+                self.assertEqual((clean(text), clean(kept)), (left, kept))
+
+    def test_clean_reads_the_listed_request_names_without_the_spaces_that_start_and_end_them_and_removes_the_forms_of_fewer_than_4_characters_that_their_percent_escapes_decode_to(self):
+        self.assertEqual(MOD["Privacy"](requests={" a-_ "}).clean("see a-_"), "see")
+        self.assertEqual(MOD["Privacy"](requests={" code-review "}).clean("run code-review and /code-review"), "run and /code-review")
+        clean = MOD["Privacy"](requests={"%61-%5F", "b-%2520"}).clean
+        self.assertEqual(clean("see a-_ and %61-%5F or A-_. then b- and b-%20 end"), "see and or then and end")
+        self.assertEqual(clean("see xa-_ and b-b end"), "see xa-_ and b-b end")
 
     def test_clean_removes_an_absolute_path_of_two_or_more_segments_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
         gone = ("/pathmarker/notes.md", "/a/b", "/home/someone/x", "(/pathmarker/a)", "x=/pathmarker/a", "a:/pathmarker/a", "/pathmarker//a", "/.config/a", "/~x/a", "/path-marker+1/a", "/pathmarker/a/",
@@ -1030,6 +1094,24 @@ class FilterTest(unittest.TestCase):
         paths = {"/storemarker", "/checkoutmarker"}
         self.assertEqual(self.clean("read /storemarker and /CHECKOUTMARKER and x/storemarker/a and %2Fcheckoutmarker then /review and /loop end", paths=paths), "read and and and then /review and /loop end")
         self.assertEqual(self.clean("read /storemarker and /checkoutmarker end"), "read /storemarker and /checkoutmarker end")
+
+    def test_clean_removes_a_path_of_two_or_more_segments_whose_first_starts_with_a_hyphen_a_plus_sign_an_asterisk_an_at_sign_or_a_second_slash_and_keeps_one_segment_two_slashes_alone_and_two_slashes_after_a_colon(self):
+        for word in ("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt", "///a/b", "x=//secret/a", "(/*/a)", "/@a/b", "%2F-secret%2Fnotes.txt"):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"see {word} now"), "see now")
+        kept = "see /review and /-flag with /+1 or // and // note at https://example.test/o/r/pull/7 for ftp://secret/a and a//b then /- / -/ now"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_a_path_it_was_given_of_fewer_than_4_characters_only_as_a_whole_word_that_starts_with_a_slash_where_a_path_can_start_with_or_without_closing_marks_after_it(self):
+        for word in ("/x", "/X", "/x.", "/x/", "(/x)", "x=/x", "\"/x\"", "/x/src", "/x/).", "%2Fx", "/x?!"):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"in {word} now", paths={"/x"}), "in now")
+        kept = "see /x.py and /xy with /x-ray in src/x.py or /review at https://example.test/x/r/pull/7 and https://x/o/r/pull/7 for a/x and x/ then /x(1) now"
+        self.assertEqual(self.clean(kept, paths={"/x"}), kept)
+        self.assertEqual(self.clean("in /x and /X/ or /x, then /xy now", paths={"/x/"}), "in and or then /xy now")
+        self.assertEqual(self.clean("at / and (/) or // then /a and https://example.test/o/r/pull/7 now", paths={"/"}), "at and or then /a and https://example.test/o/r/pull/7 now")
+        self.assertEqual(self.clean("in /x. and /x.. or /x now", paths={"/x."}), "in and or /x now")
+        self.assertEqual(self.clean("in /x and /xy now"), "in /x and /xy now")
 
     def test_clean_removes_a_path_after_a_quotation_mark_up_to_the_next_such_mark_and_any_other_through_each_next_word_with_a_slash(self):
         self.assertEqual(self.clean('see "/srv/private dir/secret file.txt" and `~/a b` and \'C:\\a b\\c d\' now'), "see and and now")
@@ -1980,6 +2062,33 @@ class TextTest(OutputCase):
                                               *[row(f"f{n}", status="failed") for n in range(5)])), CLEAN).split("\n")
         self.assertEqual((cut[10], cut[18]), ("  and 2 more running agents", "  and 1 more failed agent"))
 
+    def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_are_each_listed_or_counted_in_the_text_at_max_bytes_500000_and_16000(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.meta["restaurant"] = "name " * 10000
+        for number in range(10):
+            fixture.unit(f"D12345678901234567890-{number}", summary="same", thread=worker(number))
+            fixture.thread(worker(number), turns=(("running", 10, None),))
+        fixture.write()
+        whole = [f"  D12345678901234567890-{number}   working   same   1 agent, 10m at work" for number in range(9)]
+        for budget, listed in (("500000", whole), ("16000", ["  D12345678…   working   same   1 agent, 10m at work"] * 9)):
+            with self.subTest(budget):
+                lines = self.out("--text", "--max-bytes", budget, clock=fixture.now).split("\n")
+                at = lines.index("Work items")
+                self.assertEqual((lines[1], lines[at + 1:at + 12]), ("10 running now, 10 agents, 0 sub-agents, 0 failed", [*listed, "  and 1 more work item", ""]))
+
+    def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_each_have_their_own_entry_or_are_counted_in_the_document_at_max_bytes_16000(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.meta["restaurant"] = "name " * 10000
+        for number in range(10):
+            fixture.unit(f"D12345678901234567890-{number}", summary="same", thread=worker(number))
+            fixture.thread(worker(number), turns=(("running", 10, None),))
+        fixture.write()
+        data = data_of(self.document("--max-bytes", "16000", clock=fixture.now))
+        self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][1]), (
+            [["D12345678…", "same", "working", "go", "", 1]] * 8, [0, 1, 2, 3, 4, 5], "2 more work items in flight are not listed."))
+
     def render(self, build):
         build(self.fixture).write()
         return self.out("--text")
@@ -2523,6 +2632,104 @@ class SlashCommandTest(OutputCase):
         self.assertEqual(MOD["Privacy"]().clean("in /storemarker and /checkoutmarker"), "in /storemarker and /checkoutmarker")
 
 
+class PlantedTest(OutputCase):
+    """One fixture holds a value in the store's name, a work item id, a summary, a model, and the written title of a delegated child, each beside ordinary words."""
+
+    def planted(self, name, value, root=None):
+        fixture = self.fixture = Fixture(self.root / name)
+        fixture.coordinator()
+        if root is not None:
+            fixture.meta["projectRoot"] = root
+        fixture.meta["restaurant"] = f"kit {value}"
+        fixture.unit(f"D7 {value}", summary=f"see {value} now", thread=worker(1))
+        fixture.thread(worker(1), model=f"m {value}", turns=(("running", 10, None),))
+        fixture.thread(delegated(COORDINATOR, "helper-second"), title=f"read {value} here", parent=COORDINATOR, turns=(("running", 9, None),))
+        return fixture
+
+    def gone(self, fixture, value):
+        """No string of the document's data, with its character references decoded, and no line of the text holds value in any case. The words beside it stay in the store's name, the id, the summary, and the model.
+        A title that holds it is not used, and its row takes the label of its request name. Returns the data."""
+        fixture.write()
+        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        written = [html.unescape(text) for part in data.values() for text in strings(part)]
+        self.assertEqual([text for text in (*written, *lines) if value.lower() in text.lower()], [])
+        self.assertEqual((data["c"], data["I"][0][:2], data["M"], data["G"][1][1][0][1]), ("kit", ["D7", "see now"], ["model-a", "m"], "helper second"))
+        self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  helper second "))]), (
+            "Agent activity for kit, last 3h", ["  D7 worker   m   running for 10m", "  helper second   model-a   running for 9m", "  D7   working   see now   1 agent, 10m at work"]))
+        return data
+
+    def test_whole_request_name_of_a_delegated_task_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_pull_request_link_and_another_rows_written_title_that_hold_it_are_not_shown(self):
+        request = "kit-d7-audit-task"
+        fixture = self.planted("request", request)
+        fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 8, None),))
+        fixture.unit("D8", pr=f"https://example.test/{request}/repo/pull/7")
+        fixture.unit("D9", pr=f"https://example.test/owner/{request}/pull/8")
+        data = self.gone(fixture, request)
+        self.assertEqual(([item[4] for item in data["I"]], data["N"]), (["", "", ""], [
+            "2 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."]))
+
+    def test_slash_command_a_longer_token_and_a_request_name_with_no_hyphen_stay_in_a_summary_and_a_written_title_beside_delegated_tasks_named_code_review_queue_and_kit_d7_audit_task(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D1", summary="Run /code-review on the queue for kit-d7-audit-task-2", thread=worker(1))
+        fixture.thread(worker(1), turns=(("running", 10, None),))
+        for number, request in enumerate(("code-review", "queue", "kit-d7-audit-task")):
+            fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 9 - number, None),))
+        fixture.thread(delegated(COORDINATOR, "helper-second"), title="/code-review kit-d7-audit-task-2", parent=COORDINATOR, turns=(("running", 5, None),))
+        fixture.write()
+        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual((data["I"][0][:2], [line[1] for line in data["G"][1][1]]), (
+            ["D1", "Run /code-review on the queue for kit-d7-audit-task-2"], ["code review", "queue", "d7 audit task", "/code-review kit-d7-audit-task-2"]))
+        self.assertEqual([line for line in lines if "queue" in line or "task-2" in line], [
+            "  queue   model-a   running for 8m", "  /code-review kit-d7-audit-task-2   model-a   running for 5m",
+            "  D1   working   Run /code-review on the queue for kit-d7-audit-task-2   1 agent, 10m at work"])
+
+    def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_one_is_not_shown(self):
+        for number, path in enumerate(("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt")):
+            with self.subTest(path):
+                self.gone(self.planted(f"shape-{number}", path), path)
+        for number, root in enumerate(("/x", "/xy")):
+            with self.subTest(root=root):
+                self.gone(self.planted(f"root-{number}", root, root=root), root)
+
+    def test_email_address_with_a_quoted_local_part_and_one_with_a_bracketed_host_are_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_one_is_not_shown(self):
+        for number, address in enumerate(('"auditor"@example.test', "auditor@[127.0.0.1]")):
+            with self.subTest(address):
+                self.gone(self.planted(f"address-{number}", address), address)
+
+    def test_each_listed_email_address_whose_quoted_local_part_ends_in_a_backslash_and_a_quotation_mark_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_it_is_not_shown(self):
+        for number, address in enumerate(('"audit\\""@example.test', f'"{"a" * 60}\\""@example.test', '"audit\\""@[127.0.0.1]')):
+            with self.subTest(address):
+                self.gone(self.planted(f"pair-{number}", address), address)
+
+    def test_whole_request_name_of_3_characters_that_holds_a_hyphen_and_an_underscore_or_a_dot_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_pull_request_link_and_another_rows_written_title_that_hold_it_are_not_shown(self):
+        for number, request in enumerate(("a-_", "a-.")):
+            with self.subTest(request):
+                fixture = self.planted(f"short-{number}", request)
+                fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 8, None),))
+                fixture.unit("D8", pr=f"https://example.test/{request}/repo/pull/7")
+                fixture.unit("D9", pr=f"https://example.test/owner/{request}/pull/8")
+                data = self.gone(fixture, request)
+                self.assertEqual(([item[4] for item in data["I"]], data["N"]), (["", "", ""], [
+                    "2 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."]))
+
+    def test_word_that_holds_the_listed_request_name_of_3_characters_beside_a_letter_a_digit_an_underscore_or_a_hyphen_stays_in_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.meta["restaurant"] = "kit xa-_"
+        fixture.unit("D7 a-_b", summary="see xa-_ and a-_2 with a-__ or pre-a-_ now", thread=worker(1))
+        fixture.thread(worker(1), model="m a-_b", turns=(("running", 10, None),))
+        fixture.thread(delegated(COORDINATOR, "helper-second"), title="read xa-_y here", parent=COORDINATOR, turns=(("running", 9, None),))
+        fixture.thread(delegated(COORDINATOR, "a-_"), parent=COORDINATOR, turns=(("running", 8, None),))
+        fixture.write()
+        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual((data["c"], data["I"][0][:2], data["M"], [line[1] for line in data["G"][1][1]]), (
+            "kit xa-_", ["D7 a-_b", "see xa-_ and a-_2 with a-__ or pre-a-_ now"], ["model-a", "m a-_b"], ["read xa-_y here", "a _"]))
+        self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  read "))]), (
+            "Agent activity for kit xa-_, last 3h", ["  D7 a-_b worker   m a-_b   running for 10m", "  read xa-_y here   model-a   running for 9m",
+                                                    "  D7 a-_b   working   see xa-_ and a-_2 with a-__ or pre-a-_ now   1 agent, 10m at work"]))
+
+
 class ReferenceTest(unittest.TestCase):
     """The sentences the review of round 2 corrected, as the script's docstring and its generated reference now state them."""
 
@@ -2531,14 +2738,14 @@ class ReferenceTest(unittest.TestCase):
         stated = ("Every string a page emits passes one filter after its parts are joined.",
                   "An identifier that reads as ordinary words is not private text.",
                   "The filter removes a word for no other reason.",
-                  "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.",
-                  "It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.",
+                  "Such a path starts with a slash before a character other than a space, a slash, a quotation mark, or a backtick, and it holds a second slash with no space, quotation mark, or backtick before it and a character other than those after it.",
+                  "It leaves a word of one segment that starts with a slash, such as /review, unless it holds private text.",
                   "Userinfo, a query, and a fragment are dropped.",
                   "A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.",
                   "The output and the newline after it take at most --max-bytes bytes.")
         self.assertEqual([sentence for sentence in stated if sentence not in reference or sentence not in " ".join(MOD["__doc__"].split())], [])
         replaced = ("4 characters or longer", "with any other value that is not blank", "the class Privacy", "6 or more digits", "the most bytes the HTML document",
-                    "Such a path starts with a slash before a letter, a digit, an underscore, a dot, or a tilde. Or")
+                    "Such a path starts with a slash before a letter", "unless it holds a path this run read.")
         self.assertEqual([words for words in replaced if words in reference], [])
         self.assertIn("| `--max-bytes MAX_BYTES` | | | `16000` | the most bytes the output and the newline after it take, from 16000 to 500000 |", reference)
 
@@ -2749,6 +2956,21 @@ class RowShapeTest(OutputCase):
                     self.staffed(f"{name}-{started}", looped(*pairs, started=started))
                     line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
                     self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
+
+    def test_self_parent_row_and_two_thread_cycle_that_a_later_row_overrides_and_self_parent_row_with_no_start_time_after_a_valid_row_exit_3_in_both_forms(self):
+        cases = {"self": ((worker(1), worker(1), 10), (COORDINATOR, worker(1), 5)),
+                 "unstarted": ((COORDINATOR, worker(1), 10), (worker(1), worker(1), None)),
+                 "two": ((worker(2), worker(1), 10), (worker(1), worker(2), 10), (COORDINATOR, worker(1), 5))}
+        for name, rows in cases.items():
+            def spoil(fixture, rows=rows):
+                fixture.thread(worker(2), title="second worker", turns=(("running", 4, None),))
+                fixture.turns.append((worker(1), "running", fixture.stamp(5), None))
+                fixture.delegations += [(f"node:nodemarker-masked-{number}", parent, child, "running", fixture.stamp(start), None) for number, (parent, child, start) in enumerate(rows)]
+
+            with self.subTest(name):
+                self.staffed(f"masked-{name}", spoil)
+                line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
+                self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
 
     def test_sub_agent_rows_with_no_start_time_that_make_no_loop_are_read_and_the_running_worker_is_counted(self):
         def chained(fixture):
