@@ -44,6 +44,8 @@ python3 scripts/sync_upstream.py
 
 The build then lists each override whose upstream file changed. Re-port each one against the new upstream text, then run `python3 scripts/build.py --update-lock`.
 
+To merge first, run `python3 scripts/sync_upstream.py --merge`. For each override whose upstream file changed it either writes a clean three-way merge or leaves the override as it is and names it. Add `--dry-run` to write nothing in the checkout. Add `--conflicts <dir>` to also write git's conflict-marked merge of each override whose merge conflicts under `<dir>`, a path outside the checkout that does not exist yet. Review each merged override before `python3 scripts/build.py --update-lock`.
+
 ## Releasing
 
 1. Print the section. This changes nothing.
