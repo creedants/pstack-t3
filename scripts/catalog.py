@@ -51,7 +51,7 @@ def _scan_playbooks(text):
             file = given.group(1) if given else f"playbooks/{kebab(title)}.md"
             entries.append((title, file, GIVEN_FILE.sub("", summary).strip()))
             continue
-        if line.lstrip().startswith(("- ", "* ", "+ ")):
+        if line.startswith(("- ", "* ", "+ ")):
             unparsed.append(
                 f'poteto-mode/SKILL.md:{number}: playbook bullet does not match "- **Title.** summary": {line.strip()[:120]}'
             )

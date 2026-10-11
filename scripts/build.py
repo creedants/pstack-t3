@@ -8,7 +8,7 @@ t3/removed.txt     upstream paths that pstack-t3 does not ship
 t3/overrides.lock.json  sha256 of each upstream file an override replaces
 
 An override whose upstream file changed since it was written fails the build
-until it is re-ported and the lock refreshed with --update-lock.
+until it is reviewed or re-ported and the lock refreshed with --update-lock.
 """
 
 import argparse
