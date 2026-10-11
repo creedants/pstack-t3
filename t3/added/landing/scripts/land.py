@@ -459,7 +459,8 @@ def identity_change(store):
 
     With no identity stored under the contract key identity it returns None, and it first stores
     configured_identity(store.repo) there when that is not None. With one stored it returns a reason unless
-    configured_identity(store.repo) equals it in both name and email. The reason gives the stored identity, and the configured one or the word unset.
+    configured_identity(store.repo) equals it in both name and email. The reason gives the stored identity,
+    and the configured one or the word unset.
     """
     configured, remembered = configured_identity(store.repo), store.contract.get("identity")
     if remembered is None:

@@ -4289,8 +4289,8 @@ os.execv({real!r}, [{real!r}, *args])
 
     def configured_value(self, key):
         """What git config -z --get prints for key in the checkout, with the final NUL removed. None when git exits 1."""
-        result = subprocess.run(["git", "config", "-z", "--get", key], cwd=self.work, capture_output=True, text=True, env=git_env())
-        return None if result.returncode == 1 else result.stdout.removesuffix("\0")
+        result = subprocess.run(["git", "config", "-z", "--get", key], cwd=self.work, capture_output=True, env=git_env())
+        return None if result.returncode == 1 else result.stdout.decode().removesuffix("\0")
 
     def stored_identity(self):
         """The JSON text under the contract key identity, or None when the key is absent."""
