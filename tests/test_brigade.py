@@ -4673,7 +4673,132 @@ class BrigadeTest(unittest.TestCase):
                              f"brigade: cannot list tracked files in {self.project}")
         self.assertEqual(self.store_files(), before)
 
-    NONE_RUNNING = "workers: 0 of 2 running, 2 idle, auto-start: normal"
+    def test_ticket_paths_records_the_one_tracked_file_that_has_a_quoted_file_name_with_no_directory(self):
+        self.tracked_project("src/app/tool.py", "docs/guide.md")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths src/app/tool.py")
+        self.assertEqual(self.paths_cells(), {"T1": "src/app/tool.py"})
+
+    def test_ticket_paths_records_nothing_for_a_quoted_file_name_that_no_tracked_file_has(self):
+        self.tracked_project("src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `nope.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_ticket_paths_records_nothing_for_a_quoted_file_name_that_two_tracked_files_outside_skills_have(self):
+        self.tracked_project("src/app/tool.py", "lib/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_ticket_paths_records_the_t3_file_for_a_quoted_file_name_that_a_file_at_the_same_path_under_skills_also_has(self):
+        self.tracked_project("t3/added/x/scripts/tool.py", "skills/x/scripts/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths t3/added/x/scripts/tool.py")
+        self.assertEqual(self.paths_cells(), {"T1": "t3/added/x/scripts/tool.py"})
+
+    def test_ticket_paths_records_the_t3_file_for_a_quoted_file_name_that_a_file_at_another_path_under_skills_also_has(self):
+        self.tracked_project("t3/scripts/roles.py", "skills/pstack-runtime/scripts/roles.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `roles.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths t3/scripts/roles.py")
+        self.assertEqual(self.paths_cells(), {"T1": "t3/scripts/roles.py"})
+
+    def test_ticket_paths_records_nothing_for_a_quoted_file_name_that_files_under_skills_under_t3_and_elsewhere_have(self):
+        self.tracked_project("skills/x/tool.py", "t3/added/x/tool.py", "vendor/x/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_ticket_paths_records_a_file_under_skills_for_a_quoted_file_name_that_no_other_tracked_file_has(self):
+        self.tracked_project("skills/x/scripts/tool.py", "t3/added/x/scripts/other.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths skills/x/scripts/tool.py")
+        self.assertEqual(self.paths_cells(), {"T1": "skills/x/scripts/tool.py"})
+
+    def test_ticket_paths_records_the_one_tracked_file_that_has_a_quoted_file_name_with_a_line_suffix(self):
+        self.tracked_project("src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py:12` and `tool.py:30-34`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths src/app/tool.py")
+        self.assertEqual(self.paths_cells(), {"T1": "src/app/tool.py"})
+
+    def test_ticket_paths_records_a_quoted_file_name_that_is_a_tracked_file_at_the_root_when_another_directory_tracks_that_name(self):
+        self.tracked_project("tool.py", "src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 paths tool.py")
+        self.assertEqual(self.paths_cells(), {"T1": "tool.py"})
+
+    def test_ticket_paths_dry_run_prints_the_one_tracked_file_that_has_a_quoted_file_name_and_changes_no_store_file(self):
+        self.tracked_project("src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py`")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "paths", "--dry-run", owner=False), "T1 would record src/app/tool.py")
+        self.assertEqual(self.store_files(), before)
+
+    def test_from_report_records_the_tracked_file_for_each_quoted_file_name_with_no_directory_that_resolves_to_one_and_none_for_names_with_none_or_several(self):
+        self.tracked_project("t3/added/x/scripts/tool.py", "skills/x/scripts/tool.py", "src/app/one.py", "lib/two.py",
+                             "src/two.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- Fix `tool.py:7` and `one.py`.\n"
+                           "- Fix `two.py` and `nope.py`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/app/one.py,t3/added/x/scripts/tool.py", "T3": ""})
+
+    def test_ticket_paths_records_nothing_for_a_file_name_only_one_nested_file_has_quoted_with_a_dot_slash_before_it_a_slash_after_it_or_spaces_around_it(self):
+        self.tracked_project("src/app/tool.py", "tool.py:12")
+        self.open()
+        for quote in ("./tool.py", "tool.py/", "./tool.py:12", " tool.py "):
+            self.brigade("ticket", "add", "--summary", f"Fix `{quote}`")
+        self.assertEqual(self.brigade("ticket", "paths"), "\n".join(f"T{number} quotes no tracked path" for number in (1, 2, 3, 4)))
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "", "T4": ""})
+
+    def test_from_report_records_nothing_for_a_file_name_only_one_nested_file_has_quoted_with_a_dot_slash_before_it_a_slash_after_it_or_spaces_or_tabs_around_it(self):
+        self.tracked_project("src/app/tool.py", "tool.py:12")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- One `./tool.py`.\n"
+                           "- Two `tool.py/`.\n"
+                           "- Three `./tool.py:12`.\n"
+                           "- Four ` tool.py `.\n"
+                           "- Five `\ttool.py\t`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "", "T4": "", "T5": "", "T6": ""})
+
+    def test_ticket_paths_records_nothing_for_a_quote_that_is_a_tracked_file_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12", "src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py:12`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_file_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12", "src/app/tool.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    def test_ticket_paths_records_nothing_for_a_quote_that_is_a_tracked_directory_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12/notes.md", "src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py:12`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_directory_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12/notes.md", "src/app/tool.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    NONE_RUNNING ="workers: 0 of 2 running, 2 idle, auto-start: normal"
 
     def queue(self, *open_flags):
         self.init_landing()
@@ -4845,17 +4970,94 @@ class BrigadeTest(unittest.TestCase):
             "T2 normal, 0m: blocked, waiting for an idle worker; b.txt",
         ]))
 
-    def test_startable_holds_back_a_free_low_ticket_that_would_take_the_last_idle_worker(self):
+    HELD_BACK = "held back, low tickets leave 1 worker idle while an urgent or normal ticket waits"
+
+    def test_startable_holds_back_a_free_low_ticket_from_the_last_idle_worker_while_a_normal_ticket_waits(self):
+        self.queue()
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 2 running, 2 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, held back: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            f"T2 low, 0m: {self.HELD_BACK}; b.txt",
+        ]))
+
+    def test_startable_lists_a_free_low_ticket_as_startable_at_a_cap_of_one_when_no_urgent_or_normal_ticket_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 1, startable: 1",
+            "T1 low, 0m: startable; a.txt",
+            "  Tidy a",
+        ]))
+
+    def test_startable_lists_two_free_low_tickets_as_startable_at_a_cap_of_two_when_no_urgent_or_normal_ticket_waits(self):
         self.queue()
         self.brigade("set", "--autofire", "low")
         self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
         self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
         self.assertEqual(self.brigade("startable"), "\n".join([
             "workers: 0 of 2 running, 2 idle, auto-start: low",
-            "waiting tickets: 2, startable: 1, held back: 1",
+            "waiting tickets: 2, startable: 2",
             "T1 low, 0m: startable; a.txt",
             "  Tidy a",
-            "T2 low, 0m: held back, low tickets leave 1 worker idle; b.txt",
+            "T2 low, 0m: startable; b.txt",
+            "  Tidy b",
+        ]))
+
+    def test_startable_blocks_a_free_low_ticket_for_no_idle_worker_when_a_normal_ticket_takes_the_one_worker(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.filed("Tidy b", "--paths", "b.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, startable: 1, blocked: 1",
+            "T1 normal, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 low, 0m: blocked, waiting for an idle worker; b.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_a_normal_ticket_blocked_by_a_lease_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+        self.filed("Fix the app", "--paths", "src/app.py")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, blocked: 1, held back: 1",
+            "T1 normal, 0m: blocked, waiting on L1 (engine/D1); src/app.py",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_an_urgent_ticket_with_no_paths_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Fix something", "--priority", "urgent")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, unknown: 1, held back: 1",
+            "T1 urgent, 0m: unknown, no paths recorded",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
+        ]))
+
+    def test_startable_holds_back_a_free_low_ticket_while_a_normal_decision_ticket_waits(self):
+        self.queue("--workers", "1")
+        self.brigade("set", "--autofire", "low")
+        self.filed("Pick a name", "--decision")
+        self.filed("Tidy a", "--paths", "a.txt", "--priority", "low")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 0 of 1 running, 1 idle, auto-start: low",
+            "waiting tickets: 2, decisions: 1, held back: 1",
+            "T1 normal, 0m: decision for the owner",
+            f"T2 low, 0m: {self.HELD_BACK}; a.txt",
         ]))
 
     def test_startable_flags_a_low_ticket_filed_more_than_seven_days_ago_and_no_other(self):

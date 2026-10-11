@@ -142,7 +142,7 @@ file every ticket a sibling handed to this coordinator
 brigade.py [flags] ticket paths [--dry-run]
 ```
 
-record the tracked paths each waiting ticket's summary quotes, on tickets that record none
+record the tracked paths each waiting ticket's summary quotes, on tickets that record none; a quote that is no tracked path and that, with one trailing :\<line> or :\<line>-\<line> dropped, holds no slash, no whitespace, and none of * ? [ and is no tracked path records the tracked file of that name when exactly one has that name, and a file under skills/ is not counted when a file of the same name is tracked under t3/
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
@@ -203,7 +203,7 @@ liveness: which dishes have reports, are running, or are over their timebox
 brigade.py [flags] startable
 ```
 
-waiting tickets in the order they should start, each with why it can or cannot start now; it starts nothing
+waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that would take the last idle worker is held back while any urgent or normal ticket is waiting, whether or not that ticket can start now; it starts nothing
 
 ## brigade.py hang
 

@@ -48,6 +48,9 @@ AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
+GENERATED_ROOT = "skills/"
+SOURCE_ROOT = "t3/"
+LINE_SUFFIX = r":\d+(?:-\d+)?$"
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ STANDINGS = {
     "unknown": StandingText("unknown", "unknown, no paths recorded"),
     "decision": StandingText("decisions", "decision for the owner"),
     "below": StandingText("below auto-start", "below auto-start"),
-    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle"),
+    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle while an urgent or normal ticket waits"),
 }
 NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
@@ -594,6 +597,17 @@ def ticket_paths(text):
 class Tracked:
     files: frozenset
     directories: frozenset
+    names: dict
+
+
+def unique_names(files):
+    sources = {path.rsplit("/", 1)[-1] for path in files if path.startswith(SOURCE_ROOT)}
+    by_name = {}
+    for path in files:
+        name = path.rsplit("/", 1)[-1]
+        if not (path.startswith(GENERATED_ROOT) and name in sources):
+            by_name.setdefault(name, []).append(path)
+    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
 
 
 def tracked_paths(project_root):
@@ -606,7 +620,7 @@ def tracked_paths(project_root):
         return None
     files = frozenset(name for name in result.stdout.split("\0") if name)
     directories = frozenset(str(above) for name in files for above in PurePosixPath(name).parents if str(above) != ".")
-    return Tracked(files, directories)
+    return Tracked(files, directories, unique_names(files))
 
 
 def pattern_directory(parts):
@@ -619,13 +633,18 @@ def quoted_paths(text, tracked):
         return ()
     found = set()
     for quote in re.finditer(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", text):
-        span = re.sub(r":\d+(?:-\d+)?$", "", quote.group(2).strip())
+        content = quote.group(2)
+        span = re.sub(LINE_SUFFIX, "", content.strip())
         if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
             continue
         span = posixpath.normpath(span)
         if not re.search(r"[*?\[]", span):
             if span != "." and (span in tracked.files or span in tracked.directories):
                 found.add(span)
+            elif content not in tracked.files and content not in tracked.directories:
+                name = re.sub(LINE_SUFFIX, "", content)
+                if not re.search(r"[/\s*?\[]", name) and name in tracked.names:
+                    found.add(tracked.names[name])
             continue
         directory = pattern_directory(span.split("/"))
         if directory and fnmatch.filter(tracked.files, span):
@@ -1617,6 +1636,7 @@ def plan(tickets, running, cap, level, refusals, now):
     allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
+    higher_waits = any(ticket.priority != "low" for ticket in tickets)
     started = {}
     standings = []
     for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
@@ -1638,7 +1658,7 @@ def plan(tickets, running, cap, level, refusals, now):
             kind = "below"
         elif not idle:
             kind, why = "blocked", NO_WORKER
-        elif low and idle <= LOW_RESERVE:
+        elif low and higher_waits and idle <= LOW_RESERVE:
             kind = "reserve"
         else:
             idle -= 1
@@ -2631,7 +2651,11 @@ def parser():
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
-    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none")
+    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none; "
+                                    "a quote that is no tracked path and that, with one trailing :<line> or :<line>-<line> "
+                                    "dropped, holds no slash, no whitespace, and none of * ? [ and is no tracked path records "
+                                    "the tracked file of that name when exactly one has that name, and a file under skills/ "
+                                    "is not counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
@@ -2658,6 +2682,8 @@ def parser():
 
     sub.add_parser("watch", help="liveness: which dishes have reports, are running, or are over their timebox")
     sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot start now; "
+                                     "a low ticket that would take the last idle worker is held back while any urgent "
+                                     "or normal ticket is waiting, whether or not that ticket can start now; "
                                      "it starts nothing")
 
     p = sub.add_parser("hang", help="record one open run after report-back, once per attempt")
