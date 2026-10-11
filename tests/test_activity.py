@@ -1980,6 +1980,21 @@ class TextTest(OutputCase):
                                               *[row(f"f{n}", status="failed") for n in range(5)])), CLEAN).split("\n")
         self.assertEqual((cut[10], cut[18]), ("  and 2 more running agents", "  and 1 more failed agent"))
 
+    def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_are_each_listed_or_counted_in_the_text_at_max_bytes_500000_and_16000(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.meta["restaurant"] = "name " * 10000
+        for number in range(10):
+            fixture.unit(f"D12345678901234567890-{number}", summary="same", thread=worker(number))
+            fixture.thread(worker(number), turns=(("running", 10, None),))
+        fixture.write()
+        whole = [f"  D12345678901234567890-{number}   working   same   1 agent, 10m at work" for number in range(9)]
+        for budget, listed in (("500000", whole), ("16000", ["  D12345678…   working   same   1 agent, 10m at work"] * 9)):
+            with self.subTest(budget):
+                lines = self.out("--text", "--max-bytes", budget, clock=fixture.now).split("\n")
+                at = lines.index("Work items")
+                self.assertEqual((lines[1], lines[at + 1:at + 12]), ("10 running now, 10 agents, 0 sub-agents, 0 failed", [*listed, "  and 1 more work item", ""]))
+
     def render(self, build):
         build(self.fixture).write()
         return self.out("--text")
@@ -2523,6 +2538,55 @@ class SlashCommandTest(OutputCase):
         self.assertEqual(MOD["Privacy"]().clean("in /storemarker and /checkoutmarker"), "in /storemarker and /checkoutmarker")
 
 
+class PlantedTest(OutputCase):
+    """One fixture holds a value in the store's name, a work item id, a summary, a model, and the written title of a delegated child, each beside ordinary words."""
+
+    def planted(self, name, value, root=None):
+        fixture = self.fixture = Fixture(self.root / name)
+        fixture.coordinator()
+        if root is not None:
+            fixture.meta["projectRoot"] = root
+        fixture.meta["restaurant"] = f"kit {value}"
+        fixture.unit(f"D7 {value}", summary=f"see {value} now", thread=worker(1))
+        fixture.thread(worker(1), model=f"m {value}", turns=(("running", 10, None),))
+        fixture.thread(delegated(COORDINATOR, "helper-second"), title=f"read {value} here", parent=COORDINATOR, turns=(("running", 9, None),))
+        return fixture
+
+    def gone(self, fixture, value):
+        """No string of the document's data, with &quot; read as a quotation mark, and no line of the text holds value in any case. The words beside it stay. Returns the data."""
+        fixture.write()
+        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        written = [text.replace("&quot;", '"') for part in data.values() for text in strings(part)]
+        self.assertEqual([text for text in (*written, *lines) if value.lower() in text.lower()], [])
+        self.assertEqual((data["c"], data["I"][0][:2], data["M"], data["G"][1][1][0][1]), ("kit", ["D7", "see now"], ["model-a", "m"], "helper second"))
+        self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  helper second "))]), (
+            "Agent activity for kit, last 3h", ["  D7 worker   m   running for 10m", "  helper second   model-a   running for 9m", "  D7   working   see now   1 agent, 10m at work"]))
+        return data
+
+    def test_whole_request_name_of_a_delegated_task_is_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_a_pull_request_owner_a_pull_request_repository_and_another_rows_written_title(self):
+        request = "kit-d7-audit-task"
+        fixture = self.planted("request", request)
+        fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 8, None),))
+        fixture.unit("D8", pr=f"https://example.test/{request}/repo/pull/7")
+        fixture.unit("D9", pr=f"https://example.test/owner/{request}/pull/8")
+        data = self.gone(fixture, request)
+        self.assertEqual(([item[4] for item in data["I"]], data["N"]), (["", "", ""], [
+            "2 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."]))
+
+    def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+        for number, path in enumerate(("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt")):
+            with self.subTest(path):
+                self.gone(self.planted(f"shape-{number}", path), path)
+        for number, root in enumerate(("/x", "/xy")):
+            with self.subTest(root=root):
+                self.gone(self.planted(f"root-{number}", root, root=root), root)
+
+    def test_email_address_with_a_quoted_local_part_and_one_with_a_bracketed_host_are_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
+        for number, address in enumerate(('"auditor"@example.test', "auditor@[127.0.0.1]")):
+            with self.subTest(address):
+                self.gone(self.planted(f"address-{number}", address), address)
+
+
 class ReferenceTest(unittest.TestCase):
     """The sentences the review of round 2 corrected, as the script's docstring and its generated reference now state them."""
 
@@ -2749,6 +2813,21 @@ class RowShapeTest(OutputCase):
                     self.staffed(f"{name}-{started}", looped(*pairs, started=started))
                     line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
                     self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
+
+    def test_self_parent_row_and_two_thread_cycle_that_a_later_row_overrides_and_self_parent_row_with_no_start_time_after_a_valid_row_exit_3_in_both_forms(self):
+        cases = {"self": ((worker(1), worker(1), 10), (COORDINATOR, worker(1), 5)),
+                 "unstarted": ((COORDINATOR, worker(1), 10), (worker(1), worker(1), None)),
+                 "two": ((worker(2), worker(1), 10), (worker(1), worker(2), 10), (COORDINATOR, worker(1), 5))}
+        for name, rows in cases.items():
+            def spoil(fixture, rows=rows):
+                fixture.thread(worker(2), title="second worker", turns=(("running", 4, None),))
+                fixture.turns.append((worker(1), "running", fixture.stamp(5), None))
+                fixture.delegations += [(f"node:nodemarker-masked-{number}", parent, child, "running", fixture.stamp(start), None) for number, (parent, child, start) in enumerate(rows)]
+
+            with self.subTest(name):
+                self.staffed(f"masked-{name}", spoil)
+                line = f"activity: T3's orchestration_v2_projection_subagents makes a thread its own ancestor; {CHANGED}"
+                self.assertEqual((self.fails(3, clock=self.fixture.now), self.fails(3, "--text", clock=self.fixture.now)), (line, line))
 
     def test_sub_agent_rows_with_no_start_time_that_make_no_loop_are_read_and_the_running_worker_is_counted(self):
         def chained(fixture):
