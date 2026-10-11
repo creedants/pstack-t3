@@ -67,7 +67,7 @@ DEFAULT_HOURS = 3.0
 MIN_HOURS = 0.01
 MAX_HOURS = 168.0
 BUDGET = 16000
-FIXED_BUDGET = 7700
+FIXED_BUDGET = 7900
 # html_preview and html_render refuse more than 512000 characters.
 MAX_BUDGET = 500000
 
@@ -79,7 +79,7 @@ SUBAGENTS = "orchestration_v2_projection_subagents"
 METADATA = "orchestration_v2_projection_metadata"
 T3_SHAPE = {
     METADATA: ("projection_name", "schema_version"),
-    THREADS: ("thread_id", "title", "default_provider", "payload_json"),
+    THREADS: ("thread_id", "title", "default_provider", "payload_json", "project_id"),
     RUNS: ("thread_id", "status", "requested_at", "completed_at"),
     SUBAGENTS: ("subagent_id", "thread_id", "child_thread_id", "status", "started_at", "completed_at"),
 }
@@ -90,6 +90,7 @@ SELECTION_KEYS = ("model", "instanceId")
 # A thread id, a sub-agent id, a status, and a provider are never empty. A title can be empty.
 # A timestamp is YYYY-MM-DDTHH:MM:SS, then an optional .mmm, then Z or a +HH:MM or -HH:MM offset.
 # A thread's payload is a JSON object whose modelSelection is an object with a model and an instanceId that are not empty.
+# A thread's project id is compared inside SQLite and never returned.
 NULLABLE = {RUNS: ("completed_at",), SUBAGENTS: ("child_thread_id", "started_at", "completed_at")}
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?(?:Z|[+-]\d\d:\d\d)", re.ASCII)
 T3_DATABASE = "statev2.sqlite"
@@ -346,7 +347,7 @@ def run(argv):
     try:
         check_shape(connection)
         check_coordinator(connection, store.coordinators)
-        t3 = read_t3(connection, window, roots_of(store))
+        t3 = read_t3(connection, window, roots_of(store), store.coordinators)
     except sqlite3.Error as error:
         raise unreadable(error, path) from None
     finally:
@@ -354,7 +355,8 @@ def run(argv):
     privacy = privacy_of(store, t3, (directory, path, path.parents[1], Path.home(), *((args.out,) if args.out else ())))
     page = build_page(store, t3, window, privacy)
     budget = args.max_bytes - len("\n")
-    output = fit_text(page, budget, privacy.clean) if args.text else fit(page, budget, privacy.clean)[1]
+    frame = FRAME_HEIGHT - FRAME_MARGIN if args.max_bytes == BUDGET else None
+    output = fit_text(page, budget, privacy.clean) if args.text else fit(page, budget, privacy.clean, frame)[1]
     if target is None:
         return output
     data = output.encode(errors="backslashreplace")
@@ -396,6 +398,11 @@ def store_dir(flag, environ):
 
 
 def read_table(directory, table):
+    """The rows of a table's finished lines after its header line. A table that does not exist has none.
+    A finished line ends in a newline. The bytes after the last newline are never decoded.
+    A finished line that is not UTF-8 is refused as malformed, with its own line number. So is a finished line after the header with a wrong field count.
+    The header line is decoded and never parsed.
+    """
     columns = STORE_COLUMNS[table]
     try:
         lock = os.open(directory / STORE_LOCK, os.O_RDONLY)
@@ -411,13 +418,15 @@ def read_table(directory, table):
     finally:
         if lock is not None:
             os.close(lock)
-    try:
-        text = data.decode()
-    except UnicodeDecodeError as error:
-        raise malformed(table, data[:error.start].count(b"\n") + 1) from None
     rows = []
-    for number, line in enumerate(text.split("\n")[1:-1], start=2):
-        fields = line.split("\t")
+    for number, line in enumerate(data.split(b"\n")[:-1], start=1):
+        try:
+            text = line.decode()
+        except UnicodeDecodeError:
+            raise malformed(table, number) from None
+        if number == 1:
+            continue
+        fields = text.split("\t")
         if len(fields) != len(columns):
             raise malformed(table, number)
         rows.append(dict(zip(columns, fields)))
@@ -622,7 +631,24 @@ def check_parents(parent_of):
         clear |= chain
 
 
-def read_t3(connection, window, roots):
+def same_project(connection, threads, coordinators):
+    """How many of threads are in the T3 project of this coordinator's thread. 0 when the store records no coordinator thread.
+    The project is the current thread's. It is the previous thread's when T3 has no row for the current one.
+    The query returns thread ids this run already read.
+    """
+    if not coordinators:
+        return 0
+    own, found = ", ".join("?" * len(coordinators)), 0
+    for batch in batches(threads):
+        marks = ", ".join("?" * len(batch))
+        found += len(connection.execute(
+            f"select thread_id from {THREADS} where thread_id in ({marks}) and project_id = "
+            f"(select project_id from {THREADS} where thread_id in ({own}) order by thread_id = ? desc limit 1)",
+            (*batch, *coordinators, coordinators[0])).fetchall())
+    return found
+
+
+def read_t3(connection, window, roots, coordinators=()):
     parent_of, delegations, nodes, unstarted, seen = {}, {}, {}, [], set()
     for node, parent, child, status, started, completed in connection.execute(
             f"select subagent_id, thread_id, child_thread_id, status, started_at, completed_at from {SUBAGENTS}"):
@@ -652,7 +678,8 @@ def read_t3(connection, window, roots):
             turns.setdefault(thread, []).append(Turn(parse_status(status, end is not None), start, end))
     idle = [child for child, delegation in delegations.items() if child not in ran and touches(delegation.start, delegation.end, window)]
     active = set(turns) | set(idle)
-    kept, others = in_scope(parent_of, roots, active)
+    kept, _ = in_scope(parent_of, roots, active)
+    others = same_project(connection, active - kept, coordinators)
     described = {}
     for batch in batches(kept):
         marks = ", ".join("?" * len(batch))
@@ -1288,29 +1315,40 @@ def narrow(row, limit=None):
     return replace(row, label=clip(row.label, LABEL_BYTES), model=clip(row.model, MODEL_BYTES), spans=row.spans if limit is None else joined(row.spans, limit))
 
 
+def counted(hidden, cuts, unlisted):
+    """hidden with the agents and items a cut leaves out added to its counts.
+    Each of cuts is a group as it was and the rows of it that stay, or None for a group that is cut.
+    unlisted is how many items in flight leave the strip.
+    """
+    cut, gone_items, gone_agents = 0, 0, 0
+    for group, rows in cuts:
+        lost = agents_in(group.rows) - agents_in(rows or ())
+        # A cut group's item in flight is in page.items, so the strip lists it or cut_in_flight counts it. Any other item is counted here.
+        if rows is None and group.item and not group.item.in_flight:
+            gone_items, gone_agents = gone_items + 1, gone_agents + lost
+        else:
+            cut += lost
+    return replace(hidden, cut_agents=hidden.cut_agents + cut, cut_in_flight=hidden.cut_in_flight + unlisted,
+                   dropped_items=hidden.dropped_items + gone_items, dropped_agents=hidden.dropped_agents + gone_agents)
+
+
 def cap_everything(page):
 
     def running(row):
         return row.open_seconds is not None
 
-    groups, cut, gone_items, gone_agents = [], 0, 0, 0
+    groups, cuts = [], []
     stays = first(page.groups, MAX_GROUPS, lambda group: any(running(row) for row in group.rows))
     for group, stay in zip(page.groups, stays):
         keeps = first(group.rows, MAX_ROWS if stay else 0, lambda row: running(row) or row.status is Status.FAILED)
         rows = tuple(narrow(row, MAX_SPANS) for row in kept_rows(group.rows, keeps))
-        lost = agents_in(group.rows) - agents_in(rows)
+        cuts.append((group, rows if stay else None))
         if stay:
             groups.append(replace(group, item=shown(group.item) if group.item else None, rows=rows))
-        # A cut group's item in flight is in page.items, so the strip lists it or cut_in_flight counts it. Any other item is counted here.
-        if not stay and group.item and not group.item.in_flight:
-            gone_items, gone_agents = gone_items + 1, gone_agents + lost
-        else:
-            cut += lost
     drawn = [group.item for group in groups]
     listed = first(page.items, MAX_STRIP, lambda item: shown(item) in drawn)
     items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
-    hidden = replace(page.hidden, cut_agents=page.hidden.cut_agents + cut, cut_in_flight=page.hidden.cut_in_flight + len(page.items) - len(items),
-                     dropped_items=page.hidden.dropped_items + gone_items, dropped_agents=page.hidden.dropped_agents + gone_agents)
+    hidden = counted(page.hidden, cuts, len(page.items) - len(items))
     coordinator = narrow(page.coordinator, COORDINATOR_SPANS) if page.coordinator else None
     return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
 
@@ -1318,13 +1356,119 @@ def cap_everything(page):
 FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_items, limit) for limit in KEPT_ITEMS), cap_everything)
 
 
-def fit(page, budget, clean):
-    document = render_html(page, clean)
-    for fold in FOLDS:
-        if len(document.encode()) <= budget:
-            break
-        page = fold(page)
+# html_render shows a frame at most 2000 CSS pixels tall. The margin covers two more lines of footer text than height() counts.
+FRAME_HEIGHT = 2000
+FRAME_MARGIN = 40
+# The number of folds a page over its height takes before framed() cuts it.
+FRAME_FOLDS = len(FOLDS) - 1
+
+# The height of each part at 390 px wide, in CSS pixels, rounded up from the height measured in headless Chromium.
+STATS_PX = 121
+HEADING_PX = 41
+OPEN_PX = 37
+LEGEND_PX = (23, 43)
+AXIS_PX = 16
+GROUP_PX = 34
+ROW_PX = 30
+CHIP_PX = 39
+STRIP_PX = 35
+FOOT_PX = 12
+LINE_PX = 16
+# The footer's fixed paragraph is FOOT_TEXT characters with an 8-character time and no name.
+# A paragraph of n characters is counted as 1 + n // FOOT_CHARS lines, and a note as 1 + n // NOTE_CHARS lines.
+FOOT_TEXT = 203
+FOOT_CHARS = 60
+NOTE_CHARS = 64
+
+
+def text_lines(characters, per_line):
+    return 1 + characters // per_line
+
+
+def fixed_height(page, said):
+    """The height of the parts framed() never cuts. They are stats, the Timeline heading, legend, axis, the coordinator's row, and the footer with the notes in said.
+    A character of the name counts as two, because the name can hold any character and FOOT_CHARS is for Latin text.
+    """
+    lines = text_lines(FOOT_TEXT + 2 * len(page.name), FOOT_CHARS) + sum(text_lines(len(note), NOTE_CHARS) for note in said)
+    return STATS_PX + HEADING_PX + LEGEND_PX[len(page.legend) > 1] + AXIS_PX + (ROW_PX if page.coordinator else 0) + FOOT_PX + LINE_PX * lines
+
+
+def height(page):
+    """The modelled height of the HTML page at 390 px wide.
+    fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
+    """
+    rows = [row for group in page.groups for row in group.rows]
+    total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
+    for status in OPEN:
+        lines = sum(row.open_seconds is not None and row.status is status for row in rows)
+        total += HEADING_PX + OPEN_PX * lines if lines else 0
+    return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
+
+
+def framed(page, limit):
+    """The page cut for height. A page whose height() is at most limit is returned as it is.
+    The name is clipped to NAME_BYTES. At most MAX_STRIP chips stay, those of an item with a group on the page first.
+    Rows are tried in three passes, and each row whose parts fit what is left of limit stays.
+    The first pass tries every row with a Running now or Queued line, the second every failed row, the third every other row.
+    Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
+    A group with no row left is cut with its heading. counted() counts the agents and items left out.
+    """
+    if height(page) <= limit:
+        return page
+    page = replace(page, name=clip(page.name, NAME_BYTES))
+    # Room for the three notes a cut can add, so the result needs no second pass.
+    worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1)
+    left = limit - fixed_height(page, notes(replace(page, hidden=worst), items_of(page)))
+    drawn = [group.item for group in page.groups]
+    listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
+    items = tuple(item for item, keep in zip(page.items, listed) if keep)
+    left -= STRIP_PX + CHIP_PX * len(items) if items else 0
+
+    def tier(row):
+        return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
+
+    pieces = []
+    for at, group in enumerate(page.groups):
+        ranked = sorted(range(len(group.rows)), key=lambda index: (tier(group.rows[index]), index))
+        pieces += [(tier(group.rows[index]), turn, at, index) for turn, index in enumerate(ranked)]
+    kept, headed, lists = set(), set(), set()
+    for _, _, at, index in sorted(pieces):
+        row = page.groups[at].rows[index]
+        opened = row.open_seconds is not None
+        cost = ROW_PX + (at not in headed) * GROUP_PX + opened * (OPEN_PX + (row.status not in lists) * HEADING_PX)
+        if cost <= left:
+            left -= cost
+            kept.add((at, index))
+            headed.add(at)
+            if opened:
+                lists.add(row.status)
+    groups, cuts = [], []
+    for at, group in enumerate(page.groups):
+        rows = tuple(kept_rows(group.rows, [(at, index) in kept for index in range(len(group.rows))]))
+        cuts.append((group, rows or None))
+        if rows:
+            groups.append(replace(group, rows=rows))
+    return replace(page, groups=tuple(groups), items=items, hidden=counted(page.hidden, cuts, len(page.items) - len(items)))
+
+
+def fit(page, budget, clean, frame=None):
+    """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it, and the cut is used when its document is at most budget bytes or when the last fold is reached.
+    """
+    for done, fold in enumerate((None, *FOLDS)):
+        page = fold(page) if fold else page
         document = render_html(page, clean)
+        small, last = len(document.encode()) <= budget, done == len(FOLDS)
+        if not small and not last:
+            continue
+        if frame is None or height(page) <= frame:
+            break
+        if done >= FRAME_FOLDS:
+            cut = framed(page, frame)
+            document = render_html(cut, clean)
+            if len(document.encode()) <= budget or last:
+                page = cut
+                break
     return page, document
 
 
@@ -1388,7 +1532,8 @@ def notes(page, listed):
         lines.append(say(hidden.by_request_name, "1 agent is grouped by the name of the request that started it.",
                          "{n} agents are grouped by the name of the request that started them."))
     if hidden.other_threads:
-        lines.append(say(hidden.other_threads, "1 other thread ran in T3 outside this coordinator.", "{n} other threads ran in T3 outside this coordinator."))
+        lines.append(say(hidden.other_threads, "1 other thread ran in this coordinator's T3 project outside this coordinator.",
+                         "{n} other threads ran in this coordinator's T3 project outside this coordinator."))
     return lines
 
 
@@ -1464,6 +1609,8 @@ STYLE = joined_lines("""
     .p6{--c:var(--chart-6)}
     .f{--c:var(--destructive)}
     .foot{font-size:11px;margin-top:12px}
+    .nb,.one{white-space:nowrap}
+    .one{overflow:hidden;text-overflow:ellipsis}
     @media(max-width:520px){
     .tl{--lab:128px}
     .stats{grid-template-columns:repeat(2,1fr)}
@@ -1522,8 +1669,8 @@ RENDERER = squeezed("""
           for (const [item, label, model, parent, elapsed] of open[i]) {
             const line = add(list, 'div');
             add(line, 'i', i ? 'mark' : 'mark pulse');
-            if (item) add(line, 'b', '', item);
-            add(line, 'b', '', label);
+            if (item) add(line, 'b', 'one', item);
+            add(line, 'b', 'one', label);
             const detail = add(line, 'span', 'sum');
             add(detail, 'span', '', model);
             if (parent) {
@@ -1567,7 +1714,7 @@ RENDERER = squeezed("""
       for (const [index, rows] of D.G) {
         const head = add(lanes, 'div', 'grp'), item = D.I[index];
         if (item) {
-          link(head, item[0], item[4]);
+          link(head, item[0], item[4]).className = 'one';
           add(head, 'span', 'sum', item[1]);
           add(head, 'b', 'chip ' + item[3], item[2]);
         } else add(head, 'span', '', 'Not tied to a work item');
@@ -1579,7 +1726,7 @@ RENDERER = squeezed("""
         const box = add(root, 'div', 'strip');
         for (const item of strip) {
           const chip = link(box, '', item[4]);
-          add(chip, 'b', '', item[0]);
+          add(chip, 'b', 'one', item[0]);
           add(chip, 'span', 'sum', item[1]);
           add(chip, 'b', 'chip ' + item[3], item[2]);
         }
@@ -1588,7 +1735,10 @@ RENDERER = squeezed("""
       add(foot, 'span', '', 'As of ' + clock(start + length) + ' for ');
       add(foot, 'span', '', D.c);
       add(foot, 'span', '', '. Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals.');
-      for (const note of D.N) add(foot, 'div', '', note);
+      for (const note of D.N) {
+        const line = add(foot, 'div');
+        note.split(/(--[a-z-]+)/).forEach((part, i) => add(line, 'span', i % 2 ? 'nb' : '', part));
+      }
     }
 """)
 

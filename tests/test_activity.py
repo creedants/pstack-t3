@@ -24,13 +24,15 @@ MOD = runpy.run_path(str(SCRIPT))
 SKILL = ROOT / "t3/added/brigade/SKILL.md"
 GUIDE = ROOT / "docs/guide.md"
 
-MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "0a1b2c3")
+MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "projectmarker", "0a1b2c3")
 COORDINATOR = "mcp:threadmarker-coordinator"
+PROJECT = "project:projectmarker-own"
+ELSEWHERE = "project:projectmarker-elsewhere"
 CHANGED = "this T3 build stores threads differently, so update pstack-t3"
 FROZEN = "import runpy, sys, time\nclock = float(sys.argv[1])\ntime.time = lambda: clock\ndel sys.argv[:2]\nrunpy.run_path(sys.argv[0], run_name='__main__')"
 SCHEMA = {
     "orchestration_v2_projection_metadata": ("projection_name", "schema_version"),
-    "orchestration_v2_projection_threads": ("thread_id", "title", "default_provider", "payload_json"),
+    "orchestration_v2_projection_threads": ("thread_id", "title", "default_provider", "payload_json", "project_id"),
     "orchestration_v2_projection_runs": ("thread_id", "status", "requested_at", "completed_at"),
     "orchestration_v2_projection_subagents": ("subagent_id", "thread_id", "child_thread_id", "status", "started_at", "completed_at"),
 }
@@ -84,9 +86,9 @@ class Fixture:
     def retired(self, ident, thread):
         self.log.append({"at": self.stamp(500), "kind": "worker", "id": ident, "state": "retired", "note": thread})
 
-    def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None, instance=None):
+    def thread(self, ident, title="", provider="claudeAgent", model="model-a", parent=None, turns=(), delegation=None, payload=None, instance=None, project=PROJECT):
         selection = {"instanceId": provider if instance is None else instance, "model": model}
-        self.threads.append((ident, title, provider, json.dumps({"modelSelection": selection}) if payload is None else payload))
+        self.threads.append((ident, title, provider, json.dumps({"modelSelection": selection}) if payload is None else payload, project))
         self.turns += [(ident, status, self.stamp(start), self.stamp(end)) for status, start, end in turns]
         if parent is None:
             return None
@@ -168,7 +170,7 @@ class Fixture:
         connection = MOD["open_t3"](self.database)
         try:
             MOD["check_shape"](connection)
-            return store, MOD["read_t3"](connection, window, MOD["roots_of"](store)), window
+            return store, MOD["read_t3"](connection, window, MOD["roots_of"](store), store.coordinators), window
         finally:
             connection.close()
 
@@ -275,6 +277,34 @@ class StoreTest(ActivityCase):
         with open(self.fixture.store / "log.tsv", "ab") as table:
             table.write(b"\xff\t\t\t\t\n")
         self.assertEqual(self.fails(1), "activity: line 2 of the store's log is malformed; fix or remove it")
+
+    def test_table_that_ends_in_a_cut_multi_byte_character_is_read_with_the_rows_brigade_reads_from_the_same_bytes(self):
+        fixture = one_running(self.fixture)
+        fixture.retired("D7", worker(9))
+        fixture.write()
+        for name in ("dishes.tsv", "log.tsv"):
+            with open(fixture.store / name, "ab") as table:
+                table.write("D8\tcut \u20ac".encode()[:-1])
+        result = fixture.run()
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual([each[0] for each in json.loads(re.search(r"id=d>(.*?)</script>", result.stdout).group(1))["I"]], ["D6", "D7"])
+        self.assertEqual(fixture.run("--text").stdout.split("\n")[:2], ["Agent activity for kit, last 3h", "1 running now, 1 agent, 0 sub-agents, 0 failed"])
+        rows = runpy.run_path(str(SCRIPT.with_name("brigade.py")))["Restaurant"](fixture.store).rows
+        self.assertEqual([row["id"] for row in rows("dishes.tsv")], ["D7", "D6"])
+        self.assertEqual([row["note"] for row in rows("log.tsv")], [worker(9)])
+        for name in ("dishes.tsv", "log.tsv"):
+            self.assertEqual(MOD["read_table"](fixture.store, name), rows(name))
+
+    def test_wrong_field_count_on_a_line_before_one_that_is_not_utf8_exits_1_with_the_line_number_brigade_names(self):
+        fixture = self.fixture
+        fixture.write()
+        with open(fixture.store / "log.tsv", "ab") as table:
+            table.write(b"too\tfew\n\xff\t\t\t\t\n")
+        self.assertEqual(self.fails(1), "activity: line 2 of the store's log is malformed; fix or remove it")
+        brigade = runpy.run_path(str(SCRIPT.with_name("brigade.py")))
+        with self.assertRaises(brigade["BrigadeError"]) as refused:
+            brigade["Restaurant"](fixture.store).rows("log.tsv")
+        self.assertEqual(str(refused.exception), "proj/kit/log.tsv line 2 is malformed; fix or remove it")
 
     def test_store_columns_equal_brigade_tables(self):
         tables = runpy.run_path(str(SCRIPT.with_name("brigade.py")))["TABLES"]
@@ -840,7 +870,7 @@ class PageTest(ActivityCase):
         fixture.thread(delegated(worker(1), "how-explorer"), parent=worker(1), turns=(("completed", 70, 60),))
         fixture.thread(delegated(COORDINATOR, "brigade-kit-d7-verify"), parent=COORDINATOR, turns=(("completed", 50, 40),))
         page = page_of(fixture)
-        self.assertEqual((labels(page), page.coordinator, page.hidden.other_threads), ({"D7": [(0, "worker"), (1, "how explorer")]}, None, 1))
+        self.assertEqual((labels(page), page.coordinator, page.hidden.other_threads), ({"D7": [(0, "worker"), (1, "how explorer")]}, None, 0))
 
 
 class LabelTest(unittest.TestCase):
@@ -1358,12 +1388,12 @@ class FoldTest(ActivityCase):
             "T3 lists 1 sub-agent with no thread or no start time under a thread this page read. It is not shown.",
             "T3 gave 1 status this tool reads as unknown.",
             "1 agent is grouped by the name of the request that started it.",
-            "1 other thread ran in T3 outside this coordinator."])
+            "1 other thread ran in this coordinator's T3 project outside this coordinator."])
         several = MOD["Hidden"](other_threads=3, unknown_status=2, by_request_name=9)
         self.assertEqual(MOD["notes"](page(group(item("D1"), row("worker")), hidden=several), [item("D1")]), [
             "T3 gave 2 statuses this tool reads as unknown.",
             "9 agents are grouped by the name of the request that started them.",
-            "3 other threads ran in T3 outside this coordinator."])
+            "3 other threads ran in this coordinator's T3 project outside this coordinator."])
 
 
 DATA = re.compile(r"<script type=application/json id=d>(.*?)</script>", re.S)
@@ -1391,6 +1421,7 @@ console.log(JSON.stringify({
   classes: nodes.map(node => node.className),
   titles: nodes.filter(node => node.title).map(node => node.title),
   bars: nodes.filter(node => node.className.startsWith('b ')).map(node => [node.style.left, node.style.width]),
+  one: nodes.filter(node => node.className === 'one').map(node => node.own),
 }));
 """
 
@@ -1482,6 +1513,63 @@ class OutputCase(ActivityCase):
         return out[:-1]
 
 
+class ProjectTest(OutputCase):
+    IDLE = "No agent or sub-agent of this coordinator ran in this window."
+    NOTE = "1 other thread ran in this coordinator's T3 project outside this coordinator."
+
+    def others(self, fixture):
+        fixture.thread("mcp:threadmarker-near", turns=(("completed", 10, 5),))
+        fixture.thread("mcp:threadmarker-far", turns=(("completed", 10, 5),), project=ELSEWHERE)
+        fixture.thread(delegated("mcp:threadmarker-far", "x"), parent="mcp:threadmarker-far", turns=(("running", 3, None),), project=ELSEWHERE)
+        return fixture
+
+    def test_other_thread_in_another_t3_project_and_its_child_are_not_counted_and_one_in_the_coordinators_project_is(self):
+        fixture = self.others(self.fixture)
+        fixture.coordinator()
+        _, t3, _ = fixture.write().read()
+        self.assertEqual(t3.other_threads, 1)
+        self.assertEqual(data_of(self.document())["N"], [self.IDLE, self.NOTE])
+        self.assertEqual(self.out("--text").split("\n")[-4:], ["Notes", "  " + self.IDLE, "  " + self.NOTE, ""])
+
+    def test_project_is_the_previous_threads_when_t3_has_no_row_for_the_current_thread_and_the_current_threads_when_it_has_one(self):
+        cases = (("absent", None, self.NOTE),
+                 ("present", ELSEWHERE, "2 other threads ran in this coordinator's T3 project outside this coordinator."))
+        for name, project, note in cases:
+            with self.subTest(name):
+                fixture = self.fixture = self.others(Fixture(self.root / name))
+                fixture.meta.update(thread="mcp:threadmarker-current", previousThread=COORDINATOR)
+                fixture.coordinator()
+                if project:
+                    fixture.thread("mcp:threadmarker-current", project=project)
+                fixture.write()
+                self.assertEqual(data_of(self.document())["N"], [self.IDLE, note])
+                self.assertEqual(self.out("--text").split("\n")[-4:], ["Notes", "  " + self.IDLE, "  " + note, ""])
+
+    def test_store_with_no_recorded_coordinator_thread_counts_no_other_thread(self):
+        fixture = self.others(self.fixture)
+        fixture.meta.pop("thread")
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), turns=(("completed", 20, 10),))
+        _, t3, _ = fixture.write().read()
+        self.assertEqual(t3.other_threads, 0)
+        self.assertEqual(data_of(self.document())["N"], [])
+        self.assertNotIn("Notes", self.out("--text").split("\n"))
+
+    def test_database_with_no_project_id_column_exits_3(self):
+        self.fixture.write(schema=dict(SCHEMA, orchestration_v2_projection_threads=("thread_id", "title", "default_provider", "payload_json")))
+        self.assertEqual(self.fails(3), f"activity: T3's table orchestration_v2_projection_threads has no column project_id; {CHANGED}")
+
+    def test_project_id_is_in_no_string_of_what_read_t3_returns_and_in_neither_output_form(self):
+        fixture = self.others(self.fixture)
+        fixture.coordinator()
+        _, t3, _ = fixture.write().read()
+        self.assertEqual(t3.other_threads, 1)
+        self.assertIn("threadmarker-near", repr(t3))
+        self.assertNotIn("projectmarker", repr(t3))
+        for form in ((), ("--text",)):
+            self.assertNotIn("projectmarker", self.out(*form))
+
+
 class DocumentTest(OutputCase):
     def test_default_window_is_3_hours_and_hours_changes_which_turns_are_on_the_page(self):
         fixture = self.fixture
@@ -1511,7 +1599,7 @@ class DocumentTest(OutputCase):
         self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "why investigator", 3]])
         self.assertEqual([[bars[2::3] for bars in (line[6] for line in lines)] for _, lines in data["G"]], [[[0, 1], [1], [0], [2]], [[0]], [[3]]])
         self.assertEqual((data["k"][:3], data["k"][3][2::3]), ([0, 0, "15m"], [0, 0]))
-        self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."])
+        self.assertEqual(data["N"], ["1 agent is grouped by the name of the request that started it.", "1 other thread ran in this coordinator's T3 project outside this coordinator."])
 
     def test_checksum_in_the_document_is_fnv_1a_over_the_data_elements_utf16_units(self):
         fixture = one_running(self.fixture)
@@ -1719,13 +1807,14 @@ class SizeTest(OutputCase):
         self.assertEqual((data["n"], data["G"], data["k"], data["N"]), ([0, 0, 0, 0], [], None, ["No agent or sub-agent of this coordinator ran in this window."]))
         self.assertEqual([item[0] for item in data["I"]], ["D7"])
 
-    def test_typical_window_is_unfolded_and_at_most_16000_bytes(self):
+    def test_typical_window_shows_7_finished_work_items_as_one_row_each_and_is_at_most_16000_bytes(self):
         typical(self.fixture).write()
         document = self.document()
         data = data_of(document)
         self.assertLess(len(document.encode()), 16000)
-        self.assertEqual((data["n"], agents_shown(data), sum(len(lines) for _, lines in data["G"])), ([3, 9, 41, 1], 50, 50))
-        self.assertEqual(data["N"], ["14 agents are grouped by the name of the request that started them."])
+        self.assertEqual((data["n"], agents_shown(data), sum(len(lines) for _, lines in data["G"])), ([3, 9, 41, 1], 50, 17))
+        self.assertEqual(data["N"], ["7 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.",
+                                     "14 agents are grouped by the name of the request that started them."])
 
     def test_busy_window_is_folded_to_at_most_16000_bytes_with_a_note_and_max_bytes_buys_every_row_back(self):
         busy(self.fixture).write()
@@ -1734,7 +1823,7 @@ class SizeTest(OutputCase):
         self.assertLess(len(document.encode()), 16000)
         self.assertEqual(data["n"], [5, 36, 364, 3])
         self.assertLess(sum(len(lines) for _, lines in data["G"]), 400)
-        self.assertIn("27 merged or dropped work items with no agent running, queued, or waiting are each shown as one row.", data["N"])
+        self.assertIn("27 merged or dropped work items with 301 agents are not shown. Use a larger --max-bytes to see more.", data["N"])
         whole = data_of(self.document("--max-bytes", "500000"))
         self.assertEqual((whole["n"], agents_shown(whole), sum(len(lines) for _, lines in whole["G"])), ([5, 36, 364, 3], 400, 400))
         self.assertEqual(whole["N"], ["112 agents are grouped by the name of the request that started them."])
@@ -1747,17 +1836,17 @@ class SizeTest(OutputCase):
         self.assertLess(len(document.encode()), 16000)
         self.assertLess(fitted.fold, len(MOD["FOLDS"]))
         self.assertEqual(agents_shown(data_of(document)) + fitted.hidden.dropped_agents, 400)
+        framed, _ = MOD["fit"](unfolded, 15999, CLEAN, 1960)
         printed = self.document()
-        self.assertGreater(len(printed.encode()), 12000)
         self.assertLess(len(printed.encode()), 16000)
-        self.assertEqual(sum(len(lines) for _, lines in data_of(printed)["G"]), sum(len(one.rows) for one in fitted.groups))
+        self.assertEqual(sum(len(lines) for _, lines in data_of(printed)["G"]), sum(len(one.rows) for one in framed.groups))
 
     def test_extreme_window_with_four_byte_characters_and_long_links_is_at_most_16000_bytes(self):
         extreme(self.fixture).write()
         document = self.document()
         data = data_of(document)
         self.assertLess(len(document.encode()), 16000)
-        self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 6, 8))
+        self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 4, 8))
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
@@ -1806,6 +1895,55 @@ class SizeTest(OutputCase):
         self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 16000}, {})
 
 
+class FrameTest(OutputCase):
+    def test_height_of_a_page_with_one_group_two_rows_one_of_them_running_one_chip_and_one_note_is_539(self):
+        only = item("D1")
+        built = page(group(only, row("worker", status="running", open_seconds=5), row("helper", depth=1)), items=[only], hidden=MOD["Hidden"](by_request_name=1))
+        self.assertEqual(MOD["notes"](built, [only]), ["1 agent is grouped by the name of the request that started it."])
+        self.assertEqual(MOD["height"](built), 539)
+
+    def test_frame_budget_is_1960_and_the_busy_page_at_the_default_max_bytes_is_at_most_that_tall_and_its_notes_count_the_rows_it_leaves_out(self):
+        self.assertEqual(MOD["FRAME_HEIGHT"] - MOD["FRAME_MARGIN"], 1960)
+        fixture = busy(self.fixture)
+        fitted, _ = MOD["fit"](page_of(fixture), 15999, CLEAN, 1960)
+        self.assertEqual((MOD["height"](fitted), sum(len(one.rows) for one in fitted.groups)), (1950, 20))
+        data = data_of(self.document(clock=fixture.now))
+        self.assertEqual((sum(len(lines) for _, lines in data["G"]), len([each for each in data["I"] if each[5]])), (20, 8))
+        self.assertEqual(data["N"], [
+            "28 sub-agents that are done or stopped are shown as 4 summary rows.",
+            "27 merged or dropped work items with 301 agents are not shown. Use a larger --max-bytes to see more.",
+            "55 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "1 more work item in flight is not listed.",
+            "112 agents are grouped by the name of the request that started them."])
+
+    def test_fit_with_the_frame_keeps_each_fixture_page_at_most_1960_tall_and_16000_bytes_with_its_totals_its_legend_and_every_agent_shown_or_counted(self):
+        for build, agents, tall in ((typical, 50, 1472), (busy, 400, 1950), (day, 400, 1925), (extreme, 3000, 1882)):
+            with self.subTest(build.__name__):
+                unfolded = page_of(build(Fixture(self.root / build.__name__)))
+                fitted, document = MOD["fit"](unfolded, 15999, CLEAN, 1960)
+                self.assertEqual(MOD["height"](fitted), tall)
+                self.assertLess(len(document.encode()), 16000)
+                self.assertEqual((fitted.totals, fitted.legend), (unfolded.totals, unfolded.legend))
+                self.assertEqual(agents_shown(data_of(document)) + fitted.hidden.dropped_agents + fitted.hidden.cut_agents, agents)
+
+    def test_framed_keeps_the_running_row_then_the_failed_rows_then_each_other_row_that_fits_what_is_left_and_counts_what_it_cuts(self):
+        first, merged = item("A"), item("B", in_flight=False)
+        built = page(group(first, row("a1"), row("a2", depth=1, status="running", open_seconds=5), row("a3", status="failed")),
+                     group(merged, row("b1"), row("b2")), group(None, row("c1", status="failed"), row("c2")))
+        self.assertEqual(MOD["height"](built), 667)
+        self.assertIs(MOD["framed"](built, 667), built)
+        cut = MOD["framed"](built, 623)
+        self.assertEqual(drawn(cut), {"A": [(0, "a2", 1), (0, "a3", 1)], None: [(0, "c1", 1), (0, "c2", 1)]})
+        self.assertEqual(cut.hidden, MOD["Hidden"](dropped_items=1, dropped_agents=2, cut_agents=1))
+        self.assertEqual((MOD["height"](cut), cut.fold), (607, 0))
+
+    def test_max_bytes_16001_prints_the_77_rows_the_byte_limit_alone_leaves_and_a_page_under_the_frame_is_the_same_with_and_without_it(self):
+        busy(self.fixture).write()
+        self.assertEqual(sum(len(lines) for _, lines in data_of(self.document("--max-bytes", "16001"))["G"]), 77)
+        short = page_of(one_running(Fixture(self.root / "short")))
+        self.assertEqual(MOD["fit"](short, 15999, CLEAN, 1960), MOD["fit"](short, 15999, CLEAN))
+
+
 class TextTest(OutputCase):
     def test_text_lists_running_agents_work_items_failed_agents_and_notes(self):
         failed_child(self.fixture).write()
@@ -1824,7 +1962,7 @@ class TextTest(OutputCase):
             "  D7 review   model-c   3m at work",
             "Notes",
             "  1 agent is grouped by the name of the request that started it.",
-            "  1 other thread ran in T3 outside this coordinator.",
+            "  1 other thread ran in this coordinator's T3 project outside this coordinator.",
             ""]))
 
     def test_text_and_document_hold_the_same_four_counts(self):
@@ -1938,7 +2076,7 @@ class RendererTest(OutputCase):
                      "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator", "worker",
                      "architect runner 2", "spec_review", "review", "model-c", "why investigator", "Not tied to a work item", "Work items in flight",
                      "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
-                     "1 agent is grouped by the name of the request that started it.", "1 other thread ran in T3 outside this coordinator."):
+                     "1 agent is grouped by the name of the request that started it.", "1 other thread ran in this coordinator's T3 project outside this coordinator."):
             self.assertIn(text, texts)
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
         self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")],
@@ -1979,6 +2117,20 @@ class RendererTest(OutputCase):
         built = self.render(self.document(clock=fixture.now))
         self.assertEqual(built["bars"][-1], ["min(99.9%,100% - 3px)", "0.1%"])
         self.assertIn(".b{position:absolute;top:4px;height:11px;min-width:3px;", MOD["STYLE"])
+
+    def test_renderer_draws_a_flag_in_a_note_in_its_own_element_with_the_class_that_cannot_wrap(self):
+        note = "2 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."
+        document = MOD["render_html"](page(group(item("D1"), row("worker")), hidden=MOD["Hidden"](cut_agents=2)), same)
+        self.assertEqual(data_of(document)["N"], [note])
+        built = self.render(document)
+        self.assertEqual(built["texts"][-3:], ["2 more agents are not shown, because the page is at its size limit. Use a larger ", "--max-bytes", " to see more."])
+        self.assertEqual(built["classes"][-4:], ["", "", "nb", ""])
+        self.assertIn(".nb,.one{white-space:nowrap}", MOD["STYLE"])
+
+    def test_renderer_draws_the_item_and_label_of_an_open_line_the_id_of_a_group_heading_and_the_id_of_a_chip_with_the_one_line_class(self):
+        failed_child(self.fixture).write()
+        self.assertEqual(self.render(self.document())["one"], ["D7", "worker", "D7", "architect runner 2", "D7", "D5", "D6", "D7"])
+        self.assertIn(".nb,.one{white-space:nowrap}.one{overflow:hidden;text-overflow:ellipsis}", MOD["STYLE"])
 
     def test_renderer_says_the_copy_differs_when_one_character_of_the_data_changed(self):
         one_running(self.fixture).write()
