@@ -59,7 +59,7 @@ MERGE_DETAIL = {
 }
 DRY_RUN_DETAIL = {**MERGE_DETAIL, "clean": "would merge"}
 SAVED_SUFFIX = ", git's marked merge is in {path}"
-# Fixed strings. Without them git labels each marker line with a path, and the new upstream text sits under a random temporary one.
+# Without -L, git ends each <<<<<<< and >>>>>>> line with a path it was given, and the new upstream file is in a temporary directory.
 MERGE_LABELS = ("override", "old upstream", "new upstream")
 MERGE_FOOTER = """\
 t3/overrides.lock.json is not refreshed.

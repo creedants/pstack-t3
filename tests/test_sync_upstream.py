@@ -201,7 +201,7 @@ def marker_lines(root):
         for path in sorted(root.rglob("*"))
         if path.is_file()
         for line in path.read_bytes().splitlines()
-        if line.startswith((b"<<<<<<<", b">>>>>>>")) or line == b"======="
+        if line.startswith((b"<<<<<<<", b">>>>>>>", b"|||||||")) or line == b"======="
     ]
 
 
@@ -914,7 +914,7 @@ class MergeTest(CheckoutCase):
         commit(self.upstream, {"pstack/skills/alpha/SKILL.md": NEW})
         plain = self.sync("--merge", "--dry-run")
         flagged = self.sync("--merge", "--dry-run", "--conflicts", str(directory))
-        self.assertEqual((flagged.returncode, flagged.stdout), (plain.returncode, plain.stdout))
+        self.assertEqual((flagged.returncode, flagged.stdout, flagged.stderr), (plain.returncode, plain.stdout, plain.stderr))
         self.assertFalse(os.path.lexists(directory))
         lines = self.merge({"other/notes.md": "edited\n"}, "--conflicts", str(directory))
         self.assertEqual(
@@ -940,7 +940,7 @@ class MergeTest(CheckoutCase):
         self.assertEqual(snapshot(self.root), before)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_conflicts_without_merge_is_a_usage_error_that_writes_nothing(self):
+    def test_conflicts_without_merge_is_a_usage_error_that_writes_nothing_in_the_checkout(self):
         commit(self.upstream, {"pstack/skills/alpha/SKILL.md": CLASHING})
         directory = self.directory / "conflicts"
         before = snapshot(self.root)
