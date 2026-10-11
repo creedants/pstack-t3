@@ -19,7 +19,7 @@ import release  # noqa: E402
 import test_pstack_t3  # noqa: E402
 
 ENV = {
-    **os.environ,
+    **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "t",
     "GIT_AUTHOR_EMAIL": "t@t",
     "GIT_COMMITTER_NAME": "t",
@@ -60,6 +60,28 @@ DIRTY = (
 )
 NOTHING_CHANGED = "; nothing changed, fix that and rerun"
 NOT_A_BULLET = "is not a bullet or a continuation line; fix the fragment, commit it, and rerun\n"
+
+
+def fence_git_environment():
+    """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
+
+    A module cleanup restores os.environ to what it held at this call.
+    """
+    saved = dict(os.environ)
+
+    def restore():
+        os.environ.clear()
+        os.environ.update(saved)
+
+    unittest.addModuleCleanup(restore)
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        del os.environ[name]
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
+
+
+def setUpModule():
+    fence_git_environment()
 
 
 def git(repo, *args, date=None):

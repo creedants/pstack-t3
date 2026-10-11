@@ -532,6 +532,21 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
 
+    def test_a_worker_gets_no_variable_with_the_uppercase_git_underscore_prefix_from_the_runners_environment(self):
+        self.write("test_git_env.py", """
+            import os
+            import unittest
+
+            class GitEnvTest(unittest.TestCase):
+                def test_git_env(self):
+                    self.assertEqual(sorted(name for name in os.environ if name.startswith("GIT_")), [])
+        """)
+        elsewhere = self.proj / "elsewhere"
+        result = self.runner(env={**os.environ, "GIT_DIR": str(elsewhere / ".git"), "GIT_WORK_TREE": str(elsewhere),
+                                  "GIT_AUTHOR_NAME": "someone"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+
     def test_a_test_that_exits_its_worker_with_status_3_is_lost_with_the_test_after_it_and_the_shard_error_shows_the_output_once(self):
         self.write("test_exit.py", """
             import os
