@@ -90,7 +90,7 @@ For every unit of writing work:
 5. **Land.** Run `land`. When it prints `queue busy`, run `land` again, at most 3 more times, waiting 5 seconds before each try.
 6. **Settle.** Read `status E<n>`.
    - `landed`: the lease is released. Record it in the coordinator's tables, then remove the worker's worktree with `git worktree remove` and delete its branch.
-   - `bounced`: the lease is active again for the fix. Submitting that change again prints a new entry id. The bounced id is not reused. Call `unwatch_pull_request` on the PR the bounce left open. Fire a fresh worker with the original brief, the bounce reason, and current trunk. A conflict or a changed rebase needs a new review after the fix.
+   - `bounced`: the lease is active again for the fix. Submitting that change again prints a new entry id. The bounced id is not reused. Call `unwatch_pull_request` on the PR the bounce left open. Fire a fresh worker with the original brief, the bounce reason, and current trunk. A conflict or a changed rebase needs a new review after the fix. A reason that reads `commit <sha12> has author <name> <<email>>, not the configured <name> <<email>>; recommit it as the configured author` says the entry has a foreign commit author. A commit between the entry's base and its reviewed commit has an author that differs from `git config user.name` and `git config user.email` in the repository. Recommit it as the configured author. To keep another person as the author, give the commit a `Co-authored-by` trailer equal to that author as `name <email>`, and put a line that reads `Based on #<n> by @<login>` in the pull request body.
    - `awaiting-merge` (`merge` and `human` mode): the PR is open. [Pull request lifecycle](#pull-request-lifecycle) says what the next `land` does with it.
 
 ## Keep the queue moving
@@ -117,7 +117,7 @@ The line is a chain of candidates from awaiting-merge entries. `land` works it o
 
 With the merge method `squash` or `merge`, `land` builds a queued entry on the last candidate of the line, or on trunk when the line is empty. The PR of an entry behind the first then holds trunk, every entry ahead of it, and its own change.
 
-With `squash` or `merge`, `land` also rebuilds every awaiting-merge entry that has a PR, is outside the line, and is not noted `merge requested by the queue`. It does that before it builds queued entries. It rebases the entry onto the end of the line, runs the fingerprint check and the checks, force-pushes `landing/e<n>`, and prints `rebuilt E<n> (<holder>) <url>`. The PR stays the same. A rebuild that conflicts, differs from the reviewed change, or fails the checks bounces that entry and leaves its PR open. A rebuild whose change is already in trunk lands the entry as `already in trunk` when the end of the line holds trunk's tree, and leaves the entry as it was otherwise.
+With `squash` or `merge`, `land` also rebuilds every awaiting-merge entry that has a PR, is outside the line, and is not noted `merge requested by the queue`. It does that before it builds queued entries. It rebases the entry onto the end of the line, runs the fingerprint check and the checks, force-pushes `landing/e<n>`, and prints `rebuilt E<n> (<holder>) <url>`. The PR stays the same. A rebuild that conflicts, differs from the reviewed change, has a foreign commit author, or fails the checks bounces that entry and leaves its PR open. A rebuild whose change is already in trunk lands the entry as `already in trunk` when the end of the line holds trunk's tree, and leaves the entry as it was otherwise.
 
 With `rebase`, `land` builds at most one entry in a run, and none while an awaiting-merge entry is in the line or is noted `merge requested by the queue`.
 
@@ -157,6 +157,8 @@ The pause in [Merge](#merge) for a PR open at a head that is not the candidate n
 
 A pause that starts `could not check that trunk contains the last landed commit` means `git merge-base --is-ancestor` exited with a code other than 0 or 1 on that commit. It does not say trunk was rewound. Check that `git cat-file -e <sha>` reads the commit in the checkout, then run `resume`.
 
+A pause that starts `the configured git identity is now` means `git config user.name` or `git config user.email`, read in the repository, differs from the pair an earlier `land` remembered, or at least one of them is now unset or empty. That run fetched nothing, opened no pull request, pushed nothing, and changed no entry. This is the user's call. Report it with the identity the message gives as configured now, or its note that the identity is unset, and the identity the queue last ran as. Run `git config --show-origin user.email` and `git config --show-origin user.name` in the repository to see which file sets each value. Restore the config, or confirm with the user that the new identity is right, then run `resume`. That `resume` forgets the remembered pair. The next `land` remembers the pair configured then when both values are non-empty.
+
 A pause that starts `could not read the state of <url>` means a PR state read failed. It gives the error `gh` printed, or `nothing` when `gh` printed none. Run `resume`, then `land`, when `gh pr view <url>` answers again.
 
 When `land` cannot turn off auto-merge on a PR whose checks failed, the pause names the PR and the failure, and the entry stays awaiting merge. Turn auto-merge off on GitHub, then run `resume`, then `land`, which bounces the entry.
@@ -164,6 +166,8 @@ When `land` cannot turn off auto-merge on a PR whose checks failed, the pause na
 When GitHub refuses the merge method, the pause names `land.py mode merge --merge-method` with an allowed method, then `land.py resume`. Run that mode command, then `resume`, then `land`.
 
 In `merge` mode the pause report keeps the run's `landed`, `adopted`, and `bounced` lines. It keeps an `opened` or `rebuilt` line only for an entry still awaiting merge.
+
+Every command except `slot` stops with `land: <config path> sets core.worktree to <value>, where git does not find this repository; remove it with git --work-tree=. config --file <config path> --unset-all core.worktree` when the repository's common `config` file sets `core.worktree` to a value that is not empty and where git does not find this repository. Run the printed command, then run the command again.
 
 ## Capacity
 
