@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import sqlite3
@@ -103,30 +104,28 @@ class LandingTest(unittest.TestCase):
         self.install_github_remote()
 
     def install_github_remote(self):
-        """Point origin at https://github.com/o/r.git and send transport commands to the bare repo.
+        """Point origin at https://github.com/o/r.git and put a git stand-in first on PATH.
 
-        git remote get-url still prints the GitHub URL. push, fetch, ls-remote, and pull
-        rewrite that URL to origin.git, so a test never contacts GitHub.
+        git remote get-url still prints the GitHub URL. When push, fetch, ls-remote, or pull is the
+        stand-in's first argument and git remote get-url origin exits 0 with a URL that starts with
+        https://github.com/, the stand-in runs git with that URL rewritten to origin.git.
         """
-        real = shutil.which("git")
+        git = shlex.quote(shutil.which("git"))
         bindir = self.base / "git-wrap"
         bindir.mkdir()
-        origin = str(self.base / "origin.git")
+        rewrite = shlex.quote("url." + str(self.base / "origin.git") + "/.insteadOf=")
         script = bindir / "git"
         script.write_text(
-            "#!" + sys.executable + "\n"
-            "import os, subprocess, sys\n"
-            f"real = {real!r}\n"
-            f"origin = {origin!r}\n"
-            "args = sys.argv[1:]\n"
-            "if len(args) >= 2 and args[0] == 'remote' and args[1] == 'get-url':\n"
-            "    os.execv(real, [real, *args])\n"
-            "if args and args[0] in ('push', 'fetch', 'ls-remote', 'pull'):\n"
-            "    probed = subprocess.run([real, 'remote', 'get-url', 'origin'], capture_output=True, text=True)\n"
-            "    url = probed.stdout.strip()\n"
-            "    if probed.returncode == 0 and url.startswith('https://github.com/'):\n"
-            "        os.execv(real, [real, '-c', 'url.' + origin + '/.insteadOf=' + url, *args])\n"
-            "os.execv(real, [real, *args])\n"
+            "#!/bin/sh\n"
+            "case $1 in\n"
+            "push|fetch|ls-remote|pull)\n"
+            f"  if url=$({git} remote get-url origin 2>/dev/null); then\n"
+            "    case $url in\n"
+            f"    https://github.com/*) exec {git} -c {rewrite}\"$url\" \"$@\" ;;\n"
+            "    esac\n"
+            "  fi ;;\n"
+            "esac\n"
+            f"exec {git} \"$@\"\n"
         )
         script.chmod(0o755)
         os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
