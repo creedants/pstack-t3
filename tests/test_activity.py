@@ -1001,7 +1001,16 @@ class FilterTest(unittest.TestCase):
 
     def test_clean_removes_a_word_that_holds_an_email_address_and_keeps_an_at_sign_with_no_address_around_it(self):
         self.assertEqual(self.clean("mail acct-homemarker@example.test and <a.b@c.org>, x=USER@EXAMPLE.TEST and user%40example.test now"), "mail and and now")
-        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and \"jd\"@example.test and (jd)@example.test"
+        self.assertEqual(self.clean("mail \"jd\"@example.test now"), "mail now")
+        kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and (jd)@example.test"
+        self.assertEqual(self.clean(kept), kept)
+
+    def test_clean_removes_an_address_with_a_quoted_local_part_or_a_bracketed_host_of_four_numbers_or_ipv6_and_keeps_an_at_sign_before_any_other_bracket(self):
+        for word in ('"auditor"@example.test', "auditor@[127.0.0.1]", "auditor@[IPv6:2001:db8::1]", "AUDITOR@[ipv6:2001:DB8::1]", '"a.b"@[127.0.0.1]', "<auditor@[127.0.0.1]>", "%22auditor%22%40example.test"):
+            with self.subTest(word):
+                self.assertEqual(self.clean(f"mail {word} now"), "mail now")
+        self.assertEqual(self.clean('mail "the auditor"@example.test now'), "mail now")
+        kept = "bump react@18.2.0 for @handle on user@host and (jd)@example.test with list[0]@[a] or x@[1] and x@[1.2.3] then x@[1234.1.1.1] and x@[IPv6:] or \"\"@example.test and \"jd\" @example.test now"
         self.assertEqual(self.clean(kept), kept)
 
     def test_clean_removes_a_request_name_with_a_hyphen_as_a_whole_token_in_any_case_and_keeps_a_longer_token_the_token_after_a_slash_that_starts_a_word_and_a_name_with_no_hyphen(self):

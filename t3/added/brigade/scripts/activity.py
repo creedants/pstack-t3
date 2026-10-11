@@ -30,8 +30,9 @@ The word is also the form when it is the form before one or more of a slash, a c
 Private text is also text of one of these shapes, with upper and lower case letters read alike.
 A UUID.
 One of mcp, thread, node, run, task, run-attempt, provider-turn, provider-session, context-transfer, and context-handoff anywhere in a word, then a colon, then a letter, a digit, an underscore, or a percent sign.
-An email address, which is an at sign between a local part and a domain name that holds a dot before two or more letters.
-The local part ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
+An email address, which is an at sign between a local part and a domain.
+The domain is a name that holds a dot before two or more letters. Or it is square brackets around four numbers of 1 to 3 digits joined by dots, or around `IPv6:` and one or more hexadecimal digits, colons, and dots.
+The local part is one or more characters other than a straight double quotation mark between two such marks. Or it ends in a character other than a space, an at sign, a round or square bracket, an angle bracket, a straight quotation mark, a comma, a semicolon, a colon, or an ampersand.
 `file:` with no letter or digit before it, then a letter, a digit, an underscore, a slash, a backslash, a dot, a tilde, or a percent sign.
 A drive path, which is a letter from a to z with no letter or digit before it, then a colon, then a slash or a backslash.
 A path that starts the string or follows a space, a quotation mark, a backtick, an opening bracket, an angle bracket, an equals sign, a colon, a comma, a semicolon, or a vertical bar.
@@ -740,9 +741,9 @@ SEGMENT = rf"[^\s/{QUOTES}]"
 PATH = rf"(?:{OPENS}(?:(?:/|(?<!:)/{{2,}})(?={SEGMENT}+/[^\s{QUOTES}])|~(?:[^\W\d][\w.-]*)?[/\\]|\$(?:HOME|\{{HOME\}})[/\\]|\\\\[\w.])|(?<![^\W_])[a-z]:[/\\])"
 # The shapes the module docstring lists, but an email address, which Privacy.found looks for at each at sign.
 SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?<![^\W_])file:(?=[\w/\\.~%])", re.IGNORECASE)
-LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
+LOCAL = re.compile(r"(?:[^\s@<>()\[\]\"',;:&]+|\"[^\"]+\")\Z")
 LOCAL_CHARS = 64
-DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
+DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}|\[(?:\d{1,3}(?:\.\d{1,3}){3}|IPv6:[0-9A-Fa-f:.]+)\]", re.IGNORECASE)
 TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
 # The slash that starts a word belongs to its token, so /code-review is not code-review.
 NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
