@@ -17,7 +17,7 @@ GROUPS = [
     ("Principles", lambda name: name.startswith("principle-")),
 ]
 BULLET = re.compile(r"^- \*\*(.+?)\.\*\* (.+)$", re.M)
-# The file a bullet gives: a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " lead-in.
+# A bullet gives its file as a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " lead-in.
 GIVEN_FILE = re.compile(r"\s*(?:File: )?`(playbooks/[\w-]+\.md)`\.?$")
 
 
@@ -32,7 +32,7 @@ def kebab(title):
 
 
 def playbook_entries(skills):
-    """Return one (title, file, summary) tuple per bullet after poteto-mode's "## Playbooks" heading, in list order.
+    """Return one (title, file, summary) tuple per "- **Title.** summary" line after poteto-mode's "## Playbooks" heading, in list order.
 
     file is the skill-relative path GIVEN_FILE finds at the end of the bullet, otherwise playbooks/<kebab(title)>.md.
     summary is the bullet's text after the title with the GIVEN_FILE match removed, stripped of surrounding whitespace.
