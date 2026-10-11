@@ -26,6 +26,11 @@ GIT_ENV = {
     "GIT_COMMITTER_NAME": "Fixture",
     "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
     "LC_ALL": "C",
+    # git commit starts a detached "git maintenance run --auto" that holds .git/objects/maintenance.lock
+    # while it runs, and a snapshot of a checkout can catch it.
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "maintenance.auto",
+    "GIT_CONFIG_VALUE_0": "false",
 }
 PLUGIN = "pstack/.cursor-plugin/plugin.json"
 SKILL = "---\nname: fixture\ndescription: A fixture skill.\n---\n\n# Fixture\n\n"
