@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
+`<command>` is one of `open`, `set`, `ticket`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`.
 
 ## brigade.py open
 
@@ -41,7 +41,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--autofire AUTOFIRE]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -58,6 +58,8 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
+| `--build-command BUILD_COMMAND` |  |  |  | the command edits verify runs in its scratch copy after it applies the edits; none records that the project has no build, and "" removes the setting |
+| `--check-command CHECK_COMMAND` |  |  |  | the command edits verify runs in its scratch copy when every compared path agrees with the head; none records that the project has no check, and "" removes the setting |
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 
 ## brigade.py ticket
@@ -302,6 +304,30 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 | `dish` | yes |  |  |  |
 | `--sha SHA` | yes |  |  |  |
 | `--json` |  |  |  | print verdict, author, verifier, note, and crossFamily of the latest row |
+
+## brigade.py edits
+
+```text
+brigade.py [flags] edits <action>
+```
+
+compare a head with a reviewed commit that has its pass-with-edits round's edits applied and the build run
+
+`<action>` is one of `verify`.
+
+## brigade.py edits verify
+
+```text
+brigade.py [flags] edits verify --from SHA --to SHA dish
+```
+
+apply the edits of the item's last pass-with-edits round at --from to a scratch copy of that commit, run the build command there unless it is none, and compare the copy with --to at every path either commit holds where the two commits differ or the edits or the build changed the copy; when every path agrees, run the check command there unless it is none; a run with no failure adds one edits.tsv row for the pair unless an equal row exists; no worktree is read or written
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  |  |
+| `--from SHA` | yes |  |  | the reviewed commit, as the pass-with-edits row records it |
+| `--to SHA` | yes |  |  | the head to compare |
 
 ## brigade.py 86
 

@@ -12,6 +12,8 @@ import argparse
 import fcntl
 import fnmatch
 import functools
+import hashlib
+import io
 import json
 import os
 import posixpath
@@ -21,6 +23,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
@@ -78,6 +81,7 @@ TABLES = {
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
+    "edits.tsv": ("at", "dish", "from", "to", "report"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
@@ -85,7 +89,7 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "watch", "startable")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -803,6 +807,24 @@ EDITS_REFUSED = {
     "empty": ": Edit {number} has an empty old text",
     "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
 }
+NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
+                  "run set --build-command <command> --check-command <command>, with none for one the project lacks")
+NO_COMMAND = "none"
+# Why an edit cannot apply to the reviewed commit.
+EDIT_FAILS = {
+    "missing": "FAIL {path}: no file at {sha}",
+    "count": "FAIL {path}: old text of Edit {number} occurs {count} times at {sha}",
+    "overlap": "FAIL {path}: Edit {number} overlaps another edit",
+}
+# One line per compared path, keyed by whether the build changed the path in the scratch copy and whether the copy and the head agree at it.
+PATH_LINES = {
+    (False, True): "edited {path}",
+    (True, True): "built {path}",
+    (False, False): "FAIL {path}: differs from {sha} with the edits applied",
+    (True, False): "FAIL {path}: differs from what the build writes",
+}
+# The kind and the execute bit of each tree mode that edits verify compares by content.
+BLOB_MODES = {"100644": ("file", False), "100755": ("file", True), "120000": ("link", False)}
 # What `close` advises for an entry of each kind it warns about. Each value finishes the warning line.
 REPAIR = {
     "link": "remove the link and leave its target as it is",
@@ -939,6 +961,80 @@ def report_edits(restaurant, name):
         return parse_edits((restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace"))
     except EditsRefused as error:
         raise BrigadeError(f"reports/{name}{error}") from None
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    mode: str
+    oid: str
+
+
+@dataclass(frozen=True)
+class Digest:
+    """What edits verify compares at one path. The kind is `file`, `link`, or `other`, and a link's hash is of its target."""
+    kind: str
+    sha256: str
+    executable: bool
+
+
+def occurrences(content, old):
+    """The offset of every place old starts in content. Places that overlap each count."""
+    found, at = [], content.find(old)
+    while at != -1:
+        found.append(at)
+        at = content.find(old, at + 1)
+    return found
+
+
+def apply_edits(contents, edits, sha):
+    """({path: new bytes}, lines). A run with any line changes no path.
+
+    contents holds, for each path an edit names, the file's bytes at the reviewed commit, or None when no file is there.
+    Every old text is placed in those bytes, never in the result of another edit.
+    """
+    found = [None if contents[edit.path] is None else occurrences(contents[edit.path], edit.old.encode()) for edit in edits]
+    spans = [(edit.path, starts[0], starts[0] + len(edit.old.encode())) if starts is not None and len(starts) == 1 else None
+             for edit, starts in zip(edits, found)]
+    lines = []
+    for index, (edit, starts, span) in enumerate(zip(edits, found, spans)):
+        if starts is None:
+            case = "missing"
+        elif span is None:
+            case = "count"
+        elif any(other is not None and at != index and other[0] == span[0] and other[1] < span[2] and span[1] < other[2]
+                 for at, other in enumerate(spans)):
+            case = "overlap"
+        else:
+            continue
+        line = EDIT_FAILS[case].format(path=edit.path, number=edit.number, count=len(starts or ()), sha=sha)
+        if line not in lines:
+            lines.append(line)
+    if lines:
+        return {}, lines
+    changed = {}
+    for path in {edit.path for edit in edits}:
+        pieces, at = [], 0
+        placed = sorted(((span[1], span[2], edit.new.encode()) for edit, span in zip(edits, spans) if edit.path == path),
+                        key=lambda piece: piece[0])
+        for start, end, new in placed:
+            pieces += [contents[path][at:start], new]
+            at = end
+        changed[path] = b"".join(pieces) + contents[path][at:]
+    return changed, []
+
+
+def compared_paths(before, after, extracted, edited, built):
+    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted."""
+    return sorted(path for path in before.keys() | after.keys()
+                  if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
+                  or edited.get(path) != built.get(path))
+
+
+def path_lines(paths, edited, built, head, sha):
+    """(lines, clean): one PATH_LINES line per path, and whether the scratch copy and the head agree at every one."""
+    agree = [built.get(path) == head.get(path) for path in paths]
+    lines = [PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha) for path, same in zip(paths, agree)]
+    return lines, all(agree)
 
 
 @dataclass(frozen=True)
@@ -1384,6 +1480,8 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
         report = review_report(restaurant, dish_id, report)
     if verdict == EDITS_VERDICT:
         report_edits(restaurant, report)
+    if verdict == "pass" and not member:
+        edits_gate(restaurant, dish_id, sha, report)
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
                                    "author": author, "verifier": verifier, "note": note, "report": report,
                                    "member": "yes" if member else ""})
@@ -1398,6 +1496,153 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
     if debt:
         return f"{printed}; {debt} send-backs, decision pending"
     return printed
+
+
+def edits_gate(restaurant, dish_id, sha, report):
+    """Refuse a pass while the item's last verdict row is pass-with-edits.
+
+    Two things lift it. One is an edits.tsv row for that round's sha, this sha, and that round's report.
+    The other is a `report` that is not that round's report.
+    """
+    verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+    if not verdicts or verdicts[-1]["verdict"] != EDITS_VERDICT:
+        return
+    last = verdicts[-1]
+    if any(row["dish"] == dish_id and (row["from"], row["to"], row["report"]) == (last["sha"], clean(sha), last["report"])
+           for row in restaurant.rows("edits.tsv")):
+        return
+    if report and report != last["report"]:
+        return
+    raise BrigadeError(f"{dish_id}'s last verdict is {EDITS_VERDICT} at {last['sha']}; run edits verify {dish_id} "
+                       f"--from {last['sha']} --to {sha}, or name a second review's report with --report")
+
+
+def command_words(command):
+    try:
+        return shlex.split(command)
+    except ValueError as error:
+        raise BrigadeError(f"{command!r} is not a command line: {error}") from None
+
+
+def git(project_root, *words):
+    return subprocess.run(["git", "-C", project_root, *words], capture_output=True)
+
+
+def commit_tree(project_root, sha):
+    """(the commit's full id, {path: TreeEntry}) of a commit in the project's repository."""
+    found = git(project_root, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{sha}^{{commit}}")
+    if found.returncode:
+        raise BrigadeError(f"{sha} is not a commit in {project_root}")
+    commit = found.stdout.decode().strip()
+    tree = {}
+    for record in git(project_root, "ls-tree", "-r", "-z", commit).stdout.split(b"\0")[:-1]:
+        entry, _, path = record.partition(b"\t")
+        mode, _, oid = entry.decode().split(" ")
+        tree[os.fsdecode(path)] = TreeEntry(mode, oid)
+    return commit, tree
+
+
+def head_digest(project_root, entry):
+    kind, executable = BLOB_MODES.get(entry.mode, ("other", False))
+    if kind == "other":
+        return Digest(kind, entry.oid, executable)
+    blob = git(project_root, "cat-file", "blob", entry.oid).stdout
+    return Digest(kind, hashlib.sha256(blob).hexdigest(), executable)
+
+
+def digests(root):
+    """{path: Digest} of every entry under root that is not a directory. No link is followed."""
+    found = {}
+    for directory, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = Path(directory) / name
+            status = path.lstat()
+            if stat.S_ISDIR(status.st_mode):
+                continue
+            relative = path.relative_to(root).as_posix()
+            if stat.S_ISLNK(status.st_mode):
+                found[relative] = Digest("link", hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest(), False)
+            elif stat.S_ISREG(status.st_mode):
+                found[relative] = Digest("file", hashlib.sha256(path.read_bytes()).hexdigest(), bool(status.st_mode & stat.S_IXUSR))
+            else:
+                found[relative] = Digest("other", "", False)
+    return found
+
+
+def exit_code(scratch, command):
+    """Run a command in the scratch copy with no shell and no stdin. Its output goes to stderr when it exits non-zero."""
+    try:
+        result = subprocess.run(command_words(command), cwd=scratch, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as error:
+        raise BrigadeError(f"cannot run {command}: {error.strerror}") from None
+    if result.returncode:
+        sys.stderr.buffer.write(result.stdout)
+        sys.stderr.flush()
+    return result.returncode
+
+
+def replay(project_root, reviewed, before, after, edits, build, check, sha):
+    """(lines, clean) of one verify: the reviewed commit, then the edits, then the build's output, in one scratch copy."""
+    with tempfile.TemporaryDirectory() as directory:
+        scratch = Path(directory)
+        archive = git(project_root, "archive", "--format=tar", reviewed).stdout
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            tar.extractall(scratch, filter="tar")
+        extracted = digests(scratch)
+        files = {path for path, digest in extracted.items() if digest.kind == "file"}
+        contents = {edit.path: (scratch / edit.path).read_bytes() if edit.path in files else None for edit in edits}
+        changed, lines = apply_edits(contents, edits, sha)
+        if lines:
+            return lines, False
+        for path, data in changed.items():
+            (scratch / path).write_bytes(data)
+        edited = digests(scratch)
+        if build != NO_COMMAND:
+            code = exit_code(scratch, build)
+            if code:
+                return [f"FAIL build: {build} exited {code}"], False
+        built = digests(scratch)
+        paths = compared_paths(before, after, extracted, edited, built)
+        head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
+        lines, clean = path_lines(paths, edited, built, head, sha)
+        if clean and check != NO_COMMAND:
+            code = exit_code(scratch, check)
+            lines.append(f"FAIL check: {check} exited {code}" if code else "ok check")
+            clean = not code
+        return lines, clean
+
+
+def verify_edits(restaurant, dish_id, from_sha, to_sha):
+    """Called from run(), because it starts subprocesses. Reads the store under the lock, releases it, replays, then records."""
+    with restaurant.checked():
+        restaurant.fence()
+        restaurant.find("dishes.tsv", dish_id)
+        rounds = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id)
+                  if row["verdict"] == EDITS_VERDICT and row["sha"] == from_sha]
+        if not rounds:
+            raise BrigadeError(f"{dish_id} has no {EDITS_VERDICT} round at {from_sha}")
+        meta = restaurant.meta
+        build, check = meta.get("buildCommand"), meta.get("checkCommand")
+        if not build or not check:
+            raise BrigadeError(NEEDS_COMMANDS)
+    name = rounds[-1]["report"]
+    kind = report_entry(restaurant, name)
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing verified")
+    edits = report_edits(restaurant, name)
+    (reviewed, before), (_, after) = (commit_tree(meta["projectRoot"], sha) for sha in (from_sha, to_sha))
+    lines, verified = replay(meta["projectRoot"], reviewed, before, after, edits, build, check, from_sha)
+    for line in lines:
+        print(line)
+    if not verified:
+        raise BrigadeError(f"{dish_id}: edits not verified, {from_sha} to {to_sha}")
+    row = {"dish": dish_id, "from": clean(from_sha), "to": clean(to_sha), "report": name}
+    with restaurant.checked():
+        restaurant.fence()
+        if not any(all(recorded[key] == value for key, value in row.items()) for recorded in restaurant.rows("edits.tsv")):
+            restaurant.append("edits.tsv", {"at": now(), **row})
+    return f"{dish_id}: edits verified, {from_sha} to {to_sha}"
 
 
 def unrecorded_reviews(restaurant):
@@ -2753,6 +2998,12 @@ def parser():
     p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
+    p.add_argument("--build-command",
+                   help="the command edits verify runs in its scratch copy after it applies the edits; none records that "
+                        "the project has no build, and \"\" removes the setting")
+    p.add_argument("--check-command",
+                   help="the command edits verify runs in its scratch copy when every compared path agrees with the head; "
+                        "none records that the project has no check, and \"\" removes the setting")
     p.add_argument("--autofire", choices=AUTOFIRE,
                    help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
@@ -2874,6 +3125,20 @@ def parser():
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
+
+    p = sub.add_parser("edits", help="compare a head with a reviewed commit that has its pass-with-edits round's edits applied and the build run")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("verify",
+                     help="apply the edits of the item's last pass-with-edits round at --from to a scratch copy of that "
+                          "commit, run the build command there unless it is none, and compare the copy with --to at every "
+                          "path either commit holds where the two commits differ or the edits or the build changed the "
+                          "copy; when every path agrees, run the check command there unless it is none; a run with no "
+                          "failure adds one edits.tsv row for the pair unless an equal row exists; no worktree is read or "
+                          "written")
+    a.add_argument("dish")
+    a.add_argument("--from", dest="from_sha", metavar="SHA", required=True,
+                   help="the reviewed commit, as the pass-with-edits row records it")
+    a.add_argument("--to", metavar="SHA", required=True, help="the head to compare")
 
     p = sub.add_parser("86", help="park or answer a decision that needs the user")
     t = p.add_subparsers(dest="action", required=True)
@@ -3075,6 +3340,8 @@ def run(argv):
         # A stalled stdin or file must not hold the store lock, so the fields are read and checked first.
         fields = _brief_fields(args)
         return brief(restaurant, args.id, **fields)
+    if args.command == "edits":
+        return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "fire":
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
@@ -3154,6 +3421,14 @@ def command(restaurant, args, contract=None, rails=None):
                 drop.append("mode")
             else:
                 raise BrigadeError('--mode takes full, light, or ""')
+        for key, value in (("buildCommand", args.build_command), ("checkCommand", args.check_command)):
+            if value is None:
+                continue
+            if value.strip():
+                command_words(value)
+                changes[key] = value.strip()
+            else:
+                drop.append(key)
         if args.autofire:
             changes["autofire"] = args.autofire
         if args.reports_to is not None:
