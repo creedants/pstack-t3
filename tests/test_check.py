@@ -218,6 +218,30 @@ class LinkCheckTest(unittest.TestCase):
         )
 
 
+class PlaybookBulletCheckTest(unittest.TestCase):
+    def test_a_demo_skill_has_no_playbook_finding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
+            self.assertEqual(check.check_tree(directory), [])
+
+    def test_the_command_reports_a_missing_playbook_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skills = Path(directory) / "skills"
+            skill = skills / "poteto-mode"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: poteto-mode\ndescription: d\n---\n\n## Playbooks\n- **No such playbook.** Nothing.\n")
+            tests = tests_tree(directory, {})
+            output = io.StringIO()
+            with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
+                status = check.main([str(skills)])
+            self.assertEqual(
+                (status, output.getvalue()),
+                (1, 'poteto-mode/SKILL.md: playbook "No such playbook" resolves to playbooks/no-such-playbook.md, which does not exist\n'),
+            )
+
+
 class FrontmatterWithoutPyYamlTest(unittest.TestCase):
     def test_without_pyyaml_a_malformed_flow_sequence_is_not_reported(self):
         with tempfile.TemporaryDirectory() as directory:
