@@ -13,7 +13,7 @@ Each spawn below names a role. Resolve its seat per the [runtime's Roles section
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
 
-Every spawn is `delegate_task` with `role: "research"` and a read-only brief that says "Do not edit files, commit, or push." **Do not lower the child's runtime mode to strip tools.** It strips MCP access, which disables the MCP-backed investigators and the synthesizer's citation spot-checks. Investigators still shouldn't write anything.
+Every spawn is `delegate_task` with `role: "research"` and a read-only brief that says "Do not edit files, commit, or push." **Do not lower the child's runtime mode to strip tools.** The MCP-backed investigators and the synthesizer's citation spot-checks need their MCP tools, so the brief carries the read-only constraint.
 
 ## Operating Posture
 
