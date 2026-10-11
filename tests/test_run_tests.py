@@ -532,7 +532,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
 
-    def test_a_worker_gets_no_variable_whose_name_starts_with_git_from_the_runners_environment(self):
+    def test_a_worker_gets_no_variable_with_the_uppercase_git_underscore_prefix_from_the_runners_environment(self):
         self.write("test_git_env.py", """
             import os
             import unittest
