@@ -5345,6 +5345,27 @@ class OwnershipTest(unittest.TestCase):
                     self.assertEqual(stopped.stdout, "")
         self.assertFalse(os.path.lexists(state_dir(self.home)))
 
+    def test_install_and_doctor_under_a_relative_home_from_a_removed_working_directory_in_a_checkout_with_no_skills_directory_print_the_skills_is_missing_line(self):
+        a = make_checkout(self.home, "a")
+        (a / "skills").rename(a / "skills.away")
+        for command, stdout, stderr in (("install", "", self.UNBUILT + "\n"), ("doctor", self.UNBUILT + "\n", "")):
+            with self.subTest(command=command):
+                stopped = self.from_removed_directory(a, command, "--harness", "grok", env=self.RELATIVE_HOME)
+                self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+                self.assertEqual(stopped.stdout, stdout)
+                self.assertEqual(stopped.stderr, stderr)
+
+    def test_doctor_with_a_relative_project_path_under_a_relative_home_from_a_removed_working_directory_prints_the_project_path_line(self):
+        a = make_checkout(self.home, "a")
+        stopped = self.from_removed_directory(a, "doctor", "--harness", "grok", "--project=p", env=self.RELATIVE_HOME)
+        self.assertEqual(stopped.returncode, 1, stopped.stdout + stopped.stderr)
+        self.assertEqual(
+            stopped.stderr,
+            "the --project path p is relative, and the system could not name this run's working directory "
+            "(No such file or directory); change to another directory and rerun, or give --project a full path\n",
+        )
+        self.assertEqual(stopped.stdout, "")
+
     def test_doctor_under_a_relative_home_from_a_working_directory_that_exists_prints_nothing_on_stderr(self):
         a = make_checkout(self.home, "a")
         checked = run(self.home, a, "doctor", "--harness", "grok", env=self.RELATIVE_HOME)

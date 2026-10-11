@@ -285,15 +285,17 @@ def scope_of(args):
     """Return the directory --project names, resolved, or None when --project is not given or is empty.
 
     A relative --project while os.getcwd() raises OSError ends the run at exit 1 with NO_PROJECT on stderr.
+    When that does not end the run and unanchored(os.environ) returns a line, the run ends at exit 1 with that line on stderr.
     """
-    if not args.project:
-        return None
-    if not os.path.isabs(args.project):
+    if args.project and not os.path.isabs(args.project):
         try:
             os.getcwd()
         except OSError as error:
             sys.exit(NO_PROJECT.format(project=args.project, reason=error.strerror))
-    return Path(args.project).resolve()
+    stop = unanchored(os.environ)
+    if stop:
+        sys.exit(stop)
+    return Path(args.project).resolve() if args.project else None
 
 
 def read_object(path):
@@ -1840,9 +1842,6 @@ def main(argv=None):
     unknown = set(args.harness) - set(HARNESSES)
     if unknown:
         parser.error(f"unknown harness {', '.join(sorted(unknown))}")
-    stop = unanchored(os.environ)
-    if stop:
-        sys.exit(stop)
     escape_refused(sys.stdout)
     try:
         return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
