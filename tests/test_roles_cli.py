@@ -1692,6 +1692,37 @@ class VertexHaikuCliTest(unittest.TestCase):
         ))
 
 
+class UnrunnableHaikuParentCliTest(unittest.TestCase):
+    def show(self, constraints):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [{
+                "providerInstanceId": "claudeAgent",
+                "canRunChildTask": False,
+                "constraints": constraints,
+                "models": [{"id": "claude-haiku-4-5", "options": []}, {"id": "claude-opus-5-5", "options": []}],
+            }]})
+            repo.put(repo.user, {"version": 1, "roles": {"bug-fix": ["inherit"]}})
+            return repo.run("show", "--catalog", str(path), "--parent", "claudeAgent/claude-haiku-4-5", "--role", "bug-fix")
+
+    def test_inherit_of_a_haiku_4_5_parent_whose_provider_cannot_run_child_tasks_is_refused_with_the_reason_the_provider_is_not_runnable(self):
+        reasons = (
+            (["Provider is not authenticated.", "Sign in again."], "Provider is not authenticated.; Sign in again."),
+            ([], "cannot run child tasks"),
+        )
+        for constraints, reason in reasons:
+            with self.subTest(constraints=constraints):
+                completed = self.show(constraints)
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertEqual(completed.stderr, (
+                    "error: role 'bug-fix' cannot inherit claudeAgent/claude-haiku-4-5: "
+                    "claude-haiku-4-5 is Claude Haiku 4.5, and pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker; "
+                    f"claudeAgent is not runnable ({reason})\n"
+                ))
+
+
 class BedrockHaikuBriefCliTest(unittest.TestCase):
     """Bedrock and dated Haiku 5.5 spellings still get haikuBrief."""
 
@@ -4370,3 +4401,147 @@ class RuntimeModeBackupCliTest(unittest.TestCase):
                         "so review backups runs 3 seats; land only if no reviewer reproduces a blocker and at least two pass"
                     ),
                 })
+
+
+class RelativeConfigHomeCliTest(unittest.TestCase):
+    OPUS = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+    GROK = {"providerInstanceId": "grok", "model": "grok-4.7"}
+
+    def setUp(self):
+        wrapper = tempfile.TemporaryDirectory()
+        self.addCleanup(wrapper.cleanup)
+        root = Path(os.path.realpath(wrapper.name))
+        self.home, self.work = root / "home", root / "work"
+        self.home.mkdir()
+        (self.work / ".git").mkdir(parents=True)
+        self.default = self.home / ".config" / "pstack-t3"
+        self.earlier = self.work / ".config" / "pstack-t3"
+        self.ignored = (
+            "XDG_CONFIG_HOME='.config' is not an absolute path, so it is ignored "
+            f"and the config home is {str(self.home / '.config')!r}\n"
+        )
+
+    def put(self, path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def run_roles(self, *args):
+        env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": ".config"}
+        return subprocess.run(
+            [sys.executable, str(ROOT / "t3/scripts/roles.py"), *args],
+            env=env,
+            cwd=self.work,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_show_under_a_relative_xdg_config_home_reads_the_default_roles_file_and_prints_the_ignored_line_once(self):
+        self.put(self.default / "roles.json", {"version": 1, "roles": {"bug-fix": [self.OPUS]}})
+        self.put(self.default / "catalog.json", json.loads(CATALOG.read_text()))
+        self.put(self.earlier / "roles.json", {"version": 1, "roles": {"bug-fix": [self.GROK]}})
+        completed = self.run_roles("show", "--cwd", str(self.work), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, self.ignored)
+        self.assertEqual(json.loads(completed.stdout), {
+            "budget": "default",
+            "mode": "full",
+            "modeSource": "default",
+            "escalate": None,
+            "catalog": True,
+            "roles": {"bug-fix": {"source": str(self.default / "roles.json"), "seats": [self.OPUS]}},
+        })
+
+    def test_write_under_a_relative_xdg_config_home_writes_under_the_default_config_home_and_leaves_the_working_directory_unchanged(self):
+        self.put(self.earlier / "roles.json", {"version": 1, "roles": {"bug-fix": [self.OPUS]}})
+        self.put(self.earlier / "catalog.json", {"providers": []})
+        kept = {name: (self.earlier / name).read_bytes() for name in ("catalog.json", "roles.json")}
+        completed = self.run_roles("write", "--cwd", str(self.work), "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, f"wrote {self.default / 'roles.json'}\n")
+        self.assertEqual(completed.stderr, self.ignored)
+        self.assertEqual(
+            json.loads((self.default / "roles.json").read_text()),
+            {"version": 1, "roles": {"bug-fix": [self.GROK]}, "budget": "default", "mode": "full"},
+        )
+        self.assertEqual(json.loads((self.default / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
+        self.assertEqual(sorted(os.listdir(self.work)), [".config", ".git"])
+        self.assertEqual(os.listdir(self.work / ".config"), ["pstack-t3"])
+        self.assertEqual({name: (self.earlier / name).read_bytes() for name in sorted(os.listdir(self.earlier))}, kept)
+
+    def test_a_roles_command_that_reads_no_user_config_home_prints_no_ignored_line(self):
+        brief = self.work / "brief.md"
+        brief.write_text("x\n", encoding="utf-8")
+        roles_file = self.work / "roles.json"
+        self.put(roles_file, {"version": 1, "roles": {}, "mode": "light"})
+        runs = (
+            (("check-brief", str(brief)), 1),
+            (("show", "--help"), 0),
+            (("mode", "--cwd", str(self.work), "--config", str(roles_file)), 0),
+        )
+        for args, status in runs:
+            with self.subTest(args=args):
+                completed = self.run_roles(*args)
+                self.assertEqual(completed.returncode, status, completed.stdout + completed.stderr)
+                self.assertEqual(completed.stderr, "")
+
+    def test_a_refused_show_under_a_relative_xdg_config_home_prints_the_ignored_line_then_the_error_and_exits_2(self):
+        file = self.default / "roles.json"
+        file.parent.mkdir(parents=True)
+        file.write_text("{", encoding="utf-8")
+        completed = self.run_roles("show", "--cwd", str(self.work), "--role", "bug-fix")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, (
+            self.ignored
+            + f"error: {file}: invalid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n"
+        ))
+
+
+class WriteFilesCliTest(unittest.TestCase):
+    def setUp(self):
+        wrapper = tempfile.TemporaryDirectory()
+        self.addCleanup(wrapper.cleanup)
+        self.home = Path(os.path.realpath(wrapper.name))
+        (self.home / ".git").mkdir()
+
+    def write(self, config_home):
+        env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": config_home}
+        return subprocess.run(
+            [
+                sys.executable, str(ROOT / "t3/scripts/roles.py"), "write", "--cwd", str(self.home),
+                "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7",
+            ],
+            env=env,
+            cwd=self.home,
+            capture_output=True,
+            text=True,
+        )
+
+    def temporary_files(self):
+        return sorted(str(path.relative_to(self.home)) for path in self.home.rglob("tmp*"))
+
+    def test_write_under_a_config_home_whose_dot_dot_follows_a_symlink_writes_both_files_in_the_directory_the_system_reaches(self):
+        (self.home / "else" / "sub").mkdir(parents=True)
+        os.symlink(self.home / "else" / "sub", self.home / "x")
+        given = f"{self.home}/x/../.config"
+        completed = self.write(given)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, f"wrote {given}/pstack-t3/roles.json\n")
+        self.assertEqual(completed.stderr, "")
+        reached = self.home / "else" / ".config" / "pstack-t3"
+        self.assertEqual(sorted(os.listdir(reached)), ["catalog.json", "roles.json"])
+        self.assertEqual(
+            json.loads((reached / "roles.json").read_text()),
+            {"version": 1, "roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}, "budget": "default", "mode": "full"},
+        )
+        self.assertEqual(json.loads((reached / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
+        self.assertEqual(self.temporary_files(), [])
+        self.assertFalse(os.path.lexists(self.home / ".config"))
+
+    def test_a_write_whose_catalog_json_is_a_directory_leaves_no_temporary_file(self):
+        state = self.home / ".config" / "pstack-t3"
+        (state / "catalog.json").mkdir(parents=True)
+        completed = self.write(str(self.home / ".config"))
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(os.listdir(state / "catalog.json"), [])
+        self.assertEqual(self.temporary_files(), [])

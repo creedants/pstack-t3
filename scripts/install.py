@@ -9,10 +9,12 @@ moved aside is recorded in a manifest so `uninstall` restores the prior state.
 from __future__ import annotations
 
 import argparse
+import codecs
 import ctypes
 import errno
 import fcntl
 import hashlib
+import io
 import json
 import os
 import shlex
@@ -58,11 +60,26 @@ def extra_dirs(scope_root, user):
     }
 
 
+IGNORED = "XDG_CONFIG_HOME={value!r} is not an absolute path, so it is ignored and the config home is {home!r}"
+
+
+def config_home(environ, default):
+    value = environ.get("XDG_CONFIG_HOME")
+    if not value:
+        return Path(default()), None
+    if not os.path.isabs(value):
+        home = Path(default())
+        return home, IGNORED.format(value=value, home=str(home))
+    return Path(value), None
+
+
 def state_dir(scope_root, user):
-    if user:
-        config = Path(os.environ.get("XDG_CONFIG_HOME") or Path(os.environ.get("HOME", str(Path.home()))) / ".config")
-        return config / "pstack-t3"
-    return scope_root / ".pstack"
+    if not user:
+        return scope_root / ".pstack"
+    config, ignored = config_home(os.environ, lambda: Path(os.environ.get("HOME", str(Path.home()))) / ".config")
+    if ignored:
+        print(ignored, file=sys.stderr)
+    return config / "pstack-t3"
 
 
 def owner_path(state, checkout):
@@ -77,7 +94,7 @@ def link_target(checkout, path):
 def proves(checkout, entry, original):
     try:
         text = os.readlink(entry)
-    except OSError:
+    except (OSError, ValueError):
         return False
     base = os.path.realpath(os.path.dirname(original))
     return os.path.normpath(os.path.join(base, text)) == link_target(checkout, original)
@@ -235,6 +252,25 @@ NO_PROJECT = ("the --project path {project} is relative, and the system could no
               "({reason}); change to another directory and rerun, or give --project a full path")
 
 
+UNANCHORED = ("{name}={value!r} is not an absolute path, and the system could not name this run's working directory "
+              "({reason}); change to another directory and rerun")
+
+
+def unanchored(environ):
+    home, claude = environ.get("HOME"), environ.get("CLAUDE_CONFIG_DIR")
+    if home is not None and not os.path.isabs(home):
+        name, value = "HOME", home
+    elif claude and not os.path.isabs(claude):
+        name, value = "CLAUDE_CONFIG_DIR", claude
+    else:
+        return None
+    try:
+        os.getcwd()
+    except OSError as error:
+        return UNANCHORED.format(name=name, value=value, reason=error.strerror)
+    return None
+
+
 def anchored(file, path):
     """Return `path`, which a record in `file` holds. Raise Unreadable with ADRIFT when it is relative and os.getcwd() raises OSError."""
     if not os.path.isabs(path):
@@ -249,15 +285,17 @@ def scope_of(args):
     """Return the directory --project names, resolved, or None when --project is not given or is empty.
 
     A relative --project while os.getcwd() raises OSError ends the run at exit 1 with NO_PROJECT on stderr.
+    When that does not end the run and unanchored(os.environ) returns a line, the run ends at exit 1 with that line on stderr.
     """
-    if not args.project:
-        return None
-    if not os.path.isabs(args.project):
+    if args.project and not os.path.isabs(args.project):
         try:
             os.getcwd()
         except OSError as error:
             sys.exit(NO_PROJECT.format(project=args.project, reason=error.strerror))
-    return Path(args.project).resolve()
+    stop = unanchored(os.environ)
+    if stop:
+        sys.exit(stop)
+    return Path(args.project).resolve() if args.project else None
 
 
 def read_object(path):
@@ -304,8 +342,7 @@ def read_legacy(state, scope, user):
     return links, backups
 
 
-def load(scope, user):
-    state = state_dir(scope, user)
+def load(state, scope, user):
     root = str(ROOT)
     links, backups = read_legacy(state, scope, user)
     return View(current_claims(state, root), links, backups)
@@ -452,16 +489,28 @@ def occupied_note(row):
     return f"kept backup {backup}: {path} is occupied; clear it and rerun uninstall"
 
 
+UNREACHED = ("a relative path with nothing at it from this working directory (recorded as the backup of {original}); "
+             "uninstall reads a relative path from the directory it runs in")
+KEPT_UNREACHED = "kept backup row {backup}: " + UNREACHED
+
+
+def unreached(row):
+    return not os.path.isabs(row.backup) and not os.path.lexists(row.backup)
+
+
 def plan_uninstall(view, root, selected, holds):
     chosen = set(selected)
     shared = set()
     owned = records(view, root)
     present = stacks(view)
 
+    def covered(harnesses):
+        return set(harnesses) <= chosen
+
     def selected_row(harnesses):
-        have = set(harnesses)
-        if have <= chosen:
+        if covered(harnesses):
             return True
+        have = set(harnesses)
         if have & chosen:
             shared.add(", ".join(sorted(have - chosen)))
         return False
@@ -510,6 +559,9 @@ def plan_uninstall(view, root, selected, holds):
                                 "remove the one that is not the backup and rerun uninstall")
         elif not free and selected_row(top.harnesses):
             occupied.append(occupied_note(top))
+    for row in view.backups:
+        if unreached(row) and covered(row.harnesses) and held_beside(row.backup) is None:
+            occupied.append(KEPT_UNREACHED.format(backup=row.backup, original=row.original))
     return Plan(tuple(steps), occupied=tuple(occupied), shared=tuple(sorted(shared)), kept=kept)
 
 
@@ -1045,6 +1097,18 @@ def contested_by(backup):
     return None
 
 
+def held_beside(backup):
+    """Return the path of an entry named os.path.basename(backup) in a HOLDER directory in os.path.dirname(backup), or None."""
+    parent, name = os.path.split(backup)
+    # os.listdir raises ValueError for a path that holds a NUL byte.
+    with suppress(ValueError):
+        for _holder, directory in holders(parent):
+            aside = os.path.join(directory, name)
+            if os.path.lexists(aside):
+                return aside
+    return None
+
+
 def judge(view, root, side, aside, home):
     """Return the Stray for the entry at `aside`, which a HOLDER directory holds for `home`. Reads only."""
     if one_entry(aside, home):
@@ -1129,7 +1193,7 @@ def empty_out(state, stamp, harness=None):
         return
     # O_NOFOLLOW refuses a symlink at backups/ or <stamp>, and rmdir refuses a symlink, a file, and a directory that holds anything.
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    with suppress(OSError):
+    with suppress(OSError, ValueError):
         top = os.open(os.path.join(str(state), "backups"), flags)
         try:
             inner = os.open(stamp, flags, dir_fd=top)
@@ -1156,7 +1220,7 @@ def empty_out_matched(state, recorded, stamp, harness):
     if os.rmdir not in os.supports_dir_fd:
         return
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    with suppress(OSError), ExitStack() as stack:
+    with suppress(OSError, ValueError), ExitStack() as stack:
         def opened(path, dir_fd=None):
             descriptor = os.open(path, flags, dir_fd=dir_fd)
             stack.callback(os.close, descriptor)
@@ -1397,6 +1461,7 @@ def report_uninstall(plan, executed, dry_run):
 
 
 UNBUILT = "skills/ is missing; run python3 scripts/build.py first"
+NOT_A_DIRECTORY = "skills is not a directory; move it away, then run python3 scripts/build.py"
 NO_SKILL = "skills/ holds no skill; run python3 scripts/build.py first"
 
 
@@ -1405,9 +1470,8 @@ def skill_names():
 
 
 def unbuilt():
-    """Return the line for a checkout with no skill to link, or None. It is UNBUILT when skills/ is not a directory and NO_SKILL when skill_names() is empty."""
     if not SKILLS.is_dir():
-        return UNBUILT
+        return NOT_A_DIRECTORY if os.path.lexists(SKILLS) else UNBUILT
     return None if skill_names() else NO_SKILL
 
 
@@ -1434,7 +1498,7 @@ def install(args):
     def strays(view):
         return survey(view, scope, user, state, root, args.harness)
 
-    view = load(scope, user)
+    view = load(state, scope, user)
     plan = make_plan(view)
     found = strays(view)
     if plan.conflicts and not args.replace:
@@ -1445,8 +1509,8 @@ def install(args):
         report_install(plan, state, root, None, args.dry_run)
         return 0
     with locked(state):
-        settle(strays(load(scope, user)), state, root, False)
-        plan = make_plan(load(scope, user))
+        settle(strays(load(state, scope, user)), state, root, False)
+        plan = make_plan(load(state, scope, user))
         reject(plan)
         executed = execute(plan, state, root) if plan.steps else None
         report_install(plan, state, root, executed, False)
@@ -1465,7 +1529,7 @@ def uninstall(args):
     def strays(view):
         return survey(view, scope, user, state, root, args.harness)
 
-    view = load(scope, user)
+    view = load(state, scope, user)
     with ExitStack() as holds:
         plan = make_plan(view, holds)
     found = strays(view)
@@ -1474,8 +1538,8 @@ def uninstall(args):
         report_uninstall(plan, None, args.dry_run)
         return 0
     with locked(state), ExitStack() as holds:
-        settle(strays(load(scope, user)), state, root, False)
-        plan = make_plan(load(scope, user), holds)
+        settle(strays(load(state, scope, user)), state, root, False)
+        plan = make_plan(load(state, scope, user), holds)
         executed = execute(plan, state, root) if plan.steps else None
         report_uninstall(plan, executed, False)
     return SKIPPED if executed and executed["skipped"] else 0
@@ -1548,6 +1612,7 @@ INERT_ROW = ('backup row {backup}: nothing is there (recorded as the backup of {
              'while that path is empty; to drop it, delete the row from "backups" in {manifest}')
 INERT_ROW_MANY = ('backup rows have nothing at their backup paths; uninstall skips each row while its backup path is empty; '
                   'to drop one, delete the row from "backups" in {manifest}:')
+UNREACHED_ROW = "backup row {backup}: " + UNREACHED + '; to drop the row, delete it from "backups" in {manifest}'
 HELD_ROW = ('backup row {backup}: nothing is there, and {aside} holds an entry under that name; '
             '"{dry_run}" prints what the next run does with it')
 AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory is at {checkout}; '
@@ -1594,6 +1659,8 @@ def row_finding(args, state, row, aside):
                        HELD_MANY.format(dry_run=dry_run),
                        f"backup row {row.backup}: nothing is there, and {aside} holds an entry under that name")
     manifest = Path(state) / LEGACY_NAME
+    if not os.path.isabs(row.backup):
+        return Finding(row.harnesses, UNREACHED_ROW.format(backup=row.backup, original=row.original, manifest=manifest))
     return Finding(row.harnesses, INERT_ROW.format(backup=row.backup, original=row.original, manifest=manifest),
                    INERT_ROW_MANY.format(manifest=manifest), f"{row.backup} (recorded as the backup of {row.original})")
 
@@ -1680,7 +1747,8 @@ def audit(args, scope, user, names):
     held_for = {stray.home: stray.path for stray in strays if stray.kind != "empty"}
     for row in view.backups:
         if not os.path.lexists(row.backup):
-            stale.append(row_finding(args, state, row, held_for.get(row.backup)))
+            aside = held_for.get(row.backup) or (None if os.path.isabs(row.backup) else held_beside(row.backup))
+            stale.append(row_finding(args, state, row, aside))
     return Audit(tuple(stale + away), tuple(unread))
 
 
@@ -1739,6 +1807,27 @@ def doctor(args):
     return 0 if healthy and not any(item.blinds for item in found.unread) else 1
 
 
+ESCAPING = "pstack-t3-escaping"
+
+
+def escape_refused(stream):
+    if not isinstance(stream, io.TextIOWrapper):
+        return
+    try:
+        current = codecs.lookup_error(stream.errors)
+    except LookupError:
+        return
+
+    def escaping(error):
+        try:
+            return current(error)
+        except UnicodeError:
+            return codecs.backslashreplace_errors(error)
+
+    codecs.register_error(ESCAPING, escaping)
+    stream.reconfigure(errors=ESCAPING)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("install", "uninstall", "doctor"), nargs="?", default="install")
@@ -1751,6 +1840,7 @@ def main(argv=None):
     unknown = set(args.harness) - set(HARNESSES)
     if unknown:
         parser.error(f"unknown harness {', '.join(sorted(unknown))}")
+    escape_refused(sys.stdout)
     try:
         return {"install": install, "uninstall": uninstall, "doctor": doctor}[args.command](args) or 0
     except Unreadable as error:
