@@ -1,0 +1,1 @@
+- `brigade.py startable` holds a low ticket back from the last idle worker only while an urgent or normal ticket is waiting. `ticket paths` and `ticket add --from-report` also record the tracked file a quoted file name with no directory names when exactly one tracked file has that name, and a file under `skills/` is not counted when a file of the same name is tracked under `t3/`.
