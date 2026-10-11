@@ -118,9 +118,11 @@ STORE_LOCK = "restaurant.lock"
 UNITS_TABLE = "dishes.tsv"
 LOG_TABLE = "log.tsv"
 STORE_COLUMNS = {
-    UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
+    UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported", "kind", "goal"),
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
 }
+# How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
+ADDED_COLUMNS = {UNITS_TABLE: 2}
 TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log"}
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
@@ -419,6 +421,7 @@ def read_table(directory, table):
     """The rows of a table's finished lines after its header line. A table that does not exist has none.
     A finished line ends in a newline. The bytes after the last newline are never decoded.
     A finished line that is not UTF-8 is refused as malformed, with its own line number. So is a finished line after the header with a wrong field count.
+    A work item row may lack its last cell or its last two, and each missing cell reads as empty.
     The header line is decoded and never parsed.
     """
     columns = STORE_COLUMNS[table]
@@ -445,9 +448,10 @@ def read_table(directory, table):
         if number == 1:
             continue
         fields = text.split("\t")
-        if len(fields) != len(columns):
+        missing = len(columns) - len(fields)
+        if not 0 <= missing <= ADDED_COLUMNS.get(table, 0):
             raise malformed(table, number)
-        rows.append(dict(zip(columns, fields)))
+        rows.append(dict(zip(columns, fields + [""] * missing)))
     return rows
 
 

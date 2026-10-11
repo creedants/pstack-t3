@@ -37,6 +37,8 @@ DISH_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked", "qu
 COUNTED_STATES = ("in-progress", "in-review")
 # A dish in one of these holds an active lease that watch keeps renewing. A queued dish's lease is the queue's.
 LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
+# A dish in one of these has started and is neither merged nor dropped.
+IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
 EDITS_VERDICT = "pass-with-edits"
@@ -50,6 +52,14 @@ OPEN_RUN_MINUTES = 10
 PRIORITIES_BY_RANK = ("urgent", "normal", "low")
 AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
+# The kind fire gives an item when neither its lead ticket nor --kind gives one. A station not listed here gives none.
+STATION_KIND = {"bug-fix": "fix", "perf-issue": "fix", "investigation": "study"}
+GOAL_STATES = ("open", "paused", "done", "dropped")
+CLOSED_GOAL_STATES = ("done", "dropped")
+# The states a goal may move to from each state.
+GOAL_MOVES = {"open": ("paused", "done", "dropped"), "paused": ("open", "done", "dropped"),
+              "done": ("open",), "dropped": ("open",)}
 LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
 GENERATED_ROOT = "skills/"
@@ -76,17 +86,20 @@ NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
 
 TABLES = {
-    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision"),
-    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported"),
+    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision", "kind", "goal"),
+    "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported",
+                   "kind", "goal"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
     "edits.tsv": ("at", "dish", "from", "to", "report"),
+    "goals.tsv": ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
     # Only the executive admin's store has this table.
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
-ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 3}
-PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R"}
+# How many trailing cells a row of each table may lack. A missing cell reads as empty.
+ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
+PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
 WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
@@ -456,14 +469,14 @@ class Restaurant:
                 return rows, row
         raise BrigadeError(f"no {ident} in {table}")
 
-    def update(self, table, ident, kind, note=None, **fields):
+    def update(self, table, ident, log_kind, note=None, **fields):
         rows, row = self.find(table, ident)
         changed = {key: value for key, value in fields.items() if value is not None}
         moved = "state" in changed and changed["state"] != row.get("state")
         row.update(changed)
         self.save_rows(table, rows)
         if moved:
-            self.log(kind, ident, changed["state"], note or row.get("summary") or row.get("question", ""))
+            self.log(log_kind, ident, changed["state"], note or row.get("summary") or row.get("question", ""))
         return row
 
 
@@ -748,6 +761,95 @@ def refuse_live_ref(restaurant, ref, rails):
             if row["ref"] == ref and is_live(directory, row, rails):
                 where = "" if directory == own else f" in {directory.name}"
                 raise BrigadeError(f"{ref} is already {row['id']}{where} ({row['state']}); nothing added")
+
+
+def one_of(words):
+    """`a, b, or c` from three or more words."""
+    return ", ".join(words[:-1]) + f", or {words[-1]}"
+
+
+@dataclass(frozen=True)
+class Goal:
+    """One row of goals.tsv as read_labels reads it. state is one of GOAL_STATES. share is None or a whole number of 1 or more."""
+    id: str
+    state: str
+    name: str
+    purpose: str
+    done: str
+    share: object
+    closed: str
+
+
+@dataclass(frozen=True)
+class Label:
+    """A ticket's or an item's kind and goal as read_labels reads them.
+
+    kind is one of KINDS, or "" for no kind. goal is the id of a row of goals.tsv, or "" for unassigned.
+    """
+    kind: str = ""
+    goal: str = ""
+
+
+@dataclass(frozen=True)
+class Labels:
+    """The kinds and goals of one store, read under one hold of the store lock.
+
+    goals is {goal id: Goal} in file order. tickets is {ticket id: Label} for the rows of rail.tsv, and items is
+    {item id: Label} for the rows of dishes.tsv. faults is one (row id, text) pair per cell whose value is not legal.
+    """
+    goals: dict
+    tickets: dict
+    items: dict
+    faults: tuple
+
+
+def read_goal(row, faults):
+    state, share = row["state"], None
+    if state not in GOAL_STATES:
+        faults.append((row["id"], f"{row['id']} has state {state!r}, which is not {one_of(GOAL_STATES)}; it reads as open; "
+                                  f"run goal set {row['id']} --state <state>"))
+        state = "open"
+    if row["share"].isascii() and row["share"].isdigit() and int(row["share"]) >= 1:
+        share = int(row["share"])
+    elif row["share"]:
+        faults.append((row["id"], f"{row['id']} has share {row['share']!r}, which is not a whole number of 1 or more; "
+                                  f"it reads as no limit; run goal set {row['id']} --share <n>"))
+    return Goal(row["id"], state, row["name"], row["purpose"], row["done"], share, row["closed"])
+
+
+def read_label(table, row, goals, faults):
+    ident = row["id"]
+    kind = row["kind"] if row["kind"] in KINDS else ""
+    goal = row["goal"] if row["goal"] in goals else ""
+    # ticket set changes these two cells of a waiting ticket and of no other row.
+    waiting = table == "rail.tsv" and row["state"] == "waiting"
+    by_hand = f"no command changes this cell; correct it in {table} by hand"
+    if row["kind"] and not kind:
+        faults.append((ident, f"{ident} has kind {row['kind']!r}, which is not {one_of(KINDS)}; it reads as no kind; "
+                              + (f"run ticket set {ident} --kind <kind>" if waiting else by_hand)))
+    if row["goal"] and not goal:
+        faults.append((ident, f"{ident} names goal {row['goal']!r}, which has no row in goals.tsv; it reads as unassigned; "
+                              + (f"run ticket set {ident} --goal G<n> or --no-goal" if waiting else by_hand)))
+    return Label(kind, goal)
+
+
+def read_labels(restaurant):
+    """The one reader of the kind and goal cells of rail.tsv and dishes.tsv, and of goals.tsv. It writes nothing.
+
+    Call it under the store lock. A goals.tsv that does not exist reads as no goals.
+    A cell whose value is not legal reads as follows and adds one pair to faults.
+
+    - A kind that is not one of KINDS reads as no kind.
+    - A goal that is not the id of a row of goals.tsv reads as unassigned.
+    - A goal's state that is not one of GOAL_STATES reads as open.
+    - A goal's share that is not empty and not a whole number of 1 or more reads as no limit.
+    """
+    goals, faults = {}, []
+    for row in restaurant.rows("goals.tsv"):
+        goals.setdefault(row["id"], read_goal(row, faults))
+    tickets = {row["id"]: read_label("rail.tsv", row, goals, faults) for row in restaurant.rows("rail.tsv")}
+    items = {row["id"]: read_label("dishes.tsv", row, goals, faults) for row in restaurant.rows("dishes.tsv")}
+    return Labels(goals, tickets, items, tuple(faults))
 
 
 def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False):

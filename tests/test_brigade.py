@@ -4599,15 +4599,88 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.brigade("ticket", "add", "--summary", "New", "--priority", "urgent", "--paths", "a.txt"), "T4")
         self.assertEqual((self.at / "rail.tsv").read_bytes()[:len(before)], before)
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1], "T4 waiting urgent [user] New")
-        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[-1].split("\t")[5:], ["", "New", "urgent", "a.txt", ""])
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[-1].split("\t")[5:],
+                         ["", "New", "urgent", "a.txt", "", "", ""])
 
-    def test_a_rail_row_with_six_fields_or_eleven_is_malformed(self):
+    def test_a_rail_row_with_six_fields_or_thirteen_is_malformed(self):
         self.open()
         stamp = "2026-10-01T00:00:00+00:00"
-        for fields in (["T1", stamp, "waiting", "user", "", ""], ["T1", stamp, "waiting", "user", "", "", "s", "", "", "", ""]):
+        for fields in (["T1", stamp, "waiting", "user", "", ""], ["T1", stamp, "waiting", "user", "", "", "s", *[""] * 6]):
             (self.at / "rail.tsv").write_text("id\n" + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("ticket", "list", ok=False),
                              "brigade: bridge-kit/perf/rail.tsv line 2 is malformed; fix or remove it")
+
+    def test_a_rail_row_with_seven_ten_eleven_or_twelve_fields_is_read(self):
+        self.open()
+        stamp = "2026-10-01T00:00:00+00:00"
+        for extra in ([], ["low", "a.txt", ""], ["low", "a.txt", "", ""], ["low", "a.txt", "", "", ""]):
+            (self.at / "rail.tsv").write_text("id\n" + "\t".join(["T1", stamp, "waiting", "user", "", "", "s", *extra]) + "\n")
+            self.assertEqual(self.brigade("ticket", "list"), f"T1 waiting {'low' if extra else 'normal'} [user] s", extra)
+
+    OLD_DISHES = "id\tat\tstate\tstation\ttickets\ttask\tthread\tbranch\tpr\tsha\tsummary\ttimebox\tlease\tpaths\treported\n"
+
+    def old_item(self, stamp="2026-10-01T00:00:00+00:00"):
+        """One assigned ticket and its item in review, each in a row of the width the tool wrote before the kind and goal cells."""
+        (self.at / "rail.tsv").write_text(
+            "id\tat\tstate\tsource\tref\tdish\tsummary\tpriority\tpaths\tdecision\n"
+            f"T1\t{stamp}\tassigned\tuser\t\tD1\tFix login\t\t\t\n")
+        (self.at / "dishes.tsv").write_text(
+            self.OLD_DISHES + f"D1\t{stamp}\tin-review\tbug-fix\tT1\t\tthread-1\t\t\tabc\tFix login\t60\t\t\t\n")
+
+    def test_a_15_cell_dishes_row_and_a_10_cell_rail_row_are_read_and_a_read_leaves_both_tables_byte_identical(self):
+        self.open()
+        self.old_item()
+        before = self.tables()
+        self.assertEqual(self.brigade("ticket", "list"), "T1 assigned normal [user] Fix login")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
+        self.assertEqual(self.brigade("status").splitlines()[1], "reporting: milestones, no landing contract, in review: 1")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False), "brigade: D1 has no review verdict for abc")
+        self.assertEqual(self.tables(), before)
+
+    def test_a_rewrite_of_an_old_table_keeps_each_cell_and_adds_an_empty_kind_and_goal_cell_to_each_row(self):
+        self.open()
+        self.old_item()
+        rail, dishes = ((self.at / name).read_text().splitlines()[1].split("\t") for name in ("rail.tsv", "dishes.tsv"))
+        self.assertEqual(self.brigade("dish", "D1", "--timebox", "90"), "D1 in-review")
+        self.assertEqual(self.brigade("ticket", "set", "T1", "--priority", "low"), "T1 priority low")
+        dishes[11], rail[7] = "90", "low"
+        self.assertEqual((self.at / "dishes.tsv").read_text().splitlines()[1].split("\t"), [*dishes, "", ""])
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[1].split("\t"), [*rail, "", ""])
+        self.assertEqual((self.at / "dishes.tsv").read_text().splitlines()[0].split("\t")[-3:], ["reported", "kind", "goal"])
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[0].split("\t")[-3:], ["decision", "kind", "goal"])
+
+    def test_a_dishes_row_with_fourteen_fields_or_eighteen_is_malformed_and_one_with_sixteen_is_read(self):
+        self.open()
+        self.old_item()
+        row = (self.at / "dishes.tsv").read_text().splitlines()[1].split("\t")
+        for fields in (row[:14], [*row, "", "", ""]):
+            (self.at / "dishes.tsv").write_text(self.OLD_DISHES + "\t".join(fields) + "\n")
+            self.assertEqual(self.brigade("watch", ok=False),
+                             "brigade: bridge-kit/perf/dishes.tsv line 2 is malformed; fix or remove it")
+        (self.at / "dishes.tsv").write_text(self.OLD_DISHES + "\t".join([*row, ""]) + "\n")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
+
+    def test_open_writes_goals_tsv_with_its_header_and_no_row_into_a_new_store_and_into_the_admins_store(self):
+        self.open()
+        self.open_admin()
+        for directory in (self.at, self.store / "bridge-kit" / ".admin"):
+            self.assertEqual((directory / "goals.tsv").read_text(), "id\tat\tstate\tname\tpurpose\tdone\tshare\tclosed\n")
+
+    def test_a_store_with_no_goals_table_runs_status_watch_startable_ticket_list_and_close_and_gains_no_table(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--summary", "next")
+        (self.at / "goals.tsv").unlink()
+        files = sorted(self.store_files())
+        self.assertEqual(self.brigade("status").splitlines()[0], "thread not recorded")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (no worker recorded)")
+        self.assertEqual(self.brigade("startable").splitlines()[:2],
+                         ["workers: 1 of 2 running, 1 idle, auto-start: normal", "waiting tickets: 1, unknown: 1"])
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal [user] next")
+        code, out, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[0], "# Perf report")
+        self.assertEqual(sorted(self.store_files()), files)
+        self.assertFalse((self.at / "goals.tsv").exists())
 
     def test_a_priority_paths_or_decision_change_adds_no_log_row_and_keeps_a_blocked_ticket_blocked(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
@@ -6281,7 +6354,7 @@ class HandoffTest(StoresTest):
             (self.dir(name) / "reports" / "D1.md").write_text(body)
             self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
                              f"T2 added from {name}/reports/D1.md#1: Shared text.")
-        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", "", "", ""])
 
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")
@@ -6479,7 +6552,7 @@ class HandoffTest(StoresTest):
                           "priority": "urgent", "paths": "docs,src/cache.py", "decision": "yes"})
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "user (from app/core/T1)", "", "", "Fix the cache", "urgent", "docs,src/cache.py", "yes"])
+                         ["waiting", "user (from app/core/T1)", "", "", "Fix the cache", "urgent", "docs,src/cache.py", "yes", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent [user (from app/core/T1)] Fix the cache")
 
     def test_a_moved_ticket_with_an_empty_priority_cell_reads_the_default_of_its_source_after_ticket_take(self):
@@ -6488,7 +6561,7 @@ class HandoffTest(StoresTest):
         self.brigade("core", "ticket", "add", "--summary", "Sync", "--source", "upstream")
         self.brigade("core", "ticket", "move", "T1", "--to", "engine")
         self.brigade("engine", "ticket", "take")
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][7:], ["", "", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][7:], ["", "", "", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent [upstream (from app/core/T1)] Sync")
 
     def test_ticket_take_files_a_handoff_written_without_priority_paths_and_decision(self):
@@ -6500,7 +6573,7 @@ class HandoffTest(StoresTest):
             {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "report", "ref": "core/reports/D1.md#1"}))
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "report (from app/core/T1)", "core/reports/D1.md#1", "", "Tidy the guide", "", "", ""])
+                         ["waiting", "report (from app/core/T1)", "core/reports/D1.md#1", "", "Tidy the guide", "", "", "", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"),
                          "T1 waiting low [report (from app/core/T1)] Tidy the guide core/reports/D1.md#1")
 
@@ -6511,7 +6584,7 @@ class HandoffTest(StoresTest):
 
     def assert_one_handed_ticket(self, name="engine"):
         self.assertEqual([row[2:] for row in self.rows(name, "rail.tsv")],
-                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache", "", "", ""]])
+                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache", "", "", "", "", ""]])
         log = (self.dir(name) / "log.tsv").read_text()
         self.assertTrue(log.endswith("\n"))
         self.assertTrue(all(len(line.split("\t")) == 5 for line in log.splitlines()))
@@ -6652,7 +6725,7 @@ class HandoffTest(StoresTest):
         added = after[len(complete):].decode()
         self.assertEqual((added.count("\n"), added[-1]), (1, "\n"))
         fields = added[:-1].split("\t")
-        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b", "", "", ""])
+        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b", "", "", "", "", ""])
 
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock
