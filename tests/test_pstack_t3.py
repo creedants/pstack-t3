@@ -2782,5 +2782,29 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
         self.assertIn("| [`brigade-admin`](../skills/brigade-admin/SKILL.md) |", group)
 
 
+def repository_state(repo):
+    """Config bytes, HEAD, and every ref of a repository."""
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname) %(objectname)"], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout
+    return (repo / ".git/config").read_bytes(), (repo / ".git/HEAD").read_text(), refs
+
+
+class GitEnvironmentFenceTest(unittest.TestCase):
+    def test_a_fixture_test_leaves_a_repository_named_by_the_callers_git_variables_unchanged(self):
+        for names in (("GIT_DIR", "GIT_WORK_TREE"), ("GIT_DIR",)):
+            with self.subTest(leaked=names), tempfile.TemporaryDirectory() as tmp:
+                victim = Path(tmp) / "victim"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(victim)], check=True)
+                subprocess.run(["git", "-c", "user.name=v", "-c", "user.email=v@v", "commit", "-q", "--allow-empty", "-m", "init"],
+                               cwd=victim, check=True)
+                before = repository_state(victim)
+                leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
+                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "WorktreeAuditTest.test_flag_and_env_replace_the_configured_directory"],
+                                       env={**os.environ, **{name: leaked[name] for name in names}},
+                                       capture_output=True, text=True, timeout=300)
+                self.assertEqual(repository_state(victim), before)
+                self.assertEqual(child.returncode, 0, child.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

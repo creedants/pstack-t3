@@ -4094,6 +4094,31 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
                              "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
 
+
+def repository_state(repo):
+    """Config bytes, HEAD, and every ref of a repository."""
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname) %(objectname)"], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout
+    return (repo / ".git/config").read_bytes(), (repo / ".git/HEAD").read_text(), refs
+
+
+class GitEnvironmentFenceTest(unittest.TestCase):
+    def test_a_fixture_test_leaves_a_repository_named_by_the_callers_git_variables_unchanged(self):
+        for names in (("GIT_DIR", "GIT_WORK_TREE"), ("GIT_DIR",)):
+            with self.subTest(leaked=names), tempfile.TemporaryDirectory() as tmp:
+                victim = Path(tmp) / "victim"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(victim)], check=True)
+                subprocess.run(["git", "-c", "user.name=v", "-c", "user.email=v@v", "commit", "-q", "--allow-empty", "-m", "init"],
+                               cwd=victim, check=True)
+                before = repository_state(victim)
+                leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
+                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "LandingTest.test_a_conflict_rerere_resolved_to_trunk_bounces"],
+                                       env={**os.environ, **{name: leaked[name] for name in names}},
+                                       capture_output=True, text=True, timeout=300)
+                self.assertEqual(repository_state(victim), before)
+                self.assertEqual(child.returncode, 0, child.stderr)
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--paused-child"]:
         paused_child(sys.argv[2], sys.argv[3:])
