@@ -16,5 +16,5 @@ Persistent project memory and bounded, per-request execution routing.
 | --- | --- | --- | --- | --- |
 | `--repo REPO` |  |  | `.` |  |
 | `--state-root STATE_ROOT` |  |  |  |  |
-| `action` | yes | `route`, `open`, `context`, `remember`, `accept`, `peer`, `start-mesh`, `prepare`, `complete`, `cancel` |  |  |
+| `action` | yes | `route`, `open`, `context`, `remember`, `accept`, `peer`, `start-mesh`, `prepare`, `prepare-task`, `complete`, `cancel` |  |  |
 | `--data DATA` |  |  | `{}` |  |
