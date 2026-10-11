@@ -4,7 +4,7 @@ This is the design of the light mode setting in pstack-t3, which has shipped. Li
 
 The intended readers are a user who runs low on a provider's usage budget, and the engineer who builds the changes below.
 
-**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. A trial of the `medium` cap on the gate review finished on 2026-10-10. It found that the cap misses blocking findings, so the gate review keeps its full level in light mode. [Results](#results) records it. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap. The sections below keep the design as it was written before those changes landed, with its census of that time.
+**Status.** The setting is on `main`. Changes 1 to 5 landed as #81, #83, #84, #85, and #88. A trial of the `medium` cap on the gate review finished on 2026-10-10. It found that the cap misses blocking findings. The decision is to keep the gate review at its full level in light mode. [Results](#results) records it. The passages below that cap the gate at `medium` describe the design as it stood before that decision, and the code and skills still apply the cap. The sections below keep the design as it was written before those changes landed, with its census of that time.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item. brigade's commands and files keep their kitchen names only where they name a command or a file, such as `fire`, `dishes.tsv`, and `restaurant.json`.
 
