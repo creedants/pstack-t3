@@ -5009,12 +5009,12 @@ class BrigadeTest(unittest.TestCase):
             "not filed, prose after the last list item: That is all.",
         ])
 
-    def test_from_report_refuses_priority_paths_and_decision(self):
+    def test_from_report_refuses_priority_nonempty_paths_and_decision(self):
         self.fired_bug_fix()
         before = self.store_files()
         for extra in (("--priority", "low"), ("--paths", "a.txt"), ("--decision",)):
             self.assertEqual(self.follow_ups_in(BULLETS, *extra, ok=False),
-                             "brigade: --from-report takes no --priority, --paths, or --decision", extra)
+                             "brigade: --from-report takes no --priority, nonempty --paths, or --decision", extra)
         self.review_file("D1.md", BULLETS)
         self.assertEqual({name: data for name, data in self.store_files().items() if name != "reports/D1.md"}, before)
 
