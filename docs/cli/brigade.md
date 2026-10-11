@@ -142,7 +142,7 @@ file every ticket a sibling handed to this coordinator
 brigade.py [flags] ticket paths [--dry-run]
 ```
 
-record the tracked paths each waiting ticket's summary quotes, on tickets that record none; a quote that, with one trailing :\<line> or :\<line>-\<line> dropped, holds no slash, no whitespace, and none of * ? [ and is no tracked path records the tracked file of that name when exactly one has that name, and a file under skills/ is not counted when a file of the same name is tracked under t3/
+record the tracked paths each waiting ticket's summary quotes, on tickets that record none; a quote that is no tracked path and that, with one trailing :\<line> or :\<line>-\<line> dropped, holds no slash, no whitespace, and none of * ? [ and is no tracked path records the tracked file of that name when exactly one has that name, and a file under skills/ is not counted when a file of the same name is tracked under t3/
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

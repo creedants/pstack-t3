@@ -50,6 +50,7 @@ LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
 GENERATED_ROOT = "skills/"
 SOURCE_ROOT = "t3/"
+LINE_SUFFIX = r":\d+(?:-\d+)?$"
 
 
 @dataclass(frozen=True)
@@ -632,15 +633,18 @@ def quoted_paths(text, tracked):
         return ()
     found = set()
     for quote in re.finditer(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", text):
-        span = re.sub(r":\d+(?:-\d+)?$", "", quote.group(2).strip())
+        content = quote.group(2)
+        span = re.sub(LINE_SUFFIX, "", content.strip())
         if not span or re.search(r"\s", span) or span.startswith("/") or ".." in span.split("/"):
             continue
         span = posixpath.normpath(span)
         if not re.search(r"[*?\[]", span):
             if span != "." and (span in tracked.files or span in tracked.directories):
                 found.add(span)
-            elif "/" not in span and span in tracked.names:
-                found.add(tracked.names[span])
+            elif content not in tracked.files and content not in tracked.directories:
+                name = re.sub(LINE_SUFFIX, "", content)
+                if not re.search(r"[/\s*?\[]", name) and name in tracked.names:
+                    found.add(tracked.names[name])
             continue
         directory = pattern_directory(span.split("/"))
         if directory and fnmatch.filter(tracked.files, span):
@@ -2648,10 +2652,10 @@ def parser():
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
     a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none; "
-                                    "a quote that, with one trailing :<line> or :<line>-<line> dropped, holds no slash, no "
-                                    "whitespace, and none of * ? [ and is no tracked path records the tracked file of that "
-                                    "name when exactly one has that name, and a file under skills/ is not counted when a "
-                                    "file of the same name is tracked under t3/")
+                                    "a quote that is no tracked path and that, with one trailing :<line> or :<line>-<line> "
+                                    "dropped, holds no slash, no whitespace, and none of * ? [ and is no tracked path records "
+                                    "the tracked file of that name when exactly one has that name, and a file under skills/ "
+                                    "is not counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")

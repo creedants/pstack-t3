@@ -4753,7 +4753,52 @@ class BrigadeTest(unittest.TestCase):
                            "- Fix `two.py` and `nope.py`.\n")
         self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/app/one.py,t3/added/x/scripts/tool.py", "T3": ""})
 
-    NONE_RUNNING = "workers: 0 of 2 running, 2 idle, auto-start: normal"
+    def test_ticket_paths_records_nothing_for_a_file_name_only_one_nested_file_has_quoted_with_a_dot_slash_before_it_a_slash_after_it_or_spaces_around_it(self):
+        self.tracked_project("src/app/tool.py", "tool.py:12")
+        self.open()
+        for quote in ("./tool.py", "tool.py/", "./tool.py:12", " tool.py "):
+            self.brigade("ticket", "add", "--summary", f"Fix `{quote}`")
+        self.assertEqual(self.brigade("ticket", "paths"), "\n".join(f"T{number} quotes no tracked path" for number in (1, 2, 3, 4)))
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "", "T4": ""})
+
+    def test_from_report_records_nothing_for_a_file_name_only_one_nested_file_has_quoted_with_a_dot_slash_before_it_a_slash_after_it_or_spaces_or_tabs_around_it(self):
+        self.tracked_project("src/app/tool.py", "tool.py:12")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n"
+                           "- One `./tool.py`.\n"
+                           "- Two `tool.py/`.\n"
+                           "- Three `./tool.py:12`.\n"
+                           "- Four ` tool.py `.\n"
+                           "- Five `\ttool.py\t`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "", "T4": "", "T5": "", "T6": ""})
+
+    def test_ticket_paths_records_nothing_for_a_quote_that_is_a_tracked_file_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12", "src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py:12`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_file_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12", "src/app/tool.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    def test_ticket_paths_records_nothing_for_a_quote_that_is_a_tracked_directory_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12/notes.md", "src/app/tool.py")
+        self.open()
+        self.brigade("ticket", "add", "--summary", "Fix `tool.py:12`")
+        self.assertEqual(self.brigade("ticket", "paths"), "T1 quotes no tracked path")
+        self.assertEqual(self.paths_cells(), {"T1": ""})
+
+    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_directory_named_as_one_nested_file_with_a_line_number_added(self):
+        self.tracked_project("tool.py:12/notes.md", "src/app/tool.py")
+        self.fired_bug_fix()
+        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
+        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
+
+    NONE_RUNNING ="workers: 0 of 2 running, 2 idle, auto-start: normal"
 
     def queue(self, *open_flags):
         self.init_landing()
