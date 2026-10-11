@@ -48,6 +48,8 @@ AUTOFIRE = ("off", *PRIORITIES_BY_RANK)
 SOURCE_PRIORITY = {"upstream": "urgent", "report": "low"}
 LOW_RESERVE = 1
 LOW_FLAG_DAYS = 7
+GENERATED_ROOT = "skills/"
+SOURCE_ROOT = "t3/"
 
 
 @dataclass(frozen=True)
@@ -594,6 +596,17 @@ def ticket_paths(text):
 class Tracked:
     files: frozenset
     directories: frozenset
+    names: dict
+
+
+def unique_names(files):
+    sources = {path.rsplit("/", 1)[-1] for path in files if path.startswith(SOURCE_ROOT)}
+    by_name = {}
+    for path in files:
+        name = path.rsplit("/", 1)[-1]
+        if not (path.startswith(GENERATED_ROOT) and name in sources):
+            by_name.setdefault(name, []).append(path)
+    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
 
 
 def tracked_paths(project_root):
@@ -606,7 +619,7 @@ def tracked_paths(project_root):
         return None
     files = frozenset(name for name in result.stdout.split("\0") if name)
     directories = frozenset(str(above) for name in files for above in PurePosixPath(name).parents if str(above) != ".")
-    return Tracked(files, directories)
+    return Tracked(files, directories, unique_names(files))
 
 
 def pattern_directory(parts):
@@ -626,6 +639,8 @@ def quoted_paths(text, tracked):
         if not re.search(r"[*?\[]", span):
             if span != "." and (span in tracked.files or span in tracked.directories):
                 found.add(span)
+            elif "/" not in span and span in tracked.names:
+                found.add(tracked.names[span])
             continue
         directory = pattern_directory(span.split("/"))
         if directory and fnmatch.filter(tracked.files, span):
@@ -2632,7 +2647,10 @@ def parser():
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
     t.add_parser("take", help="file every ticket a sibling handed to this coordinator")
-    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none")
+    a = t.add_parser("paths", help="record the tracked paths each waiting ticket's summary quotes, on tickets that record none; "
+                                    "a quoted file name with no directory that is not itself a tracked path records the "
+                                    "tracked file of that name when exactly one has it, and a file under skills/ is not "
+                                    "counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
 
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
