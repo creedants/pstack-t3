@@ -290,6 +290,14 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+        # The warning texts this command has printed. One command makes one Restaurant for its own store.
+        self.warned = set()
+
+    def warn(self, text):
+        """Print one warning line on standard error. A text this command has printed is not printed again."""
+        if text not in self.warned:
+            self.warned.add(text)
+            print(f"brigade: warning: {text}", file=sys.stderr)
 
     def fence(self):
         """Refuse a write from any thread but the recorded owner. Call it under the lock and keep the lock through the write."""
@@ -813,11 +821,40 @@ class Label:
 
 
 @dataclass(frozen=True)
+class Fault:
+    """One warning of read_labels. table is the table the row is in, id is the row's id cell, and text is the warning."""
+    table: str
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ActsOn:
+    """The rows of rail.tsv and dishes.tsv whose kind and goal a command acts on.
+
+    read_labels prints the warnings of these rows. tickets holds ticket ids and items holds item ids.
+    every is true for a command that lists or counts every row.
+    """
+    tickets: tuple = ()
+    items: tuple = ()
+    every: bool = False
+
+    def covers(self, fault):
+        """True when read_labels prints this fault. Every fault of goals.tsv is printed."""
+        return (fault.table == "goals.tsv" or self.every
+                or fault.id in {"rail.tsv": self.tickets, "dishes.tsv": self.items}[fault.table])
+
+
+EVERY_ROW = ActsOn(every=True)
+GOALS_ONLY = ActsOn()
+
+
+@dataclass(frozen=True)
 class Labels:
     """The kinds and goals of one store, read under one hold of the store lock.
 
     goals is {goal id: Goal} in file order. tickets is {ticket id: Label} for the rows of rail.tsv, and items is
-    {item id: Label} for the rows of dishes.tsv. faults is one (row id, text) pair per cell whose value is not legal,
+    {item id: Label} for the rows of dishes.tsv. faults is one Fault per cell whose value is not legal,
     and one per id of goals.tsv with a row that is not a goal.
     """
     goals: dict
@@ -834,12 +871,12 @@ def whole_share(text):
 def read_goal(row, faults):
     state, share = row["state"], whole_share(row["share"])
     if state not in GOAL_STATES:
-        faults.append((row["id"], f"{row['id']} has state {state!r}, which is not {one_of(GOAL_STATES)}; it reads as open; "
-                                  f"run goal set {row['id']} --state <state>"))
+        faults.append(Fault("goals.tsv", row["id"], f"{row['id']} has state {state!r}, which is not {one_of(GOAL_STATES)}; "
+                                                    f"it reads as open; run goal set {row['id']} --state <state>"))
         state = "open"
     if row["share"] and not share:
-        faults.append((row["id"], f"{row['id']} has share {row['share']!r}, which is not a whole number of 1 or more; "
-                                  f"it reads as no limit; run goal set {row['id']} --share <n>"))
+        faults.append(Fault("goals.tsv", row["id"], f"{row['id']} has share {row['share']!r}, which is not a whole number of "
+                                                    f"1 or more; it reads as no limit; run goal set {row['id']} --share <n>"))
     return Goal(row["id"], state, row["name"], row["purpose"], row["done"], share, row["closed"])
 
 
@@ -865,7 +902,7 @@ def frozen_label(ticket, held):
     return f"{ticket['id']} is a ticket of {item['id']}, which is {item['state']}" if item else ""
 
 
-def read_label(row, goals, faults, by_hand):
+def read_label(table, row, goals, faults, by_hand):
     """One row's Label. `by_hand` is the end of the warning for a bad cell of a row whose cells ticket set does not change now.
 
     It is "" for any other row, and the warning then ends with the ticket set line to run.
@@ -874,24 +911,26 @@ def read_label(row, goals, faults, by_hand):
     kind = row["kind"] if row["kind"] in KINDS else ""
     goal = row["goal"] if row["goal"] in goals else ""
     if row["kind"] and not kind:
-        faults.append((ident, f"{ident} has kind {row['kind']!r}, which is not {one_of(KINDS)}; it reads as no kind; "
-                              + (by_hand or f"run ticket set {ident} --kind <kind>")))
+        faults.append(Fault(table, ident, f"{ident} has kind {row['kind']!r}, which is not {one_of(KINDS)}; it reads as no kind; "
+                                          + (by_hand or f"run ticket set {ident} --kind <kind>")))
     if row["goal"] and not goal:
-        faults.append((ident, f"{ident} names goal {row['goal']!r}, which has no row in goals.tsv; it reads as unassigned; "
-                              + (by_hand or f"run ticket set {ident} --goal G<n> or --no-goal")))
+        faults.append(Fault(table, ident, f"{ident} names goal {row['goal']!r}, which has no row in goals.tsv; it reads as unassigned; "
+                                          + (by_hand or f"run ticket set {ident} --goal G<n> or --no-goal")))
     return Label(kind, goal)
 
 
-def read_labels(restaurant):
-    """The one reader of the kind and goal cells of rail.tsv and dishes.tsv, and of goals.tsv. It writes nothing.
+def read_labels(restaurant, acts_on):
+    """The one reader of the kind and goal cells of rail.tsv and dishes.tsv, and of goals.tsv. It writes nothing to the store.
 
+    It prints one warning line on standard error for each fault of goals.tsv and for each fault of a row in `acts_on`.
+    A command prints a warning once, however many times it reads.
     Call it under the store lock. A goals.tsv that does not exist reads as no goals.
     A row of goals.tsv with an empty id is not a goal. Neither is a row whose id clean changes, which is an id with white
     space at an end or a carriage return in it. Of the other rows of goals.tsv with one id, the first is the goal.
-    The rows with an empty id add one pair to faults between them. So do the rows with one id that are not a goal.
+    The rows with an empty id add one Fault between them. So do the rows with one id that are not a goal.
     A kind cell, a goal cell, and an id of goals.tsv are read as they are in the file, and stored writes each back as it
     is, so a rewrite changes the reading of none that the command did not set.
-    A cell whose value is not legal reads as follows and adds one pair to faults.
+    A cell whose value is not legal reads as follows and adds one Fault.
 
     - A kind that is not one of KINDS reads as no kind.
     - A goal that is not the id of a goal reads as unassigned.
@@ -913,23 +952,18 @@ def read_labels(restaurant):
         else:
             text = (f"goals.tsv has more than one row with id {ident}; the first is the goal and the others are not read; "
                     "remove the others from goals.tsv by hand")
-        faults.append((ident, text))
+        faults.append(Fault("goals.tsv", ident, text))
     held, tickets = in_flight_tickets(restaurant), {}
     for row in restaurant.rows("rail.tsv"):
         frozen = frozen_label(row, held)
-        tickets[row["id"]] = read_label(row, goals, faults, frozen and f"ticket set does not change this cell while {frozen}; "
-                                                                       "correct it in rail.tsv by hand")
-    items = {row["id"]: read_label(row, goals, faults, "no command changes this cell; correct it in dishes.tsv by hand")
+        tickets[row["id"]] = read_label("rail.tsv", row, goals, faults,
+                                        frozen and f"ticket set does not change this cell while {frozen}; correct it in rail.tsv by hand")
+    items = {row["id"]: read_label("dishes.tsv", row, goals, faults, "no command changes this cell; correct it in dishes.tsv by hand")
              for row in restaurant.rows("dishes.tsv")}
+    for fault in faults:
+        if acts_on.covers(fault):
+            restaurant.warn(fault.text)
     return Labels(goals, tickets, items, tuple(faults))
-
-
-def shown_labels(restaurant):
-    """read_labels, and one warning line on standard error for each of its faults."""
-    labels = read_labels(restaurant)
-    for _, text in labels.faults:
-        print(f"brigade: warning: {text}", file=sys.stderr)
-    return labels
 
 
 @dataclass(frozen=True)
@@ -1022,7 +1056,7 @@ def add_goal(restaurant, name, purpose, done, share=""):
     name, purpose, done, share = clean(name), clean(purpose), clean(done), goal_share(share)
     if not (name and purpose and done):
         raise BrigadeError("goal add needs a nonempty --name, --purpose, and --done")
-    for goal in read_labels(restaurant).goals.values():
+    for goal in read_labels(restaurant, GOALS_ONLY).goals.values():
         if goal.state not in CLOSED_GOAL_STATES and same_text(goal.name) == same_text(name):
             raise BrigadeError(f"same name as {goal.id} ({goal.state}); nothing added")
     ident = restaurant.next_id("goals.tsv")
@@ -1050,7 +1084,7 @@ def set_goal(restaurant, ident, name=None, purpose=None, done=None, share=None, 
     A move to done or dropped needs --evidence, and is refused while goal_work finds work under the goal.
     One update call writes every change. It logs a goal row when the state changed.
     """
-    labels = read_labels(restaurant)
+    labels = read_labels(restaurant, EVERY_ROW if state in CLOSED_GOAL_STATES else GOALS_ONLY)
     goal = labels.goals.get(ident)
     if goal is None:
         raise BrigadeError(f"no goal {ident}; run goal list --all to see every goal")
@@ -1195,7 +1229,7 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
         if not kind:
             raise BrigadeError(f"ticket add needs --kind {KIND_CHOICE}")
         if goal is not None:
-            open_goal(read_labels(restaurant), goal)
+            open_goal(read_labels(restaurant, GOALS_ONLY), goal)
         return append_ticket(restaurant, summary, source, ref, priority, paths, decision, kind, goal or "")
 
 
@@ -1698,7 +1732,7 @@ def file_follow_ups(restaurant, name, found, write, tracked):
     Each ticket takes the goal of the report's item, whatever that goal's state, and follow_up_kind of that item's kind.
     """
     restaurant.find("dishes.tsv", name[:-3])
-    label = read_labels(restaurant).items[name[:-3]]
+    label = read_labels(restaurant, ActsOn(items=(name[:-3],))).items[name[:-3]]
     kind = follow_up_kind(label.kind, priority_of({"priority": "", "source": "report"}))
     if found is None:
         return f"reports/{name} has no follow-ups section; nothing added"
@@ -1760,7 +1794,7 @@ def move_ticket(restaurant, ident, to, rails):
     if target_rows is None:
         target_rows = Restaurant(target).rows("rail.tsv")
     # The kind goes with the ticket. The goal stays, because a goal id names a row of this store's goals.tsv only.
-    label = read_labels(restaurant).tickets[ident]
+    label = read_labels(restaurant, ActsOn(tickets=(ident,))).tickets[ident]
     if taken_row(target_rows, handoff) is None:
         restaurant.publish(inbox_file(target, handoff), json.dumps({
             "handoff": handoff, "summary": row["summary"], "source": base_source(row["source"]), "ref": row["ref"],
@@ -1780,23 +1814,22 @@ def take_tickets(restaurant):
             raise BrigadeError(f"{path} is not valid JSON: {error}") from error
         source = handoff["handoff"]
         row = taken_row(restaurant.rows("rail.tsv"), source)
-        unknown = ""
         if row is None:
             rows = restaurant.rows("rail.tsv")
-            kind = handoff.get("kind") or ""
-            if kind not in KINDS:
-                unknown, kind = clean(kind), ""
+            given = handoff.get("kind") or ""
+            kind = given if given in KINDS else ""
             row = {"id": restaurant.next_id("rail.tsv"), "at": now(), "state": "waiting",
                    "source": f"{handoff['source']} (from {source})", "ref": handoff["ref"], "summary": handoff["summary"],
                    **{key: handoff.get(key, "") for key in ("priority", "paths", "decision")}, "kind": kind}
+            if given and not kind:
+                # The warning comes before the write, so a take killed after the write has printed it.
+                restaurant.warn(f"{row['id']} came from {source} with kind {given!r}, which is not one this version knows, "
+                                f"so it has no kind; run ticket set {row['id']} --kind {KIND_CHOICE}")
             restaurant.save_rows("rail.tsv", rows + [row])
-            if unknown:
-                unknown = (f"; kind {unknown} is not one this version knows, so it has no kind; "
-                           f"run ticket set {row['id']} --kind {KIND_CHOICE}")
         if not any(event["kind"] == "ticket" and event["note"] == f"from {source}" for event in restaurant.rows("log.tsv")):
             restaurant.log("ticket", row["id"], "waiting", f"from {source}")
         restaurant.remove(path)
-        lines.append(f"{row['id']} from {source}: {row['summary']}{unknown}")
+        lines.append(f"{row['id']} from {source}: {row['summary']}")
     return lines
 
 
@@ -2297,7 +2330,7 @@ def report(restaurant, write=True):
         if title:
             sections[title].append(event)
     dishes = {row["id"]: row for row in restaurant.rows("dishes.tsv")}
-    labels = shown_labels(restaurant)
+    labels = read_labels(restaurant, EVERY_ROW)
     stamp = now()
     lines = [f"# {meta['restaurant']} report", "", f"Since {since or 'opening'}. {status_line(restaurant)}.", ""]
     for title, items in sections.items():
@@ -2678,7 +2711,7 @@ def startable_lines(standings, meta, running, now):
 
 def startable(restaurant):
     with restaurant.checked():
-        meta, labels = restaurant.meta, shown_labels(restaurant)
+        meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
         tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
     refusals = lease_refusals(meta, tickets, next_dish)
@@ -2687,7 +2720,7 @@ def startable(restaurant):
 
 
 def ticket_lines(restaurant, state, held):
-    labels, lines = shown_labels(restaurant), []
+    labels, lines = read_labels(restaurant, EVERY_ROW), []
     for row in restaurant.rows("rail.tsv"):
         if state and row["state"] != state:
             continue
@@ -2752,16 +2785,12 @@ def fire_label(labels, rail, ids, station, kind, ride_along):
     return Label(found, mine.goal), None
 
 
-def checked_fire_label(restaurant, ids, station, kind, ride_along, warned):
+def checked_fire_label(restaurant, ids, station, kind, ride_along):
     """fire_label on the store as it is now, read under the caller's lock.
 
-    It prints the warning for each fault whose row id is in `ids`, once per text in `warned`.
+    read_labels prints the warnings of goals.tsv and of the tickets in `ids`.
     """
-    labels = read_labels(restaurant)
-    for ident, text in labels.faults:
-        if ident in ids and text not in warned:
-            warned.add(text)
-            print(f"brigade: warning: {text}", file=sys.stderr)
+    labels = read_labels(restaurant, ActsOn(tickets=tuple(ids)))
     rail = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     return fire_label(labels, rail, ids, station, kind, ride_along)
 
@@ -2775,7 +2804,6 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
     The lead ticket's kind cell takes the item's kind in the rewrite that assigns the tickets. No other kind or goal cell
     of a ticket changes, so a ticket that rides along keeps its own.
     """
-    warned = set()
     while True:
         with restaurant.checked():
             restaurant.fence()
@@ -2789,7 +2817,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             if full:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
                 raise BrigadeError(f"nothing fired: {full}")
-            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along, warned)
+            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if refusal:
                 raise BrigadeError(refusal)
         # land.py can wait on the landing database, so the claim runs outside the store lock.
@@ -2807,7 +2835,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             full = None if refusal else workers_full(restaurant)
             label = None
             if not refusal and not full:
-                label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along, warned)
+                label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if label and current == dish:
                 restaurant.append("dishes.tsv", {"id": dish, "at": now(), "state": "in-progress", "station": station,
                                                  "tickets": ",".join(ids), "task": task, "thread": thread,
@@ -4224,7 +4252,7 @@ def command(restaurant, args, contract=None, rails=None):
             return add_goal(restaurant, args.name, args.purpose, args.done, args.share)
         if args.action == "set":
             return set_goal(restaurant, args.id, args.name, args.purpose, args.done, args.share, args.state, args.evidence)
-        labels = shown_labels(restaurant)
+        labels = read_labels(restaurant, EVERY_ROW)
         return goal_lines(labels, count_labels(restaurant, labels), args.all)
 
     if args.command == "ticket":
@@ -4267,7 +4295,7 @@ def command(restaurant, args, contract=None, rails=None):
             changes["kind"] = args.kind
             said.append(f"kind {args.kind}")
         if args.goal is not None:
-            changes["goal"] = open_goal(read_labels(restaurant), args.goal).id
+            changes["goal"] = open_goal(read_labels(restaurant, GOALS_ONLY), args.goal).id
             said.append(f"goal {args.goal}")
         if args.no_goal:
             changes["goal"] = ""
@@ -4406,7 +4434,7 @@ def command(restaurant, args, contract=None, rails=None):
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
         if not is_admin(meta):
             lines.append(workers_line(meta, running_workers(restaurant)))
-        labels = shown_labels(restaurant)
+        labels = read_labels(restaurant, EVERY_ROW)
         lines += status_label_lines(labels, count_labels(restaurant, labels))
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")

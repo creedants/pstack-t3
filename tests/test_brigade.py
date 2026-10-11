@@ -7254,7 +7254,7 @@ class BrigadeTest(unittest.TestCase):
         code, out, err = self.run_raw("goal", "list")
         self.assertEqual((code, err), (0, warning))
         self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
-        self.assertEqual(self.goal("activity view", ok=False), "brigade: same name as G1 (open); nothing added")
+        self.assertEqual(self.goal("activity view", ok=False), warning + "brigade: same name as G1 (open); nothing added")
         self.assertEqual(self.brigade("goal", "set", "G1", "--state", "open"), "G1 open")
         self.assertEqual(self.table_row(self.at, "goals.tsv", "G1")["state"], "open")
         self.assertEqual(self.run_raw("goal", "list")[2], "")
@@ -7586,7 +7586,9 @@ class BrigadeTest(unittest.TestCase):
         self.two_goals()
         self.copy_goal_row("", "no id")
         before = self.store_files()
-        self.assertEqual(self.brigade("goal", "set", "", "--name", "x", ok=False), "brigade: no goal ; run goal list --all to see every goal")
+        self.assertEqual(self.brigade("goal", "set", "", "--name", "x", ok=False),
+                         "brigade: warning: goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand\n"
+                         "brigade: no goal ; run goal list --all to see every goal")
         self.assertEqual(self.store_files(), before)
         self.assertEqual(self.brigade("goal", "add", "--name", "third", "--purpose", "p", "--done", "d"), "G3")
 
@@ -7698,6 +7700,94 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.raw_cells("rail.tsv", "T1", "kind", "goal"), (b"fix", b"G1\r"))
         code, out, err = self.run_raw("status")
         self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
+
+    def test_ticket_add_goal_and_ticket_set_goal_refuse_an_id_whose_goals_tsv_row_has_a_space_at_each_end_warn_of_the_row_and_change_no_file(self):
+        self.open()
+        self.goal()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.hand_edit("goals.tsv", "G1", id=" G1 ")
+        before = self.store_files()
+        warning = f"brigade: warning: {self.PADDED_GOAL_ROW}\n"
+        for goal in (" G1 ", "G1"):
+            with self.subTest(goal=goal):
+                refusal = warning + f"brigade: no goal {goal}; run goal list --all to see every goal\n"
+                self.assertEqual(self.run_raw("ticket", "add", "--summary", "Fix bug", "--kind", "fix", "--goal", goal), (1, "", refusal))
+                self.assertEqual(self.run_raw("ticket", "set", "T1", "--goal", goal), (1, "", refusal))
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_of_a_ticket_whose_goal_cell_and_whose_goals_tsv_row_id_are_the_same_padded_text_warns_of_both_and_starts_an_unassigned_item(self):
+        self.open()
+        self.goal()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.hand_edit("goals.tsv", "G1", id=" G1 ")
+        self.hand_edit("rail.tsv", "T1", goal=" G1 ")
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"),
+                         (0, "D1\n", f"brigade: warning: {self.PADDED_GOAL_ROW}\n"
+                                     f"brigade: warning: T1 names goal ' G1 ', {self.NO_GOAL_ROW}; "
+                                     "run ticket set T1 --goal G<n> or --no-goal\n"))
+        self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"fix", b""))
+        self.assertEqual(self.raw_cells("rail.tsv", "T1", "state", "kind", "goal"), (b"assigned", b"fix", b" G1 "))
+        self.assertEqual(self.raw_cells("goals.tsv", " G1 ", "id"), (b" G1 ",))
+
+    def test_ticket_add_goal_ticket_set_goal_and_fire_warn_of_a_goals_tsv_row_whose_id_an_earlier_row_has(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.copy_goal_row("G1", "second")
+        warning = ("brigade: warning: goals.tsv has more than one row with id G1; the first is the goal and the others are not read; "
+                   "remove the others from goals.tsv by hand\n")
+        self.assertEqual(self.run_raw("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1"), (0, "T2\n", warning))
+        self.assertEqual(self.run_raw("ticket", "set", "T1", "--goal", "G1"), (0, "T1 goal G1\n", warning))
+        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"), (0, "D1\n", warning))
+        self.assertEqual((self.label("dishes.tsv", "D1"), self.label("rail.tsv", "T2")), (("fix", "G1"), ("fix", "G1")))
+
+    def item_with_two_bad_cells(self):
+        """D1 in flight with a kind cell and a goal cell that are not legal, and its ticket T1 with a bad kind cell. Returns D1's warnings."""
+        self.fired_bug_fix()
+        self.hand_edit("dishes.tsv", "D1", kind="chore", goal="G9")
+        self.hand_edit("rail.tsv", "T1", kind="chore")
+        by_hand = "no command changes this cell; correct it in dishes.tsv by hand"
+        return (f"brigade: warning: D1 has kind 'chore', {self.NOT_A_KIND}; {by_hand}\n"
+                f"brigade: warning: D1 names goal 'G9', {self.NO_GOAL_ROW}; {by_hand}\n")
+
+    def test_ticket_add_from_report_of_an_item_with_a_bad_kind_cell_and_a_bad_goal_cell_warns_of_both_and_files_a_ticket_with_no_kind_and_no_goal(self):
+        warnings = self.item_with_two_bad_cells()
+        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
+        self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md"),
+                         (0, "T2 added from perf/reports/D1.md#1: Tidy guide.\n", warnings))
+        self.assertEqual(self.raw_cells("rail.tsv", "T2", "state", "kind", "goal"), (b"waiting", b"", b""))
+        self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"chore", b"G9"))
+
+    def test_ticket_add_from_report_dry_run_prints_the_same_warnings_and_changes_no_file(self):
+        warnings = self.item_with_two_bad_cells()
+        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
+        before = self.store_files()
+        self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
+                         (0, "would add from perf/reports/D1.md#1: Tidy guide.\n", warnings))
+        self.assertEqual(self.store_files(), before)
+
+    def test_goal_add_and_goal_set_warn_of_each_bad_goals_tsv_row_and_of_no_ticket(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        self.hand_edit("rail.tsv", "T1", kind="chore", goal="G9")
+        self.hand_edit("goals.tsv", "G2", state="finished")
+        self.copy_goal_row("", "no id")
+        warnings = ("brigade: warning: G2 has state 'finished', which is not open, paused, done, or dropped; it reads as open; "
+                    "run goal set G2 --state <state>\n"
+                    "brigade: warning: goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand\n")
+        self.assertEqual(self.run_raw("goal", "add", "--name", "third", "--purpose", "p", "--done", "d"), (0, "G3\n", warnings))
+        self.assertEqual(self.run_raw("goal", "set", "G1", "--name", "renamed"), (0, "G1 name renamed\n", warnings))
+        self.assertEqual(self.run_raw("goal", "set", "G1", "--state", "paused"), (0, "G1 paused\n", warnings))
+        self.assertEqual(self.raw_cells("rail.tsv", "T1", "kind", "goal"), (b"chore", b"G9"))
+
+    def test_goal_set_state_done_warns_of_a_waiting_ticket_whose_goal_cell_is_that_goals_id_padded(self):
+        self.two_goals()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.hand_edit("rail.tsv", "T1", goal=" G1 ")
+        self.assertEqual(self.run_raw("goal", "set", "G2", "--state", "paused"), (0, "G2 paused\n", ""))
+        self.assertEqual(self.run_raw("goal", "set", "G1", "--state", "done", "--evidence", "shipped"),
+                         (0, "G1 done\n", f"brigade: warning: T1 names goal ' G1 ', {self.NO_GOAL_ROW}; "
+                                          "run ticket set T1 --goal G<n> or --no-goal\n"))
+        self.assertEqual(self.raw_cells("rail.tsv", "T1", "state", "goal"), (b"waiting", b" G1 "))
 
     def test_a_ticket_and_an_item_that_name_a_goal_with_no_row_are_warned_of_and_count_as_unassigned(self):
         self.two_goals()
@@ -8257,16 +8347,26 @@ class HandoffTest(StoresTest):
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
 
-    def take_handoff(self, **extra):
-        """engine takes a handoff file that holds the seven keys from before kinds, and `extra`."""
+    def handed(self, *extras):
+        """engine's inbox holds one handoff file per dict, from core's T1 on. Each holds the seven keys from before kinds, and that dict."""
         self.open("core")
         self.open("engine")
         inbox = self.dir("engine") / "inbox"
         inbox.mkdir()
-        (inbox / "app~core~T1.json").write_text(json.dumps(
-            {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "user", "ref": "",
-             "priority": "low", "paths": "docs", "decision": "", **extra}))
+        for number, extra in enumerate(extras, 1):
+            (inbox / f"app~core~T{number}.json").write_text(json.dumps(
+                {"handoff": f"app/core/T{number}", "summary": "Tidy the guide", "source": "user", "ref": "",
+                 "priority": "low", "paths": "docs", "decision": "", **extra}))
+
+    def take_handoff(self, **extra):
+        """engine takes a handoff file that holds the seven keys from before kinds, and `extra`."""
+        self.handed(extra)
         return self.brigade("engine", "ticket", "take")
+
+    def unknown_kind(self, ident, quoted):
+        """The warning of a take for the ticket `ident` whose handoff kind, in quotes, is `quoted`."""
+        return (f"brigade: warning: {ident} came from app/core/{ident} with kind {quoted}, which is not one this version knows, "
+                f"so it has no kind; run ticket set {ident} --kind <feature|fix|polish|upkeep|study>\n")
 
     def test_ticket_take_files_a_handoff_with_no_kind_key_as_a_ticket_with_no_kind_and_no_goal(self):
         self.assertEqual(self.take_handoff(), "T1 from app/core/T1: Tidy the guide")
@@ -8277,12 +8377,49 @@ class HandoffTest(StoresTest):
         self.assertEqual(self.take_handoff(kind="upkeep"), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["upkeep", ""])
 
-    def test_ticket_take_files_a_handoff_with_a_kind_that_is_none_of_the_five_as_a_ticket_with_no_kind_and_says_so(self):
-        self.assertEqual(self.take_handoff(kind="chore"),
-                         "T1 from app/core/T1: Tidy the guide; kind chore is not one this version knows, so it has no kind; "
-                         "run ticket set T1 --kind <feature|fix|polish|upkeep|study>")
+    def test_ticket_take_files_a_handoff_with_a_kind_that_is_none_of_the_five_as_a_ticket_with_no_kind_and_warns_on_standard_error(self):
+        self.handed({"kind": "chore"})
+        took = self.run_brigade("engine", "ticket", "take")
+        self.assertEqual((took.returncode, took.stdout, took.stderr),
+                         (0, "T1 from app/core/T1: Tidy the guide\n",
+                          "brigade: warning: T1 came from app/core/T1 with kind 'chore', which is not one this version knows, "
+                          "so it has no kind; run ticket set T1 --kind <feature|fix|polish|upkeep|study>\n"))
         self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
-        self.assertEqual(self.brigade("engine", "ticket", "take"), "nothing handed to you")
+        again = self.run_brigade("engine", "ticket", "take")
+        self.assertEqual((again.returncode, again.stdout, again.stderr), (0, "nothing handed to you\n", ""))
+
+    def test_inbox_take_warns_on_standard_error_of_a_handoff_kind_that_is_a_padded_fix(self):
+        self.handed({"kind": " fix "})
+        took = self.run_brigade("engine", "inbox", "take")
+        self.assertEqual((took.returncode, took.stdout, took.stderr),
+                         (0, "T1 from app/core/T1: Tidy the guide\n", self.unknown_kind("T1", "' fix '")))
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
+
+    def test_a_take_of_two_handoffs_with_unknown_kinds_prints_one_warning_for_each(self):
+        self.handed({"kind": "chore"}, {"kind": "chore"})
+        took = self.run_brigade("engine", "ticket", "take")
+        self.assertEqual((took.returncode, took.stdout, took.stderr),
+                         (0, "T1 from app/core/T1: Tidy the guide\nT2 from app/core/T2: Tidy the guide\n",
+                          self.unknown_kind("T1", "'chore'") + self.unknown_kind("T2", "'chore'")))
+        self.assertEqual([row[10:] for row in self.rows("engine", "rail.tsv")], [["", ""], ["", ""]])
+
+    def test_ticket_move_of_a_ticket_with_a_bad_kind_cell_and_a_bad_goal_cell_warns_of_both_on_standard_error_and_again_on_a_second_move(self):
+        self.open("core")
+        self.open("engine")
+        self.brigade("core", "ticket", "add", "--summary", "Tidy the guide", "--kind", "polish")
+        rail = self.dir("core") / "rail.tsv"
+        rail.write_text(rail.read_text().replace("\tpolish\t\n", "\tchore\tG9\n"))
+        by_hand = "ticket set does not change this cell while T1 is moved; correct it in rail.tsv by hand\n"
+        said = (0, "T1 moved to engine; no thread recorded for engine\n",
+                "brigade: warning: T1 has kind 'chore', which is not feature, fix, polish, upkeep, or study; it reads as no kind; " + by_hand
+                + "brigade: warning: T1 names goal 'G9', which has no row in goals.tsv; it reads as unassigned; " + by_hand)
+        for _ in range(2):
+            moved = self.run_brigade("core", "ticket", "move", "T1", "--to", "engine")
+            self.assertEqual((moved.returncode, moved.stdout, moved.stderr), said)
+        self.assertEqual(self.rows("core", "rail.tsv")[0][10:], ["chore", "G9"])
+        self.assertEqual(json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()),
+                         {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "user", "ref": "",
+                          "priority": "", "paths": "", "decision": ""})
 
     def test_ticket_take_files_a_handoff_whose_kind_is_empty_and_one_whose_kind_is_null_as_tickets_with_no_kind(self):
         self.open("core")
