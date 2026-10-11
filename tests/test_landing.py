@@ -4116,18 +4116,18 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(self.contest("--settle", "C1", "--first", "engine/D3", ok=False),
                              "land: C1 cannot put engine/D3 first: docs/D7 has E1 awaiting-merge")
 
-    def configure_owner(self):
-        sh("git", "config", "user.name", "Owner", cwd=self.work)
-        sh("git", "config", "user.email", "owner@example.com", cwd=self.work)
+    def configure_owner(self, name="Owner", email="owner@example.com"):
+        sh("git", "config", "user.name", name, cwd=self.work)
+        sh("git", "config", "user.email", email, cwd=self.work)
 
-    def foreign_bounce(self, sha, author="t <t@t>"):
-        return (f"bounced E1 (r/D1): commit {sha[:12]} has author {author}, not the configured Owner <owner@example.com>; "
+    def foreign_bounce(self, sha, author="t <t@t>", configured="Owner <owner@example.com>"):
+        return (f"bounced E1 (r/D1): commit {sha[:12]} has author {author}, not the configured {configured}; "
                 "recommit it as the configured author")
 
-    def land_one_by(self, author, *message, body=None):
-        """Submit one commit by this author under the Owner identity in push mode, then run land. Returns the commit id and what land printed."""
+    def land_one_by(self, author, *message, body=None, owner=("Owner", "owner@example.com")):
+        """Submit one commit by this author under the owner identity in push mode, then run land. Returns the commit id and what land printed."""
         self.init(mode="push")
-        self.configure_owner()
+        self.configure_owner(*owner)
         self.worker("w1", {"a.txt": "agent\n"})
         sh("git", "commit", "-q", "--amend", "--author", author, *message, cwd=self.base / "w1")
         sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w1")
@@ -4174,6 +4174,16 @@ os.execv({real!r}, [{real!r}, *args])
     def test_an_author_with_the_configured_email_and_another_name_bounces(self):
         sha, printed = self.land_one_by("Other <owner@example.com>", "-m", "w1")
         self.assertEqual(printed, self.foreign_bounce(sha, "Other <owner@example.com>"))
+
+    def test_a_configured_name_with_surrounding_spaces_bounces_an_author_without_them(self):
+        sha, printed = self.land_one_by("Owner <owner@example.com>", "-m", "w1", owner=(" Owner ", "owner@example.com"))
+        self.assertEqual(printed, self.foreign_bounce(sha, "Owner <owner@example.com>", " Owner  <owner@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_a_configured_email_with_surrounding_spaces_bounces_an_author_without_them(self):
+        sha, printed = self.land_one_by("Owner <owner@example.com>", "-m", "w1", owner=("Owner", " owner@example.com "))
+        self.assertEqual(printed, self.foreign_bounce(sha, "Owner <owner@example.com>", "Owner < owner@example.com >"))
+        self.assertEqual(self.origin_log(), ["init"])
 
     def test_without_a_configured_identity_an_entry_by_any_author_lands(self):
         self.init(mode="push")
