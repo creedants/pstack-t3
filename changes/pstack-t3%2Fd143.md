@@ -1,0 +1,1 @@
+- The setup skill tells the user to set at least two seats of different model families for `review backups`.
