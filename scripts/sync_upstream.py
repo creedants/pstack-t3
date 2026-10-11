@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,7 @@ UPSTREAM = ROOT / "upstream.json"
 
 Change = Literal["changed", "added", "removed"]
 Handling = Literal["overridden", "dropped", "unchanged", "not-shipped"]
-Kind = Literal["clean", "same", "conflict", "deleted", "binary", "no-base"]
+Kind = Literal["clean", "same", "conflict", "markers", "deleted", "binary", "no-base"]
 
 STATUS = {"M": "changed", "T": "changed", "A": "added", "D": "removed"}
 HANDLING_TEXT = {
@@ -45,6 +46,7 @@ MERGE_DETAIL = {
     "clean": "merged",
     "same": "the merge changes nothing, left as is",
     "conflict": "left as is, re-port by hand",
+    "markers": "the merge result holds a line starting with <<<<<<<, >>>>>>>, or |||||||, left as is, re-port by hand",
     "deleted": "upstream deleted its file, left as is",
     "binary": "a NUL byte in one of the three texts, left as is, re-port by hand",
     "no-base": "no old upstream text that matches the lock, left as is, re-port by hand",
@@ -55,6 +57,8 @@ t3/overrides.lock.json is not refreshed.
 A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.
 Once the merges are written, review each merged override and re-port each override whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
 """
+# No "=======" here. That line also underlines a Markdown heading, and git writes it only between a "<<<<<<<" line and a ">>>>>>>" line.
+MARKER_LINE = re.compile(rb"^(?:<{7}|>{7}|\|{7})", re.MULTILINE)
 FIXED_COPIES = {
     "pstack-runtime/SKILL.md": "runtime.md",
     "pstack-runtime/scripts/roles.py": "scripts/roles.py",
@@ -237,7 +241,9 @@ def merge_outcome(rel, current, base, other, digest):
     merged = merge_file(current, base, other)
     if merged is None:
         return Outcome(rel, "conflict")
-    return Outcome(rel, "same") if merged == mine else Outcome(rel, "clean", merged)
+    if merged == mine:
+        return Outcome(rel, "same")
+    return Outcome(rel, "markers") if MARKER_LINE.search(merged) else Outcome(rel, "clean", merged)
 
 
 def plan_merges(overrides, old_skills, new_skills, lock):

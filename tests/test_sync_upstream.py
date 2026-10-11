@@ -94,7 +94,9 @@ PORTED = "one t3\ntwo\nthree\nfour\nfive\nsix\nseven\n"
 NEW = "one\ntwo\nthree\nfour\nfive\nsix\nseven upstream\n"
 MERGED = "one t3\ntwo\nthree\nfour\nfive\nsix\nseven upstream\n"
 CLASHING = "one upstream\ntwo\nthree\nfour\nfive\nsix\nseven\n"
+BLOCK = "<<<<<<< left\nleft\n=======\nright\n>>>>>>> right\n"
 NO_ROWS = "no override's upstream file changed"
+MARKERS = "the merge result holds a line starting with <<<<<<<, >>>>>>>, or |||||||, left as is, re-port by hand"
 FOOTER = [
     "t3/overrides.lock.json is not refreshed.",
     "A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.",
@@ -530,6 +532,62 @@ class MergeTest(CheckoutCase):
             for line in data.splitlines():
                 with self.subTest(path=rel, line=line):
                     self.assertFalse(line.startswith((b"<<<<<<<", b">>>>>>>")) or line == b"=======")
+
+    def test_an_upstream_marker_block_that_git_merges_cleanly_is_left_and_named_beside_a_conflict(self):
+        before = snapshot(self.root / "t3")
+        lines = self.merge({"pstack/skills/alpha/SKILL.md": CLASHING, "pstack/skills/alpha/both.md": NEW + BLOCK})
+        self.assertEqual(
+            lines[:2],
+            [
+                "conflict  t3/overrides/alpha/SKILL.md  left as is, re-port by hand",
+                f"markers   t3/overrides/alpha/both.md  {MARKERS}",
+            ],
+        )
+        self.assertEqual(lines[-3:], FOOTER)
+        self.assertEqual([self.override(rel) for rel in OVERRIDDEN], [PORTED.encode()] * 3)
+        self.assertEqual(snapshot(self.root / "t3"), before)
+        self.assertEqual(self.vendored("alpha/both.md"), (NEW + BLOCK).encode())
+
+    def test_a_dry_run_names_a_merge_result_that_holds_a_marker_line_and_writes_nothing(self):
+        head = commit(
+            self.upstream, {"pstack/skills/alpha/SKILL.md": CLASHING, "pstack/skills/alpha/both.md": NEW + BLOCK}
+        )
+        before = snapshot(self.root)
+        result = self.sync("--merge", "--dry-run")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                f"vendor/pstack: {self.pinned[:12]} -> {head[:12]} (1.0.0), dry run, nothing written in the checkout",
+                "conflict  t3/overrides/alpha/SKILL.md  left as is, re-port by hand",
+                f"markers   t3/overrides/alpha/both.md  {MARKERS}",
+                *FOOTER,
+            ],
+        )
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_a_line_that_starts_with_any_of_the_three_marker_shapes_leaves_the_override_and_names_it(self):
+        lines = self.merge(
+            {
+                "pstack/skills/alpha/SKILL.md": NEW + "<<<<<<< left\n",
+                "pstack/skills/alpha/both.md": NEW + "||||||| base\n",
+                "pstack/skills/gone/kept.md": NEW + ">>>>>>> right\n",
+            }
+        )
+        self.assertEqual(lines[:3], [f"markers   t3/overrides/{rel}  {MARKERS}" for rel in OVERRIDDEN])
+        self.assertEqual([self.override(rel) for rel in OVERRIDDEN], [PORTED.encode()] * 3)
+
+    def test_a_line_of_seven_equals_signs_with_no_marker_line_merges(self):
+        lines = self.merge({"pstack/skills/alpha/SKILL.md": NEW + "Heading\n=======\n"})
+        self.assertEqual(lines[0], "clean     t3/overrides/alpha/SKILL.md  merged")
+        self.assertEqual(self.override("alpha/SKILL.md"), (MERGED + "Heading\n=======\n").encode())
+
+    def test_a_marker_line_the_override_already_held_leaves_the_override_and_names_it(self):
+        held = PORTED.replace("two\n", "<<<<<<< kept\ntwo\n")
+        (self.root / "t3/overrides/alpha/SKILL.md").write_text(held)
+        lines = self.merge({"pstack/skills/alpha/SKILL.md": NEW})
+        self.assertEqual(lines[0], f"markers   t3/overrides/alpha/SKILL.md  {MARKERS}")
+        self.assertEqual(self.override("alpha/SKILL.md"), held.encode())
 
     def test_an_override_whose_upstream_file_was_deleted_is_left_and_named(self):
         lines = self.merge({"pstack/skills/gone/kept.md": None})
