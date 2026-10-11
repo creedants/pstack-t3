@@ -528,7 +528,7 @@ class MergeTest(CheckoutCase):
             [
                 "clean     t3/overrides/alpha/SKILL.md  merged",
                 "override drift:",
-                "  alpha/SKILL.md: upstream changed since this override was written; re-port it, then --update-lock",
+                "  alpha/SKILL.md: upstream changed since this override was written; review or re-port it, then --update-lock",
                 "",
                 *FOOTER,
             ],
@@ -922,7 +922,7 @@ class MergeTest(CheckoutCase):
             [
                 "clean     t3/overrides/alpha/SKILL.md  merged",
                 "override drift:",
-                "  alpha/SKILL.md: upstream changed since this override was written; re-port it, then --update-lock",
+                "  alpha/SKILL.md: upstream changed since this override was written; review or re-port it, then --update-lock",
                 "",
                 *FOOTER,
             ],

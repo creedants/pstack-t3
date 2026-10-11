@@ -1220,6 +1220,86 @@ class BuildTest(unittest.TestCase):
             self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
         self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
 
+    def test_vendor_playbook_entries_match_playbook_files(self):
+        import catalog
+        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "vendor/pstack/skills")}
+        self.assertEqual(resolved, PLAYBOOK_FILES)
+        self.assertEqual(catalog.missing_playbooks(ROOT / "vendor/pstack/skills"), [])
+
+    def test_a_skill_with_no_playbooks_heading_returns_nothing(self):
+        import catalog
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "poteto-mode"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: poteto-mode\ndescription: d\n---\n\n# Poteto mode\n")
+            self.assertEqual(catalog.playbook_entries(root), [])
+            self.assertEqual(catalog.missing_playbooks(root), [])
+
+    def test_playbooks_extra_does_not_open_the_section(self):
+        import catalog
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "poteto-mode"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: poteto-mode\ndescription: d\n---\n\n## Playbooks extra\n- **No such playbook** Nothing.\n")
+            self.assertEqual(catalog.playbook_entries(root), [])
+            self.assertEqual(catalog.missing_playbooks(root), [])
+
+    def test_the_playbooks_section_keeps_catalog_bullets_and_reports_the_other_list_markers(self):
+        import catalog
+        front = "---\nname: poteto-mode\ndescription: d\n---\n"
+        body = [
+            "## Before",
+            "- **Ignored.** Because this is before Playbooks.",
+            "## Playbooks",
+            "This is prose.",
+            "- **No such playbook** Nothing.",
+            "* **Star.** Nothing.",
+            "  - **Indented.** Nothing.",
+            "- **Empty.**",
+            "+ **Plus.** Nothing.",
+            "- **Bug fix.** File: `playbooks/bug-fix.md`.",
+            "- **No such playbook.** Nothing.",
+            "-not a bullet",
+            "1. **Ordered.** Nothing.",
+            "### Nested",
+            "- **Nested title.** File: `playbooks/bug-fix.md`.",
+            "## Later",
+            "- **No such playbook.** Nothing.",
+            "## Playbooks",
+            "- **Second.** Nothing.",
+        ]
+        text = front + "\n".join(body) + "\n"
+        lines = text.splitlines()
+        bad = [
+            "- **No such playbook** Nothing.",
+            "* **Star.** Nothing.",
+            "- **Empty.**",
+            "+ **Plus.** Nothing.",
+        ]
+        expected = [
+            f'poteto-mode/SKILL.md:{lines.index(bullet) + 1}: playbook bullet does not match "- **Title.** summary": {bullet.strip()[:120]}'
+            for bullet in bad
+        ]
+        expected.append('poteto-mode/SKILL.md: playbook "No such playbook" resolves to playbooks/no-such-playbook.md, which does not exist')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "poteto-mode"
+            (skill / "playbooks").mkdir(parents=True)
+            (skill / "SKILL.md").write_text(text)
+            (skill / "playbooks/bug-fix.md").write_text("ok\n")
+            self.assertEqual(
+                catalog.playbook_entries(root),
+                [
+                    ("Bug fix", "playbooks/bug-fix.md", ""),
+                    ("No such playbook", "playbooks/no-such-playbook.md", "Nothing."),
+                    ("Nested title", "playbooks/bug-fix.md", ""),
+                ],
+            )
+            self.assertEqual(catalog.missing_playbooks(root), expected)
+            self.assertEqual(check.check_tree(root), expected)
+
     def test_build_fails_before_the_swap_on_a_playbook_bullet_whose_file_does_not_exist(self):
         import build
         from unittest import mock
@@ -1233,13 +1313,26 @@ class BuildTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "skills"
             with mock.patch.object(build, "render", render_with_a_stray_bullet):
-                with self.assertRaises(SystemExit) as failure:
+                with self.assertRaises(SystemExit):
                     build.build(out, skip_lock=True)
-            self.assertIn(
-                'poteto-mode/SKILL.md: playbook "No such playbook" resolves to playbooks/no-such-playbook.md, which does not exist',
-                str(failure.exception),
-            )
             self.assertFalse(out.exists())
+
+    def test_build_accepts_an_indented_note_under_a_playbook_bullet(self):
+        import build
+        from unittest import mock
+        real = build.render
+        note = "    - Choose this when the defect is already reproduced.\n"
+
+        def render_with_an_indented_note(destination):
+            real(destination)
+            with (destination / "poteto-mode/SKILL.md").open("a") as skill:
+                skill.write(note)
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "skills"
+            with mock.patch.object(build, "render", render_with_an_indented_note):
+                self.assertEqual(build.build(out, skip_lock=True), out)
+            self.assertIn(note, (out / "poteto-mode/SKILL.md").read_text())
 
     def test_check_flags_cursor_leftovers(self):
         with tempfile.TemporaryDirectory() as directory:

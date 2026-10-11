@@ -31,20 +31,41 @@ def kebab(title):
     return re.sub(r"[^a-z0-9 -]", "", title.lower()).replace(" ", "-")
 
 
-def playbook_entries(skills):
-    """Return one (title, file, summary) tuple per "- **Title.** summary" line after poteto-mode's "## Playbooks" heading, in list order.
+def _scan_playbooks(text):
+    entries = []
+    unparsed = []
+    in_section = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.startswith("## ") and not line.startswith("###"):
+            if in_section:
+                break
+            if line[3:].strip() == "Playbooks":
+                in_section = True
+            continue
+        if not in_section:
+            continue
+        match = BULLET.fullmatch(line)
+        if match:
+            title, summary = match.group(1), match.group(2)
+            given = GIVEN_FILE.search(summary)
+            file = given.group(1) if given else f"playbooks/{kebab(title)}.md"
+            entries.append((title, file, GIVEN_FILE.sub("", summary).strip()))
+            continue
+        if line.startswith(("- ", "* ", "+ ")):
+            unparsed.append(
+                f'poteto-mode/SKILL.md:{number}: playbook bullet does not match "- **Title.** summary": {line.strip()[:120]}'
+            )
+    return entries, unparsed
 
+
+def playbook_entries(skills):
+    """Return one (title, file, summary) tuple per "- **Title.** summary" line in poteto-mode's Playbooks section, in list order.
+
+    The section starts on the line after the first level-two heading whose text is Playbooks and ends before the next level-two heading. A level-three heading does not end it.
     file is the skill-relative path GIVEN_FILE finds at the end of the bullet, otherwise playbooks/<kebab(title)>.md.
     summary is the bullet's text after the title with the GIVEN_FILE match removed, stripped of surrounding whitespace.
     """
-    text = (skills / "poteto-mode/SKILL.md").read_text()
-    section = text.split("## Playbooks", 1)[1]
-    entries = []
-    for title, summary in BULLET.findall(section):
-        given = GIVEN_FILE.search(summary)
-        file = given.group(1) if given else f"playbooks/{kebab(title)}.md"
-        entries.append((title, file, GIVEN_FILE.sub("", summary).strip()))
-    return entries
+    return _scan_playbooks((skills / "poteto-mode/SKILL.md").read_text())[0]
 
 
 def playbooks(skills):
@@ -52,11 +73,13 @@ def playbooks(skills):
 
 
 def missing_playbooks(skills):
-    return [
+    entries, unparsed = _scan_playbooks((skills / "poteto-mode/SKILL.md").read_text())
+    missing = [
         f'poteto-mode/SKILL.md: playbook "{title}" resolves to {file}, which does not exist'
-        for title, file, _ in playbook_entries(skills)
+        for title, file, _ in entries
         if not (skills / "poteto-mode" / file).is_file()
     ]
+    return unparsed + missing
 
 
 def render(skills):

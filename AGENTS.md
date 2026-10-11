@@ -35,10 +35,10 @@ Start from the upstream file and change only what T3 changes. Upstream's rules, 
    - After opening or driving a PR, add the `link_pull_request` step.
 3. Link the runtime by relative path (`../pstack-runtime/SKILL.md` from a SKILL.md, `../../pstack-runtime/SKILL.md` from a playbook) when the step needs it. Do not paste runtime content.
 4. Keep tool names unprefixed (`delegate_task`, not `mcp__t3-code__delegate_task`).
-5. Run `python3 scripts/build.py`. The build fails on Cursor leftovers (see `scripts/check.py`), broken links, bad frontmatter, or override drift.
+5. Run `python3 scripts/build.py`. The build fails on Cursor leftovers (see `scripts/check.py`), broken links, bad frontmatter, a poteto-mode playbook bullet whose file does not exist, or override drift.
 6. Run `python3 scripts/build.py --update-lock` only after reviewing that the override matches the current upstream file.
 
-`python3 scripts/sync_upstream.py --merge` syncs and, for each override whose upstream file changed, either writes a clean three-way merge of it or leaves the override as it is and names it. A clean merge can carry a new Cursor mechanism in upstream's lines, so a merged override still needs the review in step 6 and the build's Cursor-leftover check, which `python3 scripts/build.py --skip-lock` reaches while the lock is stale.
+`python3 scripts/sync_upstream.py --merge` syncs and, for each override whose upstream file changed, either writes a clean three-way merge of it or leaves the override as it is and names it. Add `--conflicts <dir>` to also write git's conflict-marked merge of each override whose merge conflicts under `<dir>`, a path outside the checkout that does not exist yet. A clean merge can carry a new Cursor mechanism in upstream's lines, so a merged override still needs the review in step 6 and the build's Cursor-leftover check, which `python3 scripts/build.py --skip-lock` reaches while the lock is stale.
 
 ## Writing style
 
