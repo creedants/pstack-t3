@@ -1004,6 +1004,19 @@ class FilterTest(unittest.TestCase):
         kept = "bump react@18.2.0 for @handle on user@host at a@b and @example.test and \"jd\"@example.test and (jd)@example.test"
         self.assertEqual(self.clean(kept), kept)
 
+    def test_clean_removes_a_request_name_with_a_hyphen_as_a_whole_token_in_any_case_and_keeps_a_longer_token_the_token_after_a_slash_that_starts_a_word_and_a_name_with_no_hyphen(self):
+        clean = MOD["Privacy"](requests={"kit-d7-audit-task", "code-review", "queue", "a-b"}).clean
+        self.assertEqual(clean("see kit-d7-audit-task now and KIT-D7-AUDIT-TASK. or x.kit-d7-audit-task, with (code-review) then x_code-review and a-b end"), "see now and or with then and end")
+        self.assertEqual(clean("id=kit%2Dd7%2Daudit%2Dtask and &quot;code-review&quot; and src/code-review end"), "and and end")
+        kept = "Run /code-review today on the queue for kit-d7-audit-task-2 and prekit-d7-audit-taskpost with x=/code-review and (/code-review) or code review and pre-code-review of a-b-c"
+        self.assertEqual(clean(kept), kept)
+        self.assertEqual(MOD["Privacy"]().clean("see kit-d7-audit-task now"), "see kit-d7-audit-task now")
+
+    def test_clean_removes_a_request_name_with_a_hyphen_and_an_underscore_a_dot_or_a_doubled_hyphen_anywhere_in_a_word_when_it_is_4_or_more_characters(self):
+        clean = MOD["Privacy"](requests={"odd_name-1", "v1.2-check", "two--parts", "a-_"}).clean
+        self.assertEqual(clean("see odd_name-1 and preODD_NAME-1post and v1.2-check-2 and odd%5Fname%2D1 and xtwo--partsx end"), "see and and and and end")
+        self.assertEqual(clean("see odd_name and v1.2 check and a-_ end"), "see odd_name and v1.2 check and a-_ end")
+
     def test_clean_removes_an_absolute_path_of_two_or_more_segments_a_home_path_a_drive_path_and_a_file_address_and_keeps_a_relative_path(self):
         gone = ("/pathmarker/notes.md", "/a/b", "/home/someone/x", "(/pathmarker/a)", "x=/pathmarker/a", "a:/pathmarker/a", "/pathmarker//a", "/.config/a", "/~x/a", "/path-marker+1/a", "/pathmarker/a/",
                 "~/x", "~/pathmarker", "~user/pathmarker", "$HOME/pathmarker", "${HOME}/pathmarker", "~\\pathmarker",
@@ -2572,6 +2585,22 @@ class PlantedTest(OutputCase):
         data = self.gone(fixture, request)
         self.assertEqual(([item[4] for item in data["I"]], data["N"]), (["", "", ""], [
             "2 pull request links are not shown. Each is not an https://host/owner/repository/pull/number address, or it holds text this page removes."]))
+
+    def test_slash_command_a_longer_token_and_a_request_name_with_no_hyphen_stay_in_a_summary_and_a_written_title_beside_delegated_tasks_named_code_review_queue_and_kit_d7_audit_task(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D1", summary="Run /code-review on the queue for kit-d7-audit-task-2", thread=worker(1))
+        fixture.thread(worker(1), turns=(("running", 10, None),))
+        for number, request in enumerate(("code-review", "queue", "kit-d7-audit-task")):
+            fixture.thread(delegated(COORDINATOR, request), parent=COORDINATOR, turns=(("running", 9 - number, None),))
+        fixture.thread(delegated(COORDINATOR, "helper-second"), title="/code-review kit-d7-audit-task-2", parent=COORDINATOR, turns=(("running", 5, None),))
+        fixture.write()
+        data, lines = data_of(self.document(clock=fixture.now)), self.out("--text", clock=fixture.now).split("\n")
+        self.assertEqual((data["I"][0][:2], [line[1] for line in data["G"][1][1]]), (
+            ["D1", "Run /code-review on the queue for kit-d7-audit-task-2"], ["code review", "queue", "d7 audit task", "/code-review kit-d7-audit-task-2"]))
+        self.assertEqual([line for line in lines if "queue" in line or "task-2" in line], [
+            "  queue   model-a   running for 8m", "  /code-review kit-d7-audit-task-2   model-a   running for 5m",
+            "  D1   working   Run /code-review on the queue for kit-d7-audit-task-2   1 agent, 10m at work"])
 
     def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_a_model_and_a_written_title(self):
         for number, path in enumerate(("/-secret/notes.txt", "/+secret/notes.txt", "//secret/share/notes.txt")):

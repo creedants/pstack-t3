@@ -36,11 +36,17 @@ Or it starts with a tilde before a slash or a backslash, with a tilde and a name
 A path after an opening quotation mark or a backtick is private text up to the mark that closes it.
 Any other path, and a path with no mark that closes it, is private text to the end of its word and through each next word that holds a slash or a backslash and does not start with a slash.
 
+Private text is also the request name of a delegated task when that name holds a hyphen.
+The request names are the text after the last `delegate-task:` of each identifier this run read, with the identifier's percent escapes decoded once.
+A name that is runs of letters and digits joined by single hyphens is private text only as a whole such run, compared in lower case as an identifier is.
+A longer such run that holds the name is not the name. Neither is the name after a slash that starts the string or follows one of the characters the last path shape above can follow, such as /code-review.
+Any other name with a hyphen is private text anywhere in a word, as read and with its percent escapes decoded once and twice, in each form of 4 or more characters. It is compared as a path this run read is.
+A request name with no hyphen is not private text.
+
 The filter removes a word for no other reason.
 The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py.
 It leaves a word of one segment that starts with a slash, such as /review, unless it holds a path this run read.
 A delegated task's own request name of two or more hyphen-separated parts is split into words for its label.
-The filter looks for that name in other text only when it is a work item's task value and does not read as ordinary words.
 A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped.
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 Different work items can print the same id, summary, state, and link.
@@ -730,6 +736,9 @@ SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?
 LOCAL = re.compile(r"[^\s@<>()\[\]\"',;:&]+\Z")
 LOCAL_CHARS = 64
 DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
+TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
+# The slash that starts a word belongs to its token, so /code-review is not code-review.
+NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
 CLOSES = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
 WORD_END = re.compile(r"\S*")
 NEXT_PATH_WORD = re.compile(r"\s+(?!/)\S*[/\\]\S*")
@@ -853,24 +862,33 @@ class Privacy:
     field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
 
-    def __init__(self, identifiers=(), paths=()):
+    def __init__(self, identifiers=(), paths=(), requests=()):
+        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
+        names holds each request name that is one TOKEN, in lower case. A request name with no hyphen is in neither.
+        """
         index = {}
-        for value, path in (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in paths)):
+        requests = {plain(value) for value in requests if "-" in value}
+        self.names = frozenset(lowered(value) for value in requests if re.fullmatch(TOKEN, value))
+        whole = (*paths, *(value for value in requests if lowered(value) not in self.names))
+        for value, exact in (*((plain(value), False) for value in identifiers), *((plain(value), True) for value in whole)):
             for _ in range(3):
                 low = lowered(value)
-                if len(low) >= ANCHOR and low.strip() and (path or not ordinary(value)):
+                if len(low) >= ANCHOR and low.strip() and (exact or not ordinary(value)):
                     index.setdefault(low[:ANCHOR], set()).add(low)
                 value = unescaped(value)[0]
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
         self.cache = {}
 
     def found(self, text):
-        """The spans of text that hold an indexed identifier or path in any case, or text of a private shape."""
+        """The spans of text that hold an indexed form in any case, a token that is one of names in any case, or text of a private shape."""
         low = lowered(text)
         for at in range(len(low) - ANCHOR + 1 if self.index else 0):
             for form in self.index.get(low[at:at + ANCHOR], ()):
                 if low.startswith(form, at):
                     yield at, at + len(form)
+        for match in NAME.finditer(low) if self.names else ():
+            if match.group() in self.names:
+                yield match.span()
         covered = 0
         for match in SHAPES.finditer(text):
             if match.start() >= covered:
@@ -938,6 +956,7 @@ class Privacy:
 def privacy_of(store, t3, paths=()):
     """The filter for one run. Its identifiers are the thread ids, sub-agent ids, and task values of the store and of T3's rows.
     Its paths are the project root the store records and the given paths.
+    Its request names are the names request_name() reads from those identifiers.
     """
     ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
@@ -945,7 +964,7 @@ def privacy_of(store, t3, paths=()):
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
-    return Privacy(ids, places)
+    return Privacy(ids, places, filter(None, map(request_name, ids)))
 
 
 def short(text, limit):
