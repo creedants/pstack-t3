@@ -553,7 +553,7 @@ executive admin: copy each coordinator's new log rows into this log
 brigade.py [flags] status
 ```
 
-the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present
+the thread line first, then counts, then workers outside the executive admin's store, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to, mode, and owner when present
 
 ## brigade.py close
 

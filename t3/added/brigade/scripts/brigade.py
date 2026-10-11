@@ -131,6 +131,8 @@ SECTIONS = {
     ("dish", "dropped"): "Dropped",
     ("ticket", "dropped"): "Dropped",
 }
+# The report sections whose lines print a kind and can be grouped by goal.
+GROUPED_SECTIONS = tuple(SECTIONS[key] for key in (("dish", "merged"), ("dish", "in-progress"), ("ticket", "waiting")))
 
 MENU = """# Menu: {restaurant}
 
@@ -1060,6 +1062,44 @@ def goal_lines(labels, counted, every):
     if not lines:
         lines.append("no goals" if every else "no open or paused goals")
     return "\n".join([*lines, f"unassigned: {tally_words(counted.goals.get('', Tally()))}"])
+
+
+def label_words(label):
+    """What a ticket line prints for a label. ` fix G1`, ` fix`, ` G1`, or nothing for no kind and no goal."""
+    return "".join(f" {word}" for word in (label.kind, label.goal) if word)
+
+
+def status_label_lines(labels, counted):
+    """Up to three lines of status. The counts by kind, the counts by goal, and the waiting tickets with no kind.
+
+        kinds: feature 1 waiting; fix 1 waiting, 1 in flight; upkeep 1 in flight
+        goals: G1 2 waiting, 1 in flight; G2 paused, 1 in flight; unassigned 2 waiting, 1 in flight
+        untagged: 1
+
+    An entry holds the waiting count and the in flight count that are not 0, and is absent when both are 0.
+    kinds has an entry per kind in KINDS order. An item in flight with no kind is on no line.
+    goals has an entry per goal in file order and then one for unassigned work. A goal that is not open has its state
+    after its id. The line is absent when goals.tsv has no row.
+    A line with no entry is absent, and so is untagged at 0.
+    """
+    def entry(name, tally):
+        found = [f"{len(ids)} {word}" for ids, word in ((tally.waiting, "waiting"), (tally.in_flight, "in flight")) if ids]
+        return [f"{name} {', '.join(found)}"] if found else []
+
+    lines = []
+    kinds = [text for kind in KINDS for text in entry(kind, counted.kinds.get(kind, Tally()))]
+    if kinds:
+        lines.append(f"kinds: {'; '.join(kinds)}")
+    goals = [text for goal in labels.goals.values()
+             for text in entry(goal.id if goal.state == "open" else f"{goal.id} {goal.state},", counted.goals.get(goal.id, Tally()))]
+    if labels.goals:
+        goals += entry("unassigned", counted.goals.get("", Tally()))
+    if goals:
+        lines.append(f"goals: {'; '.join(goals)}")
+    untagged = len(counted.kinds.get("", Tally()).waiting)
+    if untagged:
+        lines.append(f"untagged: {untagged}")
+    return lines
 
 
 def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False,
@@ -2151,6 +2191,33 @@ def unclaimed_reports(restaurant):
     return unclaimed
 
 
+def section_lines(title, items, dishes, labels):
+    """The lines of one report section under its title.
+
+    A line of a section in GROUPED_SECTIONS has the kind of its item or ticket before the id, when it has one.
+    When a line of such a section has a goal, the section prints its lines under one `### <goal id> <goal name>` heading
+    per goal in goals.tsv order, then `### Unassigned`. A heading with no line is absent.
+    """
+    grouped, bullets = title in GROUPED_SECTIONS, []
+    for event in items:
+        of_item = event["kind"] in ("dish", "mode")
+        dish = dishes.get(event["id"], {}) if of_item else {}
+        tickets = f" ({dish['tickets'].replace(',', ', ')})" if dish.get("tickets") else ""
+        pr = f" {dish['pr']}" if dish.get("pr") else ""
+        label = (labels.items if of_item else labels.tickets).get(event["id"], Label())
+        kind = f"{label.kind} " if grouped and label.kind else ""
+        bullets.append((label.goal, f"- {kind}{event['id']}{tickets}: {event['note']}{pr}"))
+    if not grouped or not any(goal for goal, _ in bullets):
+        return [*(text for _, text in bullets), ""]
+    lines = []
+    headings = [*((goal.id, f"### {goal.id} {goal.name}") for goal in labels.goals.values()), ("", "### Unassigned")]
+    for goal, heading in headings:
+        under = [text for found, text in bullets if found == goal]
+        if under:
+            lines += [heading, "", *under, ""]
+    return lines
+
+
 def report(restaurant, write=True):
     meta = restaurant.meta
     since = meta.get("lastReportAt") or ""
@@ -2164,18 +2231,12 @@ def report(restaurant, write=True):
         if title:
             sections[title].append(event)
     dishes = {row["id"]: row for row in restaurant.rows("dishes.tsv")}
+    labels = shown_labels(restaurant)
     stamp = now()
     lines = [f"# {meta['restaurant']} report", "", f"Since {since or 'opening'}. {status_line(restaurant)}.", ""]
     for title, items in sections.items():
-        if not items:
-            continue
-        lines += [f"## {title}", ""]
-        for event in items:
-            dish = dishes.get(event["id"], {}) if event["kind"] in ("dish", "mode") else {}
-            tickets = f" ({dish['tickets'].replace(',', ', ')})" if dish.get("tickets") else ""
-            pr = f" {dish['pr']}" if dish.get("pr") else ""
-            lines.append(f"- {event['id']}{tickets}: {event['note']}{pr}")
-        lines.append("")
+        if items:
+            lines += [f"## {title}", "", *section_lines(title, items, dishes, labels)]
     if is_admin(meta):
         lines += admin_sections(restaurant, since)
     questions = [row for row in restaurant.rows("86.tsv") if row["state"] == "open"]
@@ -2455,6 +2516,7 @@ class Waiting:
     paths: tuple
     decision: bool
     summary: str
+    label: Label = Label()
 
 
 @dataclass(frozen=True)
@@ -2465,11 +2527,11 @@ class Standing:
     overdue: bool
 
 
-def waiting_ticket(row):
+def waiting_ticket(row, label=Label()):
     filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
     if filed.tzinfo is None:
         filed = filed.replace(tzinfo=timezone.utc)
-    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"])
+    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label)
 
 
 def plan(tickets, running, cap, level, refusals, now):
@@ -2542,7 +2604,7 @@ def startable_lines(standings, meta, running, now):
         flag = " (over a week)" if standing.overdue else ""
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
         words = STANDINGS[standing.kind].line_words.format(why=standing.why)
-        lines.append(f"{ticket.id} {ticket.priority}, {age(now - ticket.filed)}{flag}: {words}{paths}")
+        lines.append(f"{ticket.id} {ticket.priority}{label_words(ticket.label)}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
             lines.append(f"  {ticket.summary}")
     return "\n".join(lines)
@@ -2550,8 +2612,8 @@ def startable_lines(standings, meta, running, now):
 
 def startable(restaurant):
     with restaurant.checked():
-        meta = restaurant.meta
-        tickets = [waiting_ticket(row) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        meta, labels = restaurant.meta, shown_labels(restaurant)
+        tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
     refusals = lease_refusals(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
@@ -2559,11 +2621,11 @@ def startable(restaurant):
 
 
 def ticket_lines(restaurant, state, held):
-    lines = []
+    labels, lines = shown_labels(restaurant), []
     for row in restaurant.rows("rail.tsv"):
         if state and row["state"] != state:
             continue
-        line = f"{row['id']} {row['state']} {priority_of(row)} [{row['source']}] {row['summary']}"
+        line = f"{row['id']} {row['state']} {priority_of(row)}{label_words(labels.tickets[row['id']])} [{row['source']}] {row['summary']}"
         if row["ref"]:
             line += f" {row['ref']}"
         if row["state"] == "waiting" and row["id"] in held:
@@ -3793,7 +3855,9 @@ def parser():
 
     sub.add_parser("sync", help="executive admin: copy each coordinator's new log rows into this log")
 
-    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, then reports to, mode, and owner when present")
+    sub.add_parser("status", help="the thread line first, then counts, then workers outside the executive admin's store, "
+                                  "then a kinds line, a goals line, and an untagged line when each has something to count, "
+                                  "then reports to, mode, and owner when present")
     p = sub.add_parser("close", help="write the report of what changed since the last one")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
@@ -4268,6 +4332,8 @@ def command(restaurant, args, contract=None, rails=None):
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
         if not is_admin(meta):
             lines.append(workers_line(meta, running_workers(restaurant)))
+        labels = shown_labels(restaurant)
+        lines += status_label_lines(labels, count_labels(restaurant, labels))
         if meta.get("reportsTo"):
             lines.append(f"reports to {meta['reportsTo']}")
         if meta.get("mode"):
