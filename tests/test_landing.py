@@ -4317,7 +4317,10 @@ os.execv({real!r}, [{real!r}, *args])
         return {**rows, "contract": sorted(rows["contract"])}
 
     def remember_then_configure(self, mode, before, after):
-        """Init in mode, run land with before configured and nothing queued, configure after, and queue E1 by after."""
+        """Init in mode, run land with before configured and nothing queued, and configure after.
+
+        Queue E1 with the author git builds from after.
+        """
         self.init(mode=mode)
         self.configure_owner(*before)
         self.assertEqual(self.land("land"), "nothing to land")
