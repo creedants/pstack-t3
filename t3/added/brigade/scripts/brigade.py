@@ -803,7 +803,7 @@ FILE_LINE = re.compile(r"File: `([^`]+)`")
 # Why a review report's edits are refused. Each value finishes the words `reports/<name>`.
 EDITS_REFUSED = {
     "none": " holds no edit under a ## Edits heading",
-    "parts": ": Edit {number} needs a File line, Old text with a fenced block, and New text with a fenced block",
+    "parts": ": Edit {number} needs a File line, then Old text with a fenced block, then New text with a fenced block",
     "empty": ": Edit {number} has an empty old text",
     "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
 }
@@ -1032,7 +1032,7 @@ def compared_paths(before, after, extracted, edited, built):
 
 
 def path_lines(paths, edited, built, head, sha):
-    """(lines, clean): one PATH_LINES line per path, and whether the scratch copy and the head agree at every one."""
+    """One PATH_LINES line per path, and whether the scratch copy and the head agree at every path."""
     agree = [built.get(path) == head.get(path) for path in paths]
     lines = [PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha) for path, same in zip(paths, agree)]
     return lines, all(agree)
@@ -1586,12 +1586,12 @@ def exit_code(scratch, command):
 
 
 def replay(project_root, reviewed, before, after, edits, build, check, sha):
-    """(lines, clean) of one verify: the reviewed commit, then the edits, then the build's output, in one scratch copy."""
+    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output."""
     with tempfile.TemporaryDirectory() as directory:
         scratch = Path(directory)
         archive = git(project_root, "archive", "--format=tar", reviewed).stdout
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-            # extractall takes no filter argument before Python 3.10.12.
+            # extractall has no filter argument in Python 3.10 before 3.10.12 or in 3.11 before 3.11.4.
             tar.extractall(scratch, **({"filter": "tar"} if hasattr(tarfile, "tar_filter") else {}))
         extracted = digests(scratch)
         files = {path for path, digest in extracted.items() if digest.kind == "file"}
@@ -1618,7 +1618,7 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
 
 
 def verify_edits(restaurant, dish_id, from_sha, to_sha):
-    """Called from run(), because it starts subprocesses. Reads the store under the lock, releases it, replays, then records."""
+    """Called from run(), because it starts subprocesses. It holds the store lock for its first read and for its write, and never while a subprocess runs."""
     with restaurant.checked():
         restaurant.fence()
         restaurant.find("dishes.tsv", dish_id)
@@ -3003,11 +3003,11 @@ def parser():
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
     p.add_argument("--build-command",
-                   help="the command edits verify runs in its scratch copy after it applies the edits; none records that "
-                        "the project has no build, and \"\" removes the setting")
+                   help="the build command edits verify runs; none records that the project has no build, and \"\" removes "
+                        "the setting")
     p.add_argument("--check-command",
-                   help="the command edits verify runs in its scratch copy when every compared path agrees with the head; "
-                        "none records that the project has no check, and \"\" removes the setting")
+                   help="the check command edits verify runs; none records that the project has no check, and \"\" removes "
+                        "the setting")
     p.add_argument("--autofire", choices=AUTOFIRE,
                    help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
@@ -3118,8 +3118,9 @@ def parser():
     a.add_argument("--same-family", action="store_true", help="allow it when no other family is runnable")
     a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
     a.add_argument("--edits", default="",
-                   help=f"with --verdict {EDITS_VERDICT}, which needs it: the round's review report under reports/, such as "
-                        "D2-review-1.md; refused when its ## Edits section holds no edit or an edit that does not parse")
+                   help=f"the round's review report under reports/, such as D2-review-1.md; --verdict {EDITS_VERDICT} needs it, "
+                        "and no other verdict takes it; refused when its ## Edits section holds no edit or an edit "
+                        "that does not parse")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")

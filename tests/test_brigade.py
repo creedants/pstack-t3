@@ -1380,7 +1380,7 @@ class BrigadeTest(unittest.TestCase):
         report.write_bytes(b"# D1 \xff\xfe\n\n## Claims check\n")
         self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
 
-    def test_close_prints_no_claims_check_warning_for_an_item_in_another_state(self):
+    def test_close_prints_no_claims_check_warning_for_an_item_in_progress_sent_back_blocked_or_merged(self):
         self.fired_bug_fix()
         self.review_file("D1.md", "# D1\n\nStatus: done\n")
         self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
@@ -2220,7 +2220,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertIn("\nACCEPTANCE:\n- a\n\nCONTRACT:\nnone\n\nVERIFY:\n- v\n", text)
         self.assertEqual((self.at / "briefs" / "D1.contract.md").read_text(), "none\n")
 
-    def test_brief_renders_a_contract_of_several_lines_with_its_lines_unchanged(self):
+    def test_brief_renders_a_contract_of_several_lines_with_only_the_whitespace_at_its_two_ends_removed(self):
         self.briefable()
         contract = "A refused write changes no table.\n\n  - `log.tsv` gains no row.\nVERIFY: is not a heading here."
         text = self.brigade("brief", "D1", *self.FLAGS, "--contract", f"\n  {contract} \n\n")
@@ -5451,8 +5451,8 @@ class BrigadeTest(unittest.TestCase):
         self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
                           "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n```\n")
         self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
-                         "brigade: reports/D1-review-1.md: Edit 2 needs a File line, Old text with a fenced block, "
-                         "and New text with a fenced block")
+                         "brigade: reports/D1-review-1.md: Edit 2 needs a File line, then Old text with a fenced block, "
+                         "then New text with a fenced block")
         self.assertEqual(self.pass_rows(), [])
         self.assertEqual(self.dish_fields("state"), ("in-progress",))
 
@@ -5798,7 +5798,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.record_pass_at(head), "D1 passed")
         self.assertEqual(self.brigade("pass", "check", "D1", "--sha", head), f"D1 at {head} passed review by {CLAUDE}")
 
-    def test_verified_edits_for_another_head_do_not_lift_the_refusal_of_a_pass(self):
+    def test_verified_edits_do_not_lift_the_refusal_of_a_pass_at_another_head_or_at_the_same_head_written_shorter(self):
         reviewed = self.edits_store()
         self.two_edits()
         self.record_edits(reviewed, "--edits", "D1-review-1.md")

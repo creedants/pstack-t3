@@ -58,8 +58,8 @@ record the head chef thread, a schedule id, or the reporting level
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
-| `--build-command BUILD_COMMAND` |  |  |  | the command edits verify runs in its scratch copy after it applies the edits; none records that the project has no build, and "" removes the setting |
-| `--check-command CHECK_COMMAND` |  |  |  | the command edits verify runs in its scratch copy when every compared path agrees with the head; none records that the project has no check, and "" removes the setting |
+| `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none records that the project has no build, and "" removes the setting |
+| `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none records that the project has no check, and "" removes the setting |
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 
 ## brigade.py ticket
@@ -287,7 +287,7 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `--note NOTE` |  |  |  |  |
 | `--same-family` |  |  |  | allow it when no other family is runnable |
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
-| `--edits EDITS` |  |  |  | with --verdict pass-with-edits, which needs it: the round's review report under reports/, such as D2-review-1.md; refused when its ## Edits section holds no edit or an edit that does not parse |
+| `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused when its ## Edits section holds no edit or an edit that does not parse |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 
