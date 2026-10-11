@@ -114,12 +114,26 @@ def git_push(*args, cwd, check=False):
 IGNORE_CORE_WORKTREE = ("--work-tree=.",)
 
 
-ESCAPED = re.compile("[\\\\\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
+# The characters that end a line for str.splitlines.
+LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+ESCAPED = re.compile("[\\\\" + LINE_BREAKS + "]")
 
 
 def one_line(text):
-    """text with each backslash, and each character that ends a line for str.splitlines, written as its Python escape."""
+    """text with each backslash and each LINE_BREAKS character written as its Python escape."""
     return ESCAPED.sub(lambda found: found.group().encode("unicode_escape").decode("ascii"), text)
+
+
+def shell_word(text):
+    """text as one shell word that holds no LINE_BREAKS character.
+
+    It is shlex.quote(text) when text holds none. Otherwise it is a printf %b command substitution in double quotes.
+    Its argument writes each byte of a backslash or a LINE_BREAKS character as a backslash, a zero, and three octal digits.
+    """
+    if not set(LINE_BREAKS) & set(text):
+        return shlex.quote(text)
+    octal = ESCAPED.sub(lambda found: "".join(f"\\0{byte:03o}" for byte in os.fsencode(found.group())), text)
+    return f'"$(printf %b {shlex.quote(octal)})"'
 
 
 def refuse_stray_worktree(common):
@@ -135,12 +149,13 @@ def refuse_stray_worktree(common):
                 cwd=common, check=False, exact=True)
     if found.returncode != 0 or Path(found.stdout.removesuffix("\n")).resolve() != common:
         raise LandError(f"{one_line(str(config))} sets core.worktree to {one_line(value)}, where git does not find this repository; "
-                        f"remove it with git --work-tree=. config --file {shlex.quote(str(config))} --unset-all core.worktree")
+                        f"remove it with git --work-tree=. config --file {shell_word(str(config))} --unset-all core.worktree")
 
 
 def common_dir(path):
     """The git common directory identifies a repository across all of its worktrees."""
-    common = Path(git(*IGNORE_CORE_WORKTREE, "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path).stdout.strip()).resolve()
+    found = git(*IGNORE_CORE_WORKTREE, "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path, exact=True)
+    common = Path(found.stdout.removesuffix("\n")).resolve()
     refuse_stray_worktree(common)
     # A bare repository has no top level, so this call refuses one.
     git("rev-parse", "--show-toplevel", cwd=path)
@@ -400,8 +415,8 @@ def configured_identity(repo):
 
 def entry_commits(repo, entry):
     """The id, author, and Co-authored-by values of each reviewed commit of an entry, oldest first."""
-    fields = "%H%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,unfold,separator=%x01)%x02"
-    listed = git("log", "--reverse", f"--format={fields}", f"{entry['base']}..{pin_ref(entry['sha'])}", cwd=repo).stdout
+    fields = "%H%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x01)%x02"
+    listed = git("log", "--reverse", f"--format={fields}", f"{entry['base']}..{pin_ref(entry['sha'])}", cwd=repo, exact=True).stdout
     for record in listed.split("\x02")[:-1]:
         sha, name, email, credits = record.lstrip("\n").split("\x00")
         yield sha, Identity(name, email), credits.split("\x01")
@@ -429,8 +444,8 @@ def foreign_author(store, entry):
     credited = any(CREDIT_LINE.fullmatch(line.strip()) for line in pr_body(store, entry).splitlines())
     for sha, author, credits in foreign:
         if not (credited and f"{author.name} <{author.email}>" in credits):
-            return (f"commit {sha[:12]} has author {author.name} <{author.email}>, not the configured "
-                    f"{identity.name} <{identity.email}>; recommit it as the configured author")
+            return (f"commit {sha[:12]} has author {one_line(f'{author.name} <{author.email}>')}, not the configured "
+                    f"{one_line(f'{identity.name} <{identity.email}>')}; recommit it as the configured author")
     return None
 
 
