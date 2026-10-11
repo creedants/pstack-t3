@@ -2429,12 +2429,15 @@ def contract_file(ident):
 
 
 def stored_contract(restaurant, ident):
-    """The contract the item's last brief stored."""
+    """The contract the item's last brief stored.
+
+    It is the contract file's text, with no newline converted and without the one newline write_brief put after the contract.
+    """
     restaurant.find("dishes.tsv", ident)
     path = restaurant.dir / contract_file(ident)
     if not path.is_file():
         raise BrigadeError(f"{ident} has no contract on record; run brief with --contract")
-    return path.read_text(encoding="utf-8").removesuffix("\n")
+    return path.read_bytes().decode("utf-8").removesuffix("\n")
 
 
 def attempt_starts(restaurant, dish):
@@ -3134,8 +3137,8 @@ def parser():
     p.add_argument("--goal", default=None, help="one sentence: the outcome")
     p.add_argument("--acceptance", action="append", default=[], help="a checkable criterion; repeatable, at least one")
     p.add_argument("--contract", default=None,
-                   help="the item's contract, rendered under CONTRACT: in the brief; write none when the item has no safety, "
-                        "privacy, or integrity property; a brief with no contract is refused")
+                   help="the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no "
+                        "safety, privacy, or integrity property; a brief with no contract is refused")
     p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
     p.add_argument("--paths", default=None, help="leased paths, when fire did not claim them")
     p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
@@ -3184,8 +3187,7 @@ def parser():
     a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
     a.add_argument("--edits", default="",
                    help=f"the round's review report under reports/, such as D2-review-1.md; --verdict {EDITS_VERDICT} needs it, "
-                        "and no other verdict takes it; refused when its ## Edits section holds no edit or an edit "
-                        "that does not parse")
+                        "and no other verdict takes it; refused with one line that says why when its edits cannot be read")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -3268,11 +3270,10 @@ def parser():
 
 
 def brief_contract(value):
-    """The contract with the whitespace at its two ends removed. Refuses None and text that is only whitespace."""
-    contract = (value or "").strip()
-    if not contract:
+    """The contract as given. Refuses None and text that is only whitespace."""
+    if not (value or "").strip():
         raise BrigadeError(NEEDS_CONTRACT)
-    return contract
+    return value
 
 
 def _brief_fields(args):

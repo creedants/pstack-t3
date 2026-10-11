@@ -185,7 +185,7 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--fields FIELDS` |  |  |  | JSON file of brief fields, or - for stdin |
 | `--goal GOAL` |  |  |  | one sentence: the outcome |
 | `--acceptance ACCEPTANCE` (repeatable) |  |  |  | a checkable criterion; repeatable, at least one |
-| `--contract CONTRACT` |  |  |  | the item's contract, rendered under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
+| `--contract CONTRACT` |  |  |  | the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
 | `--verify VERIFY` |  |  |  | exact commands that prove it, plus known gotchas |
 | `--paths PATHS` |  |  |  | leased paths, when fire did not claim them |
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it |
@@ -287,7 +287,7 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `--note NOTE` |  |  |  |  |
 | `--same-family` |  |  |  | allow it when no other family is runnable |
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
-| `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused when its ## Edits section holds no edit or an edit that does not parse |
+| `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 
