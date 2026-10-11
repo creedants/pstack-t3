@@ -103,7 +103,9 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable", "next")
+# next sets this. A write or a land.py call then raises instead of changing a store.
+READ_ONLY = False
 ADMIN_COMMANDS = ("request", "rule", "sync")
 RULING_KINDS = ("contested-paths", "ownership", "shares", "queue-order")
 RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "floor", "user")
@@ -290,6 +292,7 @@ class Restaurant:
         self.unfenced = False
         self._lock_fd = None
         self._lock_depth = 0
+        self._read_depth = 0
         # The warning texts this command has printed. One command makes one Restaurant for its own store.
         self.warned = set()
 
@@ -350,25 +353,36 @@ class Restaurant:
                 self._lock_fd = None
 
     @contextmanager
-    def read_lock(self):
+    def read_lock(self, create=True):
         """A shared lock for a read, unless this process already holds this store's lock.
 
         Under its own lock a command reads its own tables and takes no second lock.
         Reading another store while holding a lock raises, so the caller reads that store first.
         No process holds two stores' locks.
+        create is false when a missing restaurant.lock must stay missing. A nested read takes no second lock.
         """
-        if self.dir.resolve() in HELD_LOCKS:
+        if self._read_depth or self.dir.resolve() in HELD_LOCKS:
             yield
             return
         if HELD_LOCKS:
             raise BrigadeError(
                 f"cannot read {self.dir} while holding {HELD_LOCKS[0]}'s lock; "
                 "read other stores before taking a lock")
-        fd = os.open(self.dir / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        lock = self.dir / "restaurant.lock"
+        if not create and not lock.exists():
+            self._read_depth += 1
+            try:
+                yield
+            finally:
+                self._read_depth -= 1
+            return
+        fd = os.open(lock, os.O_RDWR | (os.O_CREAT if create else 0), 0o644)
+        self._read_depth += 1
         try:
             fcntl.flock(fd, fcntl.LOCK_SH)
             yield
         finally:
+            self._read_depth -= 1
             os.close(fd)
 
     def snapshot(self, table, offset=0):
@@ -404,6 +418,8 @@ class Restaurant:
     @contextmanager
     def guarded(self):
         """The one gate for every change this command makes: the store lock, then the owner fence, held through the change."""
+        if READ_ONLY:
+            raise BrigadeError("brigade: next is read-only")
         with self.locked():
             if not self.unfenced:
                 self.fence()
@@ -2504,6 +2520,8 @@ def blocked_waiting(restaurant):
 
 
 def land_result(project_root, *args):
+    if READ_ONLY:
+        raise BrigadeError("brigade: next is read-only")
     return subprocess.run([sys.executable, str(LAND), "--repo", str(project_root), *args],
                           capture_output=True, text=True)
 
