@@ -5377,6 +5377,97 @@ class BrigadeTest(unittest.TestCase):
         self.review_file("D1.md", BULLETS)
         self.assertEqual({name: data for name, data in self.store_files().items() if name != "reports/D1.md"}, before)
 
+    @staticmethod
+    def edit_block(number, path, old, new, fence="```"):
+        return f"### Edit {number}\n\nFile: `{path}`\n\nOld text:\n\n{fence}\n{old}\n{fence}\n\nNew text:\n\n{fence}text\n{new}\n{fence}\n"
+
+    def edits_report(self, *blocks, name="D1-review-1.md", after="## Edits verified\n\nApplied in a scratch copy.\n"):
+        body = "Verdict: pass with edits\n\n## Blockers\n\nNone.\n\n## Edits\n\n" + "\n".join(blocks)
+        return self.review_file(name, body + ("\n" + after if after else ""))
+
+    def record_edits(self, sha, *extra, ok=True):
+        return self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "pass-with-edits",
+                            "--author", CODEX, "--verifier", CLAUDE, *extra, ok=ok)
+
+    def test_a_pass_with_edits_row_moves_the_item_to_sent_back_and_names_the_report(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.record_edits("abc", "--edits", "reports/D1-review-1.md"), "D1 sent-back")
+        self.assertEqual(self.dish_fields("state", "sha"), ("sent-back", "abc"))
+        self.assertEqual([row[3:5] + row[8:] for row in self.pass_rows()], [["abc", "pass-with-edits", "D1-review-1.md", ""]])
+
+    def test_pass_check_fails_at_the_sha_of_a_pass_with_edits_row(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.record_edits("abc", "--edits", "D1-review-1.md", "--note", "two wording edits")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
+                         "brigade: D1 at abc: pass-with-edits (two wording edits)")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "queued", ok=False),
+                         "brigade: only reviewed work lands: D1 at abc: pass-with-edits (two wording edits)")
+
+    def test_pass_with_edits_rows_do_not_count_toward_the_round_budget(self):
+        self.started()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.sent_back(2)
+        self.brigade("dish", "D1", "--state", "in-progress")
+        for sha in ("b1", "b2"):
+            self.assertEqual(self.record_edits(sha, "--edits", "D1-review-1.md"), "D1 sent-back")
+            self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False),
+                         "brigade: D1 has 2 send-backs since its last pass or round decision; the decision opens at 3")
+        self.assertEqual(self.send_back("a3"), "D1 sent-back; 3 send-backs, decision pending")
+
+    def test_close_prints_no_unrecorded_review_warning_for_the_report_a_pass_with_edits_row_names(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_row("D1-review-1.md")))
+        self.record_edits("abc", "--edits", "D1-review-1.md")
+        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
+
+    def test_pass_record_refuses_pass_with_edits_without_edits_and_edits_with_another_verdict_or_a_report(self):
+        self.fired_bug_fix()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
+        self.assertEqual(self.record_edits("abc", ok=False), "brigade: --verdict pass-with-edits needs --edits <review report>")
+        self.assertEqual(self.record_edits("abc", "--report", "D1-review-1.md", ok=False),
+                         "brigade: --verdict pass-with-edits needs --edits <review report>")
+        for verdict in ("pass", "send-back", "blocked"):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", verdict, "--author", CODEX,
+                                          "--verifier", CLAUDE, "--edits", "D1-review-1.md", ok=False),
+                             "brigade: --edits goes only with --verdict pass-with-edits", verdict)
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", "--report", "D1-review-1.md", ok=False),
+                         "brigade: --edits names the round's report; drop --report")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-9.md", ok=False),
+                         "brigade: reports/D1-review-9.md does not exist; write the review report first")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1.md", ok=False),
+                         "brigade: D1.md is not a review report of D1; name a file like reports/D1-review-1.md")
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.dish_fields("state"), ("in-progress",))
+
+    def test_pass_record_refuses_a_pass_with_edits_report_whose_edits_do_not_parse(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n## Blockers\n\nNone.\n\n## Edits verified\n\nYes.\n")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md holds no edit under a ## Edits heading")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                          "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n```\n")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
+                         "brigade: reports/D1-review-1.md: Edit 2 needs a File line, Old text with a fenced block, "
+                         "and New text with a fenced block")
+        self.assertEqual(self.pass_rows(), [])
+        self.assertEqual(self.dish_fields("state"), ("in-progress",))
+
+    def test_a_fix_brief_points_at_the_report_of_a_pass_with_edits_round(self):
+        self.briefable()
+        self.review_file("D1-review-1.md", "findings\n")
+        self.send_back("a1", "--report", "D1-review-1.md")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"), name="D1-review-2.md")
+        self.record_edits("a2", "--edits", "D1-review-2.md")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        self.assertIn(f"\n- A reviewer sent an earlier attempt back. Its findings: {self.at}/reports/D1-review-2.md\n", text)
+        self.assertNotIn("D1-review-1.md", text)
+
 
 class StoresTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""

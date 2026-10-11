@@ -271,7 +271,7 @@ record or check a review verdict for a dish at a head SHA
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--member | --late] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--member | --late] dish
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -279,12 +279,13 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `dish` | yes |  |  |  |
 | `--pr PR` |  |  |  | PR URL; omit for local-only work |
 | `--sha SHA` | yes |  |  |  |
-| `--verdict VERDICT` | yes | `pass`, `send-back`, `blocked` |  |  |
+| `--verdict VERDICT` | yes | `pass`, `send-back`, `blocked`, `pass-with-edits` |  |  |
 | `--author AUTHOR` | yes |  |  | provider/model of the worker |
 | `--verifier VERIFIER` | yes |  |  | provider/model of the reviewer |
 | `--note NOTE` |  |  |  |  |
 | `--same-family` |  |  |  | allow it when no other family is runnable |
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
+| `--edits EDITS` |  |  |  | with --verdict pass-with-edits, which needs it: the round's review report under reports/, such as D2-review-1.md; refused when its ## Edits section holds no edit or an edit that does not parse |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 

@@ -35,7 +35,8 @@ COUNTED_STATES = ("in-progress", "in-review")
 # A dish in one of these holds an active lease that watch keeps renewing. A queued dish's lease is the queue's.
 LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
-VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked"}
+VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
+EDITS_VERDICT = "pass-with-edits"
 MODES = ("full", "light")
 ROUND_BUDGET = 3
 OWING_STATES = ("in-progress", "in-review", "sent-back", "blocked")
@@ -791,6 +792,17 @@ NOT_A_REPORT = {
     "other": "is not a regular file",
     "elsewhere": "resolves outside this store's reports/",
 }
+EDITS_HEADING = "## Edits"
+EDIT_HEADING = re.compile(r"### Edit (\S.*)")
+FENCE_OPEN = re.compile(r"(`{3,})[ \t]*[^\s`]*[ \t]*")
+FILE_LINE = re.compile(r"File: `([^`]+)`")
+# Why a review report's edits are refused. Each value finishes the words `reports/<name>`.
+EDITS_REFUSED = {
+    "none": " holds no edit under a ## Edits heading",
+    "parts": ": Edit {number} needs a File line, Old text with a fenced block, and New text with a fenced block",
+    "empty": ": Edit {number} has an empty old text",
+    "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
+}
 # What `close` advises for an entry of each kind it warns about. Each value finishes the warning line.
 REPAIR = {
     "link": "remove the link and leave its target as it is",
@@ -845,6 +857,88 @@ def item_report(restaurant, report):
     if kind != "file":
         raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing added")
     return name
+
+
+class EditsRefused(BrigadeError):
+    """A refusal from parse_edits. Its text is a value of EDITS_REFUSED with the edit's number and path filled in."""
+
+
+@dataclass(frozen=True)
+class Edit:
+    number: str
+    path: str
+    old: str
+    new: str
+
+
+def edit_parts(lines):
+    """The lines after the `## Edits` line as (kind, text) parts, up to the section's end.
+
+    A `line` is one line outside a fence. A `fence` is the text between a fence's two lines.
+    A fence that never closes ends the parts and gives none.
+    The section ends before the first line outside a fence that starts with `## `.
+    """
+    parts, index = [], 0
+    while index < len(lines):
+        line = lines[index]
+        opened = FENCE_OPEN.fullmatch(line)
+        if opened:
+            closing = re.compile(f"`{{{len(opened.group(1))},}}")
+            close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
+            if close is None:
+                break
+            parts.append(("fence", "\n".join(lines[index + 1:close])))
+            index = close + 1
+            continue
+        if line.startswith("## "):
+            break
+        parts.append(("line", line))
+        index += 1
+    return parts
+
+
+def one_edit(number, parts):
+    rest = iter(parts)
+    path = next((match.group(1) for kind, text in rest if kind == "line" and (match := FILE_LINE.match(text))), None)
+    texts = []
+    for label in ("Old text:", "New text:"):
+        labelled = any(part == ("line", label) for part in rest)
+        texts.append(next((text for kind, text in rest if kind == "fence"), None) if labelled else None)
+    old, new = texts
+    if path is None or old is None or new is None:
+        raise EditsRefused(EDITS_REFUSED["parts"].format(number=number))
+    if not old:
+        raise EditsRefused(EDITS_REFUSED["empty"].format(number=number))
+    if path.startswith("/") or ".." in PurePosixPath(path).parts:
+        raise EditsRefused(EDITS_REFUSED["path"].format(number=number, path=path))
+    return Edit(number, posixpath.normpath(path), old, new)
+
+
+def parse_edits(text):
+    """The edits of a review report's `## Edits` section, in the report's order.
+
+    Raises EditsRefused when the section holds no edit, and for the first edit that does not fit.
+    """
+    lines = text.split("\n")
+    edits = []
+    if EDITS_HEADING in lines:
+        for kind, value in edit_parts(lines[lines.index(EDITS_HEADING) + 1:]):
+            heading = EDIT_HEADING.fullmatch(value) if kind == "line" else None
+            if heading:
+                edits.append((heading.group(1).rstrip(), []))
+            elif edits:
+                edits[-1][1].append((kind, value))
+    if not edits:
+        raise EditsRefused(EDITS_REFUSED["none"])
+    return tuple(one_edit(number, parts) for number, parts in edits)
+
+
+def report_edits(restaurant, name):
+    """The edits of reports/<name>, read as UTF-8 with replacement. The caller has checked that the entry is a `file`."""
+    try:
+        return parse_edits((restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace"))
+    except EditsRefused as error:
+        raise BrigadeError(f"reports/{name}{error}") from None
 
 
 @dataclass(frozen=True)
@@ -1269,7 +1363,7 @@ def review_report(restaurant, dish_id, report):
 
 
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
-                member=False, late=False):
+                member=False, late=False, edits=""):
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
@@ -1278,8 +1372,18 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
     if same_family:
         note = clean(f"same model family; {note}")
+    if verdict == EDITS_VERDICT:
+        if not edits:
+            raise BrigadeError(f"--verdict {EDITS_VERDICT} needs --edits <review report>")
+        if report:
+            raise BrigadeError("--edits names the round's report; drop --report")
+        report = edits
+    elif edits:
+        raise BrigadeError(f"--edits goes only with --verdict {EDITS_VERDICT}")
     if report:
         report = review_report(restaurant, dish_id, report)
+    if verdict == EDITS_VERDICT:
+        report_edits(restaurant, report)
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
                                    "author": author, "verifier": verifier, "note": note, "report": report,
                                    "member": "yes" if member else ""})
@@ -1969,7 +2073,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     land = LAND
     report = restaurant.dir / "reports" / f"{ident}.md"
-    sent_back = send_backs(restaurant.rows("pass.tsv"), ident)
+    sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
@@ -2758,6 +2862,9 @@ def parser():
     a.add_argument("--note", default="")
     a.add_argument("--same-family", action="store_true", help="allow it when no other family is runnable")
     a.add_argument("--report", default="", help="the round's findings file under reports/, such as D2-review-1.md")
+    a.add_argument("--edits", default="",
+                   help=f"with --verdict {EDITS_VERDICT}, which needs it: the round's review report under reports/, such as "
+                        "D2-review-1.md; refused when its ## Edits section holds no edit or an edit that does not parse")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -3175,7 +3282,7 @@ def command(restaurant, args, contract=None, rails=None):
     if args.command == "pass":
         if args.action == "record":
             return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                               args.note, args.same_family, args.report, args.member, args.late)
+                               args.note, args.same_family, args.report, args.member, args.late, args.edits)
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:
