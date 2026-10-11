@@ -796,19 +796,38 @@ NOT_A_REPORT = {
     "other": "is not a regular file",
     "elsewhere": "resolves outside this store's reports/",
 }
-EDITS_HEADING = "## Edits"
-EDIT_HEADING = re.compile(r"### Edit (\S.*)")
+EDITS_SECTION = (2, "Edits")
+EDIT_TITLE = re.compile(r"Edit (\S.*)")
+HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
 FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
+UNDERLINE = re.compile(r" {0,3}(?:=+|-+)[ \t]*")
 FILE_LINE = re.compile(r"File: `([^`]+)`")
+LABELS = {"Old text:": "old", "New text:": "new"}
+# What edit_mark gives the parts of one edit, in the only order one_edit takes.
+EDIT_MARKS = ["file", "old", "fence", "new", "fence"]
+# What a block quote, a list item, and indentation put in front of a line's text.
+NESTED = r"[ \t]*(?:(?:>|(?:[-+*]|\d{1,9}[.)])(?=[ \t]))[ \t]*)*"
 # Lines outside a fence that parse_edits does not read and Markdown can read as structure. Each key is a key of EDITS_REFUSED.
 UNREAD = (
     ("fence", re.compile(r" {1,3}(?:`{3}|~{3})")),
+    ("heading", re.compile(NESTED + r"#{1,6}(?:[ \t]|$)")),
+    ("html", re.compile(r" {0,3}<[A-Za-z/!?]")),
 )
 # Why a review report's edits are refused. Each value finishes the words `reports/<name>`.
 EDITS_REFUSED = {
     "none": " holds no edit under a ## Edits heading",
+    "return": " holds a carriage return",
+    "twice": " holds {count} headings whose text is Edits",
     "fence": ": line {line} has three backticks or tildes after one to three spaces; start each fence at the first column",
-    "parts": ": Edit {number} needs a File line, then Old text with a fenced block, then New text with a fenced block",
+    "heading": (": line {line} starts like a heading and is not one to six #, one space, and the text, from the first column "
+                "with nothing after the text"),
+    "html": (": line {line} starts, after at most three spaces, with < and then a letter, /, !, or ?, and Markdown can read it "
+             "as the start of an HTML block"),
+    "underline": ": line {line} is only = or only - directly below a line of text, and Markdown can read the two as a heading",
+    "inside": ": line {line} is a heading in the ## Edits section that is neither ### Edit <n> nor a heading of one or two #",
+    "above": ": line {line} starts a fenced block in the ## Edits section above its first ### Edit heading",
+    "parts": (": Edit {number} must hold, once each and in this order, a File line, an Old text line, a fenced block, "
+              "a New text line, and a fenced block"),
     "empty": ": Edit {number} has an empty old text",
     "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
 }
@@ -887,7 +906,7 @@ def item_report(restaurant, report):
 
 
 class EditsRefused(BrigadeError):
-    """A refusal from parse_edits. Its text is a value of EDITS_REFUSED with the edit's number and path filled in."""
+    """A refusal from parse_edits. Its text is a value of EDITS_REFUSED with its fields filled in."""
 
 
 @dataclass(frozen=True)
@@ -899,19 +918,23 @@ class Edit:
 
 
 def report_parts(lines):
-    """A report's lines as (kind, text) parts.
+    """A report's lines as (kind, value, number) parts. The number is that of the part's first line, counted from 1.
 
-    A `line` is one line outside a fence. A `fence` is the text between a fence's two lines.
+    A `fence` is the text between a fence's two lines.
     A fence opens at a line that starts at the first column with three or more backticks and holds no other backtick,
     or that starts there with three or more tildes.
     It closes at the next line that is at most three spaces, at least as many of the same character, and then only
     spaces and tabs.
     A fence that never closes ends the parts and gives none.
-    Raises EditsRefused for the first line outside a fence that an UNREAD pattern matches at its start.
+    A `heading` is the (count of `#`, text) of a line outside a fence that HEADING matches in full. That is one to six `#`,
+    one space, and a text with no whitespace at its two ends and no run of `#` at its end after a space or a tab.
+    A `line` is any other line outside a fence.
+    Raises EditsRefused for the first such line that an UNREAD pattern matches at its start, or that UNDERLINE matches in
+    full directly below a `line` that is not blank.
     """
     parts, index = [], 0
     while index < len(lines):
-        line = lines[index]
+        line, number = lines[index], index + 1
         opened = FENCE_OPEN.fullmatch(line)
         if opened:
             run = opened.group(1) or opened.group(2)
@@ -919,27 +942,40 @@ def report_parts(lines):
             close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
             if close is None:
                 break
-            parts.append(("fence", "\n".join(lines[index + 1:close])))
+            parts.append(("fence", "\n".join(lines[index + 1:close]), number))
             index = close + 1
             continue
-        unread = next((key for key, pattern in UNREAD if pattern.match(line)), None)
-        if unread:
-            raise EditsRefused(EDITS_REFUSED[unread].format(line=index + 1))
-        parts.append(("line", line))
+        heading = HEADING.fullmatch(line)
+        if heading:
+            parts.append(("heading", (len(heading.group(1)), heading.group(2)), number))
+        else:
+            unread = next((key for key, pattern in UNREAD if pattern.match(line)), None)
+            if not unread and UNDERLINE.fullmatch(line) and parts and parts[-1][0] == "line" and parts[-1][1].strip():
+                unread = "underline"
+            if unread:
+                raise EditsRefused(EDITS_REFUSED[unread].format(line=number))
+            parts.append(("line", line, number))
         index += 1
     return parts
 
 
+def edit_mark(kind, value):
+    """What one part of an edit is to one_edit. It is `fence`, `file`, `old`, `new`, or None for any other line."""
+    if kind == "fence":
+        return "fence"
+    return "file" if FILE_LINE.match(value) else LABELS.get(value)
+
+
 def one_edit(number, parts):
-    rest = iter(parts)
-    path = next((match.group(1) for kind, text in rest if kind == "line" and (match := FILE_LINE.match(text))), None)
-    texts = []
-    for label in ("Old text:", "New text:"):
-        labelled = any(part == ("line", label) for part in rest)
-        texts.append(next((text for kind, text in rest if kind == "fence"), None) if labelled else None)
-    old, new = texts
-    if path is None or old is None or new is None:
+    """The Edit of the (kind, value) parts between an edit's heading and the next heading.
+
+    Raises EditsRefused unless the parts that edit_mark names are, in this order, one line that starts with
+    ``File: `<path>` ``, one line that is `Old text:`, one fence, one line that is `New text:`, and one fence.
+    """
+    marked = [(mark, value) for kind, value in parts if (mark := edit_mark(kind, value))]
+    if [mark for mark, _ in marked] != EDIT_MARKS:
         raise EditsRefused(EDITS_REFUSED["parts"].format(number=number))
+    path, old, new = FILE_LINE.match(marked[0][1]).group(1), marked[2][1], marked[4][1]
     if not old:
         raise EditsRefused(EDITS_REFUSED["empty"].format(number=number))
     if path.startswith("/") or ".." in PurePosixPath(path).parts:
@@ -950,30 +986,45 @@ def one_edit(number, parts):
 def parse_edits(text):
     """The edits of a review report's `## Edits` section, in the report's order.
 
-    The section starts after the first line outside a fence that is exactly `## Edits`.
-    It ends before the next line outside a fence that starts with `## `, or where the report's parts end.
-    Raises EditsRefused when the section holds no edit, and for the first edit that does not fit.
+    The section starts after the report's one heading whose text is `Edits`, when that heading has two `#`.
+    It ends before the next heading of one or two `#`, or where the report's parts end.
+    In it a heading of three `#` whose text is `Edit <n>` starts an edit, and the edit ends before the next heading.
+    Raises EditsRefused for a carriage return, for what report_parts refuses, for a second heading whose text is `Edits`,
+    for any other heading in the section, for a fence in the section above its first edit, for a section with no edit,
+    and for the first edit that one_edit refuses.
     """
-    parts = iter(report_parts(text.split("\n")))
-    edits = []
-    if ("line", EDITS_HEADING) in parts:
-        for kind, value in parts:
-            if kind == "line" and value.startswith("## "):
-                break
-            heading = EDIT_HEADING.fullmatch(value) if kind == "line" else None
-            if heading:
-                edits.append((heading.group(1).rstrip(), []))
+    if "\r" in text:
+        raise EditsRefused(EDITS_REFUSED["return"])
+    parts = report_parts(text.split("\n"))
+    named = sum(kind == "heading" and value[1] == EDITS_SECTION[1] for kind, value, _ in parts)
+    if named > 1:
+        raise EditsRefused(EDITS_REFUSED["twice"].format(count=named))
+    section, edits = iter(parts), []
+    if any((kind, value) == ("heading", EDITS_SECTION) for kind, value, _ in section):
+        for kind, value, number in section:
+            if kind == "heading":
+                level, title = value
+                if level < 3:
+                    break
+                numbered = EDIT_TITLE.fullmatch(title) if level == 3 else None
+                if not numbered:
+                    raise EditsRefused(EDITS_REFUSED["inside"].format(line=number))
+                edits.append((numbered.group(1), []))
             elif edits:
                 edits[-1][1].append((kind, value))
+            elif kind == "fence":
+                raise EditsRefused(EDITS_REFUSED["above"].format(line=number))
     if not edits:
         raise EditsRefused(EDITS_REFUSED["none"])
     return tuple(one_edit(number, parts) for number, parts in edits)
 
 
 def report_edits(restaurant, name):
-    """The edits of reports/<name>, read as UTF-8 with replacement. The caller has checked that the entry is a `file`."""
+    """The edits of reports/<name>. Refuses a report that is not UTF-8. The caller has checked that the entry is a `file`."""
     try:
-        return parse_edits((restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace"))
+        return parse_edits((restaurant.dir / "reports" / name).read_bytes().decode("utf-8"))
+    except UnicodeDecodeError:
+        raise BrigadeError(f"reports/{name} is not UTF-8") from None
     except EditsRefused as error:
         raise BrigadeError(f"reports/{name}{error}") from None
 
@@ -3444,7 +3495,7 @@ def command(restaurant, args, contract=None, rails=None):
             if value is None:
                 continue
             if value.strip():
-                command_words(value)
+                command_words(value.strip())
                 changes[key] = value.strip()
             else:
                 drop.append(key)
