@@ -114,17 +114,27 @@ def git_push(*args, cwd, check=False):
 IGNORE_CORE_WORKTREE = ("--work-tree=.",)
 
 
+ESCAPED = re.compile("[\\\\\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
+
+
+def one_line(text):
+    """text with each backslash, and each character that ends a line for str.splitlines, written as its Python escape."""
+    return ESCAPED.sub(lambda found: found.group().encode("unicode_escape").decode("ascii"), text)
+
+
 def refuse_stray_worktree(common):
     """Stop when the common config file sets core.worktree to a value where git does not find this repository."""
     config = common / "config"
-    value = git(*IGNORE_CORE_WORKTREE, "config", "--file", str(config), "--get", "core.worktree", cwd=common, check=False).stdout.rstrip("\n")
+    # -z ends the value with a NUL, so a newline before the NUL belongs to the value.
+    value = git(*IGNORE_CORE_WORKTREE, "config", "--file", str(config), "-z", "--get", "core.worktree",
+                cwd=common, check=False, exact=True).stdout.removesuffix("\0")
     if not value:
         return
     # git resolves a relative core.worktree against the git directory.
-    target = common / value
-    found = target.is_dir() and git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=target, check=False)
-    if not found or found.returncode != 0 or Path(found.stdout.strip()).resolve() != common:
-        raise LandError(f"{config} sets core.worktree to {value}, where git does not find this repository; "
+    found = git("-C", os.path.join(common, value), "rev-parse", "--path-format=absolute", "--git-common-dir",
+                cwd=common, check=False, exact=True)
+    if found.returncode != 0 or Path(found.stdout.removesuffix("\n")).resolve() != common:
+        raise LandError(f"{one_line(str(config))} sets core.worktree to {one_line(value)}, where git does not find this repository; "
                         f"remove it with git --work-tree=. config --file {shlex.quote(str(config))} --unset-all core.worktree")
 
 
