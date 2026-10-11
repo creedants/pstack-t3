@@ -71,9 +71,9 @@ def check_lock(update):
     current = {}
     for rel in relative_files(overrides):
         upstream = VENDOR / "skills" / rel
-        current[str(rel)] = sha256(upstream) if upstream.exists() else None
+        current[rel.as_posix()] = sha256(upstream) if upstream.exists() else None
     if update:
-        LOCK.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
+        LOCK.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
         return []
     locked = json.loads(LOCK.read_text()) if LOCK.exists() else {}
     problems = []
@@ -113,10 +113,10 @@ def render(destination):
     copy_file(T3 / "setup.md", destination / "setup-pstack" / "SKILL.md")
     for skill_md in sorted(destination.glob("*/SKILL.md")):
         skill = skill_md.parent.name
-        skill_md.write_text(normalize_skill(skill_md.read_text(), skill))
+        skill_md.write_text(normalize_skill(skill_md.read_text(encoding="utf-8"), skill), encoding="utf-8", newline="\n")
 
 
-def build(destination, update_lock=False, skip_lock=False):
+def build(destination, update_lock=False, skip_lock=False, skills_only=False):
     problems = [] if skip_lock else check_lock(update_lock)
     if problems:
         raise SystemExit("override drift:\n  " + "\n  ".join(problems))
@@ -135,7 +135,8 @@ def build(destination, update_lock=False, skip_lock=False):
         import cli_reference
 
         write(destination)
-        cli_reference.write()
+        if not skills_only:
+            cli_reference.write()
     return destination
 
 
@@ -162,5 +163,6 @@ if __name__ == "__main__":
     parser.add_argument("--update-lock", action="store_true", help="accept current upstream digests for every override")
     parser.add_argument("--skip-lock", action="store_true", help="check a work-in-progress port without the drift lock")
     parser.add_argument("--out", type=Path, default=ROOT / "skills")
+    parser.add_argument("--skills-only", action="store_true", help="retain CLI reference docs while building skills, for hosts without POSIX runtimes")
     args = parser.parse_args()
-    print(f"built {build(args.out, args.update_lock, args.skip_lock)}")
+    print(f"built {build(args.out, args.update_lock, args.skip_lock, args.skills_only)}")

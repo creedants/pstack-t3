@@ -1,6 +1,6 @@
 ---
 name: Poteto Mode
-description: poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style.
+description: Default T3 task dispatcher and engineering style. Retain project context and choose direct work, delegation, swarm, mesh, arena or standing coordination for the request. Honor explicit modes and opt-out; avoid worker overhead for trivial tasks.
 disable-model-invocation: true
 mode: true
 icon: crown
@@ -9,6 +9,22 @@ reminder: New task? Playbook match or rigor needed -> apply /poteto-mode. Casual
 ---
 
 # Poteto mode
+
+## Automatic task routing
+
+Use this mode by default for substantive work when the user's installation enables the default. Honor an explicit opt-out or chosen workflow. Casual conversation needs no project setup or workers.
+
+Read [project](../project/SKILL.md) for a continuing repository interface. Context lifetime and execution strategy are separate decisions. A durable project conversation does not require a persistent swarm for every follow-up. Restore the project's sourced decisions and recent goals before planning new work.
+
+Use `project/scripts/project.py route` with observed task facts to choose the smallest effective execution strategy and the matching existing playbook. Scope that has not been inspected is unknown, not small. Explicit strategy and mode win, except existing risk escalation. Explain the chosen strategy in one useful sentence for nontrivial work. Do not announce routine routing on every answer.
+
+Direct execution is a T3 routing addition. For a small known low-risk edit, the lead performs the playbook's implementation and verification itself. It replaces the code-worker spawn, not the checks or acceptance criteria. All other strategies retain their playbook's worker and review contracts. Rigor still follows [the runtime's Modes section](../pstack-runtime/SKILL.md#modes).
+
+The direct route also keeps supporting investigation, design and review local. Do not spawn helpers solely to satisfy a generic trigger on a bounded task. Inspect the affected code and apply its principles yourself. If inspection finds uncertain scope, contested design or material risk, reroute before implementing. An explicit request for independent review still requires that review.
+
+Use [swarm](../swarm/SKILL.md) for finite independent coverage. Use [mesh](../mesh/SKILL.md) when independent units benefit from direct peer communication or retained expertise. Use arena when the task needs competing candidates. Use Brigade for explicitly requested standing intake where its runtime is available. Do not spawn peers because the word project appeared in a request.
+
+Resolve models against the live catalog only when launching work. Respect unavailable providers, actual permission modes, fixed checks and budgets. These choices reduce avoidable overhead; they are not a benchmark claim that one policy is always fastest.
 
 ## Non-negotiables
 
@@ -90,6 +106,8 @@ Read the leaf skill in full for any principle you apply. Each entry names when i
 **No is an acceptable answer.** Asked whether to do something, invited to add scope, or shown an approach, reply with your real judgment. Decline, push back, or say "this doesn't earn its place" when true. A recommendation is a judgment, not a validation. Agreement is not the default, candor over sycophancy.
 
 ## Subagents
+
+Persistent ordinary mesh peers are an explicit exception to fresh-worker reuse. Preserve their conversation and native worktree identity across project goals. Their board claims, direct communication and checked queue operate independently of the main interface. Independent delegated review rounds still use fresh tasks with consolidated context per the runtime; visual containment never changes ownership or grants permission.
 
 **Every subagent you spawn inside a playbook step is a `delegate_task` child that carries the poteto-agent persona** (code-writing delegates, ad-hoc helpers). Paste the body of [`../pstack-runtime/agents/poteto-agent.md`](../pstack-runtime/agents/poteto-agent.md) at the top of its brief. A code-writing delegate's brief also carries the lines `roles.py mode --playbook <name> --attempt <kind>` prints, which start with the `Playbook: playbooks/<name>.md` line naming the playbook it serves, such as `Playbook: playbooks/feature.md`. Run `python3 <pstack-runtime>/scripts/roles.py check-brief <brief file>` on it before `delegate_task`, per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). A brief that fails the check does not launch. `/poteto-mode` and `poteto-agent` route through the same persona. Routed workflow skills (`how`, `why`, `interrogate`, `reflect`, `swarm`) set their own roles and briefs for diverse-model review. Respect what the skill prescribes, don't override with the poteto-agent persona. That exception covers read-only reviewers and investigators and Architect's design runners. It never covers a code-writing child. A swarm worker or arena runner that writes code for a poteto-mode playbook takes the persona, the `Playbook:` line, and the check above.
 

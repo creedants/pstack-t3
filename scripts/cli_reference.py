@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,11 @@ TOOLS = (
     "t3/added/brigade/scripts/activity.py",
     "t3/added/brigade/scripts/brigade.py",
     "t3/added/landing/scripts/land.py",
+    "t3/added/mesh/scripts/check_slot.py",
+    "t3/added/mesh/scripts/pstack_mesh/__main__.py",
+    "t3/added/mesh/scripts/pstack_mesh/landing.py",
+    "t3/added/mesh/scripts/pstack_mesh/verify.py",
+    "t3/added/project/scripts/project.py",
     "t3/scripts/roles.py",
 )
 CWD = "$PWD"
@@ -40,13 +46,15 @@ def load(path):
     os.getcwd() returns CWD, so no default can hold a machine value.
     """
     environ, getcwd, parse = dict(os.environ), os.getcwd, argparse.ArgumentParser.parse_known_args
+    search_path = sys.path[:]
     scope = {"__name__": path.stem, "__file__": str(path)}
     try:
         os.environ.clear()
+        sys.path[:0] = [str(path.parent), str(path.parent.parent)]
         os.getcwd = lambda: CWD
         argparse.ArgumentParser.parse_known_args = trap
         exec(compile(path.read_text(), str(path), "exec"), scope)
-        scope["main"]([])
+        scope["main"]()
     except Found as found:
         return found.args[0]
     finally:
@@ -54,6 +62,7 @@ def load(path):
         os.getcwd = getcwd
         os.environ.clear()
         os.environ.update(environ)
+        sys.path[:] = search_path
     raise SystemExit(f"{path}: main([]) returned without parsing arguments")
 
 
@@ -185,7 +194,7 @@ def write(out=OUT, root=ROOT, tools=TOOLS):
         if stale.name not in pages:
             stale.unlink()
     for name, text in pages.items():
-        (out / name).write_text(text)
+        (out / name).write_text(text, encoding="utf-8", newline="\n")
     return out
 
 

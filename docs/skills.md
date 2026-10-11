@@ -9,7 +9,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | Skill | What it does |
 | --- | --- |
 | [`poteto-help`](../skills/poteto-help/SKILL.md) | Guides users through pstack setup, $poteto-mode, and picking the skill, playbook, or principle for a task. Type $poteto-help with a question. |
-| [`poteto-mode`](../skills/poteto-mode/SKILL.md) | poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style. |
+| [`poteto-mode`](../skills/poteto-mode/SKILL.md) | Default T3 task dispatcher and engineering style. Retain project context and choose direct work, delegation, swarm, mesh, arena or standing coordination for the request. Honor explicit modes and opt-out; avoid worker overhead for trivial tasks. |
 
 ## Multi-model workflows
 
@@ -105,6 +105,8 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | Skill | What it does |
 | --- | --- |
 | [`ketchup`](../skills/ketchup/SKILL.md) | Catch the user up on everything in this chat since their last message, in plain words. Give each action item an executive summary with enough context to make the call. Use for /ketchup. |
+| [`mesh`](../skills/mesh/SKILL.md) | Run a finite peer mesh with durable independent T3 conversations, atomic SQLite work claims, direct messaging and reviewed Git integration. Reuse a project's peer contexts when useful. Use when independent units need peer coordination or retained expertise; use swarm for simple finite parallel coverage. |
+| [`project`](../skills/project/SKILL.md) | Keep one durable T3 project interface with repository memory, follow-up goals and reusable peer identities. Route each request through Poteto without requiring a swarm for every task. Use for a project main conversation, continued repository work, or project follow-ups. |
 
 ## poteto-mode playbooks
 

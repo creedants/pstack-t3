@@ -5,4 +5,9 @@ Every command and flag of the scripts pstack-t3 ships, one page per script. Each
 - [activity.py](activity.md), source `t3/added/brigade/scripts/activity.py`
 - [brigade.py](brigade.md), source `t3/added/brigade/scripts/brigade.py`
 - [land.py](land.md), source `t3/added/landing/scripts/land.py`
+- [check_slot.py](check_slot.md), source `t3/added/mesh/scripts/check_slot.py`
+- [__main__.py](__main__.md), source `t3/added/mesh/scripts/pstack_mesh/__main__.py`
+- [landing.py](landing.md), source `t3/added/mesh/scripts/pstack_mesh/landing.py`
+- [verify.py](verify.md), source `t3/added/mesh/scripts/pstack_mesh/verify.py`
+- [project.py](project.md), source `t3/added/project/scripts/project.py`
 - [roles.py](roles.md), source `t3/scripts/roles.py`

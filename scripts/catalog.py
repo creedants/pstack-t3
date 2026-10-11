@@ -68,7 +68,7 @@ def render(skills):
 
 def write(skills=ROOT / "skills", out=ROOT / "docs/skills.md"):
     out.parent.mkdir(exist_ok=True)
-    out.write_text(render(skills))
+    out.write_text(render(skills), encoding="utf-8", newline="\n")
     return out
 
 

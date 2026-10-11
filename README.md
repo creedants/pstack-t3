@@ -150,6 +150,8 @@ $swarm audit stats.py: one read-only worker per public function.
 
 ## Quick start
 
+For a persistent project interface, autonomous peer meshes, and automatic Poteto routing, see [Project control](docs/project-control.md). The portable activation command copies skills and installs a reversible default rule for Codex or Claude. Project memory and execution strategy are separate: a small follow-up can use the lead alone, while a larger goal can reuse peer threads.
+
 You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) `0.0.46-nightly.20261005.2702` or later, the minimum this project accepts for `watch_pull_request`, plus git and Python 3.10 or later. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Stable releases through `v0.0.45` don't ship them. Nightlies are the pre-releases on the T3 Code releases page.
 
 Complete each prerequisite before using the feature it names.
@@ -192,7 +194,7 @@ The [guide](docs/guide.md) walks through your first hour. Stuck, or unsure which
 | `$landing set up this repo so several agents can land work at once.` | A landing contract with your test commands as checks. Every coordinator then claims leases before delegating and lands through one queue. |
 | `$poteto-help which skill should I use to review this branch?` | It points at the skill or playbook and hands you a prompt. It does not start the work. |
 
-See [all 57 skills and every playbook](docs/skills.md). Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
+See [all skills and every playbook](docs/skills.md). Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py` is in the [command-line reference](docs/cli/README.md).
 
 ## How it works
 

@@ -186,7 +186,8 @@ class CliReferenceTest(unittest.TestCase):
             cli_reference.write(out)
             self.assertEqual(
                 sorted(path.name for path in out.iterdir()),
-                sorted(["README.md", "activity.md", "brigade.md", "land.md", "roles.md"]),
+                sorted(["README.md", "__main__.md", "activity.md", "brigade.md", "check_slot.md",
+                        "land.md", "landing.md", "project.md", "roles.md", "verify.md"]),
             )
 
     def test_every_t3_script_with_a_parser_is_documented(self):

@@ -855,7 +855,7 @@ MODE_POINTER_SITES = {
     **{f"{name}/SKILL.md": "skill" for name in (
         "poteto-mode", "how", "why", "architect", "arena", "no-comments", "swarm", "interrogate",
         "show-me-your-work", "recall", "automate-me", "maintain-verification-skill", "reflect",
-        "pstack-author-skill", "landing",
+        "pstack-author-skill", "landing", "mesh", "project",
     )},
     **{f"poteto-mode/playbooks/{stem}.md": "playbook" for stem in (
         "feature", "bug-fix", "refactoring", "perf-issue", "hillclimb", "opening-a-pr",

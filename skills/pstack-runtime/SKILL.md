@@ -349,6 +349,12 @@ When light mode applies, say so once, at the start, in two or three short senten
 
 ## Isolation
 
+Project context and a finite mesh goal have separate lifetimes. [Project](../project/SKILL.md) retains the main conversation, sourced decisions, request history and peer identities. [Mesh](../mesh/SKILL.md) owns atomic work claims and direct communication for each bounded goal. Neither requires every peer decision or message to pass through the interface.
+
+Ordinary peers may use visual-only `containerThreadId` when capabilities advertise `visualPeerContainers`. This field does not change lineage, delegated task ownership, provider context, worktree binding, PR watching or stop propagation. Keep ordinary launch and review semantics. On an older server, do not pass unsupported fields or fake grouping with fork/subagent lineage. Settle completed peers as a reversible visibility fallback and disclose the missing active containment.
+
+The portable mesh queue is an alternative integration backend for a repository without an existing landing authority. Never run it beside the pstack queue on the same target. Project ownership is recorded in the common Git directory's `pstack-project.json`. Mesh admission and advancement revalidate that marker and refuse a competing pstack authority. Existing pstack projects require shared landing lease admission before a mesh writer starts; until that adapter is available, keep their canonical workflow instead of silently creating another queue.
+
 Two writers never share a checkout (principle-separate-before-serializing-shared-state).
 
 - Read-only children share the current checkout.
@@ -362,12 +368,14 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 
 Children, launched threads, and this thread run on this machine, so their builds and tests share its cores. Run each local build, test suite, and verifier rerun through `python3 <skills>/landing/scripts/land.py slot -- <command>`, where `<skills>` is the directory that holds `<pstack-runtime>`. Run each benchmark or timing measurement through `python3 <skills>/landing/scripts/land.py slot --exclusive -- <command>`. It must be the outermost slot. The slot count, its config file, and the landing queue's reserved slot are in the landing skill's [Capacity](../landing/SKILL.md#capacity) section. A brief links that section and does not copy them.
 
+Native Windows project and mesh checks use `python <skills>/mesh/scripts/check_slot.py -- <command>` instead. This experimental wrapper serializes one check through a machine-wide kernel lock and returns 75 when the slot is busy. It propagates the check's exit code. Mesh landing checks acquire the same lock. Its default state directory is `~/.pstack-t3/capacity`; `PSTACK_MESH_CAPACITY_STATE` or the wrapper's `--state-root` selects another directory for isolated tests. A wrapper check that exercises mesh landing uses an isolated capacity directory for its disposable landing fixture to avoid acquiring its own outer lock again. POSIX workflows retain the existing landing governor. This exception does not make Brigade's `fcntl` scripts portable.
+
 - A slot wraps one command and ends when that command exits. Never hold a slot across a model turn, a `t3_thread_wait`, a `task_status` check, a `watch_pull_request` wait, or any other wait on children. Start dev servers with the preview tools, not in a slot.
 - Slots limit heavy commands, not agents. Do not cap owners, children, or launched threads at the slot count.
 
 ## Top-level threads
 
-Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
+Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade, project, mesh). Invoking those is that request. Project and mesh peers retain ordinary thread and native worktree identities across goals. Independent delegated reviews use fresh child tasks. Everything else uses child tasks.
 
 ```json
 {
