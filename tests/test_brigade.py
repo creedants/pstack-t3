@@ -5450,9 +5450,7 @@ class BrigadeTest(unittest.TestCase):
                          "brigade: reports/D1-review-1.md holds no edit under a ## Edits heading")
         self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
                           "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n```\n")
-        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False),
-                         "brigade: reports/D1-review-1.md: Edit 2 needs a File line, then Old text with a fenced block, "
-                         "then New text with a fenced block")
+        self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", ok=False), self.PARTS_REFUSAL.format(2))
         self.assertEqual(self.pass_rows(), [])
         self.assertEqual(self.dish_fields("state"), ("in-progress",))
 
@@ -5543,6 +5541,12 @@ class BrigadeTest(unittest.TestCase):
         refusal = self.brigade("set", "--check-command", "make 'gen", ok=False)
         self.assertTrue(refusal.startswith("brigade: \"make 'gen\" is not a command line: "), refusal)
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["checkCommand"], "none")
+
+    def test_set_refuses_a_command_that_is_not_a_command_line_once_the_whitespace_at_its_two_ends_is_removed(self):
+        self.open()
+        refusal = self.brigade("set", "--build-command", "make\\ ", ok=False)
+        self.assertTrue(refusal.startswith("brigade: 'make\\\\' is not a command line: "), refusal)
+        self.assertNotIn("buildCommand", json.loads((self.at / "restaurant.json").read_text()))
 
     def test_edits_verify_passes_a_head_that_is_the_edits_and_the_rebuilt_output_and_records_the_pair_once(self):
         reviewed = self.edits_store()
@@ -5684,6 +5688,113 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.record_edits(head, "--edits", "D1-review-1.md", ok=False), refusal)
         self.assertEqual(len(self.pass_rows()), 1)
+
+    PARTS_REFUSAL = ("brigade: reports/D1-review-1.md: Edit {} must hold, once each and in this order, a File line, "
+                     "an Old text line, a fenced block, a New text line, and a fenced block")
+
+    def section(self):
+        return "## Edits\n\n" + self.edit_block("1", "src/greeting.txt", "wrold", "world")
+
+    def refused_edits(self, body):
+        """What pass record prints when it refuses a pass-with-edits round on a report with this body."""
+        path = self.review_file("D1-review-1.md")
+        path.write_bytes(body if isinstance(body, bytes) else body.encode())
+        refusal = self.record_edits("abc", "--edits", "D1-review-1.md", ok=False)
+        self.assertEqual(self.pass_rows(), [])
+        return refusal
+
+    def test_pass_record_refuses_a_report_with_a_heading_that_is_not_number_signs_one_space_and_its_text_from_the_first_column(self):
+        self.fired_bug_fix()
+        for heading in (" ## Edits", "## Edits ", "## Edits\t", "## Edits ##", "##  Edits", "##\tEdits", "> ## Edits", "- ## Edits",
+                        "1. ## Edits", "    ## Edits", "\t## Edits", "##", "> - ### Edit 2", "### Edit 2 "):
+            with self.subTest(heading=heading):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{heading}\n\nNotes.\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 starts like a heading and is not one to six #, one space, "
+                                 "and the text, from the first column with nothing after the text")
+
+    def test_pass_record_refuses_a_report_with_a_line_of_only_equals_signs_or_only_hyphens_directly_below_a_line_of_text(self):
+        self.fired_bug_fix()
+        for underline in ("---", "=====", " -", "=  "):
+            with self.subTest(underline=underline):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\nEdits\n{underline}\n\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 4 is only = or only - directly below a line of text, "
+                                 "and Markdown can read the two as a heading")
+
+    def test_pass_record_refuses_a_report_with_a_line_that_starts_with_an_angle_bracket_and_then_a_letter_a_slash_or_a_mark(self):
+        self.fired_bug_fix()
+        for line in ("<details>", "   <!--", "</summary>", "<?php", "<item>: edits verified"):
+            with self.subTest(line=line):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{line}\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md: line 3 starts, after at most three spaces, with < and then a "
+                                 "letter, /, !, or ?, and Markdown can read it as the start of an HTML block")
+
+    def test_pass_record_refuses_a_report_with_two_headings_whose_text_is_edits(self):
+        self.fired_bug_fix()
+        for other in ("## Edits", "# Edits", "#### Edits"):
+            with self.subTest(other=other):
+                quoted = self.edit_block("8", "src/greeting.txt", "helo", "hello")
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{other}\n\n{quoted}\n{self.section()}"),
+                                 "brigade: reports/D1-review-1.md holds 2 headings whose text is Edits")
+
+    def test_pass_record_refuses_a_heading_in_the_edits_section_that_is_not_an_edit_heading_and_has_three_or_more_number_signs(self):
+        self.fired_bug_fix()
+        for heading in ("#### Edit 2", "### Edit", "### Edit  2", "### Notes on the edits", "###### Edit 2"):
+            with self.subTest(heading=heading):
+                body = (f"Verdict: pass with edits\n\n{self.section()}\n{heading}\n\n"
+                        + self.edit_block("2", "src/greeting.txt", "helo", "hello").split("\n", 1)[1])
+                self.assertEqual(self.refused_edits(body),
+                                 f"brigade: reports/D1-review-1.md: line {body.split(chr(10)).index(heading) + 1} is a heading in the "
+                                 "## Edits section that is neither ### Edit <n> nor a heading of one or two #")
+
+    def test_edits_verify_does_not_read_an_edit_below_a_heading_of_one_number_sign_that_follows_the_edits_section(self):
+        reviewed = self.edits_store()
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"),
+                          after="# Appendix\n\n" + self.edit_block("2", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.QUOTED_APPLIED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
+
+    def test_pass_record_refuses_a_fenced_block_in_the_edits_section_above_its_first_edit_heading(self):
+        self.fired_bug_fix()
+        unheaded = self.edit_block("1", "src/greeting.txt", "helo", "hello").split("\n", 2)[2]
+        self.assertEqual(self.refused_edits("Verdict: pass with edits\n\n## Edits\n\n" + unheaded + "\n"
+                                            + self.edit_block("2", "src/greeting.txt", "wrold", "world")),
+                         "brigade: reports/D1-review-1.md: line 9 starts a fenced block in the ## Edits section above its first "
+                         "### Edit heading")
+
+    def test_pass_record_refuses_an_edit_with_a_second_file_line_old_text_line_new_text_line_or_a_third_fenced_block(self):
+        self.fired_bug_fix()
+        unheaded = self.edit_block("2", "src/greeting.txt", "helo", "hello").split("\n", 2)[2]
+        for more in ("File: `src/other.txt`\n", "Old text:\n", "New text:\n", "```\nThe sentence then reads so.\n```\n", unheaded):
+            with self.subTest(more=more):
+                self.assertEqual(self.refused_edits(f"Verdict: pass with edits\n\n{self.section()}\n{more}"),
+                                 self.PARTS_REFUSAL.format(1))
+
+    def test_pass_record_refuses_a_report_that_holds_a_carriage_return(self):
+        self.fired_bug_fix()
+        report = "Verdict: pass with edits\n\n" + self.section()
+        for body in (report.replace("\n", "\r\n"), report.replace("wrold", "wrold\r"), "Notes\r" + report):
+            with self.subTest(body=body):
+                self.assertEqual(self.refused_edits(body), "brigade: reports/D1-review-1.md holds a carriage return")
+
+    def test_pass_record_refuses_a_report_that_is_not_utf_8(self):
+        self.fired_bug_fix()
+        report = ("Verdict: pass with edits\n\n" + self.section()).encode()
+        self.assertEqual(self.refused_edits(report.replace(b"world", b"w\xf6rld")), "brigade: reports/D1-review-1.md is not UTF-8")
+
+    def test_edits_verify_reads_tilde_fences_and_closing_fences_with_spaces_around_them_below_notes_that_parse_edits_reads_as_text(self):
+        reviewed = self.edits_store()
+        notes = ("## Notes\n\n> ```\n> quoted\n> ```\n\n- item\n\n      ```\n      nested\n      ```\n\n\t~~~\n\n    <details>\n\n"
+                 "< 3 items\n\n---\n\n## Rule\n---\n\n```\ncode\n```\n---\n\n#hashtag\n\n####### seven\n\n")
+        self.review_file("D1-review-1.md", "Verdict: pass with edits\n\n" + notes + "## Edits\n\n"
+                         "### Edit 1\n\nFile: `src/greeting.txt`\n\nOld text:\n\n~~~\nhelo\n~~~\n\n"
+                         "New text:\n\n~~~~text one `two`\nhello\n  ~~~~~ \t\n\n"
+                         "### Edit 2\n\nFile: `src/greeting.txt`\n\nOld text:\n\n```\nwrold\n   ```\n\nNew text:\n\n```\nworld\n```  \n")
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", ""))
 
     def test_edits_verify_refuses_a_build_command_that_names_a_program_that_does_not_exist(self):
         command = "no-such-program-d152 gen"
