@@ -10,7 +10,7 @@ reminder: New task? Playbook match or rigor needed -> apply /poteto-mode. Casual
 
 # Poteto mode
 
-Bundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolute path in every `delegate_task` brief.
+Bundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolute path in every `delegate_task` brief that carries the poteto-agent persona.
 
 ## Non-negotiables
 
