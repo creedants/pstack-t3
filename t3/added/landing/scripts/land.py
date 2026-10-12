@@ -597,7 +597,10 @@ def _admit(kind, repo=None, command=None):
             else:
                 records = _publish(kind, handles, taken, repo, command)
             if taken is not None and ticket is not None:
-                os.unlink(ticket.name)
+                try:
+                    os.unlink(ticket.name)
+                except FileNotFoundError:
+                    pass
             fcntl.flock(mutex, fcntl.LOCK_UN)
             if taken is not None:
                 for handle in handles.values():
