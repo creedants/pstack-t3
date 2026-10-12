@@ -1,10 +1,10 @@
-"""Every $B ticket add and $B fire command line in the brigade skill.
+"""Each `$B ticket add` and `$B fire` command line in the brigade skill that contains `--`.
 
-Expansion. A command line has three marks. `a|b|c` is one token of alternatives, split on `|`.
-`[...]` wraps tokens the line always includes. The brackets are not arguments. `<words>` is a
-placeholder, and a placeholder may contain spaces. `<words>` glued to other characters stays one
-token: `G<n>`, `A<n>`, `reports/<dish>.md`. Fill every placeholder. Keep every bracket. Do not
-drop an optional to make a line pass.
+Expansion. The filler recognizes three marks when a line has them. `a|b|c` is one token of
+alternatives, split on `|`. `[...]` wraps tokens the line includes. The brackets are not
+arguments. `<words>` is a placeholder, and a placeholder may contain spaces. `<words>` glued to
+other characters stays one token, as in `G<n>`, `A<n>`, and `reports/<dish>.md`. Fill every
+placeholder. Keep every token inside a bracket group. Do not drop an optional to make a line pass.
 
 A choice whose alternatives are exactly feature, fix, polish, upkeep, and study becomes one argv
 per alternative, in the order written. Every other choice keeps its first alternative. `--source`
@@ -556,7 +556,7 @@ class SkillCommandTest(test_brigade.BrigadeTest):
 
 
 def load_tests(loader, tests, pattern):
-    """Run this module's two methods.
+    """Return a suite of this module's two methods.
 
     SkillCommandTest subclasses BrigadeTest for init_landing and the temp project.
     The default loader would also collect BrigadeTest's test_* methods.
