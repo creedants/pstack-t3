@@ -545,7 +545,7 @@ def _held(kind, repo, command):
     for signum in previous:
         signal.signal(signum, _raise_exit)
     try:
-        yield
+        yield held
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -589,7 +589,10 @@ def _admit(kind, repo=None, command=None):
                 os.unlink(ticket.name)
             fcntl.flock(mutex, fcntl.LOCK_UN)
             if taken is not None:
-                return list(handles.values()), records
+                for handle in handles.values():
+                    if handle not in taken:
+                        handle.close()
+                return taken, records
             waited = time.time() - started
             if _report_due(waited, reported):
                 print(_format_wait(waited, _live_holders(busy)), file=sys.stderr, flush=True)
@@ -610,31 +613,37 @@ def _admit(kind, repo=None, command=None):
 def exclusive_slot(repo=None, command=None):
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
     It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
-    A later conflicting caller that waits on this governor leaves the slots when this caller could take every one of them."""
+    A later conflicting caller that waits on this governor leaves the slots when this caller could take every one of them.
+    The command sees LAND_SLOT_FILES, the slot files this hold locks, in name order."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    with _held("exclusive", repo, command):
+    with _held("exclusive", repo, command) as held:
         os.environ["LAND_SLOT"] = "exclusive"
+        os.environ["LAND_SLOT_FILES"] = " ".join(sorted(Path(handle.name).name for handle in held))
         try:
             yield
         finally:
             os.environ.pop("LAND_SLOT", None)
+            os.environ.pop("LAND_SLOT_FILES", None)
 
 
 @contextlib.contextmanager
 def slot(pool="worker", repo=None, command=None):
     """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
     A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
-    A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it."""
+    A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it.
+    The command sees LAND_SLOT_FILES, the slot files this hold locks, in name order."""
     if os.environ.get("LAND_SLOT"):
         yield
         return
-    with _held(pool, repo, command):
+    with _held(pool, repo, command) as held:
         os.environ["LAND_SLOT"] = pool
+        os.environ["LAND_SLOT_FILES"] = " ".join(sorted(Path(handle.name).name for handle in held))
         try:
             yield
         finally:
             os.environ.pop("LAND_SLOT", None)
+            os.environ.pop("LAND_SLOT_FILES", None)
 
 
 def supervised(command, cwd, timeout):

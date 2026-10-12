@@ -91,8 +91,10 @@ SLOT_HOLD = (
     "from pathlib import Path\n"
     "log, name, fifo, *hold = sys.argv[1:]\n"
     "def mark(word):\n"
+    "    files = os.environ.get('LAND_SLOT_FILES', '')\n"
+    "    line = f'{word} {name}' + (f' {files}' if files else '')\n"
     "    out = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)\n"
-    "    os.write(out, f'{word} {name}\\n'.encode())\n"
+    "    os.write(out, (line + '\\n').encode())\n"
     "    os.close(out)\n"
     "release = os.open(fifo, os.O_RDONLY)\n"
     "mark('enter')\n"
@@ -331,11 +333,16 @@ class SlotCallers:
     def __init__(self, test, slots):
         self.test = test
         self.governor = test.base / "state/pstack-t3/governor"
-        self.governor.mkdir(parents=True)
+        self.governor.mkdir(parents=True, exist_ok=True)
         (self.governor / "governor.json").write_text(json.dumps({"slots": slots}))
-        # The suite may itself run inside a slot. A child that inherits LAND_SLOT takes no lock.
-        self.env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
-        self.log = test.base / "slot-log"
+        # The suite may itself run inside a slot. A child that inherits LAND_SLOT takes no lock,
+        # and an inherited LAND_SLOT_FILES would name the parent's slot files.
+        self.env = {key: value for key, value in os.environ.items() if key not in {"LAND_SLOT", "LAND_SLOT_FILES"}}
+        stamp = 0
+        while (test.base / f"slot-log-{stamp}").exists():
+            stamp += 1
+        self.stamp = stamp
+        self.log = test.base / f"slot-log-{stamp}"
         self.callers = []
         self.descriptors = []
         test.addCleanup(self.close)
@@ -356,7 +363,7 @@ class SlotCallers:
 
     def start(self, name, *flags, script=SCRIPT, stepped=False, marked=False, pool="worker", hold=None):
         """Start a slot caller. With hold, its command leaves the slot after hold seconds instead of on release."""
-        directory = self.test.base / f"caller-{name}"
+        directory = self.test.base / f"caller-{self.stamp}-{name}"
         directory.mkdir()
         release, retry = self.fifo(directory / "release"), self.fifo(directory / "retry")
         command = [*flags, "--", sys.executable, "-c", SLOT_HOLD, str(self.log), name, str(directory / "release"),
@@ -409,7 +416,7 @@ class SlotCallers:
         return [tuple(line.split()) for line in self.log.read_text().splitlines()]
 
     def entries(self):
-        return [name for word, name in self.events() if word == "enter"]
+        return [fields[1] for fields in self.events() if fields[0] == "enter"]
 
 
 class LandingTest(unittest.TestCase):
@@ -4007,7 +4014,8 @@ os.execv({real!r}, [{real!r}, *args])
             waiting.remove(running)
 
         running, peak = set(), 0
-        for word, name in slots.events():
+        for fields in slots.events():
+            word, name = fields[0], fields[1]
             if word == "exit":
                 running.remove(name)
                 continue
@@ -4018,12 +4026,85 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(peak, 2)
         self.assertEqual(len(slots.entries()), 10)
 
+    def assert_slot_log(self, callers, kind_of):
+        """Return the most workers running at once.
+
+        No two intervals on one slot file overlap, and an exclusive interval overlaps no other caller.
+        """
+        running, spans, slot_of, peak = set(), {}, {}, 0
+        for position, fields in enumerate(callers.events()):
+            word, name, *files = fields
+            self.assertTrue(files, f"{name} recorded no slot file")
+            if word == "enter":
+                running.add(name)
+                spans[name] = [position, None]
+                slot_of[name] = tuple(files)
+            else:
+                running.remove(name)
+                spans[name][1] = position
+                self.assertEqual(tuple(files), slot_of[name], name)
+            peak = max(peak, sum(kind_of[caller] == "worker" for caller in running))
+        self.assertEqual(sorted(spans), sorted(kind_of))
+
+        def overlaps(left, right):
+            return left[0] < right[1] and right[0] < left[1]
+
+        by_slot = {}
+        for name, files in slot_of.items():
+            for slot_file in files:
+                by_slot.setdefault(slot_file, []).append(name)
+        for slot_file, names in by_slot.items():
+            for index, name in enumerate(names):
+                for other in names[index + 1:]:
+                    self.assertFalse(overlaps(spans[name], spans[other]), f"{name} and {other} overlapped on {slot_file}")
+        for name, span in spans.items():
+            if kind_of[name] != "exclusive":
+                continue
+            for other, other_span in spans.items():
+                if other != name:
+                    self.assertFalse(overlaps(span, other_span), f"{name} overlapped {other}")
+        return peak
+
     def contend(self, slots, kinds, hold):
         """Queue one free-running caller per kind, in order, behind full slots, then free the slots.
 
-        Each caller holds its slot for hold seconds. Asserts that no slot is ever shared and that no caller runs
-        ahead of an earlier one it conflicts with, except a worker or landing caller ahead of an earlier exclusive.
-        Returns the most worker slots in use at once."""
+        Each caller holds its slot for hold seconds. The slot log names the slot file each caller holds.
+        Returns the most worker slots in use at once.
+        """
+        callers = SlotCallers(self, slots)
+        kind_of = {f"holder-{index}": "worker" for index in range(slots)}
+        holders = [callers.enter(callers.start(name)) for name in kind_of]
+        kind_of["holder-landing"] = "landing"
+        holders.append(callers.enter(callers.start("holder-landing", pool="landing")))
+        for index, kind in enumerate(kinds):
+            name = f"{index}-{kind}"
+            kind_of[name] = kind
+            flags = ["--exclusive"] if kind == "exclusive" else []
+            pool = "landing" if kind == "landing" else "worker"
+            callers.queued(callers.start(name, *flags, marked=True, pool=pool, hold=hold))
+        for holder in holders:
+            callers.release(holder)
+        for caller in callers.callers:
+            self.assertEqual(caller.process.wait(timeout=120), 0, caller.name)
+        return self.assert_slot_log(callers, kind_of)
+
+    def admit_latest_first(self, slots, kinds):
+        """Park one stepped caller per kind behind full slots, free the slots, then let the latest parked caller try first.
+
+        A caller may start before an earlier parked caller only when that earlier caller could not take a slot.
+        Waiters sit on their retry fifo while a slot is released, so a release cannot land between the admission
+        check and the take.
+        """
+        def can_take(kind, busy):
+            if kind == "exclusive":
+                return not busy
+            if kind == "landing":
+                return "landing" not in busy and "exclusive" not in busy
+            return "exclusive" not in busy and busy.count("worker") < slots
+
+        def conflicts(earlier, later):
+            return earlier == later or "exclusive" in (earlier, later)
+
         callers = SlotCallers(self, slots)
         kind_of = {f"holder-{index}": "worker" for index in range(slots)}
         holders = [callers.enter(callers.start(name)) for name in kind_of]
@@ -4035,40 +4116,47 @@ os.execv({real!r}, [{real!r}, *args])
             kind_of[name] = kind
             flags = ["--exclusive"] if kind == "exclusive" else []
             pool = "landing" if kind == "landing" else "worker"
-            queue.append(callers.queued(callers.start(name, *flags, marked=True, pool=pool, hold=hold)).name)
+            caller = callers.start(name, *flags, stepped=True, pool=pool)
+            self.assertEqual(callers.settle(caller), "waiting", name)
+            queue.append(caller)
         for holder in holders:
             callers.release(holder)
-        for caller in callers.callers:
-            self.assertEqual(caller.process.wait(timeout=120), 0, caller.name)
 
-        running, spans, peak = set(), {}, 0
-        for position, (word, name) in enumerate(callers.events()):
-            if word == "enter":
-                running.add(name)
-                spans[name] = [position, None]
-            else:
-                running.remove(name)
-                spans[name][1] = position
-            held = [kind_of[other] for other in running]
-            self.assertTrue("exclusive" not in held or len(held) == 1, f"an exclusive caller shared the slots: {sorted(running)}")
-            self.assertLessEqual(held.count("landing"), 1, sorted(running))
-            self.assertLessEqual(held.count("worker"), slots, sorted(running))
-            peak = max(peak, held.count("worker"))
-        self.assertEqual(sorted(spans), sorted(kind_of))
-
-        for index, first in enumerate(queue):
-            for later in queue[index + 1:]:
-                if kind_of[first] == kind_of[later] or kind_of[later] == "exclusive":
-                    self.assertLess(spans[first][0], spans[later][1], f"{later} finished before the earlier {first} started")
-        return peak
+        pending = list(queue)
+        running = []
+        while pending:
+            started = None
+            for caller in reversed(pending):
+                if callers.step(caller) == "started":
+                    started = caller
+                    break
+            if started is None:
+                self.assertTrue(running, "nobody holds a slot and nobody could take one")
+                callers.release(running.pop(0))
+                continue
+            busy = [kind_of[caller.name] for caller in running]
+            for other in pending:
+                if queue.index(other) >= queue.index(started):
+                    continue
+                if not conflicts(kind_of[other.name], kind_of[started.name]):
+                    continue
+                self.assertFalse(can_take(kind_of[other.name], busy),
+                                 f"{started.name} entered before {other.name} while {other.name} could take a slot, running {busy}")
+            pending.remove(started)
+            running.append(started)
+        for caller in running:
+            callers.release(caller)
+        self.assert_slot_log(callers, kind_of)
 
     def test_contending_callers_never_share_a_slot_and_never_pass_an_earlier_ticket(self):
         kinds = ["worker", "exclusive", "landing", "worker", "landing", "exclusive", "worker", "worker", "landing", "exclusive"]
         self.assertEqual(self.contend(1, kinds, hold=0.1), 1)
+        self.admit_latest_first(1, kinds)
 
     def test_contending_callers_fill_two_worker_slots_and_never_pass_an_earlier_ticket(self):
         kinds = ["worker", "worker", "landing", "exclusive", "worker", "landing", "worker", "worker", "exclusive", "worker"]
         self.assertEqual(self.contend(2, kinds, hold=1.5), 2)
+        self.admit_latest_first(2, kinds)
 
     def test_an_old_slot_holder_blocks_a_new_caller_and_the_reverse(self):
         slots = SlotCallers(self, 1)
