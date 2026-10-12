@@ -1436,14 +1436,16 @@ class BrigadeTest(unittest.TestCase):
         self.review_file("D1.md", f"findings\n\n## Threads\n\n- fixer `{THREAD_B}` grok/grok-4.7\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
-                         "brigade: D1: reports/D1.md cannot be read; line 5 holds role 'fixer', which is not worker, "
-                         "fix worker, reviewer, panel member, code delegate, claims check, or architect runner; "
-                         "nothing recorded")
-        self.review_file("D1.md", f"findings\n\n## Threads\n\n- fix worker `{THREAD_B}` grok/grok-4.7\n")
-        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
-                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
-                         "brigade: D1: reports/D1.md cannot be read; line 5 holds role 'fix worker', "
-                         "which dish --thread writes; nothing recorded")
+                         "brigade: D1: reports/D1.md cannot be read; line 5 holds role 'fixer', which is not "
+                         "code delegate, claims check, or architect runner; nothing recorded")
+        for role, writer in (("fix worker", "dish <item> --thread <id>"), ("reviewer", "pass record --reviewer-thread <id>"),
+                             ("panel member", "thread <dish> --role \"panel member\"")):
+            with self.subTest(role=role):
+                self.review_file("D1.md", f"findings\n\n## Threads\n\n- {role} `{THREAD_B}` grok/grok-4.7\n")
+                self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                              "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                                 f"brigade: D1: reports/D1.md cannot be read; line 5 holds role '{role}', "
+                                 f"which {writer} writes; nothing recorded")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
 
@@ -1459,7 +1461,10 @@ class BrigadeTest(unittest.TestCase):
                              f"thread D1 --role \"panel member\" --thread <id> --seat <provider/model>")
         self.assert_refused_choice(self.brigade("thread", "D1", "--role", "worker", "--thread", THREAD_C,
                                                "--seat", "grok/grok-4.7", ok=False),
-                                   "--role", "worker", ("panel member", "architect runner"))
+                                   "--role", "worker", ("panel member",))
+        self.assert_refused_choice(self.brigade("thread", "D1", "--role", "architect runner", "--thread", THREAD_C,
+                                               "--seat", "grok/grok-4.7", ok=False),
+                                   "--role", "architect runner", ("panel member",))
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
@@ -1515,13 +1520,15 @@ class BrigadeTest(unittest.TestCase):
                          [["1", "worker", THREAD_A], ["2", "fix worker", THREAD_B], ["3", "fix worker", THREAD_C]])
         self.assertEqual([row[7] for row in self.thread_rows()], ["stamp", "stamp", "stamp"])
 
-    def test_the_thread_command_records_a_panel_member_and_an_architect_runner_and_a_rerun_adds_nothing(self):
+    def test_the_thread_command_records_a_panel_member_and_a_report_records_an_architect_runner_and_a_rerun_adds_nothing(self):
         self.fired_bug_fix()
         self.assertEqual(self.brigade("thread", "D1", "--role", "panel member", "--thread", THREAD_A,
                                       "--seat", "grok/grok-4.7"), "D1: panel member on record")
-        self.assertEqual(self.brigade("thread", "D1", "--role", "architect runner", "--thread", THREAD_B,
-                                      "--seat", "opencode-go/muse-spark-1.3-contributor"),
-                         "D1: architect runner on record")
+        self.review_file("D1.md", f"findings\n\n## Threads\n\n- architect runner `{THREAD_B}` "
+                                  "opencode-go/muse-spark-1.3-contributor\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX),
+                         "D1 sent-back")
         after = (self.at / "threads.tsv").read_bytes()
         self.assertEqual(self.brigade("thread", "D1", "--role", "panel member", "--thread", THREAD_A,
                                       "--seat", "grok/grok-4.7"), "D1: panel member already on record")
@@ -1534,7 +1541,7 @@ class BrigadeTest(unittest.TestCase):
                                       "--seat", "grok/grok-4.7", ok=False), "brigade: no D9 in dishes.tsv")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
                                       "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--member", "--note", "nit"),
-                         "D1: member send-back on record; D1 stays in-progress")
+                         "D1: member send-back on record; D1 stays sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "panel member", THREAD_A, "grok/grok-4.7", "", "stamp"],
                           ["D1", "1", "architect runner", THREAD_B,

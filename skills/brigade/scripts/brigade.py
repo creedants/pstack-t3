@@ -41,12 +41,17 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
-# The roles a row of threads.tsv may hold. Each of the seven has one writer.
+# The roles a row of threads.tsv may hold. A report item or --role naming anything else is refused.
 THREAD_ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
-# The roles whose rows stay open until another write ends them. dish --thread writes these.
+# The worker roles. dish --thread writes these, and a report may not name them.
 WORKER_ROLES = ("worker", "fix worker")
-# The roles the thread command writes. Every other role already has a writer of its own.
-THREAD_COMMAND_ROLES = ("panel member", "architect runner")
+# The roles a worker report lists, which its worker delegated. The report writes these and nothing else.
+CHILD_ROLES = ("code delegate", "claims check", "architect runner")
+# The roles the thread command writes. No other command takes a role as a flag.
+THREAD_COMMAND_ROLES = ("panel member",)
+# The command that writes each role the report may not name, by role.
+THREADS_WRITERS = {"worker": "dish <item> --thread <id>", "fix worker": "dish <item> --thread <id>",
+                   "reviewer": "pass record --reviewer-thread <id>", "panel member": "thread <dish> --role \"panel member\""}
 EDITS_VERDICT = "pass-with-edits"
 MODES = ("full", "light")
 ROUND_BUDGET = 3
@@ -1403,7 +1408,7 @@ THREADS_REFUSED = {
     "deeper": "is a heading deeper than the ## Threads heading",
     "again": "is a second ## Threads heading",
     "role": "holds role {role!r}, which is not {roles}",
-    "worker": "holds role {role!r}, which dish --thread writes",
+    "writer": "holds role {role!r}, which {writer} writes",
 }
 # One refusal for every line report_threads could not read. `lines` is the joined per-line reasons.
 THREADS_REFUSED_LINE = "{dish}: reports/{name} cannot be read; {lines}; nothing recorded"
@@ -2140,18 +2145,20 @@ THREADS_REFUSED_LINE = "{dish}: reports/{name} cannot be read; {lines}; nothing 
 
 
 def report_threads(text):
-    """Every child thread a report's ## Threads section lists, as ((role, thread, seat), unreadable).
+    """The children a report's ## Threads section lists, and every line that could not be read.
 
-    A fenced block is skipped, so no line inside one is read. A report with no ## Threads section holds no
-    child. A line of the section that is not one item is reported by its number, and so is a heading
-    deeper than the section's own and a second ## Threads heading, which both end the scan. A role that
-    is well formed but is not one of THREAD_ROLES is reported by its number and named, and so is a worker
-    role, because dish --thread writes those rows.
+    The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
+    tuple of `(line number, reason)` pairs. A fenced block is skipped, so no line inside one is read. A
+    report with no ## Threads section holds no child. A line of the section that holds text but is not
+    one item is reported by its number, and a line with no text is skipped. So is a heading deeper than
+    the section's own and a second ## Threads heading while the first is still open, and both of those
+    end the scan. A role that is well formed but is not one of CHILD_ROLES is reported by its number,
+    and named with the command that writes it when a role of THREADS_WRITERS names it.
     """
     children, unreadable = [], []
     level, fenced = 0, False
     for number, line in enumerate(text.splitlines(), 1):
-        fence = line.strip().startswith("```")
+        fence = bool(FENCE_OPEN.match(line.strip()))
         plain = not fence and not fenced
         fenced = fenced != fence
         heading = plain and HEADING.match(line)
@@ -2177,11 +2184,11 @@ def report_threads(text):
             unreadable.append((number, THREADS_REFUSED["item"]))
             continue
         role, thread, seat = item.groups()
-        if role in WORKER_ROLES:
-            unreadable.append((number, THREADS_REFUSED["worker"].format(role=role)))
+        if role in THREADS_WRITERS:
+            unreadable.append((number, THREADS_REFUSED["writer"].format(role=role, writer=THREADS_WRITERS[role])))
             continue
-        if role not in THREAD_ROLES:
-            unreadable.append((number, THREADS_REFUSED["role"].format(role=role, roles=one_of(THREAD_ROLES))))
+        if role not in CHILD_ROLES:
+            unreadable.append((number, THREADS_REFUSED["role"].format(role=role, roles=one_of(CHILD_ROLES))))
             continue
         children.append({"role": role, "thread": thread, "seat": seat})
     return tuple(children), tuple(unreadable)
@@ -2212,7 +2219,7 @@ def worker_report(restaurant, dish_id):
 
 
 def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
-    """The one writer of threads.tsv. Returns True when it wrote a row.
+    """The one writer of threads.tsv. Returns True when it wrote a row or closed one.
 
     `threads` is a sequence of `(role, thread, seat)`. A worker role's attempt is one more than the worker
     rows the item already holds for another thread, and every other role's is that count, or 1 when the
@@ -5076,7 +5083,8 @@ def parser():
     p = sub.add_parser("thread", help="record one thread an item used, for a role no other command writes")
     p.add_argument("dish")
     p.add_argument("--role", required=True, choices=THREAD_COMMAND_ROLES,
-                   help="the row's role; every other role has a writer of its own")
+                   help="the row's role; the other six roles are written by dish --thread, --reviewer-thread, "
+                        "or a report")
     p.add_argument("--thread", required=True, help="the thread id")
     p.add_argument("--seat", required=True, help="the thread's seat as provider/model")
 
@@ -5096,25 +5104,27 @@ def parser():
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
     threads_help = (
-        "Records the verdict, and writes one row of threads.tsv for each thread the attempt used. The reviewer's row "
-        "comes from --reviewer-thread and takes its seat from --verifier. The rows for the children the worker "
-        "delegated come from a ## Threads section of reports/<dish>.md, which this command reads and takes no flag "
-        "for.\n"
+        "Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's "
+        "report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The "
+        "child rows come from a ## Threads section of reports/<dish>.md, which this command reads and takes no "
+        "flag for.\n"
         "\n"
-        "That section starts with the heading `## Threads` on a line of its own, and every other line of the section "
-        "is one list item of the form - <role> `<thread id>` <seat>. A fenced block inside the section is skipped.\n"
+        "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
+        "is not blank and is not inside a fenced block is one list item of the form "
+        "- <role> `<thread id>` <seat>.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
         "then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and "
         "whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is "
         "`mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.\n"
         "\n"
-        "The role is one of worker, fix worker, reviewer, panel member, code delegate, claims check, or architect "
-        "runner. A report with no ## Threads section adds no row and is not an error. A line that is not one such "
-        "item is refused by its number. So is a heading deeper than the section's own, and so is a second ## "
-        "Threads heading, and those two end the scan. A role that is well formed but is not one of the seven is "
-        "refused by its number and named. A child whose role is worker or fix worker is refused, because dish "
-        "--thread writes those rows.\n"
+        "The three roles a child may take are code delegate, claims check, and architect runner. A child whose "
+        "role is any of the other four is refused, because dish --thread writes the worker rows, "
+        "--reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A "
+        "report with no ## Threads section adds no row and is not an error. A line that is not one such item is "
+        "refused by its number. So is a heading deeper than the section's own, and so is a second ## Threads "
+        "heading while the first is still open, and those two end the scan. A role that is well formed but is not "
+        "one of the three is refused by its number and named.\n"
         "\n"
         "Any refusal happens before the pass row is written, so nothing is recorded and no partial row is written."
     )

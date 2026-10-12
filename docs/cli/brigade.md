@@ -311,7 +311,7 @@ record one thread an item used, for a role no other command writes
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `dish` | yes |  |  |  |
-| `--role ROLE` | yes | `panel member`, `architect runner` |  | the row's role; every other role has a writer of its own |
+| `--role ROLE` | yes | `panel member` |  | the row's role; the other six roles are written by dish --thread, --reviewer-thread, or a report |
 | `--thread THREAD` | yes |  |  | the thread id |
 | `--seat SEAT` | yes |  |  | the thread's seat as provider/model |
 
@@ -356,13 +356,13 @@ record or check a review verdict for a dish at a head SHA
 brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--member | --late] dish
 ```
 
-Records the verdict, and writes one row of threads.tsv for each thread the attempt used. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The rows for the children the worker delegated come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
+Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The child rows come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
 
-That section starts with the heading `## Threads` on a line of its own, and every other line of the section is one list item of the form - \<role> `\<thread id>` \<seat>. A fenced block inside the section is skipped.
+That section starts with the heading `## Threads` on a line of its own, and every other line of it that is not blank and is not inside a fenced block is one list item of the form - \<role> `\<thread id>` \<seat>.
 
 This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is `mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.
 
-The role is one of worker, fix worker, reviewer, panel member, code delegate, claims check, or architect runner. A report with no ## Threads section adds no row and is not an error. A line that is not one such item is refused by its number. So is a heading deeper than the section's own, and so is a second ## Threads heading, and those two end the scan. A role that is well formed but is not one of the seven is refused by its number and named. A child whose role is worker or fix worker is refused, because dish --thread writes those rows.
+The three roles a child may take are code delegate, claims check, and architect runner. A child whose role is any of the other four is refused, because dish --thread writes the worker rows, --reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A report with no ## Threads section adds no row and is not an error. A line that is not one such item is refused by its number. So is a heading deeper than the section's own, and so is a second ## Threads heading while the first is still open, and those two end the scan. A role that is well formed but is not one of the three is refused by its number and named.
 
 Any refusal happens before the pass row is written, so nothing is recorded and no partial row is written.
 
