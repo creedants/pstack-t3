@@ -6,12 +6,12 @@ t3/overrides/      whole-file replacements, keyed by skill-relative path
 t3/agents/         personas copied into skills/pstack-runtime/agents/, keyed agents/<name>.md
 t3/added/          files with no upstream counterpart
 t3/removed.txt     upstream paths that pstack-t3 does not ship
-t3/overrides.lock.json  sha256 of each vendored file the T3 layer replaces
+t3/overrides.lock.json  sha256 of vendored counterparts for skill overrides and personas
 
 An override or a persona whose vendored file changed since it was written
 fails the build until it is reviewed or re-ported and the lock refreshed
-with --update-lock. A persona with no vendored counterpart is T3's own
-file and carries no digest.
+with --update-lock. Refreshing the lock omits personas with no vendored
+counterpart. A stale persona pin reports drift until the lock is refreshed.
 """
 
 import argparse
@@ -55,9 +55,9 @@ class Replacement:
     lock_key is the key in t3/overrides.lock.json, a skill-relative path for an
     override and agents/<name>.md for a persona. problem_label is what the build
     names when the replacement drifts. conflict_rel is the path under the
-    directory --conflicts writes to, so it equals lock_key. The lock pins the row
-    when its vendored counterpart exists, and a persona with no vendored
-    counterpart carries no lock entry.
+    directory --conflicts writes to, so it equals lock_key. Refreshing the lock
+    records the vendored digest for a persona with a counterpart and omits a
+    persona with no counterpart. A stale persona pin still reports drift.
     """
 
     lock_key: str
@@ -70,15 +70,19 @@ class Replacement:
     def pins(self):
         return (VENDOR / self.upstream_rel).is_file()
 
+    @property
+    def persona(self):
+        return self.lock_key.startswith("agents/")
+
 
 def replacements():
-    """Every replacement the lock may carry, overrides first, then personas. An unpinned persona carries no entry."""
+    """Every replacement the lock may carry, overrides first, then personas."""
     rows = []
     for rel in relative_files(T3 / "overrides"):
         if rel.parts[0] == "agents":
             raise SystemExit(
-                f"t3/overrides/{rel.as_posix()}: a persona belongs in t3/agents, because the lock keys it "
-                f"agents/{rel.name} and an override under t3/overrides/agents would shadow that key"
+                f"t3/overrides/{rel.as_posix()}: a persona belongs in t3/agents; "
+                "the lock reserves the agents/ prefix, so skill overrides under t3/overrides/agents are unsupported"
             )
         key = rel.as_posix()
         rows.append(Replacement(key, key, f"t3/overrides/{key}", f"skills/{key}", key))
@@ -122,7 +126,12 @@ def entry_noun(lock_key):
 def check_lock(update):
     rows = replacements()
     by_key = {row.lock_key: row for row in rows}
-    current = {row.lock_key: sha256(VENDOR / row.upstream_rel) for row in rows if row.pins}
+    current = {}
+    for row in rows:
+        if row.pins:
+            current[row.lock_key] = sha256(VENDOR / row.upstream_rel)
+        elif not row.persona:
+            current[row.lock_key] = None
     if update:
         LOCK.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
         return []

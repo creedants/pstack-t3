@@ -152,6 +152,36 @@ class OverrideLockTest(unittest.TestCase):
             ],
         )
 
+    def test_a_skill_override_with_no_vendored_counterpart_reports_a_missing_lock_key_and_writes_null(self):
+        self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
+        self.write_lock({})
+        self.assertEqual(
+            build.check_lock(False),
+            ["alpha/SKILL.md: override not in overrides.lock.json (run build.py --update-lock after reviewing)"],
+        )
+        build.check_lock(True)
+        self.assertEqual(json.loads(self.lock.read_text()), {"alpha/SKILL.md": None})
+
+    def test_a_null_lock_key_for_a_skill_override_with_no_vendored_counterpart_is_not_drift(self):
+        self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
+        self.write_lock({"alpha/SKILL.md": None})
+        self.assertEqual(build.check_lock(False), [])
+        build.check_lock(True)
+        self.assertEqual(json.loads(self.lock.read_text()), {"alpha/SKILL.md": None})
+
+    def test_a_skill_override_with_an_old_digest_reports_drift_and_refreshes_to_null(self):
+        self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
+        self.write_lock({"alpha/SKILL.md": hashlib.sha256(b"an older upstream file\n").hexdigest()})
+        self.assertEqual(
+            build.check_lock(False),
+            [
+                "alpha/SKILL.md: upstream changed since this override was written; "
+                "review or re-port it, then --update-lock"
+            ],
+        )
+        build.check_lock(True)
+        self.assertEqual(json.loads(self.lock.read_text()), {"alpha/SKILL.md": None})
+
     def test_a_persona_with_no_vendored_file_is_not_drift_and_gets_no_key(self):
         self.write("t3/agents/persona.md", "t3 persona\n")
         self.assertEqual(build.check_lock(False), [])
