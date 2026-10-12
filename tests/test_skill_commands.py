@@ -506,7 +506,7 @@ class SkillCommandTest(test_brigade.BrigadeTest):
             f"SKILL.md yielded {len(spans)} command lines; the floor is {COMMAND_LINE_FLOOR}",
         )
 
-    def test_each_filled_command_prints_its_id(self):
+    def test_each_filled_command_prints_its_recorded_line(self):
         for tape in tapes(command_spans(skill_text())):
             self.run_tape(tape)
 
@@ -564,7 +564,7 @@ def load_tests(loader, tests, pattern):
     suite = loader.suiteClass()
     for name in (
         "test_the_skill_keeps_at_least_seven_command_lines",
-        "test_each_filled_command_prints_its_id",
+        "test_each_filled_command_prints_its_recorded_line",
     ):
         suite.addTest(SkillCommandTest(name))
     return suite
