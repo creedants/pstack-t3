@@ -1,0 +1,1 @@
+- Probe the activity page at 390 pixels in a headless browser against the reserved height.
