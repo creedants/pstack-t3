@@ -589,7 +589,7 @@ every restaurant's counts and open decisions, grouped by repository
 brigade.py [flags] next [--failure FAILURE] [--unsent UNSENT] <wake>
 ```
 
-print the steps this wake owes and whether the wake is a reply
+print the steps this wake owes and whether the wake is a reply. Leave the wake off when this wake has no known cause
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

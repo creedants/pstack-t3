@@ -3934,7 +3934,7 @@ def inbox_ready(snapshot):
 
 
 def accepted_argv(snapshot, argv):
-    """The argv when that command would exit 0 on this store. None becomes a see or an if."""
+    """The argv when that command would exit 0 on this store. None means this sheet prints no run of it."""
     if snapshot.owner_block:
         return None
     if argv == ("inbox", "take"):
@@ -4099,7 +4099,7 @@ def occasion_yes(level, occasion, forced):
 
 
 def reply_for(snapshot, trigger, failure, unsent):
-    """The one reply. The first held occasion wins the token."""
+    """The one reply. A store that reports to the executive admin uses that rule first, unless --unsent is set. Otherwise the first held occasion wins the token."""
     if snapshot.reports_to and not unsent:
         close = ("close", "--to-file") if trigger.wake == "evening" or is_drained(snapshot, trigger) else None
         if trigger.wake == "user":
@@ -4718,7 +4718,8 @@ def parser():
     p.add_argument("--stale-hours", type=float, default=24)
     p.add_argument("--repo", help="print only this repository")
 
-    p = sub.add_parser("next", help="print the steps this wake owes and whether the wake is a reply")
+    p = sub.add_parser("next", help="print the steps this wake owes and whether the wake is a reply. "
+                                    "Leave the wake off when this wake has no known cause")
     p.add_argument("--failure", choices=("fixable", "stuck"), default=None,
                    help="fixable or stuck, for a failure this wake already knows")
     p.add_argument("--unsent", choices=UNSENT, default=None,
