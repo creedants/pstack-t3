@@ -117,13 +117,15 @@ STORE_RECORD = "restaurant.json"
 STORE_LOCK = "restaurant.lock"
 UNITS_TABLE = "dishes.tsv"
 LOG_TABLE = "log.tsv"
+GOALS_TABLE = "goals.tsv"
 STORE_COLUMNS = {
     UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported", "kind", "goal"),
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
+    GOALS_TABLE: ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
 }
 # How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
 ADDED_COLUMNS = {UNITS_TABLE: 2}
-TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log"}
+TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table"}
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
 RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
@@ -145,6 +147,8 @@ OTHER_PROVIDER = ("Other", 6)
 OTHER_MODEL = "other model"
 UNGROUPED = "Not tied to a work item"
 UNNAMED = "work item"
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
+UNASSIGNED = "Unassigned"
 TITLE_CHARS = 60
 LABEL_CHARS = 40
 
@@ -189,6 +193,18 @@ class SourceError(ActivityError):
 
 
 @dataclass(frozen=True)
+class GoalRecord:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Goal:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
 class Unit:
     id: str
     state: str
@@ -197,6 +213,8 @@ class Unit:
     worker: str
     earlier_workers: tuple[str, ...]
     task: str
+    kind: str = ""
+    goal: str = ""
 
 
 @dataclass(frozen=True)
@@ -206,6 +224,7 @@ class Store:
     coordinators: tuple[str, ...]
     units: tuple[Unit, ...]
     project_root: str = ""
+    goals: tuple[GoalRecord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -287,6 +306,8 @@ class Item:
     no_link: str = ""
     # The work item's position among the store's work items, so two work items that print alike stay two. No form prints it.
     key: int = 0
+    kind: str = ""
+    goal: str = ""
 
 
 @dataclass(frozen=True)
@@ -328,6 +349,20 @@ class Page:
     items: tuple[Item, ...]
     hidden: Hidden
     fold: int = 0
+    goals: tuple[Goal, ...] = ()
+    flight: Optional["Flight"] = None
+
+
+@dataclass(frozen=True)
+class StripGroup:
+    heading: str
+    count: str
+    items: tuple[Item, ...]
+
+
+@dataclass(frozen=True)
+class Flight:
+    groups: tuple[StripGroup, ...]
 
 
 def parser():
@@ -473,6 +508,18 @@ def record_text(meta, key):
     return value
 
 
+def goals_of(directory):
+    seen = set()
+    kept = []
+    for row in read_table(directory, GOALS_TABLE):
+        ident = row["id"]
+        if not ident or ident in seen:
+            continue
+        seen.add(ident)
+        kept.append(GoalRecord(ident, row["name"]))
+    return tuple(kept)
+
+
 def read_store(directory):
     try:
         try:
@@ -487,6 +534,7 @@ def read_store(directory):
             raise ActivityError("this is the executive admin's store; pass one coordinator's store directory")
         units = read_table(directory, UNITS_TABLE)
         log = read_table(directory, LOG_TABLE)
+        goals = goals_of(directory)
     except OSError as error:
         raise ActivityError(f"cannot read the store ({error.strerror}); check its permissions and run this again") from None
     earlier = {}
@@ -494,12 +542,12 @@ def read_store(directory):
         if row["kind"] == "worker" and row["state"] == "retired" and row["note"]:
             earlier.setdefault(row["id"], []).append(row["note"])
     by_id = {
-        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"])
+        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"], row["kind"], row["goal"])
         for row in units
     }
     name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
     coordinators = tuple(value for value in (record_text(meta, "thread"), record_text(meta, "previousThread")) if value.strip())
-    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root)
+    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals)
 
 
 def roots_of(store):
@@ -1185,16 +1233,21 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy, key):
+def item_of(unit, privacy, key, goal_ids=()):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key)
+    kind = unit.kind if unit.kind in KINDS else ""
+    goal = unit.goal if unit.goal in goal_ids else ""
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal)
 
 
 def build_page(store, t3, window, privacy):
     """Each string of the page that comes from the store or from T3 is a value privacy.field, privacy.model, or privacy.link returned, or a label short() cut from a field() value.
     The other strings are the constants of this file and numbers. No page type holds a thread id, a sub-agent id, or a path.
     """
+    goals = tuple(Goal(record.id, clip(privacy.field(record.name), SUMMARY_BYTES)) for record in store.goals)
+    goal_ids = {goal.id for goal in goals}
+
     def row(agent, depth, label):
         turn = open_turn(agent)
         return Row(depth, label, privacy.model(agent.model), PROVIDERS.get(agent.provider, OTHER_PROVIDER)[0], status_of(agent),
@@ -1218,7 +1271,7 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy, keys[unit]) if unit else None, rows, len(active) - subagents, subagents))
+        groups.append(Group(item_of(units[unit], privacy, keys[unit], goal_ids) if unit else None, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1236,9 +1289,9 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy, keys[unit.id]) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
-    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
+    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals, flight=flight_of(items, goals))
 
 
 KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
@@ -1409,6 +1462,49 @@ def counted(hidden, cuts, unlisted):
                    dropped_items=hidden.dropped_items + gone_items, dropped_agents=hidden.dropped_agents + gone_agents)
 
 
+def tally(items):
+    counts = {}
+    for item in items:
+        counts[item.state] = counts.get(item.state, 0) + 1
+    ordered = [word for state, (word, _) in STATE_WORDS.items() if state not in FINISHED_STATES]
+    ordered.append(UNKNOWN_STATE[0])
+    seen = set(ordered)
+    parts = [f"{counts[word]} {word}" for word in ordered if counts.get(word)]
+    for item in items:
+        word = item.state
+        if word not in seen:
+            parts.append(f"{counts[word]} {word}")
+            seen.add(word)
+    return ", ".join(parts)
+
+
+def flight_of(items, goals):
+    ids = {goal.id for goal in goals}
+    grouped = {goal.id: [] for goal in goals}
+    loose = []
+    labeled = False
+    for item in items:
+        resolved = item.goal in ids
+        if item.kind or resolved:
+            labeled = True
+        (grouped[item.goal] if resolved else loose).append(item)
+    if not labeled:
+        return None
+    groups = [StripGroup(goal.name, tally(grouped[goal.id]), tuple(grouped[goal.id])) for goal in goals if grouped[goal.id]]
+    if loose:
+        groups.append(StripGroup(UNASSIGNED, tally(loose), tuple(loose)))
+    return Flight(tuple(groups))
+
+
+def cut_items(page, items):
+    kept = tuple(items)
+    return replace(page, items=kept, flight=flight_of(kept, page.goals))
+
+
+def count_line(group):
+    return f"{group.heading} · {group.count}" if group.heading else group.count
+
+
 def cap_everything(page):
 
     def running(row):
@@ -1427,7 +1523,8 @@ def cap_everything(page):
     items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
     hidden = counted(page.hidden, cuts, len(page.items) - len(items))
     coordinator = narrow(page.coordinator, COORDINATOR_SPANS) if page.coordinator else None
-    return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
+    page = replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), hidden=hidden, fold=page.fold + 1)
+    return cut_items(page, items)
 
 
 FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_items, limit) for limit in KEPT_ITEMS), cap_everything)
@@ -1473,12 +1570,15 @@ def fixed_height(page, said):
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
+    A grouped strip adds LINE_PX for each count line and GROUP_PX for each heading.
     """
     rows = [row for group in page.groups for row in group.rows]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
     for status in OPEN:
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
         total += HEADING_PX + OPEN_PX * lines if lines else 0
+    if page.flight is not None:
+        total += (LINE_PX + GROUP_PX) * len(page.flight.groups)
     return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
 
 
@@ -1499,7 +1599,9 @@ def framed(page, limit):
     drawn = [group.item for group in page.groups]
     listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
     items = tuple(item for item, keep in zip(page.items, listed) if keep)
-    left -= STRIP_PX + CHIP_PX * len(items) if items else 0
+    flight = flight_of(items, page.goals)
+    groups = len(flight.groups) if flight is not None else 0
+    left -= (STRIP_PX + CHIP_PX * len(items) + (LINE_PX + GROUP_PX) * groups) if items else 0
 
     def tier(row):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
@@ -1525,7 +1627,7 @@ def framed(page, limit):
         cuts.append((group, rows or None))
         if rows:
             groups.append(replace(group, rows=rows))
-    return replace(page, groups=tuple(groups), items=items, hidden=counted(page.hidden, cuts, len(page.items) - len(items)))
+    return cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
 
 
 def fit(page, budget, clean, frame=None):
@@ -1554,7 +1656,7 @@ def shortened(page):
     The name, each item's id and summary, and each group row's label and model are clipped as cap_everything clips them, and each link it would leave out is left out.
     """
     groups = tuple(replace(group, item=shown(group.item) if group.item else None, rows=tuple(narrow(row) for row in group.rows)) for group in page.groups)
-    return replace(page, name=clip(page.name, NAME_BYTES), groups=groups, items=tuple(shown(item) for item in page.items))
+    return cut_items(replace(page, name=clip(page.name, NAME_BYTES), groups=groups), (shown(item) for item in page.items))
 
 
 def fit_text(page, budget, clean):
@@ -1819,6 +1921,32 @@ RENDERER = squeezed("""
     }
 """)
 
+STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
+STRIP_HOOK = squeezed("""
+    if (D && D.v === 1 && D.F && D.F.length) {
+      const link = (parent, text, url) => {
+        const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
+        if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+        return node;
+      };
+      const box = add(root, 'div', 'strip'), counts = add(box, 'div', 'lg');
+      for (const [count, heading, indexes] of D.F) {
+        add(counts, 'div', '', count);
+        add(box, 'div', 'grp', heading);
+        for (const index of indexes) {
+          const item = D.I[index], chip = link(box, '', item[4]);
+          if (item[6]) add(chip, 'b', 'chip', item[6]);
+          add(chip, 'b', 'one', item[0]);
+          add(chip, 'span', 'sum', item[1]);
+          add(chip, 'b', 'chip ' + item[3], item[2]);
+        }
+      }
+      const foot = root.querySelector('.foot'), title = add(root, 'h2', '', 'Work items in flight');
+      root.insertBefore(title, foot);
+      root.insertBefore(box, foot);
+    }
+""")
+
 
 def wire(page):
     models, providers = [], [name for name, _ in page.legend]
@@ -1839,7 +1967,15 @@ def wire(page):
 
     items = items_of(page)
     own, totals = page.coordinator, page.totals
-    return {
+    grouped = page.flight is not None
+
+    def cells(item):
+        row = [item.id, item.summary, item.state, item.tone, item.pr, 0 if grouped else int(item in page.items)]
+        if grouped:
+            row.append(item.kind)
+        return row
+
+    data = {
         "v": WIRE_VERSION,
         "c": page.name,
         "w": [int(page.window.start), round(page.window.end - page.window.start), span(page.window)],
@@ -1847,11 +1983,15 @@ def wire(page):
         "S": [status.value for status in WIRE_STATUS],
         "P": [[name, colors[name], agents] for name, agents in page.legend],
         "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
-        "I": [[item.id, item.summary, item.state, item.tone, item.pr, int(item in page.items)] for item in items],
+        "I": [cells(item) for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
         "M": models,
         "N": notes(page, items),
     }
+    if grouped:
+        places = {id(item): index for index, item in enumerate(items)}
+        data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
+    return data
 
 
 def checksum(text):
@@ -1864,10 +2004,12 @@ def checksum(text):
 def render_html(page, clean):
     """The document. The only strings in it that are not constants of this file are in the data element, and encode() passes each of those to clean."""
     data = encode(wire(page), clean)
+    style = STYLE if page.flight is None else STYLE + STRIP_CSS
+    script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
-        f"<title>Agent activity</title><style>{STYLE}</style><div id=o></div>"
-        f"<script type=application/json id=d>{data}</script><script>const H={checksum(data)};{RENDERER}</script>")
+        f"<title>Agent activity</title><style>{style}</style><div id=o></div>"
+        f"<script type=application/json id=d>{data}</script><script>const H={checksum(data)};{script}</script>")
 
 
 def span(window):
@@ -1909,9 +2051,19 @@ def render_text(page, clean):
                 failed.append(line(name, row.model, worked([row])))
     drawn = {group.item: f"{people(group.agents, group.subagents)}, {worked(group.rows)}" for group in page.groups if group.item}
     listed = [*drawn, *(item for item in page.items if item not in drawn)][:TEXT_ITEMS]
-    items = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
     more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
     loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
+    flat = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
+    text_flight = flight_of(listed, page.goals)
+    if text_flight is None:
+        items = flat
+    else:
+        items = []
+        for group in text_flight.groups:
+            items.append(line(group.heading, group.count))
+            items.append("  " + group.heading)
+            for item in group.items:
+                items.append("  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr))
     totals = page.totals
     lines = [
         f"Agent activity for {page.name}, last {span(page.window)}",
