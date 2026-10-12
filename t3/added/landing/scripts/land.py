@@ -21,6 +21,7 @@ import re
 import shlex
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -272,16 +273,65 @@ def _can_satisfy(kind, handles, slots):
     return taken is not None
 
 
+def _discard_ticket(path):
+    """Remove path when it is not a regular file.
+    An empty directory is removed. A symlink is unlinked and its target stays. Any other non-directory is unlinked.
+    A directory that still has children stays. A regular file stays."""
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return
+    if stat.S_ISREG(mode):
+        return
+    try:
+        if stat.S_ISDIR(mode):
+            os.rmdir(path)
+        else:
+            os.unlink(path)
+    except OSError:
+        return
+
+
+def _open_ticket(path):
+    """Open a regular ticket for a flock probe, or discard the entry and return None.
+    This runs under the turn mutex. It uses lstat, then opens with O_NONBLOCK and O_NOFOLLOW, so a fifo cannot
+    block the open and a symlink is not followed."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(mode):
+        _discard_ticket(path)
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            _discard_ticket(path)
+            return None
+        raise
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        _discard_ticket(path)
+        return None
+    return os.fdopen(fd, "r")
+
+
 def _waiting(tickets, before):
     """Return the number and kind of each live ticket below before, or of every ticket when before is None, in ticket order.
     Deletes each dead ticket it finds. A ticket is live while its waiter holds the flock on its file, so a killed waiter's ticket
     is dead. A caller passes its own number, because where flock is emulated per process its own lock would probe free.
-    Runs under the turn mutex."""
+    Only a regular file is a ticket. Runs under the turn mutex."""
     found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
                    if match and (before is None or int(match[1]) < before))
     live = []
     for number, kind, name in found:
-        with open(tickets / name, "a") as probe:
+        probe = _open_ticket(tickets / name)
+        if probe is None:
+            continue
+        with probe:
             try:
                 fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -525,7 +575,10 @@ def _admit(kind, repo=None, command=None):
                 taken = _try_take(kind, handles, slots)
             if taken is None and ticket is None:
                 # Every dead ticket is gone by now, so the next number follows the newest live one.
+                # A name that is still there could not be removed, so this ticket takes the next free number.
                 number = max((live for live, _ in waiting), default=0) + 1
+                while os.path.lexists(tickets / f"{number}-{kind}"):
+                    number += 1
                 ticket = open(tickets / f"{number}-{kind}", "x")
                 fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if taken is None:
