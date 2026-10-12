@@ -3900,6 +3900,52 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual([path.name for path in tickets.iterdir()], ["1-worker"])
         self.assertEqual((directory / "child").read_text(), "stay")
 
+    def test_a_slot_probe_on_a_read_only_ticket_keeps_a_held_ticket_and_removes_a_free_one(self):
+        tickets = self.base / "probe-tickets"
+        tickets.mkdir()
+        held_path = tickets / "1-worker"
+        free_path = tickets / "2-worker"
+        held_path.write_bytes(b"")
+        free_path.write_bytes(b"")
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import fcntl, os, sys, time\n"
+             "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+             "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+             "sys.stdout.write('held\\n')\n"
+             "sys.stdout.flush()\n"
+             "time.sleep(60)\n",
+             str(held_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+
+        def stop():
+            if holder.poll() is None:
+                os.killpg(holder.pid, signal.SIGKILL)
+            holder.wait(timeout=20)
+            holder.stdout.close()
+            holder.stderr.close()
+
+        self.addCleanup(stop)
+        self.assertEqual(holder.stdout.readline(), "held\n")
+        recorded = []
+        real = land.fcntl.flock
+
+        def nfs_flock(handle, operation):
+            descriptor = handle.fileno()
+            read_only = (fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE) == os.O_RDONLY
+            exclusive = (operation & (fcntl.LOCK_SH | fcntl.LOCK_EX | fcntl.LOCK_UN)) == fcntl.LOCK_EX
+            if read_only and exclusive:
+                raise OSError(errno.EBADF, "Bad file descriptor")
+            recorded.append((read_only, operation))
+            return real(handle, operation)
+
+        with mock.patch.object(land.fcntl, "flock", nfs_flock):
+            found = land._waiting(tickets, None)
+        self.assertEqual(found, [(1, "worker")])
+        self.assertEqual([path.name for path in tickets.iterdir()], ["1-worker"])
+        shared = fcntl.LOCK_SH | fcntl.LOCK_NB
+        self.assertEqual(recorded, [(True, shared), (True, shared)])
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
