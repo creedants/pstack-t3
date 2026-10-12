@@ -53,7 +53,7 @@ roles.py validate [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG
 ## roles.py write
 
 ```text
-roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT] [--budget BUDGET] [--mode MODE] [--escalate ESCALATE | --clear-escalate] [--set SET] [--project] [--keep] [--force]
+roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT] [--budget BUDGET] [--mode MODE] [--escalate ESCALATE | --clear-escalate] [--set SET] [--project] [--keep] [--force] [--allow-opencode ALLOW_OPENCODE] [--deny-opencode DENY_OPENCODE]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -70,6 +70,8 @@ roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT]
 | `--project` |  |  |  | write the project file instead of the user file |
 | `--keep` |  |  |  | keep roles already in the target file |
 | `--force` |  |  |  | write despite the problems validate lists, except an excluded seat |
+| `--allow-opencode ALLOW_OPENCODE` (repeatable) |  |  |  | Add this full OpenCode model id to the allow list in the file being written. |
+| `--deny-opencode DENY_OPENCODE` (repeatable) |  |  |  | Remove this full OpenCode model id from the allow list in the file being written. |
 
 Give at most one of `--escalate`, `--clear-escalate`.
 
