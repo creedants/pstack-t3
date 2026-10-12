@@ -1,0 +1,1 @@
+- Synced to upstream pstack 0.15.18 at ea32d9562a1c9f077d7cdd3be53d07383eb18866. Ketchup stays read-only except for visuals made from what the agent already has, and each action item is a before and after shown with a screenshot or a video when the change is visible, otherwise with a table, a diff, a diagram, a Mermaid diagram, a chart, or a generated image.
