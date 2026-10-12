@@ -2255,8 +2255,8 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     its end at this write. A thread id is compared and written as the table stores it, because save_rows
     writes the cell through clean. `closing` writes this stamp into the end of every open worker row of
     the item but one whose stored thread is the stored `keep_thread`. A row whose item, attempt, role,
-    and stored thread a row already holds is dropped, so the same command run twice writes one row. When
-    every row is dropped and nothing closes, no file changes.
+    and stored thread a row already holds is dropped, so a rerun that finds the same item, attempt, role,
+    and thread writes no row. When every row is dropped and nothing closes, no file changes.
     """
     rows = restaurant.rows("threads.tsv")
     mine = [row for row in rows if row["dish"] == dish_id]
@@ -5140,8 +5140,8 @@ def parser():
         "flag for.\n"
         "\n"
         "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
-        "is not blank and is not inside a fenced block that opens at the first column is one list item of the form "
-        "- <role> `<thread id>` <seat>.\n"
+        "is not blank, is not a heading, and is not inside a fenced block that opens at the first column is one "
+        "list item of the form - <role> `<thread id>` <seat>.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
         "then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and "
