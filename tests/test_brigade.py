@@ -1430,6 +1430,61 @@ class BrigadeTest(unittest.TestCase):
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
                           ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
 
+    def test_a_padded_report_thread_id_is_refused_by_its_number_and_a_rerun_adds_no_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n")
+        self.record("abc", "pass")
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- claims check ` {THREAD_B} ` grok/grok-4.7\n")
+        before = self.store_files()
+        for _ in range(2):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                          "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                             "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
+                             "table would change; nothing recorded")
+            self.assertEqual(self.store_files(), before)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_whitespace_only_report_thread_id_is_refused_and_writes_no_thread_cell(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check ` ` grok/grok-4.7\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
+                         "table would change; nothing recorded")
+        self.assertEqual((self.at / "threads.tsv").read_text(),
+                         "at\tdish\tattempt\trole\tthread\tseat\tstart\tend\n")
+
+    def test_a_longer_outer_fence_holding_shorter_fences_adds_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  "````markdown\n"
+                                  "```text\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "```\n"
+                                  "````\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_mixed_backtick_and_tilde_fences_add_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  "```text\n"
+                                  "~~~\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "~~~\n"
+                                  "```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
     def test_a_role_the_report_cannot_hold_is_refused_by_its_number_and_name(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--thread", THREAD_A)
@@ -1519,6 +1574,35 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual([row[2:5] for row in self.thread_rows()],
                          [["1", "worker", THREAD_A], ["2", "fix worker", THREAD_B], ["3", "fix worker", THREAD_C]])
         self.assertEqual([row[7] for row in self.thread_rows()], ["stamp", "stamp", "stamp"])
+
+    def test_dish_thread_with_reported_closes_that_worker_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A, "--reported"), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"]])
+
+    def test_dish_thread_with_a_state_that_ends_the_attempt_closes_that_worker_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A, "--state", "in-review"), "D1 in-review")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"]])
+
+    def test_a_state_flag_that_changes_nothing_leaves_the_worker_row_open(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_replacement_worker_started_with_its_state_and_thread_together_keeps_its_row_open(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", THREAD_B), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"],
+                          ["D1", "2", "fix worker", THREAD_B, "", "stamp", ""]])
 
     def test_the_thread_command_records_a_panel_member_and_a_report_records_an_architect_runner_and_a_rerun_adds_nothing(self):
         self.fired_bug_fix()
