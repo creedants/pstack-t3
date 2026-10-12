@@ -106,7 +106,7 @@ MARKERS = "the merge result holds a line starting with <<<<<<<, >>>>>>>, or ||||
 FOOTER = [
     "t3/overrides.lock.json is not refreshed.",
     "A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.",
-    "Once the merges are written, review each merged override and re-port each override whose row says so. "
+    "Once the merges are written, review each merged override or persona and re-port each override or persona whose row says so. "
     "Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.",
 ]
 README_AT_1_0_0 = (
@@ -638,7 +638,7 @@ class MergeTest(CheckoutCase):
             [
                 "clean     t3/agents/persona.md  merged",
                 "override drift:",
-                "  t3/agents/persona.md: upstream changed since this override was written; review or re-port it, then --update-lock",
+                "  t3/agents/persona.md: upstream changed since this persona was written; review or re-port it, then --update-lock",
                 "",
                 *FOOTER,
             ],
@@ -660,19 +660,18 @@ class MergeTest(CheckoutCase):
         self.assertEqual(snapshot(self.root / "t3"), before)
         self.assertEqual(held(directory), {"agents": None, "agents/persona.md": MARKED.encode()})
 
-    def test_a_persona_with_no_vendored_file_gets_no_row_and_no_drift(self):
+    def test_a_t3_only_persona_gets_no_row_when_an_unrelated_upstream_file_changes(self):
         write_tree(self.root, {"t3/agents/t3-only.md": "t3 only\n"})
-        lines = self.merge({"pstack/agents/persona.md": NEW})
-        self.assertEqual(
-            lines,
-            [
-                "clean     t3/agents/persona.md  merged",
-                "override drift:",
-                "  t3/agents/persona.md: upstream changed since this override was written; review or re-port it, then --update-lock",
-                "",
-                *FOOTER,
-            ],
-        )
+        lines = self.merge({"pstack/README.md": "edited\n"})
+        self.assertEqual(lines[0], NO_ROWS)
+        self.assertEqual([line for line in lines if "t3-only.md" in line], [])
+        self.assertEqual((self.root / "t3/agents/t3-only.md").read_bytes(), b"t3 only\n")
+
+    def test_a_t3_only_persona_whose_vendored_file_appears_gets_a_no_base_row(self):
+        write_tree(self.root, {"t3/agents/t3-only.md": "t3 only\n"})
+        lines = self.merge({"pstack/agents/t3-only.md": NEW})
+        detail = "no old upstream text that matches the lock, left as is, re-port by hand"
+        self.assertEqual(lines[0], f"no-base   t3/agents/t3-only.md  {detail}")
         self.assertEqual((self.root / "t3/agents/t3-only.md").read_bytes(), b"t3 only\n")
 
     def test_a_conflict_leaves_t3_byte_identical_and_names_the_override(self):

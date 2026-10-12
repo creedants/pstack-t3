@@ -50,12 +50,14 @@ def persona_files():
 
 @dataclass(frozen=True)
 class Replacement:
-    """One file under t3 that replaces a vendored one, and every path that names it.
+    """One file under t3 that may replace a vendored one, and every path that names it.
 
     lock_key is the key in t3/overrides.lock.json, a skill-relative path for an
     override and agents/<name>.md for a persona. problem_label is what the build
     names when the replacement drifts. conflict_rel is the path under the
-    directory --conflicts writes to, so it equals lock_key.
+    directory --conflicts writes to, so it equals lock_key. The lock pins the row
+    when its vendored counterpart exists, and a persona with no vendored
+    counterpart carries no lock entry.
     """
 
     lock_key: str
@@ -70,7 +72,7 @@ class Replacement:
 
 
 def replacements():
-    """Every replacement the lock carries, overrides first, then personas."""
+    """Every replacement the lock may carry, overrides first, then personas. An unpinned persona carries no entry."""
     rows = []
     for rel in relative_files(T3 / "overrides"):
         if rel.parts[0] == "agents":
@@ -112,6 +114,11 @@ def normalize_skill(text, skill):
     return "---\n" + "\n".join(lines) + "\n---\n\n" + body
 
 
+def entry_noun(lock_key):
+    """The word a drift message uses for the entry a lock key names."""
+    return "persona" if lock_key.startswith("agents/") else "override"
+
+
 def check_lock(update):
     rows = replacements()
     by_key = {row.lock_key: row for row in rows}
@@ -123,19 +130,26 @@ def check_lock(update):
     problems = []
     for key, digest in current.items():
         if key not in locked:
-            problems.append(f"{by_key[key].problem_label}: override not in overrides.lock.json (run build.py --update-lock after reviewing)")
+            problems.append(
+                f"{by_key[key].problem_label}: {entry_noun(key)} not in overrides.lock.json "
+                "(run build.py --update-lock after reviewing)"
+            )
         elif locked[key] != digest:
-            problems.append(f"{by_key[key].problem_label}: upstream changed since this override was written; review or re-port it, then --update-lock")
+            problems.append(
+                f"{by_key[key].problem_label}: upstream changed since this {entry_noun(key)} was written; "
+                "review or re-port it, then --update-lock"
+            )
     for key in locked:
         if key in current:
             continue
         # A locked key whose vendored file is gone still has its T3 file, so upstream moved. Any other
-        # locked key names a T3 file that was deleted or renamed.
+        # locked key names an entry with no T3 file.
         row = by_key.get(key)
+        noun = entry_noun(key)
         detail = (
-            "upstream changed since this override was written; review or re-port it, then --update-lock"
+            f"upstream changed since this {noun} was written; review or re-port it, then --update-lock"
             if row
-            else "locked but no override exists (run --update-lock)"
+            else f"locked but no {noun} exists (run --update-lock)"
         )
         problems.append(f"{row.problem_label if row else key}: {detail}")
     return problems

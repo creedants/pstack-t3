@@ -15,7 +15,7 @@ With --merge --dry-run, print a row for each of those files and write nothing in
 the checkout.
 
 With --merge --conflicts DIR, also write git's conflict-marked merge of each file
-whose merge conflicts to DIR/<its path under t3>. The files are written before the
+whose merge conflicts to DIR under the lock key. The files are written before the
 sync writes anything in the checkout, and under --dry-run too. DIR is refused when
 it resolves to the checkout or a path under it, and when it exists. DIR is not
 created when nothing conflicts.
@@ -69,7 +69,7 @@ MERGE_LABELS = ("override", "old upstream", "new upstream")
 MERGE_FOOTER = """\
 t3/overrides.lock.json is not refreshed.
 A clean merge is not a reviewed port, because upstream's new lines can hold a Cursor mechanism.
-Once the merges are written, review each merged override and re-port each override whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
+Once the merges are written, review each merged override or persona and re-port each override or persona whose row says so. Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.
 """
 # No "=======" here. That line also underlines a Markdown heading, and git writes it only between a "<<<<<<<" line and a ">>>>>>>" line.
 MARKER_LINE = re.compile(rb"^(?:<{7}|>{7}|\|{7})", re.MULTILINE)
@@ -333,7 +333,7 @@ def main():
     parser.add_argument(
         "--conflicts",
         metavar="DIR",
-        help="with --merge, write git's conflict-marked merge of each override whose merge conflicts under DIR, as described above. DIR is refused when it exists or resolves to the checkout or a path under it",
+        help="with --merge, write git's conflict-marked merge of each file whose merge conflicts under DIR, as described above. DIR is refused when it exists or resolves to the checkout or a path under it",
     )
     args = parser.parse_args()
     if not args.check and (args.json or args.repository):

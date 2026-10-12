@@ -126,7 +126,7 @@ class OverrideLockTest(unittest.TestCase):
     def lock_line(self, rel, key):
         self.write_lock({key: hashlib.sha256((self.root / f"vendor/pstack/{rel}").read_bytes()).hexdigest()})
 
-    def test_a_changed_vendored_persona_fails_the_build_and_names_the_t3_file(self):
+    def test_a_changed_vendored_persona_reports_drift_and_names_the_t3_file(self):
         self.write("t3/agents/persona.md", "t3 persona\n")
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         self.lock_line("agents/persona.md", "agents/persona.md")
@@ -134,7 +134,7 @@ class OverrideLockTest(unittest.TestCase):
         self.assertEqual(
             build.check_lock(False),
             [
-                "t3/agents/persona.md: upstream changed since this override was written; "
+                "t3/agents/persona.md: upstream changed since this persona was written; "
                 "review or re-port it, then --update-lock"
             ],
         )
@@ -164,7 +164,7 @@ class OverrideLockTest(unittest.TestCase):
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         self.assertEqual(
             build.check_lock(False),
-            ["t3/agents/persona.md: override not in overrides.lock.json (run build.py --update-lock after reviewing)"],
+            ["t3/agents/persona.md: persona not in overrides.lock.json (run build.py --update-lock after reviewing)"],
         )
         build.check_lock(True)
         self.assertEqual(build.check_lock(False), [])
@@ -177,7 +177,7 @@ class OverrideLockTest(unittest.TestCase):
         self.assertEqual(
             build.check_lock(False),
             [
-                "t3/agents/persona.md: upstream changed since this override was written; "
+                "t3/agents/persona.md: upstream changed since this persona was written; "
                 "review or re-port it, then --update-lock"
             ],
         )
@@ -193,12 +193,12 @@ class OverrideLockTest(unittest.TestCase):
         self.assertEqual(
             build.check_lock(False),
             [
-                "agents/persona.md: locked but no override exists (run --update-lock)",
+                "agents/persona.md: locked but no persona exists (run --update-lock)",
                 "gone/SKILL.md: locked but no override exists (run --update-lock)",
             ],
         )
 
-    def test_a_persona_under_t3_overrides_fails_the_build(self):
+    def test_a_persona_under_t3_overrides_is_rejected_by_the_replacement_list(self):
         self.write("t3/overrides/agents/persona.md", "t3 persona\n")
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         with self.assertRaises(SystemExit) as raised:
