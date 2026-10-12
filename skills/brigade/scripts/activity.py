@@ -2054,7 +2054,7 @@ def render_text(page, clean):
     more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
     loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
     flat = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
-    text_flight = flight_of(listed, page.goals) if page.flight is not None else None
+    text_flight = flight_of(listed, page.goals)
     if text_flight is None:
         items = flat
     else:
