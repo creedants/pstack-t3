@@ -151,8 +151,8 @@ def check_lock(update):
     for key in locked:
         if key in current:
             continue
-        # A locked key that still has its T3 file is a persona with no vendored counterpart. Any other
-        # locked key names an entry with no T3 file.
+        # A locked key missing from the current digests that still has its T3 file is a persona with no
+        # vendored counterpart. Any other locked key names an entry with no T3 file.
         row = by_key.get(key)
         noun = entry_noun(key)
         detail = (
