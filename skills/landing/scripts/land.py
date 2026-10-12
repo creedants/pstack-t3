@@ -214,6 +214,16 @@ TURN_KIND = 1048576
 TURN_PLACE = 2097152
 TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
 
+# A waiter reports why it waits after REPORT_AFTER seconds, then again every REPORT_EVERY seconds.
+REPORT_AFTER = 15
+REPORT_EVERY = 60
+
+# A holder record names its holder. kind is one of the three kinds or None. pid is identity for
+# dedupe only and never a liveness test. started is a wall-clock float. command is the wrapped
+# command shortened to its first 80 characters.
+_Holder = namedtuple("_Holder", "kind pid repo started command")
+_UNKNOWN = _Holder(None, None, None, None, None)
+
 
 def _slot_names(kind, slots):
     """Return the slot filenames for kind, in lock order."""
@@ -306,7 +316,152 @@ def _take_ticket(gate, place, kind):
     return ticket
 
 
-def _admit(kind):
+def _short_command(command):
+    """The wrapped command shortened to its first 80 characters, with newlines flattened to spaces."""
+    if not command:
+        return None
+    text = command.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return text[:80] or None
+
+
+def _repo_text(repo):
+    """The repository as an absolute path string. None selects the working directory."""
+    try:
+        return os.path.abspath(repo or os.getcwd())
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _hold_path(name):
+    return governor_dir() / "holds" / name
+
+
+def _dump_holder(path, holder):
+    """Write one holder record atomically, replacing whatever the slot file's previous holder left."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(dict(zip(_Holder._fields, holder))))
+    os.replace(temporary, path)
+
+
+def _read_holder(path):
+    """The holder a record names, with each unreadable field as unknown. A missing, empty, or malformed record is unknown."""
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return _UNKNOWN
+    if not isinstance(record, dict):
+        return _UNKNOWN
+    kind, pid, repo, started, command = (record.get(field) for field in _Holder._fields)
+    if not (isinstance(command, str) and command and len(command) <= 80
+            and "\n" not in command and "\r" not in command):
+        command = None
+    return _Holder(
+        kind if kind in ("worker", "landing", "exclusive") else None,
+        pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+        repo if isinstance(repo, str) and repo else None,
+        started if isinstance(started, (int, float)) and not isinstance(started, bool) else None,
+        command,
+    )
+
+
+def _slot_busy(handles, name):
+    """True when the slot file is held by someone else. Probes the waiter's own unlocked handle and releases it at once."""
+    try:
+        fcntl.flock(handles[name], fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    fcntl.flock(handles[name], fcntl.LOCK_UN)
+    return False
+
+
+def _held_names(handles):
+    return [name for name in handles if _slot_busy(handles, name)]
+
+
+def _publish(kind, handles, taken, repo, command):
+    """Write one holder record for each slot just taken, before the turn mutex unlocks."""
+    holder = _Holder(kind, os.getpid(), _repo_text(repo), time.time(), _short_command(command))
+    for name, handle in handles.items():
+        if handle not in taken:
+            continue
+        try:
+            _dump_holder(_hold_path(name), holder)
+        except OSError:
+            pass
+
+
+def _clear():
+    """Remove this process's records while its slot flocks are still held."""
+    for path in (governor_dir() / "holds").glob("*"):
+        if _read_holder(path).pid == os.getpid():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _live_holders(handles):
+    """The distinct holders whose slot flocks are actually held, named by their records."""
+    holders, seen = [], set()
+    for name in _held_names(handles):
+        holder = _read_holder(_hold_path(name))
+        key = holder.pid if holder.pid is not None else holder
+        if key in seen:
+            continue
+        seen.add(key)
+        holders.append(holder)
+    return holders
+
+
+def _held_for(holder):
+    if holder.started is None:
+        return "unknown"
+    return f"{int(max(0, time.time() - holder.started))}s"
+
+
+def _format_wait(elapsed, holders):
+    """One line naming each current holder: kind, repository, hold duration, short command."""
+    named = []
+    for holder in holders:
+        if holder == _UNKNOWN:
+            named.append("unknown")
+        else:
+            named.append(f"{holder.kind or 'unknown'} {holder.repo or 'unknown'} for {_held_for(holder)}: "
+                         f"{holder.command or 'unknown'}")
+    if not named:
+        return f"land: waited {int(elapsed)}s for a slot"
+    return f"land: waited {int(elapsed)}s for a slot; " + "; ".join(named)
+
+
+def _report_due(elapsed, last):
+    if elapsed < REPORT_AFTER:
+        return False
+    return last is None or elapsed - last >= REPORT_EVERY
+
+
+def _raise_exit(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def _held(kind, repo, command):
+    """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
+    held = _admit(kind, repo, command)
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
+    for signum in previous:
+        signal.signal(signum, _raise_exit)
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        _clear()
+        for handle in held:
+            handle.close()
+
+
+def _admit(kind, repo=None, command=None):
     directory = governor_dir()
     directory.mkdir(parents=True, exist_ok=True)
     slots = governor_slots()
@@ -318,6 +473,7 @@ def _admit(kind):
             turns.append(os.open(directory / "turn", os.O_RDWR | os.O_CREAT, 0o666))
         gate, place = turns
         ticket = None
+        started, reported = time.time(), None
         while True:
             _ofd_excl(gate, TURN_MUTEX, True)
             earlier = _earlier_waiters(gate, ticket, kind)
@@ -326,11 +482,17 @@ def _admit(kind):
                 taken = _try_take(kind, handles, slots)
             if taken is None and ticket is None:
                 ticket = _take_ticket(gate, place, kind)
+            if taken is not None:
+                _publish(kind, handles, taken, repo, command)
             if taken is not None and ticket is not None:
                 _ofd_unlock(place, TURN_PLACE + ticket)
             _ofd_unlock(gate, TURN_MUTEX)
             if taken is not None:
                 return list(handles.values())
+            waited = time.time() - started
+            if _report_due(waited, reported):
+                print(_format_wait(waited, _live_holders(handles)), file=sys.stderr, flush=True)
+                reported = waited
             time.sleep(0.5)
     except BaseException:
         for handle in handles.values():
@@ -342,38 +504,34 @@ def _admit(kind):
 
 
 @contextlib.contextmanager
-def exclusive_slot():
+def exclusive_slot(repo=None, command=None):
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
     It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
     A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    held = _admit("exclusive")
-    try:
+    with _held("exclusive", repo, command):
         os.environ["LAND_SLOT"] = "exclusive"
-        yield
-    finally:
-        os.environ.pop("LAND_SLOT", None)
-        for handle in held:
-            handle.close()
+        try:
+            yield
+        finally:
+            os.environ.pop("LAND_SLOT", None)
 
 
 @contextlib.contextmanager
-def slot(pool="worker"):
+def slot(pool="worker", repo=None, command=None):
     """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
     A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
     A caller that shares this turn file leaves a free slot for an earlier conflicting ticket that can take it."""
     if os.environ.get("LAND_SLOT"):
         yield
         return
-    held = _admit(pool)
-    try:
+    with _held(pool, repo, command):
         os.environ["LAND_SLOT"] = pool
-        yield
-    finally:
-        os.environ.pop("LAND_SLOT", None)
-        for handle in held:
-            handle.close()
+        try:
+            yield
+        finally:
+            os.environ.pop("LAND_SLOT", None)
 
 
 def supervised(command, cwd, timeout):
@@ -1265,8 +1423,9 @@ class Integration:
         """Run setup and checks on the candidate. Returns None, or the failure. Raises when the run left the tree dirty."""
         contract = self.store.contract
         expected = self.head()
-        with slot("landing"):
-            for command in ([contract["setup"]] if contract.get("setup") else []) + contract["checks"]:
+        commands = ([contract["setup"]] if contract.get("setup") else []) + contract["checks"]
+        with slot("landing", repo=self.path, command=" ".join(commands)):
+            for command in commands:
                 code, output = supervised(command, self.path, contract.get("timeout") or 1800)
                 if code != 0:
                     tail = " / ".join(output.strip().splitlines()[-3:])
@@ -2444,6 +2603,7 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
+    p.add_argument("--repo", default=".", help="the repository this command works in (default: current directory)")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     return top
 
@@ -2454,7 +2614,8 @@ def run(argv):
         command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
         if not command:
             raise LandError("slot needs a command after --")
-        with (exclusive_slot() if args.exclusive else slot()):
+        holder = (exclusive_slot if args.exclusive else slot)
+        with holder(repo=args.repo, command=" ".join(command)):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,

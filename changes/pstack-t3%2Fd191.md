@@ -1,0 +1,1 @@
+- A command waiting 15 seconds for a governor slot prints one stderr line naming each current holder's kind, repository, hold duration, and first 80 characters of its command, then one more every 60 seconds.

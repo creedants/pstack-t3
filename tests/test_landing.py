@@ -124,6 +124,32 @@ SLOT_WRAPPED = (
 TURN_MUTEX = 4096
 TURN_PLACE = 2097152
 
+# A holder that keeps its slot until the release fifo is written, so a test can read a waiter's report.
+HOLD_SCRIPT = (
+    "import os, sys\n"
+    "from pathlib import Path\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "kind, repo, command, ready, release = sys.argv[2:7]\n"
+    "slot = land.exclusive_slot if kind == 'exclusive' else (lambda **kw: land.slot('worker', **kw))\n"
+    "with slot(repo=repo, command=command):\n"
+    "    Path(ready).touch()\n"
+    "    os.read(os.open(release, os.O_RDONLY), 1)\n"
+)
+
+# A waiter with a shortened report interval. It runs its wrapped command once it holds a slot.
+WAIT_SCRIPT = (
+    "import sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "land.REPORT_AFTER = float(sys.argv[2])\n"
+    "land.REPORT_EVERY = float(sys.argv[3])\n"
+    "kind, repo, command = sys.argv[4:7]\n"
+    "slot = land.exclusive_slot if kind == 'exclusive' else (lambda **kw: land.slot('worker', **kw))\n"
+    "with slot(repo=repo, command=command):\n"
+    "    print('ran', flush=True)\n"
+)
+
 # The fixture is the slot code of the last version before the turn file and must not be updated to match the script.
 # LandError and state_home are the names that code calls. main only parses slot and runs the command inside slot or exclusive_slot.
 PREVIOUS_SLOT_SCRIPT = '''\
@@ -3931,6 +3957,203 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(slots.step(waiter), "started")
         slots.release(waiter)
         self.assertEqual(slots.entries(), ["old-holder", "new-ordinary", "new-exclusive", "new-holder", "old-waiter"])
+
+    def governor(self, slots=1):
+        directory = self.base / "state/pstack-t3/governor"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "governor.json").write_text(json.dumps({"slots": slots}))
+        return directory
+
+    def slot_env(self):
+        return {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+
+    @contextlib.contextmanager
+    def no_slot(self):
+        saved = os.environ.pop("LAND_SLOT", None)
+        try:
+            yield
+        finally:
+            if saved is not None:
+                os.environ["LAND_SLOT"] = saved
+
+    def start_holder(self, kind="worker", repo=None, command="make test", slots=1):
+        directory = self.base / f"holder-{kind}"
+        directory.mkdir()
+        ready, release = directory / "ready", directory / "release"
+        os.mkfifo(release)
+        process = subprocess.Popen(
+            [sys.executable, "-c", HOLD_SCRIPT, str(SCRIPT.parent), kind, repo or str(self.work), command,
+             str(ready), str(release)],
+            cwd=directory, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop():
+            if process.poll() is None:
+                with open(release, "w") as handle:
+                    handle.write("x")
+            process.wait(timeout=20)
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(ready.exists(), f"{kind} holder did not take its slot")
+        return process
+
+    def wait_for_line(self, path, timeout=20):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.exists() and "\n" in path.read_text():
+                return path.read_text().strip()
+            time.sleep(0.02)
+        self.fail(f"no report line in {path}")
+
+    def run_waiter(self, script, release, repo=None, command="npm run build", after="0.2", every="60", kind="worker"):
+        out, err = self.base / "waiter.out", self.base / "waiter.err"
+        handles = [open(out, "w"), open(err, "w")]
+        process = subprocess.Popen(
+            [sys.executable, "-c", script, str(SCRIPT.parent), after, every, kind, repo or str(self.work), command],
+            cwd=self.base, env=self.slot_env(), start_new_session=True,
+            stdout=handles[0], stderr=handles[1])
+        line = self.wait_for_line(err)
+        if release is not None:
+            os.write(release, b"x")
+        code = process.wait(timeout=20)
+        for handle in handles:
+            handle.close()
+        return code, out.read_text(), err.read_text(), line
+
+    def test_a_waiter_behind_a_worker_holder_reports_the_holder_after_the_interval(self):
+        self.governor(1)
+        self.start_holder(kind="worker", command="pytest -q tests/integration")
+        release = os.open(self.base / "holder-worker" / "release", os.O_WRONLY)
+        try:
+            _, stdout, stderr, line = self.run_waiter(
+                WAIT_SCRIPT, release, command="npm run build", after="0.2")
+        finally:
+            os.close(release)
+        self.assertEqual(stdout, "ran\n")
+        self.assertEqual(stderr, line + "\n")
+        self.assertRegex(line, rf"^land: waited \d+s for a slot; worker {re.escape(str(self.work))} for \d+s: "
+                                rf"pytest -q tests/integration$")
+
+    def test_a_waiter_that_gets_a_slot_at_once_prints_nothing(self):
+        self.governor(1)
+        result = subprocess.run(
+            [sys.executable, "-c", WAIT_SCRIPT, str(SCRIPT.parent), "0.2", "60", "worker", str(self.work), "make"],
+            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "ran\n")
+        self.assertEqual(result.stderr, "")
+        holds = self.base / "state/pstack-t3/governor/holds"
+        self.assertFalse(holds.exists() and list(holds.iterdir()))
+
+    def test_a_waiter_behind_an_exclusive_holder_names_it_exclusive(self):
+        self.governor(1)
+        self.start_holder(kind="exclusive", command="bench --all")
+        release = os.open(self.base / "holder-exclusive" / "release", os.O_WRONLY)
+        try:
+            _, stdout, _, line = self.run_waiter(WAIT_SCRIPT, release, after="0.2")
+        finally:
+            os.close(release)
+        self.assertEqual(stdout, "ran\n")
+        self.assertIn(f"exclusive {self.work} for ", line)
+        self.assertIn(": bench --all", line)
+
+    def test_a_record_whose_holder_is_gone_is_not_shown_as_holding(self):
+        self.governor(1)
+        holds = land.governor_dir() / "holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        (holds / "worker-0").write_text(json.dumps(
+            {"kind": "worker", "pid": 2 ** 31 - 1, "repo": str(self.work), "started": time.time(), "command": "make"}))
+        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+        try:
+            self.assertEqual(land._live_holders(handles), [])
+        finally:
+            for handle in handles.values():
+                handle.close()
+
+    def test_a_malformed_record_prints_unknown_without_failing(self):
+        self.governor(1)
+        holds = land.governor_dir() / "holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        record = holds / "worker-0"
+        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+        held = open(land.governor_dir() / "worker-0", "a")
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            for content in ("{ not json", ""):
+                record.write_text(content)
+                holders = land._live_holders(handles)
+                self.assertEqual(holders, [land._UNKNOWN])
+                self.assertEqual(land._format_wait(15, holders), "land: waited 15s for a slot; unknown")
+            record.unlink()
+            self.assertEqual(land._live_holders(handles), [land._UNKNOWN])
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+            for handle in handles.values():
+                handle.close()
+
+    def test_the_wrapped_command_exit_status_and_output_are_unchanged(self):
+        self.governor(1)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "slot", "--repo", str(self.work), "--",
+             "sh", "-c", "echo out; echo err >&2; exit 7"],
+            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, "out\n")
+        self.assertEqual(result.stderr, "err\n")
+
+    def test_the_record_holds_only_the_first_80_characters_of_the_command(self):
+        self.governor(1)
+        command = "x" * 120
+        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+        try:
+            land._publish("worker", handles, [handles["worker-0"]], str(self.work), command)
+            record = json.loads(land._hold_path("worker-0").read_text())
+        finally:
+            for handle in handles.values():
+                handle.close()
+        self.assertEqual(record["command"], command[:80])
+        self.assertEqual(len(record["command"]), 80)
+        self.assertEqual(set(record), set(land._Holder._fields))
+
+    def test_a_holder_publishes_its_record_and_clears_it_on_release(self):
+        self.governor(1)
+        with self.no_slot():
+            with land.slot("worker", repo=str(self.work), command="make test"):
+                record = land._read_holder(land._hold_path("worker-0"))
+                self.assertEqual((record.kind, record.repo, record.command), ("worker", str(self.work), "make test"))
+                self.assertTrue(land._hold_path("worker-0").exists())
+            self.assertFalse(land._hold_path("worker-0").exists())
+
+    def test_a_nested_slot_yields_without_a_second_record(self):
+        self.governor(1)
+        with self.no_slot():
+            with land.slot("worker", repo=str(self.work), command="outer"):
+                with land.slot("worker", repo=str(self.work), command="inner"):
+                    self.assertEqual(land._read_holder(land._hold_path("worker-0")).command, "outer")
+            self.assertFalse(land._hold_path("worker-0").exists())
+
+    def test_a_nested_exclusive_slot_raises(self):
+        self.governor(1)
+        with self.no_slot():
+            with land.slot("worker", repo=str(self.work), command="outer"):
+                with self.assertRaises(land.LandError):
+                    with land.exclusive_slot(repo=str(self.work), command="bench"):
+                        pass
+
+    def test_a_catchable_signal_clears_the_holders_record(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="make test")
+        self.assertTrue(land._hold_path("worker-0").exists())
+        os.kill(holder.pid, signal.SIGTERM)
+        self.assertEqual(holder.wait(timeout=20), 128 + signal.SIGTERM)
+        self.assertFalse(land._hold_path("worker-0").exists())
+
+    def test_the_slot_repo_flag_defaults_to_the_working_directory(self):
+        self.assertEqual(land.parser().parse_args(["slot", "--", "true"]).repo, ".")
+        self.assertEqual(land._repo_text("."), os.getcwd())
 
     def reserve(self, prefix, paths, ruling, *extra, ok=True):
         return self.land("lease", "reserve", "--for", prefix, "--paths", paths, "--ruling", ruling, *ADMIN, *extra, ok=ok)
