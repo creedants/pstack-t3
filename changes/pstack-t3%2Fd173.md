@@ -1,0 +1,1 @@
+- The activity page groups each shown work item under its goal name and prints one count line per shown group, using the chip's state words. A kind tag is feature, fix, polish, upkeep, or study. Any other kind cell has no tag. An item with no resolved goal is under Unassigned. A page with no such kind and no resolved goal stays the page the store printed before kinds and goals.

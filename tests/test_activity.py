@@ -338,14 +338,22 @@ class StoreTest(ActivityCase):
         self.assertEqual(self.kinds_and_goals(), [("D7", "upkeep", ""), ("D6", "", "")])
         self.assertEqual(MOD["read_table"](self.fixture.store, "dishes.tsv"), self.brigade_rows("dishes.tsv"))
 
-    def test_page_and_text_for_17_cell_work_item_rows_equal_those_for_the_same_rows_with_the_kind_and_goal_cells_removed(self):
+    def test_rows_outside_the_five_kinds_and_without_a_goal_row_print_the_15_cell_page_and_a_real_kind_does_not(self):
         fixture = one_running(self.fixture).write()
         narrow = (fixture.stdout_bytes(), fixture.stdout_bytes("--text"))
-        self.widened({"D7": ("feature", "G1"), "D6": ("fix", "G2")})
-        self.assertEqual(self.kinds_and_goals(), [("D7", "feature", "G1"), ("D6", "fix", "G2")])
+        self.widened({"D7": ("nope", "G9"), "D6": ("later", "G2")})
+        self.assertEqual(self.kinds_and_goals(), [("D7", "nope", "G9"), ("D6", "later", "G2")])
         self.assertEqual((fixture.stdout_bytes(), fixture.stdout_bytes("--text")), narrow)
         self.assertIn(b"Agent activity page", narrow[0])
         self.assertEqual(narrow[1].split(b"\n")[0], b"Agent activity for kit, last 3h")
+        fixture.write_store()
+        self.widened({"D7": ("feature", "G1"), "D6": ("fix", "G2")})
+        self.assertEqual(self.kinds_and_goals(), [("D7", "feature", "G1"), ("D6", "fix", "G2")])
+        wide = (fixture.stdout_bytes(), fixture.stdout_bytes("--text"))
+        self.assertNotEqual(wide, narrow)
+        self.assertIn(b"feature", wide[0])
+        self.assertIn(b"feature", wide[1])
+        self.assertNotIn(b"nope", wide[0])
 
     def test_work_item_row_of_14_cells_or_18_cells_exits_1_with_its_line_number(self):
         for extra in (None, ("feature", "G1", "one more")):
@@ -1575,6 +1583,25 @@ const nodes = [];
 const make = tag => ({
   tagName: tag.toUpperCase(), kids: [], style: {}, className: '', own: '',
   appendChild(kid) { this.kids.push(kid); return kid; },
+  insertBefore(node, ref) {
+    const from = this.kids.indexOf(node);
+    if (from >= 0) this.kids.splice(from, 1);
+    const at = ref ? this.kids.indexOf(ref) : -1;
+    if (at < 0) this.kids.push(node); else this.kids.splice(at, 0, node);
+    return node;
+  },
+  querySelector(sel) {
+    const name = sel[0] === '.' ? sel.slice(1) : sel;
+    const walk = (node) => {
+      if ((node.className || '').split(' ').includes(name)) return node;
+      for (const kid of node.kids || []) {
+        const found = walk(kid);
+        if (found) return found;
+      }
+      return null;
+    };
+    return walk(this);
+  },
   set textContent(value) { this.kids = []; this.own = String(value); },
   get textContent() { return this.own; },
 });
@@ -3320,6 +3347,136 @@ class PriorPageTest(OutputCase):
         self.assertNotIn(" \u00b7 ".encode(), text)
         self.assertNotIn(" \u00b7 ", DATA.search(html.decode()).group(1))
 
+
+def write_goals(fixture, rows):
+    header = "id\tat\tstate\tname\tpurpose\tdone\tshare\tclosed"
+    (fixture.store / "goals.tsv").write_text("\n".join([header, *("\t".join(row) for row in rows)]) + "\n")
+
+
+def widen_items(fixture, cells):
+    path = fixture.store / "dishes.tsv"
+    header, *rows = path.read_text().splitlines()
+    widened = ["\t".join([row, *cells.get(row.split("\t")[0], ())]) for row in rows]
+    path.write_text("\n".join([header, *widened]) + "\n")
+
+
+def painted(case, document):
+    data, program = DATA.search(document).group(1), PROGRAM.search(document).group(1)
+    script = case.fixture.root / "render.js"
+    script.write_text(f"const DATA = {json.dumps(data)};{STUB}{program}{REPORT}")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "TZ": "UTC"})
+    case.assertEqual((result.returncode, result.stderr), (0, ""), result.stderr)
+    return json.loads(result.stdout)
+
+
+class GoalStripTest(OutputCase):
+    def test_a_goal_name_loses_each_kind_of_private_text(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Parser work", thread=worker(1))
+        fixture.thread(worker(1), title="D7 worker", turns=(("running", 30, None),))
+        fixture.write()
+        email = "ada@private.example"
+        uuid = "7ead0a2b-e89b-12d3-a456-426614174000"
+        file_url = "file:/home/private/secret"
+        drive = "c:/secret/notes"
+        purpose = "purpose-sentinel-qq"
+        done = "done-sentinel-zz"
+        name = " ".join(["Kept", worker(1), str(fixture.store), email, uuid, file_url, drive, "parser"])
+        write_goals(fixture, [("Gkept", "2026-10-10T11:00:00.000Z", "done", name, purpose, done, "1", "")])
+        widen_items(fixture, {"D7": ("feature", "Gkept")})
+        html, text = self.document(), self.out("--text")
+        for needle in (worker(1), str(fixture.store), email, uuid, file_url, drive, purpose, done, "Gkept"):
+            self.assertNotIn(needle, html)
+            self.assertNotIn(needle, text)
+        for kept in ("Kept", "parser"):
+            self.assertIn(kept, html)
+            self.assertIn(kept, text)
+
+    def test_each_shown_item_is_under_its_goal_once_and_the_counts_match(self):
+        fixture = self.fixture
+        fixture.meta["thread"] = ""
+        for ident, state, summary in (
+                ("D1", "in-progress", "Parser work"),
+                ("D2", "queued", "Queue one"),
+                ("D3", "queued", "Queue two"),
+                ("D4", "blocked", "Loose one"),
+                ("D5", "in-review", "Loose two")):
+            fixture.unit(ident, state, summary)
+        fixture.write()
+        stamp = "2026-10-10T11:00:00.000Z"
+        write_goals(fixture, [
+            ("G1", stamp, "open", "Ship the parser", "purpose text", "done test", "1", ""),
+            ("G2", stamp, "done", "Retire the queue", "purpose text", "done test", "1", ""),
+        ])
+        widen_items(fixture, {"D1": ("", "G1"), "D2": ("", "G2"), "D3": ("", "G2"), "D4": ("", ""), "D5": ("", "G9")})
+        html, text = self.document(), self.out("--text")
+        data = data_of(html)
+        self.assertEqual([item[0] for item in data["I"]], ["D1", "D2", "D3", "D4", "D5"])
+        self.assertEqual([item[5] for item in data["I"]], [0, 0, 0, 0, 0])
+        self.assertEqual(data["F"], [
+            ["Ship the parser · 1 working", "Ship the parser", [0]],
+            ["Retire the queue · 2 landing", "Retire the queue", [1, 2]],
+            ["Unassigned · 1 in review, 1 blocked", "Unassigned", [3, 4]],
+        ])
+        seen = []
+        for count, _heading, indexes in data["F"]:
+            seen += indexes
+            self.assertEqual(sum(int(part) for part in count.split() if part.isdigit()), len(indexes))
+        self.assertEqual(seen, [0, 1, 2, 3, 4])
+        lines = text.splitlines()
+        self.assertEqual(lines[lines.index("Work items") + 1:lines.index("Notes")], [
+            "  Ship the parser   1 working",
+            "  Ship the parser",
+            "    D1   working   Parser work   no activity in this window",
+            "  Retire the queue   2 landing",
+            "  Retire the queue",
+            "    D2   landing   Queue one   no activity in this window",
+            "    D3   landing   Queue two   no activity in this window",
+            "  Unassigned   1 in review, 1 blocked",
+            "  Unassigned",
+            "    D4   blocked   Loose one   no activity in this window",
+            "    D5   in review   Loose two   no activity in this window",
+        ])
+        for ident in ("D1", "D2", "D3", "D4", "D5"):
+            self.assertEqual(html.count(ident), 1)
+            self.assertEqual(text.count(ident), 1)
+        drawn = painted(self, html)["texts"]
+        self.assertEqual(drawn[-22:], [
+            "Ship the parser · 1 working", "Ship the parser", "D1", "Parser work", "working",
+            "Retire the queue · 2 landing", "Retire the queue", "D2", "Queue one", "landing", "D3", "Queue two", "landing",
+            "Unassigned · 1 in review, 1 blocked", "Unassigned", "D4", "Loose one", "blocked", "D5", "Loose two", "in review",
+            "Work items in flight",
+        ])
+        for ident in ("D1", "D2", "D3", "D4", "D5"):
+            self.assertEqual(drawn.count(ident), 1)
+
+    def test_a_kind_outside_the_five_shows_no_tag(self):
+        fixture = one_running(self.fixture).write()
+        widen_items(fixture, {"D7": ("feature", ""), "D6": ("nope", "")})
+        html, text = self.document(), self.out("--text")
+        self.assertNotIn("nope", html)
+        self.assertNotIn("nope", text)
+        data = data_of(html)
+        self.assertEqual([(item[0], item[6]) for item in data["I"]], [("D6", ""), ("D7", "feature")])
+        item_lines = [line for line in text.splitlines() if "   D6   " in line or "   D7   " in line]
+        self.assertEqual(item_lines, [
+            "    feature   D7   working   Agent activity page   1 agent, 63m at work   " + PR7,
+            "    D6   landing   Queue fix   no activity in this window   " + PR6,
+        ])
+        drawn = painted(self, html)["texts"]
+        self.assertEqual(drawn.count("feature"), 1)
+        self.assertNotIn("nope", drawn)
+
+    def test_the_page_does_not_write_the_store_or_the_database(self):
+        fixture = one_running(self.fixture).write()
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "Ship the parser", "purpose text", "done test", "1", "")])
+        widen_items(fixture, {"D7": ("feature", "G1"), "D6": ("fix", "G1")})
+        before = listing(fixture.store), listing(fixture.database.parent)
+        self.assertIn("goals.tsv", before[0])
+        self.document()
+        self.out("--text")
+        self.assertEqual((listing(fixture.store), listing(fixture.database.parent)), before)
 
 
 if __name__ == "__main__":

@@ -148,6 +148,7 @@ OTHER_MODEL = "other model"
 UNGROUPED = "Not tied to a work item"
 UNNAMED = "work item"
 KINDS = ("feature", "fix", "polish", "upkeep", "study")
+UNASSIGNED = "Unassigned"
 TITLE_CHARS = 60
 LABEL_CHARS = 40
 
@@ -350,6 +351,18 @@ class Page:
     fold: int = 0
     goals: tuple[Goal, ...] = ()
     flight: Optional["Flight"] = None
+
+
+@dataclass(frozen=True)
+class StripGroup:
+    heading: str
+    count: str
+    items: tuple[Item, ...]
+
+
+@dataclass(frozen=True)
+class Flight:
+    groups: tuple[StripGroup, ...]
 
 
 def parser():
@@ -1278,7 +1291,7 @@ def build_page(store, t3, window, privacy):
 
     items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
-    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals)
+    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals, flight=flight_of(items, goals))
 
 
 KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
@@ -1449,6 +1462,49 @@ def counted(hidden, cuts, unlisted):
                    dropped_items=hidden.dropped_items + gone_items, dropped_agents=hidden.dropped_agents + gone_agents)
 
 
+def tally(items):
+    counts = {}
+    for item in items:
+        counts[item.state] = counts.get(item.state, 0) + 1
+    ordered = [word for state, (word, _) in STATE_WORDS.items() if state not in FINISHED_STATES]
+    ordered.append(UNKNOWN_STATE[0])
+    seen = set(ordered)
+    parts = [f"{counts[word]} {word}" for word in ordered if counts.get(word)]
+    for item in items:
+        word = item.state
+        if word not in seen:
+            parts.append(f"{counts[word]} {word}")
+            seen.add(word)
+    return ", ".join(parts)
+
+
+def flight_of(items, goals):
+    ids = {goal.id for goal in goals}
+    grouped = {goal.id: [] for goal in goals}
+    loose = []
+    labeled = False
+    for item in items:
+        resolved = item.goal in ids
+        if item.kind or resolved:
+            labeled = True
+        (grouped[item.goal] if resolved else loose).append(item)
+    if not labeled:
+        return None
+    groups = [StripGroup(goal.name, tally(grouped[goal.id]), tuple(grouped[goal.id])) for goal in goals if grouped[goal.id]]
+    if loose:
+        groups.append(StripGroup(UNASSIGNED, tally(loose), tuple(loose)))
+    return Flight(tuple(groups))
+
+
+def cut_items(page, items):
+    kept = tuple(items)
+    return replace(page, items=kept, flight=flight_of(kept, page.goals))
+
+
+def count_line(group):
+    return f"{group.heading} · {group.count}" if group.heading else group.count
+
+
 def cap_everything(page):
 
     def running(row):
@@ -1467,7 +1523,8 @@ def cap_everything(page):
     items = tuple(shown(item) for item, keep in zip(page.items, listed) if keep)
     hidden = counted(page.hidden, cuts, len(page.items) - len(items))
     coordinator = narrow(page.coordinator, COORDINATOR_SPANS) if page.coordinator else None
-    return replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), items=items, hidden=hidden, fold=page.fold + 1)
+    page = replace(page, name=clip(page.name, NAME_BYTES), coordinator=coordinator, groups=tuple(groups), hidden=hidden, fold=page.fold + 1)
+    return cut_items(page, items)
 
 
 FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_items, limit) for limit in KEPT_ITEMS), cap_everything)
@@ -1513,12 +1570,15 @@ def fixed_height(page, said):
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
+    A grouped strip adds LINE_PX for each count line and GROUP_PX for each heading.
     """
     rows = [row for group in page.groups for row in group.rows]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
     for status in OPEN:
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
         total += HEADING_PX + OPEN_PX * lines if lines else 0
+    if page.flight is not None:
+        total += (LINE_PX + GROUP_PX) * len(page.flight.groups)
     return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
 
 
@@ -1565,7 +1625,7 @@ def framed(page, limit):
         cuts.append((group, rows or None))
         if rows:
             groups.append(replace(group, rows=rows))
-    return replace(page, groups=tuple(groups), items=items, hidden=counted(page.hidden, cuts, len(page.items) - len(items)))
+    return cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
 
 
 def fit(page, budget, clean, frame=None):
@@ -1594,7 +1654,7 @@ def shortened(page):
     The name, each item's id and summary, and each group row's label and model are clipped as cap_everything clips them, and each link it would leave out is left out.
     """
     groups = tuple(replace(group, item=shown(group.item) if group.item else None, rows=tuple(narrow(row) for row in group.rows)) for group in page.groups)
-    return replace(page, name=clip(page.name, NAME_BYTES), groups=groups, items=tuple(shown(item) for item in page.items))
+    return cut_items(replace(page, name=clip(page.name, NAME_BYTES), groups=groups), (shown(item) for item in page.items))
 
 
 def fit_text(page, budget, clean):
@@ -1859,6 +1919,32 @@ RENDERER = squeezed("""
     }
 """)
 
+STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
+STRIP_HOOK = squeezed("""
+    if (D && D.v === 1 && D.F && D.F.length) {
+      const link = (parent, text, url) => {
+        const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
+        if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+        return node;
+      };
+      const box = add(root, 'div', 'strip'), counts = add(box, 'div', 'lg');
+      for (const [count, heading, indexes] of D.F) {
+        add(counts, 'div', '', count);
+        add(box, 'div', 'grp', heading);
+        for (const index of indexes) {
+          const item = D.I[index], chip = link(box, '', item[4]);
+          if (item[6]) add(chip, 'b', 'chip', item[6]);
+          add(chip, 'b', 'one', item[0]);
+          add(chip, 'span', 'sum', item[1]);
+          add(chip, 'b', 'chip ' + item[3], item[2]);
+        }
+      }
+      const foot = root.querySelector('.foot'), title = add(root, 'h2', '', 'Work items in flight');
+      root.insertBefore(title, foot);
+      root.insertBefore(box, foot);
+    }
+""")
+
 
 def wire(page):
     models, providers = [], [name for name, _ in page.legend]
@@ -1879,7 +1965,15 @@ def wire(page):
 
     items = items_of(page)
     own, totals = page.coordinator, page.totals
-    return {
+    grouped = page.flight is not None
+
+    def cells(item):
+        row = [item.id, item.summary, item.state, item.tone, item.pr, 0 if grouped else int(item in page.items)]
+        if grouped:
+            row.append(item.kind)
+        return row
+
+    data = {
         "v": WIRE_VERSION,
         "c": page.name,
         "w": [int(page.window.start), round(page.window.end - page.window.start), span(page.window)],
@@ -1887,11 +1981,15 @@ def wire(page):
         "S": [status.value for status in WIRE_STATUS],
         "P": [[name, colors[name], agents] for name, agents in page.legend],
         "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
-        "I": [[item.id, item.summary, item.state, item.tone, item.pr, int(item in page.items)] for item in items],
+        "I": [cells(item) for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
         "M": models,
         "N": notes(page, items),
     }
+    if grouped:
+        places = {id(item): index for index, item in enumerate(items)}
+        data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
+    return data
 
 
 def checksum(text):
@@ -1904,10 +2002,12 @@ def checksum(text):
 def render_html(page, clean):
     """The document. The only strings in it that are not constants of this file are in the data element, and encode() passes each of those to clean."""
     data = encode(wire(page), clean)
+    style = STYLE if page.flight is None else STYLE + STRIP_CSS
+    script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
-        f"<title>Agent activity</title><style>{STYLE}</style><div id=o></div>"
-        f"<script type=application/json id=d>{data}</script><script>const H={checksum(data)};{RENDERER}</script>")
+        f"<title>Agent activity</title><style>{style}</style><div id=o></div>"
+        f"<script type=application/json id=d>{data}</script><script>const H={checksum(data)};{script}</script>")
 
 
 def span(window):
@@ -1949,9 +2049,19 @@ def render_text(page, clean):
                 failed.append(line(name, row.model, worked([row])))
     drawn = {group.item: f"{people(group.agents, group.subagents)}, {worked(group.rows)}" for group in page.groups if group.item}
     listed = [*drawn, *(item for item in page.items if item not in drawn)][:TEXT_ITEMS]
-    items = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
     more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
     loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
+    flat = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
+    text_flight = flight_of(listed, page.goals) if page.flight is not None else None
+    if text_flight is None:
+        items = flat
+    else:
+        items = []
+        for group in text_flight.groups:
+            items.append(line(group.heading, group.count))
+            items.append("  " + group.heading)
+            for item in group.items:
+                items.append("  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr))
     totals = page.totals
     lines = [
         f"Agent activity for {page.name}, last {span(page.window)}",
