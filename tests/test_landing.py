@@ -88,9 +88,9 @@ def paused_child(case, args):
 
 
 SLOT_HOLD = (
-    "import os, sys\n"
+    "import os, sys, time\n"
     "from pathlib import Path\n"
-    "log, name, fifo = sys.argv[1:4]\n"
+    "log, name, fifo, *hold = sys.argv[1:]\n"
     "def mark(word):\n"
     "    out = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)\n"
     "    os.write(out, f'{word} {name}\\n'.encode())\n"
@@ -98,32 +98,39 @@ SLOT_HOLD = (
     "release = os.open(fifo, os.O_RDONLY)\n"
     "mark('enter')\n"
     "Path('started').touch()\n"
-    "assert os.read(release, 1) == b'x'\n"
+    "if hold:\n"
+    "    time.sleep(float(hold[0]))\n"
+    "else:\n"
+    "    assert os.read(release, 1) == b'x'\n"
     "mark('exit')\n"
     "Path('finished').touch()\n"
 )
+# A stepped caller waits for the test between attempts. A marked caller sleeps for real. Both mark each failed attempt.
 SLOT_WRAPPED = (
-    "import os, subprocess, sys\n"
+    "import os, subprocess, sys, time\n"
     "from pathlib import Path\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import land\n"
     "count = 0\n"
-    "def blocked(seconds):\n"
+    "sleep = time.sleep\n"
+    "def waiting(seconds):\n"
     "    global count\n"
     "    count += 1\n"
-    "    gate = os.open(sys.argv[2], os.O_RDONLY)\n"
     "    Path(f'waiting-{count}').touch()\n"
+    "    if sys.argv[2] == 'marked':\n"
+    "        sleep(seconds)\n"
+    "        return\n"
+    "    gate = os.open(sys.argv[2], os.O_RDONLY)\n"
     "    assert os.read(gate, 1) == b'x'\n"
     "    os.close(gate)\n"
     "if sys.argv[2]:\n"
-    "    land.time.sleep = blocked\n"
+    "    land.time.sleep = waiting\n"
     "if sys.argv[3] == 'landing':\n"
     "    with land.slot('landing'):\n"
     "        sys.exit(subprocess.run(sys.argv[4:]).returncode)\n"
     "sys.exit(land.main(['slot', *sys.argv[4:]]))\n"
 )
 TURN_MUTEX = 4096
-TURN_PLACE = 2097152
 
 # A holder that keeps its slot until the release fifo is written, so a test can read a waiter's report.
 HOLD_SCRIPT = (
@@ -343,14 +350,17 @@ class SlotCallers:
         self.descriptors.append(os.open(path, os.O_RDWR | os.O_NONBLOCK))
         return self.descriptors[-1]
 
-    def start(self, name, *flags, script=SCRIPT, stepped=False, pool="worker"):
+    def start(self, name, *flags, script=SCRIPT, stepped=False, marked=False, pool="worker", hold=None):
+        """Start a slot caller. With hold, its command leaves the slot after hold seconds instead of on release."""
         directory = self.test.base / f"caller-{name}"
         directory.mkdir()
         release, retry = self.fifo(directory / "release"), self.fifo(directory / "retry")
-        command = [*flags, "--", sys.executable, "-c", SLOT_HOLD, str(self.log), name, str(directory / "release")]
-        if stepped or pool == "landing":
+        command = [*flags, "--", sys.executable, "-c", SLOT_HOLD, str(self.log), name, str(directory / "release"),
+                   *([] if hold is None else [str(hold)])]
+        if stepped or marked or pool == "landing":
+            mode = str(directory / "retry") if stepped else "marked" if marked else ""
             argv = [sys.executable, "-c", SLOT_WRAPPED, str(Path(script).parent),
-                    str(directory / "retry") if stepped else "", pool, *(command if pool == "worker" else command[1:])]
+                    mode, pool, *(command if pool == "worker" else command[1:])]
         else:
             argv = [sys.executable, str(script), "slot", *command]
         process = subprocess.Popen(argv, cwd=directory, env=self.env, start_new_session=True,
@@ -382,6 +392,11 @@ class SlotCallers:
         os.write(caller.retry, b"x")
         return self.settle(caller)
 
+    def queued(self, caller):
+        """Wait until a marked caller has failed its first attempt, which it does only after it takes a ticket."""
+        self.wait(lambda: (caller.directory / "waiting-1").exists(), f"{caller.name} waits with a ticket")
+        return caller
+
     def release(self, caller):
         os.write(caller.release, b"x")
         self.test.assertEqual(caller.process.wait(timeout=20), 0)
@@ -402,9 +417,6 @@ class SlotCallers:
             if fields[0] == "OFDLCK" and fields[4] == identity:
                 (blocked if waits else held).add(int(fields[5]))
         return held, blocked
-
-    def tickets(self):
-        return {byte - TURN_PLACE for byte in self.turn_locks()[0] if byte >= TURN_PLACE}
 
     def events(self):
         return [tuple(line.split()) for line in self.log.read_text().splitlines()]
@@ -3912,10 +3924,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(caller.process.wait(timeout=20), -signal.SIGKILL)
 
         holder = slots.enter(slots.start("holder"))
-        ticketed = slots.start("ticketed")
-        slots.wait(lambda: slots.tickets() == {1}, "the waiter holds ticket 1")
-        kill(ticketed)
-        slots.wait(lambda: slots.tickets() == set(), "the killed waiter's ticket lock is gone")
+        kill(slots.queued(slots.start("ticketed", marked=True)))
         slots.release(holder)
         slots.release(slots.enter(slots.start("after-ticketed")))
 
@@ -3934,19 +3943,20 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_many_callers_never_exceed_the_slot_count(self):
         slots = SlotCallers(self, 2)
-        waiting = [slots.start(f"worker-{index}") for index in range(5)]
+        waiting = [slots.start(f"worker-{index}", marked=True) for index in range(5)]
         while waiting:
             expected = min(2, len(waiting))
             slots.wait(lambda: sum(caller.started for caller in waiting) >= expected
-                       and len(slots.tickets()) == len(waiting) - expected, "the slots are full and the rest wait")
+                       and all(caller.started or (caller.directory / "waiting-1").exists() for caller in waiting),
+                       "the slots are full and the rest wait")
             running = [caller for caller in waiting if caller.started]
             self.assertEqual(len(running), expected)
             slots.release(running[0])
             waiting.remove(running[0])
 
         exclusive = slots.enter(slots.start("exclusive", "--exclusive"))
-        waiting = [slots.start(f"later-{index}") for index in range(3)] + [slots.start("landing", pool="landing")]
-        slots.wait(lambda: len(slots.tickets()) == 4, "every later caller waits behind the exclusive command")
+        waiting = [slots.queued(slots.start(f"later-{index}", marked=True)) for index in range(3)]
+        waiting.append(slots.queued(slots.start("landing", pool="landing", marked=True)))
         self.assertEqual([caller.name for caller in waiting if caller.started], [])
         slots.release(exclusive)
         while waiting:
@@ -3966,6 +3976,58 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assertEqual(running, {"exclusive"})
         self.assertEqual(peak, 2)
         self.assertEqual(len(slots.entries()), 10)
+
+    def contend(self, slots, kinds, hold):
+        """Queue one free-running caller per kind, in order, behind full slots, then free the slots.
+
+        Each caller holds its slot for hold seconds. Asserts that no slot is ever shared and that no caller runs
+        ahead of an earlier one it conflicts with, except a worker or landing caller ahead of an earlier exclusive.
+        Returns the most worker slots in use at once."""
+        callers = SlotCallers(self, slots)
+        kind_of = {f"holder-{index}": "worker" for index in range(slots)}
+        holders = [callers.enter(callers.start(name)) for name in kind_of]
+        kind_of["holder-landing"] = "landing"
+        holders.append(callers.enter(callers.start("holder-landing", pool="landing")))
+        queue = []
+        for index, kind in enumerate(kinds):
+            name = f"{index}-{kind}"
+            kind_of[name] = kind
+            flags = ["--exclusive"] if kind == "exclusive" else []
+            pool = "landing" if kind == "landing" else "worker"
+            queue.append(callers.queued(callers.start(name, *flags, marked=True, pool=pool, hold=hold)).name)
+        for holder in holders:
+            callers.release(holder)
+        for caller in callers.callers:
+            self.assertEqual(caller.process.wait(timeout=120), 0, caller.name)
+
+        running, spans, peak = set(), {}, 0
+        for position, (word, name) in enumerate(callers.events()):
+            if word == "enter":
+                running.add(name)
+                spans[name] = [position, None]
+            else:
+                running.remove(name)
+                spans[name][1] = position
+            held = [kind_of[other] for other in running]
+            self.assertTrue("exclusive" not in held or len(held) == 1, f"an exclusive caller shared the slots: {sorted(running)}")
+            self.assertLessEqual(held.count("landing"), 1, sorted(running))
+            self.assertLessEqual(held.count("worker"), slots, sorted(running))
+            peak = max(peak, held.count("worker"))
+        self.assertEqual(sorted(spans), sorted(kind_of))
+
+        for index, first in enumerate(queue):
+            for later in queue[index + 1:]:
+                if kind_of[first] == kind_of[later] or kind_of[later] == "exclusive":
+                    self.assertLess(spans[first][0], spans[later][1], f"{later} finished before the earlier {first} started")
+        return peak
+
+    def test_contending_callers_never_share_a_slot_and_never_pass_an_earlier_ticket(self):
+        kinds = ["worker", "exclusive", "landing", "worker", "landing", "exclusive", "worker", "worker", "landing", "exclusive"]
+        self.assertEqual(self.contend(1, kinds, hold=0.1), 1)
+
+    def test_contending_callers_fill_two_worker_slots_and_never_pass_an_earlier_ticket(self):
+        kinds = ["worker", "worker", "landing", "exclusive", "worker", "landing", "worker", "worker", "exclusive", "worker"]
+        self.assertEqual(self.contend(2, kinds, hold=1.5), 2)
 
     def test_an_old_slot_holder_blocks_a_new_caller_and_the_reverse(self):
         slots = SlotCallers(self, 1)
