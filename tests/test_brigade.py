@@ -8281,6 +8281,29 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.execute_conditionals(crossing), ["86 add --dish D1 --round-budget"])
 
+    def test_next_restarts_a_pass_with_edits_review_after_two_send_backs(self):
+        self.fresh()
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        sheet = self.next_sheet("review", "D1", "--verdict", "pass-with-edits")
+        self.assertIn(
+            "if the old worker's wait for D1 is terminal and D1 may take a fix round: run dish D1 --state in-progress",
+            sheet)
+        self.assertNotIn("round-budget", sheet)
+        self.assertEqual(sheet.splitlines()[-1], "reply: yes (sent-back: D1)")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"), name="D1-review-3.md")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "pass-with-edits",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--edits", "D1-review-3.md"),
+                         "D1 sent-back")
+        self.assertEqual(self.execute_conditionals(sheet), ["dish D1 --state in-progress"])
+        self.fresh()
+        for number in range(3):
+            self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--author", CLAUDE, "--verifier", CODEX)
+        at_budget = self.next_sheet("review", "D1", "--verdict", "pass-with-edits")
+        self.assertNotIn("run dish D1 --state in-progress", at_budget)
+        self.assertIn("run 86 add --dish D1 --round-budget", at_budget)
+
     def test_next_facts(self):
         self.fired_bug_fix()
         self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)

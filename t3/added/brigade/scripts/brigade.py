@@ -4051,7 +4051,10 @@ def budget_reached(snapshot, trigger):
         return False
     if open_for(snapshot, trigger.dish):
         return False
-    return snapshot.round_counts.get(trigger.dish, 0) + 1 >= ROUND_BUDGET
+    count = snapshot.round_counts.get(trigger.dish, 0)
+    if trigger.verdict == "send-back":
+        count += 1
+    return count >= ROUND_BUDGET
 
 
 def blocked_needs_user(snapshot, trigger, failure):
