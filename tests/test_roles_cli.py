@@ -1051,7 +1051,9 @@ class ModeCliTest(unittest.TestCase):
         self.assertIn(
             "- With no excluded seat, it runs `validate`'s checks on the roles it is about to store. "
             "When they list a problem, it prints each one and writes nothing unless `--force` is passed. "
-            "Fix each problem and rerun. Do not pass `--force` unless the user asks.\n",
+            "Fix each problem and rerun. Do not pass `--force` unless the user asks. "
+            "Write refuses a seat on a metered OpenCode model unless that same file's allow list names the full model id. "
+            "Pass the allow flag on write with that id and rerun.\n",
             text,
         )
         self.assertNotIn("a seat that does not match the catalog", text)
@@ -1874,7 +1876,7 @@ class BedrockHaikuBriefCliTest(unittest.TestCase):
             "providerInstanceId": "opencode",
             "canRunChildTask": True,
             "constraints": [],
-            "models": [{"id": model_id, "options": []}],
+            "models": [{"id": model_id, "options": [], "cost": 0}],
         }]}
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
@@ -2800,7 +2802,10 @@ def backup_catalog(*, second_claude=False):
             "providerInstanceId": "opencode",
             "canRunChildTask": True,
             "constraints": [],
-            "models": [{"id": model, "options": [_select("variant", ("high", "max"))]} for model in (MUSE, STEP, BUNNY)],
+            "models": [
+                {"id": model, "options": [_select("variant", ("high", "max"))], "cost": 0}
+                for model in (MUSE, STEP, BUNNY)
+            ],
         },
     ])
     return {"providers": providers}
@@ -3963,7 +3968,7 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(json.loads(shown.stdout)["roles"], {"review backups": {
             "source": user,
             "seats": [MUSE_SEAT, STEP_SEAT],
-            "notes": self.PANEL_NOTES,
+            "notes": self.PANEL_NOTES + [metered_line("review backups", "opencode", "opencode/nope-free")],
         }})
         self.assertEqual(backed.returncode, 0, backed.stderr)
         payload = json.loads(backed.stdout)
@@ -3976,7 +3981,10 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
             repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
             completed = repo.run("validate", "--catalog", catalog)
         self.assertEqual(completed.returncode, 1)
-        self.assertEqual(completed.stdout, self.PANEL_PROBLEMS)
+        self.assertEqual(
+            completed.stdout,
+            metered_line("review backups", "opencode", "opencode/nope-free") + "\n" + self.PANEL_PROBLEMS,
+        )
         self.assertEqual(completed.stderr, "")
 
     def test_write_refuses_dropped_seats_without_force(self):
@@ -3991,7 +3999,10 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         self.assertEqual(refused.stdout, "")
         self.assertEqual(
             refused.stderr,
-            "error: refusing to write without --force:\n" + self.PANEL_PROBLEMS,
+            "error: refusing to write without --force:\n"
+            + self.PANEL_PROBLEMS
+            + metered_line("review backups", "opencode", "opencode/nope-free")
+            + "\n",
         )
         self.assertFalse(written_before_force)
         self.assertEqual(forced.returncode, 0, forced.stderr)
@@ -4011,6 +4022,11 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
                 "review backups drops seats by the catalog: "
                 "call orchestrator_capabilities and rerun roles.py show --catalog"
             ),
+            "notes": [
+                metered_line("review backups", "opencode", MUSE),
+                metered_line("review backups", "opencode", "opencode/nope-free"),
+                metered_line("review backups", "opencode", STEP),
+            ],
         }})
 
     def test_validate_reports_an_unknown_option_on_a_kept_seat(self):
@@ -4317,7 +4333,7 @@ def muse_driver_provider(provider_id="muse", driver="muse"):
         "driverKind": driver,
         "canRunChildTask": True,
         "constraints": [],
-        "models": [{"id": "muse-spark-1", "options": []}],
+        "models": [{"id": "muse-spark-1", "options": [], "cost": 0}],
     }
 
 
@@ -4753,6 +4769,7 @@ class WriteFilesCliTest(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertEqual(os.listdir(state / "catalog.json"), [])
         self.assertEqual(self.temporary_files(), [])
+
 
 PICKLE = "opencode/big-pickle"
 SPACE_BUNNY = "opencode/space-bunny-free"

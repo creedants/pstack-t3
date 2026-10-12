@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
@@ -549,6 +549,119 @@ def lease_paths(text):
     return sorted({canonical(part) for part in text.split(",")})
 
 
+@dataclass(frozen=True)
+class OpenCodeAllow:
+    """Sorted unique full model ids one roles file allows."""
+
+    models: tuple[str, ...]
+
+    @staticmethod
+    def empty():
+        return OpenCodeAllow(())
+
+    @staticmethod
+    def from_json(value):
+        if not value:
+            return OpenCodeAllow.empty()
+        return OpenCodeAllow(tuple(sorted(set(value))))
+
+    def names(self, model_id):
+        return model_id in self.models
+
+    def add_all(self, model_ids):
+        return OpenCodeAllow(tuple(sorted(set(self.models).union(model_ids))))
+
+    def remove_all(self, model_ids):
+        gone = set(model_ids)
+        return OpenCodeAllow(tuple(model for model in self.models if model not in gone))
+
+    def to_json(self):
+        return list(self.models)
+
+
+def allow_shape_error(value):
+    if isinstance(value, list) and all(isinstance(item, str) and item and " " not in item for item in value):
+        return None
+    return "opencodeAllow must be a list of non-empty strings with no spaces"
+
+
+def catalog_provider(catalog, provider_instance_id):
+    if not catalog:
+        return None
+    return next(
+        (item for item in catalog.get("providers") or [] if item.get("providerInstanceId") == provider_instance_id),
+        None,
+    )
+
+
+def is_opencode_provider(catalog, provider_instance_id):
+    provider = catalog_provider(catalog, provider_instance_id)
+    if provider is not None and "driverKind" in provider:
+        return provider["driverKind"] == "opencode"
+    return provider_instance_id == "opencode"
+
+
+def _free_marker(value):
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == 0
+    if isinstance(value, float):
+        return value == 0.0
+    return value == "free"
+
+
+def catalog_says_free(model):
+    if not isinstance(model, dict):
+        return False
+    present = [key for key in ("cost", "pricing", "tier") if key in model]
+    return bool(present) and all(_free_marker(model[key]) for key in present)
+
+
+def opencode_model_is_metered(catalog, provider_instance_id, model_id):
+    if not is_opencode_provider(catalog, provider_instance_id):
+        return False
+    model = find_model(catalog_provider(catalog, provider_instance_id), model_id)
+    return not catalog_says_free(model)
+
+
+def opencode_allow_line(role, seat, allow, catalog):
+    if not isinstance(seat, dict):
+        return None
+    provider = seat.get("providerInstanceId")
+    model = seat.get("model")
+    if not provider or not model or not opencode_model_is_metered(catalog, provider, model) or allow.names(model):
+        return None
+    return (
+        f"{role}: {provider}/{model} is a metered OpenCode model and the allow list does not name {model}. "
+        f"Add it with --allow-opencode {model}"
+    )
+
+
+def opencode_allow_lines(roles, allow, catalog):
+    lines = []
+    for name, seats in roles.items():
+        for seat in seats:
+            line = opencode_allow_line(name, seat, allow, catalog)
+            if line:
+                lines.append(line)
+    return lines
+
+
+def allow_for(config, name):
+    source = config.get("sources", {}).get(name)
+    return config.get("allowByFile", {}).get(source, OpenCodeAllow.empty())
+
+
+def stored_allow(raw, origin):
+    if not isinstance(raw, dict) or "opencodeAllow" not in raw:
+        return OpenCodeAllow.empty()
+    message = allow_shape_error(raw["opencodeAllow"])
+    if message:
+        raise RolesError(f"{origin}: {message}")
+    return OpenCodeAllow.from_json(raw["opencodeAllow"])
+
+
 def check_shape(config, origin):
     if not isinstance(config, dict):
         raise RolesError(f"{origin}: expected an object")
@@ -583,6 +696,10 @@ def check_shape(config, origin):
                 continue
             if not isinstance(seat, dict) or not seat.get("providerInstanceId") or not seat.get("model"):
                 raise RolesError(f"{origin}: role {name!r} has a seat without providerInstanceId and model")
+    if "opencodeAllow" in config:
+        message = allow_shape_error(config["opencodeAllow"])
+        if message:
+            raise RolesError(f"{origin}: {message}")
     return config
 
 
@@ -591,11 +708,12 @@ def merged_config(cwd, user_path=None, project_path=None):
     project_path = Path(project_path) if project_path else project_config_path(cwd)
     user = check_shape(load_json(user_path) or {}, user_path)
     project = check_shape(load_json(project_path) or {}, project_path)
-    roles, sources = {}, {}
+    roles, sources, allow_by_file = {}, {}, {}
     for origin, config in ((user_path, user), (project_path, project)):
         for name, seats in config.get("roles", {}).items():
             roles[name] = seats
             sources[name] = str(origin)
+        allow_by_file[str(origin)] = OpenCodeAllow.from_json(config.get("opencodeAllow"))
     if "mode" in project:
         mode = ModeDecision(project["mode"], ".pstack/t3-roles.json", str(project_path))
     elif "mode" in user:
@@ -610,6 +728,7 @@ def merged_config(cwd, user_path=None, project_path=None):
         "escalate": escalate,
         "roles": roles,
         "sources": sources,
+        "allowByFile": allow_by_file,
     }
 
 
@@ -1047,6 +1166,7 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
             and isinstance(configured[0], dict)
             and configured[0]["providerInstanceId"] in CANNOT_LAUNCH_SEATS
         )
+        from_file = False
         if configured is None or (role_providers is not None and configured_cursor):
             selection = default_seats(name, catalog, budget, role_providers)
             if isinstance(selection.seats, str):
@@ -1064,6 +1184,7 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
         else:
             seats = configured
             selection_notes = skipped
+            from_file = True
         if name == PANEL_BACKUP_ROLE and catalog is None:
             entry["seats"] = CATALOG_REQUIRED
             entry["note"] = PANEL_CATALOG_NOTE
@@ -1097,6 +1218,10 @@ def resolve(config, catalog=None, names=None, parent=None, providers=None, launc
                 entry["notes"] = problems
             if info:
                 entry["info"] = info
+        if from_file:
+            lines = opencode_allow_lines({name: list(configured)}, allow_for(config, name), catalog)
+            if lines:
+                entry["notes"] = [*entry.get("notes", []), *lines]
         _store_settled(entry, name, catalog, parent, budget)
         attach_haiku_brief(entry, entry["seats"], parent)
         result["roles"][name] = entry
@@ -1343,6 +1468,11 @@ def command_backup(args):
         args.role, failed, text, catalog, budget, args.out or [], authors, args.resume, review_backups,
         panel_budget=panel_budget,
     )
+    kept, _skipped = configured_seats(config, args.role)
+    if kept:
+        extra = opencode_allow_lines({args.role: kept}, allow_for(config, args.role), catalog)
+        if extra:
+            result = replace(result, notes=(*result.notes, *extra))
     payload = {
         "decision": result.decision,
         "role": args.role,
@@ -1458,6 +1588,10 @@ def command_validate(args):
     config = merged_config(args.cwd, args.config, args.project_config)
     catalog = load_catalog(args.catalog)
     _parent, catalog = catalog_for_check(args, catalog, args.catalog)
+    for name, seats in config["roles"].items():
+        kept = [seat for seat in seats if excluded_reason(seat) is None]
+        for line in opencode_allow_lines({name: kept}, allow_for(config, name), catalog):
+            print(line)
     problems = validate(config, catalog)
     for problem in problems:
         print(problem)
@@ -1484,6 +1618,7 @@ def command_write(args):
         raw = loaded
     else:
         raw = {}
+    allow = stored_allow(raw, target).remove_all(args.deny_opencode or []).add_all(args.allow_opencode or [])
     # Budget and roles survive a rewrite only with --keep. Escalate is separate.
     existing = raw if args.keep else {}
     roles = dict(existing.get("roles", {}))
@@ -1510,6 +1645,8 @@ def command_write(args):
             config["escalate"] = list(args.escalate)
         elif "escalate" in raw:
             config["escalate"] = raw["escalate"]
+    if allow.models:
+        config["opencodeAllow"] = allow.to_json()
     check_shape(config, target)
     if "escalate" in config:
         config["escalate"] = list(config["escalate"])
@@ -1518,6 +1655,7 @@ def command_write(args):
         raise RolesError("refusing to write, even with --force:\n" + "\n".join(excluded))
     _parent, checking = catalog_for_check(args, catalog, args.catalog)
     problems = validate({"budget": config.get("budget", "default"), "roles": roles, "sources": {}}, checking)
+    problems.extend(opencode_allow_lines(roles, allow, checking))
     if problems and not args.force:
         raise RolesError("refusing to write without --force:\n" + "\n".join(problems))
     write_atomic(target, config)
@@ -1957,6 +2095,18 @@ def main(argv=None):
     write.add_argument("--project", action="store_true", help="write the project file instead of the user file")
     write.add_argument("--keep", action="store_true", help="keep roles already in the target file")
     write.add_argument("--force", action="store_true", help="write despite the problems validate lists, except an excluded seat")
+    write.add_argument(
+        "--allow-opencode",
+        action="append",
+        default=None,
+        help="Add this full OpenCode model id to the allow list in the file being written.",
+    )
+    write.add_argument(
+        "--deny-opencode",
+        action="append",
+        default=None,
+        help="Remove this full OpenCode model id from the allow list in the file being written.",
+    )
     mode = sub.add_parser("mode")
     mode.add_argument("--cwd", default=os.getcwd())
     mode.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")
