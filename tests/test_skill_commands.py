@@ -165,8 +165,10 @@ def tapes(spans: tuple[Span, ...]) -> tuple[Tape, ...]:
     """Each span is its own store, except from-report spans, which share one. A kind choice is several skill steps on that store.
 
     Tokenize each span, fill placeholders from FILL, expand the kind choice, then wrap the argv
-    in the setup steps that make that argv succeed. When a kind choice has `--request` or `--ref`,
-    those become `A1` upward and `app-7f3-<kind>`. Any other line keeps FILL, so `<n>` is `1` and `<ref>` is `app-7f3`.
+    in the setup steps that make that argv succeed. When a kind choice has `--request` or `--ref`
+    with the placeholder fill after the flag, those become `A1` upward and `app-7f3-<kind>`.
+    A token after the flag that is not that fill stays as written, so a broken flag reaches the parser.
+    Any other line keeps FILL, so `<n>` is `1` and `<ref>` is `app-7f3`.
     """
     prepared = tuple((span, _filled_argvs(span)) for span in spans)
     reports = tuple((span, argvs) for span, argvs in prepared if _is_from_report(argvs[0]))
@@ -334,8 +336,8 @@ def _filled_argvs(span: Span) -> tuple[tuple[str, ...], ...]:
     argvs = []
     for number, kind in enumerate(tokens[kind_at].alternatives, 1):
         argv = list(_fill_tokens(tokens, span.line, (kind_at, kind)))
-        _replace(argv, "--ref", f"{FILL['<ref>']}-{kind}")
-        _replace(argv, "--request", f"A{number}")
+        _replace(argv, "--ref", f"{FILL['<ref>']}-{kind}", FILL["<ref>"])
+        _replace(argv, "--request", f"A{number}", f"A{FILL['<n>']}")
         argvs.append(tuple(argv))
     return tuple(argvs)
 
@@ -350,22 +352,35 @@ def _fill_tokens(tokens: tuple[Token, ...], line: int, kind: tuple[int, str] | N
     return tuple(argv)
 
 
-def _replace(argv: list[str], flag: str, value: str) -> None:
+def _replace(argv: list[str], flag: str, value: str, expected: str) -> None:
     if flag not in argv:
         return
-    argv[argv.index(flag) + 1] = value
+    at = argv.index(flag)
+    if at + 1 >= len(argv):
+        return
+    if argv[at + 1] != expected:
+        return
+    argv[at + 1] = value
 
 
-def _option(argv: tuple[str, ...], flag: str) -> str:
-    return argv[argv.index(flag) + 1]
+def _option(argv: tuple[str, ...], flag: str, line: int) -> str:
+    if flag not in argv:
+        raise AssertionError(f"SKILL.md line {line}: missing {flag} in {' '.join(argv)}")
+    at = argv.index(flag)
+    if at + 1 >= len(argv):
+        raise AssertionError(f"SKILL.md line {line}: missing value after {flag} in {' '.join(argv)}")
+    return argv[at + 1]
 
 
 def _is_from_report(argv: tuple[str, ...]) -> bool:
     return argv[:2] == ("ticket", "add") and "--from-report" in argv
 
 
-def _open_step(line: int) -> Step:
-    return Step(line, ("open", "--project-root", "<project>", "--name", RESTAURANT), None)
+def _open_step(line: int, workers: int | None = None) -> Step:
+    argv: tuple[str, ...] = ("open", "--project-root", "<project>", "--name", RESTAURANT)
+    if workers is not None:
+        argv = (*argv, "--workers", str(workers))
+    return Step(line, argv, None)
 
 
 def _goal_step(line: int) -> Step:
@@ -399,11 +414,28 @@ def _kind_tape(line: int, argvs: tuple[tuple[str, ...], ...]) -> Tape:
 
 
 def _fire_tape(line: int, argv: tuple[str, ...]) -> Tape:
-    """Create every ticket id the line names, including a gap id next_id would otherwise skip."""
-    named = _option(argv, "--tickets").split(",")
-    ride = set(_option(argv, "--ride-along").split(",")) if "--ride-along" in argv else set()
+    """Create every ticket id the line names, including a gap id next_id would otherwise skip.
+
+    A missing or malformed `--tickets` fails with the line number.
+    """
+    raw = _option(argv, "--tickets", line)
+    named = raw.split(",")
+    for ident in named:
+        if not ident.startswith("T") or not ident[1:].isdigit():
+            raise AssertionError(f"SKILL.md line {line}: bad ticket id {ident} in {' '.join(argv)}")
+    if "--ride-along" in argv:
+        ride_raw = _option(argv, "--ride-along", line)
+        ride = set(ride_raw.split(",")) if ride_raw else set()
+        for ident in ride:
+            if not ident.startswith("T") or not ident[1:].isdigit():
+                raise AssertionError(f"SKILL.md line {line}: bad ticket id {ident} in {' '.join(argv)}")
+    else:
+        ride = set()
+    if "--kind" in argv:
+        kind = _option(argv, "--kind", line)
+    else:
+        kind = "fix"
     lead = named[0]
-    kind = _option(argv, "--kind") if "--kind" in argv else "fix"
     highest = max(int(ident[1:]) for ident in named)
     steps = [_open_step(line)]
     unused = 0
@@ -437,27 +469,32 @@ def _plain_add_tape(line: int, argv: tuple[str, ...]) -> Tape:
 def _report_tape(items: tuple[tuple[Span, tuple[tuple[str, ...], ...]], ...]) -> Tape:
     """From-report spans share one store.
 
-    Each report stem is fired once, in numeric dish order, with no paths. A dry-run step does not
-    take a ticket id. The first real add is the next id after those lead tickets.
+    Each report stem is fired once, in numeric dish order, with no paths. Dishes from 1 through
+    the highest stem exist, so a lone D2 still has D1. The store opens with workers for the highest
+    dish. A dry-run step does not take a ticket id. The first real add is the next id after those lead tickets.
     """
-    stems = sorted({Path(_option(argvs[0], "--from-report")).stem for _, argvs in items}, key=lambda stem: int(stem[1:]))
+    parsed: list[tuple[Span, tuple[tuple[str, ...], ...], str, int]] = []
+    for span, argvs in items:
+        raw = _option(argvs[0], "--from-report", span.line)
+        stem = Path(raw).stem
+        if not stem.startswith("D") or not stem[1:].isdigit():
+            raise AssertionError(f"SKILL.md line {span.line}: bad report {raw} in {' '.join(argvs[0])}")
+        parsed.append((span, argvs, stem, int(stem[1:])))
+    highest = max(number for _, _, _, number in parsed)
     line = items[0][0].line
-    words = ("one", "two", "three", "four", "five", "six", "seven", "eight")
-    steps = [_open_step(line)]
-    for index, _stem in enumerate(stems):
-        word = words[index]
-        number = index + 1
-        steps.append(Step(line, ("ticket", "add", "--kind", "fix", "--summary", f"Lead {word}"), f"T{number}\n"))
+    steps = [_open_step(line, highest)]
+    for number in range(1, highest + 1):
+        steps.append(Step(line, ("ticket", "add", "--kind", "fix", "--summary", f"Lead {number}"), f"T{number}\n"))
         steps.append(Step(
             line,
-            ("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", f"Dish {word}"),
+            ("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", f"Dish {number}"),
             f"D{number}\n",
         ))
-    next_ticket = len(stems) + 1
+    next_ticket = highest + 1
     item = _follow_up_item()
-    for span, argvs in items:
+    for span, argvs, _, _ in parsed:
         argv = argvs[0]
-        name = Path(_option(argv, "--from-report")).name
+        name = Path(_option(argv, "--from-report", span.line)).name
         ref = f"{SLUG}/reports/{name}#1"
         if "--dry-run" in argv:
             expect = f"would add from {ref}: {item}\n"
@@ -510,6 +547,50 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         for tape in tapes(command_spans(skill_text())):
             self.run_tape(tape)
 
+    def test_kind_expansion_keeps_broken_ref_and_request_flags(self):
+        spans = command_spans(skill_text())
+        kind_spans = [span for span in spans if len(_filled_argvs(span)) > 1]
+        self.assertGreaterEqual(len(kind_spans), 1)
+        span = kind_spans[0]
+        for original, broken in (("<ref>", "--ref-BROKEN"), ("A<n>", "--request-BROKEN")):
+            mutated = Span(span.line, span.text.replace(original, broken, 1))
+            argvs = _filled_argvs(mutated)
+            for argv in argvs:
+                self.assertIn(broken, argv)
+            tape = _one_tape(mutated, argvs)
+            with self.assertRaises(AssertionError) as caught:
+                self.run_tape(tape)
+            self.assertIn(f"SKILL.md line {mutated.line}", str(caught.exception))
+
+    def test_fire_without_tickets_fails_with_its_line(self):
+        spans = command_spans(skill_text())
+        fire_spans = [span for span in spans if span.text.startswith("$B fire")]
+        self.assertGreaterEqual(len(fire_spans), 2)
+        for span in fire_spans:
+            mutated = Span(span.line, span.text.replace("--tickets", "--tickets-BROKEN", 1))
+            argvs = _filled_argvs(mutated)
+            with self.assertRaises(AssertionError) as caught:
+                _one_tape(mutated, argvs)
+            self.assertIn(f"SKILL.md line {span.line}", str(caught.exception))
+
+    def test_renamed_from_report_fails_with_its_line(self):
+        spans = command_spans(skill_text())
+        report_spans = [span for span in spans if "--from-report" in span.text]
+        self.assertGreaterEqual(len(report_spans), 2)
+        target = max(report_spans, key=lambda item: item.line)
+        others = [span for span in spans if span is not target and "--from-report" in span.text]
+        self.assertGreaterEqual(len(others), 1)
+        lone = others[0]
+        lone_argvs = _filled_argvs(lone)
+        lone_tape = _report_tape(((lone, lone_argvs),))
+        self.run_tape(lone_tape)
+        mutated = Span(target.line, target.text.replace("--from-report", "--from-report-BROKEN", 1))
+        mutated_argvs = _filled_argvs(mutated)
+        mutated_tape = _one_tape(mutated, mutated_argvs)
+        with self.assertRaises(AssertionError) as caught:
+            self.run_tape(mutated_tape)
+        self.assertIn(f"SKILL.md line {mutated.line}", str(caught.exception))
+
     def run_tape(self, tape: Tape) -> None:
         saved = (self.temporary, self.store, self.project, self.at)
         temporary = tempfile.TemporaryDirectory()
@@ -532,7 +613,7 @@ class SkillCommandTest(test_brigade.BrigadeTest):
     def _run_step(self, step: Step) -> None:
         argv = tuple(str(self.project) if word == "<project>" else word for word in step.argv)
         if "--from-report" in argv:
-            self._write_report(argv)
+            self._write_report(argv, step.line)
         owner = test_brigade._owner_words(self.at)
         result = subprocess.run(
             [sys.executable, str(test_brigade.SCRIPT), "--store", str(self.store), "--at", str(self.at), *owner, *argv],
@@ -548,15 +629,15 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         if step.expect is not None:
             self.assertEqual(result.stdout, step.expect, f"SKILL.md line {step.line}: {shown}\n{result.stderr}")
 
-    def _write_report(self, argv: tuple[str, ...]) -> None:
-        name = Path(_option(argv, "--from-report")).name
+    def _write_report(self, argv: tuple[str, ...], line: int) -> None:
+        name = Path(_option(argv, "--from-report", line)).name
         directory = self.at / "reports"
         directory.mkdir(parents=True, exist_ok=True)
         (directory / name).write_text(FOLLOW_UP, encoding="utf-8")
 
 
 def load_tests(loader, tests, pattern):
-    """Return a suite of this module's two methods.
+    """Return a suite of this module's test methods.
 
     SkillCommandTest subclasses BrigadeTest for init_landing and the temp project.
     The default loader would also collect BrigadeTest's test_* methods.
@@ -565,6 +646,9 @@ def load_tests(loader, tests, pattern):
     for name in (
         "test_the_skill_keeps_at_least_seven_command_lines",
         "test_each_filled_command_prints_its_recorded_line",
+        "test_kind_expansion_keeps_broken_ref_and_request_flags",
+        "test_fire_without_tickets_fails_with_its_line",
+        "test_renamed_from_report_fails_with_its_line",
     ):
         suite.addTest(SkillCommandTest(name))
     return suite
