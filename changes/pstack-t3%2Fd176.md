@@ -1,0 +1,1 @@
+- `scripts/sync_upstream.py` rewrites the README upstream badge url and alt when it writes `upstream.json`, and exits 1 before that write when the badge line is missing or not that one line. `scripts/check.py` names `README.md` and both versions when the badge url or alt differs from the pin, and when the badge is absent. The build fails on that finding.

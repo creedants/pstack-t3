@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence."""
+"""Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
+
+check_tree also reports a README upstream badge that is missing or that disagrees with the version in upstream.json.
+"""
 
 import ast
 import importlib.util
+import json
 import re
 import sys
 
@@ -51,6 +55,8 @@ CATALOG_HEREDOC_CLOSER = "JSON"
 
 ROLES_PY = Path(__file__).resolve().parents[1] / "t3/scripts/roles.py"
 TESTS_DIR = Path(__file__).resolve().parents[1] / "tests"
+README_PATH = Path(__file__).resolve().parents[1] / "README.md"
+UPSTREAM_PATH = Path(__file__).resolve().parents[1] / "upstream.json"
 # Every tests/test_*.py must carry fence_git_environment as it is in the reference module, and a setUpModule that contains a call to it.
 FENCE_REFERENCE = "test_landing.py"
 FENCE_FUNCTION = "fence_git_environment"
@@ -58,6 +64,96 @@ FENCE_SETUP = "setUpModule"
 LIGHT_HEADER_CELLS = frozenset({"light", "light mode", "light behavior", "in light mode"})
 LIGHT_MODE_NAME = re.compile(r"(?i:\blight mode\b)|Mode: light")
 TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
+_VERSION_TOKEN = r"[0-9]+(?:\.[0-9]+)+"
+_BADGE_LINE = re.compile(
+    "(?P<indent>[ \t]*)"
+    '<a href="upstream.json"><img src="https://img\\.shields\\.io/badge/upstream%20pstack-'
+    "(?P<url>" + _VERSION_TOKEN + ")"
+    '-555\\.svg" alt="upstream pstack '
+    "(?P<alt>" + _VERSION_TOKEN + ")"
+    '"></a>'
+    "(?P<trail>[ \t]*)"
+)
+
+
+def _body_lines(text):
+    if text.endswith("\n"):
+        return text[:-1].split("\n")
+    return text.split("\n")
+
+
+def _hits(text):
+    hits = []
+    for line in _body_lines(text):
+        match = _BADGE_LINE.fullmatch(line)
+        if match:
+            hits.append(match)
+    return hits
+
+
+def _readme_text(path):
+    try:
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _pin_version(path):
+    try:
+        if not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    version = payload.get("version")
+    if not isinstance(version, str) or version == "" or "\n" in version:
+        return None
+    return version
+
+
+def rewritten_readme(path, version):
+    if not isinstance(version, str) or re.fullmatch(_VERSION_TOKEN, version) is None:
+        return None
+    text = _readme_text(path)
+    if text is None:
+        return None
+    hits = _hits(text)
+    if len(hits) != 1:
+        return None
+    lines = _body_lines(text)
+    match = hits[0]
+    for index, line in enumerate(lines):
+        if line != match.group(0):
+            continue
+        url_start, url_end = match.span("url")
+        alt_start, alt_end = match.span("alt")
+        line = line[:alt_start] + version + line[alt_end:]
+        line = line[:url_start] + version + line[url_end:]
+        lines[index] = line
+        break
+    rewritten = "\n".join(lines)
+    if text.endswith("\n"):
+        rewritten += "\n"
+    return rewritten
+
+
+def badge_findings(readme, upstream):
+    pin = _pin_version(upstream)
+    if pin is None:
+        return ["upstream.json has no version"]
+    text = _readme_text(readme)
+    hits = _hits(text) if text is not None else []
+    if len(hits) != 1:
+        return [f"README.md has no upstream badge and upstream.json version is {pin}"]
+    url = hits[0].group("url")
+    alt = hits[0].group("alt")
+    if url == pin and alt == pin:
+        return []
+    return [f"README.md badge url {url} alt {alt} disagrees with upstream.json version {pin}"]
 
 
 _catalog_module = None
@@ -178,6 +274,7 @@ def check_tree(root):
                     findings.append(f"{rel}: broken link {target}")
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
+    findings.extend(badge_findings(README_PATH, UPSTREAM_PATH))
     return findings
 
 
