@@ -4160,8 +4160,8 @@ def land_follow(dish_id):
 
 
 def pause_if():
-    return If("the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker",
-              "run next again with --failure stuck")
+    return If("the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker and --failure stuck was not passed",
+              "run next --failure stuck")
 
 
 def pass_words(snapshot, dish):
@@ -4224,7 +4224,7 @@ def prefix_cues(snapshot, trigger, failure):
         elif trigger.verdict == "pass":
             cues.append(See(pass_words(snapshot, dish)))
         elif trigger.verdict == "blocked" and failure != "fixable":
-            cues.append(If(f"only the user can unblock {dish_id}", f"run 86 add --dish {dish_id}"))
+            cues.append(See(f"Only the user can unblock {dish_id}. Ask with 86 add --dish {dish_id} --question --options --default."))
         return cues
     if wake == "checks":
         dish = dish_by_id(snapshot, dish_id)

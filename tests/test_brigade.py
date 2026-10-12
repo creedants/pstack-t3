@@ -8014,21 +8014,52 @@ class BrigadeTest(unittest.TestCase):
             shutil.rmtree(self.at)
         self.fired_bug_fix()
 
-    def execute_sheet(self, sheet):
-        lines = [line for line in sheet.splitlines() if line.startswith("run ")]
-        self.assertTrue(lines)
-        commands = []
-        for line in lines:
-            words = shlex.split(line[4:])
+    def conditional_runs(self, sheet):
+        runs = []
+        for line in sheet.splitlines():
+            if line.startswith("if ") and ": run " in line:
+                runs.append(shlex.split(line.split(": run ", 1)[1]))
+        return runs
+
+    def run_printed(self, directory, words):
+        if words[0] == "land.py":
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "t3/added/landing/scripts/land.py"), "--repo", str(self.project), *words[1:]],
+                capture_output=True, text=True, env=self.land_env())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return
+        self.run_at(directory, *words)
+
+    def execute_commands(self, commands):
+        self.assertTrue(commands)
+        ran = []
+        for words in commands:
             self.assertNotIn(words[0], ("fire", "watch", "startable"))
-            commands.append(words)
             copy = Path(self.temporary.name) / f"alone-{time.time_ns()}"
             shutil.copytree(self.at, copy)
-            self.run_at(copy, *words)
+            self.run_printed(copy, words)
+            ran.append(" ".join(words))
         ordered = Path(self.temporary.name) / f"ordered-{time.time_ns()}"
         shutil.copytree(self.at, ordered)
         for words in commands:
-            self.run_at(ordered, *words)
+            self.run_printed(ordered, words)
+        self.assertEqual(ran, [" ".join(words) for words in commands])
+        return ran
+
+    def execute_sheet(self, sheet):
+        commands = []
+        for line in sheet.splitlines():
+            if line.startswith("run "):
+                words = shlex.split(line[4:])
+                self.assertNotIn(words[0], ("fire", "watch", "startable", "land.py"))
+                commands.append(words)
+        self.execute_commands(commands)
+        conditionals = self.conditional_runs(sheet)
+        if conditionals:
+            self.execute_commands(conditionals)
+
+    def execute_conditionals(self, sheet):
+        return self.execute_commands(self.conditional_runs(sheet))
 
     def test_next_readonly(self):
         self.queue()
@@ -8177,18 +8208,61 @@ class BrigadeTest(unittest.TestCase):
             "see Finish with the old worker for thread none, branch none, and pull request none for D1. "
             "If its run is still open, interrupt it and hang the attempt, then archive it. "
             "Remove the worktree and delete the branch after that. Do not claim they are already gone.",
-            "if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
-            "run next again with --failure stuck",
+            "if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker and --failure stuck was not passed: "
+            "run next --failure stuck",
             "reply: yes (merged: D1)",
         ]))
         self.execute_sheet(sheet)
+
+    def test_next_runs_each_conditional_action(self):
+        self.fired_bug_fix()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("dish", "D1", "--state", "queued")
+        liveness = self.next_sheet("liveness")
+        self.assertEqual(self.execute_conditionals(liveness), [
+            "next merge D1",
+            "next --failure stuck",
+            "set --schedule liveness=",
+        ])
+        self.fresh()
+        self.brigade("set", "--reporting", "digest")
+        checks = self.next_sheet("checks", "D1", "--result", "fail")
+        self.assertEqual(self.execute_conditionals(checks), [
+            "next merge D1",
+            "next checks D1 --result fail --failure stuck",
+        ])
+        self.fresh()
+        review = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.execute_conditionals(review), ["dish D1 --state in-progress"])
+        self.fresh()
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        owed = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.assertIn("if D1 reaches the round budget and no decision is open: run 86 add --dish D1 --round-budget", owed)
+        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.execute_commands([["86", "add", "--dish", "D1", "--round-budget"]]),
+                         ["86 add --dish D1 --round-budget"])
+        shutil.rmtree(self.at)
+        self.open()
+        inbox = self.at / "inbox"
+        inbox.mkdir()
+        (inbox / "A1.line").write_text("please fix the gate\n")
+        admin = self.next_sheet("admin", "A1")
+        self.assertEqual(self.execute_conditionals(admin), ["inbox done A1"])
+        self.fresh()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        landed = self.next_sheet()
+        self.assertIn("if the landing queue has an entry for D1: run land.py status --holder perf/D1 --sha abc", landed)
+        self.init_landing()
+        self.assertEqual(self.execute_conditionals(landed), ["land.py status --holder perf/D1 --sha abc"])
 
     def test_next_facts(self):
         self.fired_bug_fix()
         self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
         self.brigade("dish", "D1", "--state", "queued")
-        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
-                 "run next again with --failure stuck")
+        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker and --failure stuck was not passed: "
+                 "run next --failure stuck")
         follow = "if land or watch reports D1 landed: run next merge D1"
         unspecified = self.next_sheet()
         self.assertEqual(unspecified, "\n".join([
@@ -8219,8 +8293,8 @@ class BrigadeTest(unittest.TestCase):
 
     def test_next_reply(self):
         self.open()
-        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker: "
-                 "run next again with --failure stuck")
+        pause = ("if the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker and --failure stuck was not passed: "
+                 "run next --failure stuck")
         self.assertEqual(self.next_sheet("morning"), "\n".join([
             "wake: morning", "reporting: milestones",
             "see No intake source is recorded. File a user request with ticket add when the message asks for work.",
@@ -8277,7 +8351,8 @@ class BrigadeTest(unittest.TestCase):
         blocked = self.next_sheet("review", "D1", "--verdict", "blocked")
         self.assertEqual(blocked.splitlines()[-1], "reply: yes (decision: D1)")
         self.assertIn("run close --to-file", blocked)
-        self.assertIn("if only the user can unblock D1: run 86 add --dish D1", blocked)
+        self.assertIn("see Only the user can unblock D1. Ask with 86 add --dish D1 --question --options --default.", blocked)
+        self.assertNotIn("if only the user can unblock D1: run 86 add --dish D1", blocked)
         fixable = self.next_sheet("review", "D1", "--verdict", "blocked", "--failure", "fixable")
         self.assertEqual(fixable.splitlines()[-1], "reply: no (failure: fixable)")
         self.assertNotIn("run close", fixable)
