@@ -89,7 +89,7 @@ def write_goals(directory, names):
 
 
 def busy_page(directory, goal_names):
-    """The page of a store of 36 work items and 400 agents, where every work item is a feature of one goal of goal_names."""
+    """Build the page of a store of 36 work items and 400 agents, marking each row a feature of goal G<n> by row number and writing goal_names as the goals table."""
     fixture = Fixture(directory)
     populate(fixture, units=36, agents=400, running=5, failed=3)
     fixture.write()
@@ -100,7 +100,7 @@ def busy_page(directory, goal_names):
 
 
 def wide_page(goal_names):
-    """A page of eight groups of two rows, where each group is the work item of one goal of goal_names."""
+    """Build a page of eight groups of two rows, with goal G<n> and item D<n> numbered 1 up, named from goal_names."""
     goals = tuple(MOD["Goal"](f"G{number}", name) for number, name in enumerate(goal_names, start=1))
     items = tuple(replace(item(f"D{number}"), kind="feature", goal=f"G{number}") for number in range(1, 9))
     groups = tuple(group(items[number - 1], row(f"w{number}a"), row(f"w{number}b", depth=1)) for number in range(1, 9))
