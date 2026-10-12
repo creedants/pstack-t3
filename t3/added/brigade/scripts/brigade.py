@@ -4013,7 +4013,7 @@ def accepted_argv(snapshot, argv):
             return argv
         return None
     if argv in (("close",), ("close", "--to-file")):
-        return argv
+        return None if snapshot.close_refusal else argv
     if len(argv) == 4 and argv[0] == "dish" and argv[2:] == ("--state", "merged"):
         dish = dish_by_id(snapshot, argv[1])
         passed = snapshot.passes.get(argv[1])
@@ -4425,7 +4425,7 @@ def tail_cues(snapshot, trigger, failure, reply):
     for dish_id, where in snapshot.report_gaps:
         if dish_id in held:
             continue
-        cues.append(If(f"reports/{dish_id}.md is absent or older than the reported mark",
+        cues.append(If(f"reports/{dish_id}.md is absent or older than the last attempt start",
                        f"read the worker thread ({where}) and get the report"))
     seen = set()
     for debt in snapshot.debts:
@@ -4474,7 +4474,7 @@ def inbox_cues(snapshot):
 
 
 def compile_sheet(snapshot, trigger, failure, unsent):
-    """The cues for this wake. The reply's close is the last command, before a report or drained line."""
+    """The cues for this wake. The reply's close line comes before a report or drained line. It is a run when close would exit 0, and a see of the malformed row when close would refuse."""
     reply = reply_for(snapshot, trigger, failure, unsent)
     return [*inbox_cues(snapshot), *prefix_cues(snapshot, trigger, failure), *tail_cues(snapshot, trigger, failure, reply)]
 

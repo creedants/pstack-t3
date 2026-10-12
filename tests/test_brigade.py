@@ -8565,7 +8565,7 @@ class BrigadeTest(unittest.TestCase):
         self.brigade("set", "--reporting", "digest")
         self.brigade("dish", "D1", "--thread", "thread-9")
         self.brigade("dish", "D1", "--reported")
-        line = ("if reports/D1.md is absent or older than the reported mark: "
+        line = ("if reports/D1.md is absent or older than the last attempt start: "
                 "read the worker thread (thread thread-9) and get the report")
         bare = self.next_sheet()
         self.assertIn(line, bare)
