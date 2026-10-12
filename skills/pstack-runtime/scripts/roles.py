@@ -598,7 +598,7 @@ def is_opencode_provider(catalog, provider_instance_id):
     provider = catalog_provider(catalog, provider_instance_id)
     if provider is not None and "driverKind" in provider:
         return provider["driverKind"] == "opencode"
-    return provider_instance_id == "opencode"
+    return provider_instance_id in ("opencode", "opencode-go")
 
 
 def _free_marker(value):
@@ -1473,6 +1473,14 @@ def command_backup(args):
         extra = opencode_allow_lines({args.role: kept}, allow_for(config, args.role), catalog)
         if extra:
             result = replace(result, notes=(*result.notes, *extra))
+    if result.decision == "panel" and review_backups is not None:
+        panel_notes = opencode_allow_lines(
+            {PANEL_BACKUP_ROLE: result.seats},
+            allow_for(config, PANEL_BACKUP_ROLE),
+            catalog,
+        )
+        if panel_notes:
+            result = replace(result, notes=(*result.notes, *panel_notes))
     payload = {
         "decision": result.decision,
         "role": args.role,
