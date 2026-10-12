@@ -295,7 +295,8 @@ def _discard_ticket(path):
 def _open_ticket(path):
     """Open a regular ticket for a flock probe, or discard the entry and return None.
     This runs under the turn mutex. It uses lstat, then opens with O_NONBLOCK and O_NOFOLLOW, so a fifo cannot
-    block the open and a symlink is not followed."""
+    block the open and a symlink is not followed. A regular file with a link count other than 1 is not a ticket.
+    Its directory entry is removed and any other link stays."""
     try:
         mode = os.lstat(path).st_mode
     except FileNotFoundError:
@@ -312,9 +313,17 @@ def _open_ticket(path):
             _discard_ticket(path)
             return None
         raise
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
         os.close(fd)
         _discard_ticket(path)
+        return None
+    if info.st_nlink != 1:
+        os.close(fd)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
         return None
     return os.fdopen(fd, "r")
 
@@ -325,7 +334,7 @@ def _waiting(tickets, before):
     is dead. The probe takes a shared lock on its read-only open. That conflicts with the waiter's exclusive lock. An exclusive
     lock on the read-only open fails with EBADF where flock is a POSIX lock, including an NFS client.
     A caller passes its own number, because where flock is emulated per process its own lock would probe free.
-    Only a regular file is a ticket. Runs under the turn mutex."""
+    Only a regular file with one link is a ticket. Runs under the turn mutex."""
     found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
                    if match and (before is None or int(match[1]) < before))
     live = []
