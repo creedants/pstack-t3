@@ -1333,6 +1333,27 @@ HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
 THREADS_SECTION = (2, "Threads")
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
 FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
+
+
+def fence_open(line):
+    """The (character, length) of the fence a line opens, or None when it opens none.
+
+    A fence opens at a line that starts at the first column with three or more backticks and holds no other
+    backtick, or that starts there with three or more tildes.
+    """
+    opened = FENCE_OPEN.fullmatch(line)
+    run = opened.group(1) or opened.group(2) if opened else None
+    return (run[0], len(run)) if run else None
+
+
+def fence_close(line, run):
+    """Whether a line closes a fence that opened with that (character, length).
+
+    A fence closes at a line that is at most three spaces, at least as many of the same character, and then
+    only spaces and tabs.
+    """
+    return re.compile(f" {{0,3}}{run[0]}{{{run[1]},}}[ \t]*").fullmatch(line) is not None
+
 FILE_LINE = re.compile(r"File: `([^` ][^`]*)`(?!`)")
 LABELS = {"Old text:": "old", "New text:": "new"}
 # The marks edit_mark gives the five parts of one edit that one_edit reads, in the only order it reads them.
@@ -1405,6 +1426,7 @@ REPAIR = {
 # Why report_threads cannot read one line of a report's ## Threads section. Each value finishes `line <n> `.
 THREADS_REFUSED = {
     "item": "is not one list item of the form - <role> `<thread id>` <seat>",
+    "id": "holds a thread id that the table would change",
     "deeper": "is a heading deeper than the ## Threads heading",
     "again": "is a second ## Threads heading",
     "role": "holds role {role!r}, which is not {roles}",
@@ -1491,11 +1513,9 @@ def report_parts(lines):
     parts, index = [], 0
     while index < len(lines):
         line, number = lines[index], index + 1
-        opened = FENCE_OPEN.fullmatch(line)
+        opened = fence_open(line)
         if opened:
-            run = opened.group(1) or opened.group(2)
-            closing = re.compile(f" {{0,3}}{run[0]}{{{len(run)},}}[ \t]*")
-            close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
+            close = next((at for at in range(index + 1, len(lines)) if fence_close(lines[at], opened)), None)
             if close is None:
                 raise EditsRefused(EDITS_REFUSED["open"].format(line=number))
             parts.append(("fence", "\n".join(lines[index + 1:close]), number))
@@ -2150,18 +2170,24 @@ def report_threads(text):
     The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
     tuple of `(line number, reason)` pairs. A fenced block is skipped, so no line inside one is read. A
     report with no ## Threads section holds no child. A line of the section that holds text but is not
-    one item is reported by its number, and a line with no text is skipped. So is a heading deeper than
-    the section's own and a second ## Threads heading while the first is still open, and both of those
-    end the scan. A role that is well formed but is not one of CHILD_ROLES is reported by its number,
-    and named with the command that writes it when a role of THREADS_WRITERS names it.
+    one item is reported by its number, and a line with no text is skipped. A heading deeper than the
+    section's own or a second ## Threads heading while the first is still open is reported by its number
+    and ends the scan. An item whose thread id the table would change is reported by its number too. A
+    role that is well formed but is not one of CHILD_ROLES is reported by its number, and named with the
+    command that writes it when a role of THREADS_WRITERS names it.
     """
     children, unreadable = [], []
-    level, fenced = 0, False
+    level, fence = 0, None
     for number, line in enumerate(text.splitlines(), 1):
-        fence = bool(FENCE_OPEN.match(line.strip()))
-        plain = not fence and not fenced
-        fenced = fenced != fence
-        heading = plain and HEADING.match(line)
+        if fence:
+            if fence_close(line, fence):
+                fence = None
+            continue
+        opened = fence_open(line)
+        if opened:
+            fence = opened
+            continue
+        heading = HEADING.match(line)
         if heading:
             depth, name = len(heading.group(1)), heading.group(2)
             if (depth, name) == THREADS_SECTION:
@@ -2175,8 +2201,6 @@ def report_threads(text):
                 unreadable.append((number, THREADS_REFUSED["deeper"]))
                 break
             continue
-        if not plain:
-            continue
         if not level or not line.strip():
             continue
         item = THREADS_ITEM.match(line)
@@ -2184,6 +2208,9 @@ def report_threads(text):
             unreadable.append((number, THREADS_REFUSED["item"]))
             continue
         role, thread, seat = item.groups()
+        if clean(thread) != thread:
+            unreadable.append((number, THREADS_REFUSED["id"]))
+            continue
         if role in THREADS_WRITERS:
             unreadable.append((number, THREADS_REFUSED["writer"].format(role=role, writer=THREADS_WRITERS[role])))
             continue
@@ -2225,17 +2252,20 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     rows the item already holds for another thread, and every other role's is that count, or 1 when the
     item holds none. A worker role's row is written open, with its start at this write, and its role is
     worker at attempt 1 and fix worker at every later one. Every other role's row is written closed, with
-    its end at this write. `closing` writes this stamp into the end of every open worker row of the item
-    but one whose thread is `keep_thread`. A row whose item, attempt, role, and thread a row already holds
-    is dropped, so the same command run twice writes one row. When every row is dropped and nothing
-    closes, no file changes.
+    its end at this write. A thread id is compared and written as the table stores it, because save_rows
+    writes the cell through clean. `closing` writes this stamp into the end of every open worker row of
+    the item but one whose stored thread is the stored `keep_thread`. A row whose item, attempt, role,
+    and stored thread a row already holds is dropped, so the same command run twice writes one row. When
+    every row is dropped and nothing closes, no file changes.
     """
     rows = restaurant.rows("threads.tsv")
     mine = [row for row in rows if row["dish"] == dish_id]
     stamp = now()
+    keep = stored("threads.tsv", "thread", keep_thread) if keep_thread else ""
     held = {(row["attempt"], row["role"], row["thread"]) for row in mine}
     written = []
     for role, thread, seat in threads:
+        thread = stored("threads.tsv", "thread", thread)
         worker = role in WORKER_ROLES
         used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
         number = used + 1 if worker else max(used, 1)
@@ -2249,7 +2279,7 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     closed = False
     if closing:
         for row in mine:
-            if row["role"] in WORKER_ROLES and not row["end"] and row["thread"] != keep_thread:
+            if row["role"] in WORKER_ROLES and not row["end"] and row["thread"] != keep:
                 row["end"] = stamp
                 closed = True
     if not written and not closed:
@@ -5122,7 +5152,8 @@ def parser():
         "role is any of the other four is refused, because dish --thread writes the worker rows, "
         "--reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A "
         "report with no ## Threads section adds no row and is not an error. A line that is not one such item is "
-        "refused by its number. So is a heading deeper than the section's own, and so is a second ## Threads "
+        "refused by its number. An item whose thread id the table would change is refused by its number too. "
+        "So is a heading deeper than the section's own, and so is a second ## Threads "
         "heading while the first is still open, and those two end the scan. A role that is well formed but is not "
         "one of the three is refused by its number and named.\n"
         "\n"
@@ -5641,14 +5672,17 @@ def command(restaurant, args, contract=None, rails=None):
             if current["thread"] not in recorded:
                 restaurant.log("worker", args.id, "retired", current["thread"])
         reported = "" if entering or replacing else ("yes" if args.reported else None)
-        closing = bool(args.state) or args.reported or (thread and thread != current.get("thread", ""))
+        transition = bool(args.state) and args.state != current["state"]
+        ends = transition and args.state != "in-progress"
+        closing = args.reported or ends or (thread and thread != current.get("thread", ""))
+        keep = args.thread if args.thread and args.thread != current.get("thread", "") else ""
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=thread,
                                 branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox, reported=reported,
                                 lease=args.lease, paths=args.paths)
         if replacing:
             restaurant.log("dish", args.id, "in-progress", row.get("summary", ""))
         if args.thread:
-            write_threads(restaurant, args.id, [("worker", args.thread, "")], closing=closing, keep_thread=args.thread)
+            write_threads(restaurant, args.id, [("worker", args.thread, "")], closing=closing, keep_thread=keep)
         elif closing:
             write_threads(restaurant, args.id, (), closing=True)
         if args.state == "merged":
