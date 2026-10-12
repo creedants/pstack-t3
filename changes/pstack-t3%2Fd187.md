@@ -1,0 +1,6 @@
+- A changed file under `vendor/pstack/agents` with a stale lock fails `python3 scripts/build.py` and names `t3/agents/<name>.md`.
+- `python3 scripts/sync_upstream.py --merge` merges a changed persona like an override.
+- A conflicted persona leaves `t3/agents/<name>.md` as is and saves the marked merge under `DIR/agents/<name>.md`.
+- A file under `t3/agents` with no vendored counterpart carries no lock entry and is not drift.
+- A file under `t3/overrides/agents` fails the build.
+- `t3/overrides.lock.json` holds persona digests under `agents/<name>.md`.

@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Replace vendor/pstack with a newer upstream revision and report override drift.
 
-After syncing, `python3 scripts/build.py` lists every override whose upstream
-file changed. Re-port each one, then run `build.py --update-lock`.
+After syncing, `python3 scripts/build.py` lists every override and persona whose
+upstream file changed. Re-port each one, then run `build.py --update-lock`.
 
 With --check, sync nothing. Print each path upstream changed since the pinned
 commit and what pstack-t3 does with that path, and write nothing in the checkout.
 
-With --merge, sync and, for each file in t3/overrides whose upstream file
-changed, either write a clean three-way merge of it or leave the override as it
-is and name it. The merge base is the file in vendor/pstack before the sync,
-used only when its sha256 is the one in t3/overrides.lock.json. The lock is
-never refreshed. With --merge --dry-run, print a row for each of those files
-and write nothing in the checkout.
+With --merge, sync and, for each file in t3/overrides or t3/agents whose vendored
+file changed, either write a clean three-way merge of it or leave it as it is and
+name it. The merge base is the file in vendor/pstack before the sync, used only
+when its sha256 is the one in t3/overrides.lock.json. The lock is never refreshed.
+With --merge --dry-run, print a row for each of those files and write nothing in
+the checkout.
 
-With --merge --conflicts DIR, also write git's conflict-marked merge of each
-override whose merge conflicts to DIR/<its path under t3/overrides>. The files
-are written before the sync writes anything in the checkout, and under
---dry-run too. DIR is refused when it resolves to the checkout or a path under
-it, and when it exists. DIR is not created when no override conflicts.
+With --merge --conflicts DIR, also write git's conflict-marked merge of each file
+whose merge conflicts to DIR/<its path under t3>. The files are written before the
+sync writes anything in the checkout, and under --dry-run too. DIR is refused when
+it resolves to the checkout or a path under it, and when it exists. DIR is not
+created when nothing conflicts.
 
 When the sync writes upstream.json it also rewrites the README upstream badge
 so the url and the alt text carry the new version. When the badge line is
@@ -112,7 +112,8 @@ class Report:
 
 @dataclass(frozen=True)
 class Outcome:
-    rel: str
+    t3_path: str
+    conflict_rel: str
     kind: Kind
     merged: bytes | None = None
     marked: bytes | None = None
@@ -242,42 +243,47 @@ def merge_file(current, base, other):
     return bool(result.returncode), result.stdout
 
 
-def merge_outcome(rel, current, base, other, digest):
+def outcome(row, kind, merged=None, marked=None):
+    # t3_path is both the row the sync prints and the file the merge lands in.
+    return Outcome(row.t3_path, row.conflict_rel, kind, merged, marked)
+
+
+def merge_outcome(row, current, base, other, digest):
     old = base.read_bytes() if base.is_file() else None
     new = other.read_bytes() if other.is_file() else None
     if old == new:
         return None
     if new is None:
-        return Outcome(rel, "deleted")
+        return outcome(row, "deleted")
     if old is None or hashlib.sha256(old).hexdigest() != digest:
-        return Outcome(rel, "no-base")
+        return outcome(row, "no-base")
     mine = current.read_bytes()
     if any(b"\0" in text for text in (old, mine, new)):
-        return Outcome(rel, "binary")
+        return outcome(row, "binary")
     conflicted, merged = merge_file(current, base, other)
     if conflicted:
-        return Outcome(rel, "conflict", marked=merged)
+        return outcome(row, "conflict", marked=merged)
     if merged == mine:
-        return Outcome(rel, "same")
-    return Outcome(rel, "markers") if MARKER_LINE.search(merged) else Outcome(rel, "clean", merged)
+        return outcome(row, "same")
+    return outcome(row, "markers") if MARKER_LINE.search(merged) else outcome(row, "clean", merged)
 
 
-def plan_merges(overrides, old_skills, new_skills, lock):
+def plan_merges(old_root, new_root, lock):
     import build
 
     outcomes = (
-        merge_outcome(rel.as_posix(), overrides / rel, old_skills / rel, new_skills / rel, lock.get(rel.as_posix()))
-        for rel in build.relative_files(overrides)
+        merge_outcome(row, ROOT / row.t3_path, old_root / row.upstream_rel, new_root / row.upstream_rel, lock.get(row.lock_key))
+        for row in build.replacements()
     )
     return tuple(outcome for outcome in outcomes if outcome)
 
 
 def apply(outcomes, t3):
-    # Staged beside the lock, so a crash leaves each override whole and no extra file under t3/overrides.
+    # Staged beside the lock, so a crash leaves each replaced file whole and no extra file under t3/overrides.
     staging = t3 / "overrides.merge-incoming"
     for outcome in outcomes:
         if outcome.kind == "clean":
-            target = t3 / "overrides" / outcome.rel
+            target = ROOT / outcome.t3_path
             staging.write_bytes(outcome.merged)
             shutil.copymode(target, staging)
             os.replace(staging, target)
@@ -298,7 +304,7 @@ def save_conflicts(outcomes, directory):
         return
     directory.mkdir(parents=True)
     for outcome in conflicts:
-        target = directory / outcome.rel
+        target = directory / outcome.conflict_rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(outcome.marked)
 
@@ -311,8 +317,8 @@ def render_merges(outcomes, dry_run, directory=None):
     for outcome in outcomes:
         text = detail[outcome.kind]
         if directory and outcome.kind == "conflict":
-            text += SAVED_SUFFIX.format(path=quoted(str(directory / outcome.rel)))
-        rows.append(f"{outcome.kind:<8}  {quoted('t3/overrides/' + outcome.rel)}  {text}\n")
+            text += SAVED_SUFFIX.format(path=quoted(str(directory / outcome.conflict_rel)))
+        rows.append(f"{outcome.kind:<8}  {quoted(outcome.t3_path)}  {text}\n")
     return "".join(rows)
 
 
@@ -374,7 +380,7 @@ def main():
                     return 1
             if args.merge:
                 lock = json.loads(build.LOCK.read_text()) if build.LOCK.exists() else {}
-                outcomes = plan_merges(build.T3 / "overrides", build.VENDOR / "skills", source / "skills", lock)
+                outcomes = plan_merges(build.VENDOR, source, lock)
                 if directory:
                     save_conflicts(outcomes, directory)
         except (subprocess.CalledProcessError, OSError) as error:

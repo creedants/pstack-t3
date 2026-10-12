@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import shutil
 import stat
@@ -11,6 +13,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import build  # noqa: E402
 import check  # noqa: E402
 
 CASES = (
@@ -88,8 +91,6 @@ class BuildModeTest(unittest.TestCase):
                         self.assertEqual(built_mode, expected, output_rel)
 
     def test_build_fails_when_the_repository_badge_is_stale(self):
-        import build
-
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "skills"
             stale = ["README.md badge url 0.0.0 alt 0.0.0 disagrees with upstream.json version 1.1.0"]
@@ -98,6 +99,128 @@ class BuildModeTest(unittest.TestCase):
                     build.build(out)
             self.assertIn("check failed", str(raised.exception))
             self.assertIn(stale[0], str(raised.exception))
+
+
+class OverrideLockTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.lock = self.root / "t3/overrides.lock.json"
+        for name, value in (("T3", self.root / "t3"), ("VENDOR", self.root / "vendor/pstack"), ("LOCK", self.lock)):
+            patcher = mock.patch.object(build, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.root / "t3/overrides/alpha").mkdir(parents=True)
+        (self.root / "t3/agents").mkdir(parents=True)
+
+    def write(self, path, text):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        return target
+
+    def write_lock(self, digests):
+        self.lock.write_text(json.dumps(digests, indent=2, sort_keys=True) + "\n")
+
+    def lock_line(self, rel, key):
+        self.write_lock({key: hashlib.sha256((self.root / f"vendor/pstack/{rel}").read_bytes()).hexdigest()})
+
+    def test_a_changed_vendored_persona_fails_the_build_and_names_the_t3_file(self):
+        self.write("t3/agents/persona.md", "t3 persona\n")
+        self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
+        self.lock_line("agents/persona.md", "agents/persona.md")
+        self.write("vendor/pstack/agents/persona.md", "upstream persona changed\n")
+        self.assertEqual(
+            build.check_lock(False),
+            [
+                "t3/agents/persona.md: upstream changed since this override was written; "
+                "review or re-port it, then --update-lock"
+            ],
+        )
+
+    def test_a_changed_vendored_override_keeps_its_skill_path_in_the_message(self):
+        self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
+        self.write("vendor/pstack/skills/alpha/SKILL.md", "upstream alpha\n")
+        self.lock_line("skills/alpha/SKILL.md", "alpha/SKILL.md")
+        self.write("vendor/pstack/skills/alpha/SKILL.md", "upstream alpha changed\n")
+        self.assertEqual(
+            build.check_lock(False),
+            [
+                "alpha/SKILL.md: upstream changed since this override was written; "
+                "review or re-port it, then --update-lock"
+            ],
+        )
+
+    def test_a_persona_with_no_vendored_file_is_not_drift_and_gets_no_key(self):
+        self.write("t3/agents/persona.md", "t3 persona\n")
+        self.assertEqual(build.check_lock(False), [])
+        build.check_lock(True)
+        self.assertEqual(json.loads(self.lock.read_text()), {})
+
+    def test_a_vendored_persona_that_appears_fails_until_the_lock_is_refreshed(self):
+        self.write("t3/agents/persona.md", "t3 persona\n")
+        self.assertEqual(build.check_lock(False), [])
+        self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
+        self.assertEqual(
+            build.check_lock(False),
+            ["t3/agents/persona.md: override not in overrides.lock.json (run build.py --update-lock after reviewing)"],
+        )
+        build.check_lock(True)
+        self.assertEqual(build.check_lock(False), [])
+
+    def test_a_locked_persona_whose_vendored_file_is_gone_keeps_the_upstream_changed_sentence(self):
+        self.write("t3/agents/persona.md", "t3 persona\n")
+        self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
+        self.lock_line("agents/persona.md", "agents/persona.md")
+        (self.root / "vendor/pstack/agents/persona.md").unlink()
+        self.assertEqual(
+            build.check_lock(False),
+            [
+                "t3/agents/persona.md: upstream changed since this override was written; "
+                "review or re-port it, then --update-lock"
+            ],
+        )
+
+    def test_a_locked_key_with_no_t3_file_keeps_the_locked_but_no_override_sentence(self):
+        self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
+        self.write_lock(
+            {
+                "agents/persona.md": hashlib.sha256(b"upstream persona\n").hexdigest(),
+                "gone/SKILL.md": hashlib.sha256(b"nothing vendored\n").hexdigest(),
+            }
+        )
+        self.assertEqual(
+            build.check_lock(False),
+            [
+                "agents/persona.md: locked but no override exists (run --update-lock)",
+                "gone/SKILL.md: locked but no override exists (run --update-lock)",
+            ],
+        )
+
+    def test_a_persona_under_t3_overrides_fails_the_build(self):
+        self.write("t3/overrides/agents/persona.md", "t3 persona\n")
+        self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
+        with self.assertRaises(SystemExit) as raised:
+            build.replacements()
+        self.assertIn("t3/overrides/agents/persona.md: a persona belongs in t3/agents", str(raised.exception))
+
+    def test_replacements_mints_the_persona_keys(self):
+        self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
+        self.write("vendor/pstack/skills/alpha/SKILL.md", "upstream alpha\n")
+        self.write("t3/agents/persona.md", "t3 persona\n")
+        self.write("t3/agents/other.md", "t3 other\n")
+        self.assertEqual(
+            [
+                (row.lock_key, row.t3_path, row.upstream_rel, row.conflict_rel, row.pins)
+                for row in build.replacements()
+            ],
+            [
+                ("alpha/SKILL.md", "t3/overrides/alpha/SKILL.md", "skills/alpha/SKILL.md", "alpha/SKILL.md", True),
+                ("agents/other.md", "t3/agents/other.md", "agents/other.md", "agents/other.md", False),
+                ("agents/persona.md", "t3/agents/persona.md", "agents/persona.md", "agents/persona.md", False),
+            ],
+        )
 
 
 class BuildReferenceTest(unittest.TestCase):
