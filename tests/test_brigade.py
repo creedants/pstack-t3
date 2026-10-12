@@ -8560,6 +8560,43 @@ class BrigadeTest(unittest.TestCase):
         sheet = out.splitlines()
         self.assertTrue(sheet[-1].startswith("reply:"))
 
+    def test_next_asks_for_a_report_the_row_says_was_written(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("dish", "D1", "--thread", "thread-9")
+        self.brigade("dish", "D1", "--reported")
+        line = ("if reports/D1.md is absent or older than the reported mark: "
+                "read the worker thread (thread thread-9) and get the report")
+        bare = self.next_sheet()
+        self.assertIn(line, bare)
+        self.assertEqual(bare.splitlines()[-1], "reply: no (routine: unspecified)")
+        self.assertNotIn("running ", bare)
+        morning = self.next_sheet("morning")
+        self.assertIn(line, morning)
+        named = self.next_sheet("report-back", "D1")
+        self.assertIn(line, named)
+        self.park_item("which way")
+        held = self.next_sheet()
+        self.assertNotIn("reports/D1.md is absent", held)
+        self.fresh()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("dish", "D1", "--thread", "thread-9")
+        self.brigade("dish", "D1", "--reported")
+        reports = self.at / "reports"
+        reports.mkdir()
+        current_path = reports / "D1.md"
+        current_path.write_text("done\n")
+        current = self.next_sheet()
+        self.assertIn("see D1: report written ", current)
+        self.assertNotIn("reports/D1.md is absent", current)
+        old = time.time() - 7200
+        os.utime(current_path, (old, old))
+        stale = self.next_sheet()
+        self.assertIn(line, stale)
+        self.assertNotIn("see D1: report written ", stale)
+        self.assertNotIn("see D1: reported ", stale)
+        self.assertNotIn("running ", stale)
+
     def backdate_blocked(self, ident, hours):
         stamp = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="microseconds")
         path = self.at / "log.tsv"

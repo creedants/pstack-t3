@@ -3235,6 +3235,15 @@ def open_item_decisions(rows):
     return decisions
 
 
+def worker_where(dish):
+    """The worker words a progress sentence names."""
+    if dish["thread"]:
+        return f"thread {dish['thread']}"
+    if dish["task"]:
+        return f"task {dish['task']}"
+    return "no worker recorded"
+
+
 def dish_progress(restaurant, dish, moment, held=False):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
@@ -3249,7 +3258,7 @@ def dish_progress(restaurant, dish, moment, held=False):
     minutes = int((moment - start).total_seconds() // 60)
     timebox = int(dish.get("timebox") or 60)
     report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
-    where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
+    where = worker_where(dish)
     written = datetime.fromtimestamp(report_path.stat().st_mtime, timezone.utc) if report_path.exists() else None
     if written and written >= start:
         if dish.get("reported") == "yes":
@@ -3825,6 +3834,7 @@ class Snapshot:
     close_refusal: str
     warn: object
     place: str
+    report_gaps: tuple
 
 
 def dish_by_id(snapshot, ident):
@@ -3892,6 +3902,15 @@ def load_inbox(restaurant):
     return tuple(found)
 
 
+def report_is_current(restaurant, dish):
+    """True when reports/<id>.md exists and its mtime is at least the last attempt start."""
+    path = restaurant.dir / "reports" / f"{dish['id']}.md"
+    if not path.exists():
+        return False
+    written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return written >= attempt_starts(restaurant, dish)[-1]
+
+
 def counted_timebox(restaurant, dish):
     """The row next passes to dish_progress. An empty timebox stays empty. A timebox that is not a base-10 integer warns and reads as 60."""
     cell = dish.get("timebox") or ""
@@ -3925,12 +3944,16 @@ def load_snapshot(restaurant, moment):
     decisions = tuple(row for row in restaurant.rows("86.tsv") if row["state"] == "open")
     open_dishes = {row["dish"] for row in decisions if row["dish"]}
     progress = []
+    gaps = []
     for dish in dishes:
         if dish["state"] != "in-progress" or dish.get("reported") != "yes":
             continue
         held = dish["id"] in open_dishes
         if not held:
             dish = counted_timebox(restaurant, dish)
+        if not report_is_current(restaurant, dish):
+            gaps.append((dish["id"], worker_where(dish)))
+            continue
         for sentence in dish_progress(restaurant, dish, moment, held):
             if "no report-back" in sentence:
                 continue
@@ -3961,7 +3984,7 @@ def load_snapshot(restaurant, moment):
         tuple(events_since(restaurant, since).values()), counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
-        store_path(restaurant.dir))
+        store_path(restaurant.dir), tuple(gaps))
 
 
 def inbox_ready(snapshot):
@@ -4399,6 +4422,11 @@ def tail_cues(snapshot, trigger, failure, reply):
     for dish_id, sentence in snapshot.progress:
         if dish_id not in named and dish_id not in held:
             cues.append(See(sentence))
+    for dish_id, where in snapshot.report_gaps:
+        if dish_id in held:
+            continue
+        cues.append(If(f"reports/{dish_id}.md is absent or older than the reported mark",
+                       f"read the worker thread ({where}) and get the report"))
     seen = set()
     for debt in snapshot.debts:
         run = maybe_run(snapshot, ("86", "add", "--dish", debt.dish, "--round-budget"))
