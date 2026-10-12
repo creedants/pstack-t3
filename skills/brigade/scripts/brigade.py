@@ -3235,6 +3235,15 @@ def open_item_decisions(rows):
     return decisions
 
 
+def worker_where(dish):
+    """The worker words a progress sentence names."""
+    if dish["thread"]:
+        return f"thread {dish['thread']}"
+    if dish["task"]:
+        return f"task {dish['task']}"
+    return "no worker recorded"
+
+
 def dish_progress(restaurant, dish, moment, held=False):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
@@ -3249,7 +3258,7 @@ def dish_progress(restaurant, dish, moment, held=False):
     minutes = int((moment - start).total_seconds() // 60)
     timebox = int(dish.get("timebox") or 60)
     report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
-    where = f"thread {dish['thread']}" if dish["thread"] else (f"task {dish['task']}" if dish["task"] else "no worker recorded")
+    where = worker_where(dish)
     written = datetime.fromtimestamp(report_path.stat().st_mtime, timezone.utc) if report_path.exists() else None
     if written and written >= start:
         if dish.get("reported") == "yes":
@@ -3800,7 +3809,7 @@ class Debt:
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One read of the store. It holds no plan and no live restaurant."""
+    """One read of the store. It holds no plan. warn prints on standard error and writes nothing."""
 
     reporting: str
     reports_to: str
@@ -3822,6 +3831,10 @@ class Snapshot:
     passes: dict
     blocked_since: tuple
     moment: datetime
+    close_refusal: str
+    warn: object
+    place: str
+    report_gaps: tuple
 
 
 def dish_by_id(snapshot, ident):
@@ -3838,8 +3851,16 @@ def open_for(snapshot, ident):
     return None
 
 
-def lowest_id(idents):
-    return min(idents, key=lambda ident: int(ident[1:]))
+def lowest_id(idents, warn):
+    """The lowest id. A suffix that is not a base-10 integer warns and sorts after every numeric suffix."""
+    ranked = []
+    for ident in idents:
+        try:
+            ranked.append((0, int(ident[1:], 10), ident))
+        except ValueError:
+            warn(f"{ident} has no base-10 id suffix")
+            ranked.append((1, 0, ident))
+    return min(ranked)[2]
 
 
 def crossing_send_back(restaurant, dish_id):
@@ -3881,6 +3902,38 @@ def load_inbox(restaurant):
     return tuple(found)
 
 
+def report_is_current(restaurant, dish):
+    """True when reports/<id>.md exists and its mtime is at least the last attempt start."""
+    path = restaurant.dir / "reports" / f"{dish['id']}.md"
+    if not path.exists():
+        return False
+    written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return written >= attempt_starts(restaurant, dish)[-1]
+
+
+def counted_timebox(restaurant, dish):
+    """The row next passes to dish_progress. An empty timebox stays empty. A timebox that is not a base-10 integer warns and reads as 60."""
+    cell = dish.get("timebox") or ""
+    if cell == "":
+        return dish
+    try:
+        int(cell, 10)
+    except ValueError:
+        restaurant.warn(f"{dish['id']} timebox {cell} is not a base-10 integer")
+        return {**dish, "timebox": "60"}
+    return dish
+
+
+def malformed_close(restaurant):
+    """The first malformed row rows names, in TABLES order, or empty when every table parses."""
+    for table in TABLES:
+        try:
+            restaurant.rows(table)
+        except MalformedTable as error:
+            return str(error)
+    return ""
+
+
 def load_snapshot(restaurant, moment):
     """Read the store under the caller's lock. The caller already refused a bad owner."""
     read_labels(restaurant, EVERY_ROW)
@@ -3891,10 +3944,17 @@ def load_snapshot(restaurant, moment):
     decisions = tuple(row for row in restaurant.rows("86.tsv") if row["state"] == "open")
     open_dishes = {row["dish"] for row in decisions if row["dish"]}
     progress = []
+    gaps = []
     for dish in dishes:
         if dish["state"] != "in-progress" or dish.get("reported") != "yes":
             continue
-        for sentence in dish_progress(restaurant, dish, moment, dish["id"] in open_dishes):
+        held = dish["id"] in open_dishes
+        if not held:
+            dish = counted_timebox(restaurant, dish)
+        if not report_is_current(restaurant, dish):
+            gaps.append((dish["id"], worker_where(dish)))
+            continue
+        for sentence in dish_progress(restaurant, dish, moment, held):
             if "no report-back" in sentence:
                 continue
             if sentence.startswith(f"{dish['id']}: reported ") or sentence.startswith(f"{dish['id']}: report written "):
@@ -3923,7 +3983,8 @@ def load_snapshot(restaurant, moment):
         tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
         tuple(events_since(restaurant, since).values()), counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
-        tuple(blocked_since.items()), moment)
+        tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
+        store_path(restaurant.dir), tuple(gaps))
 
 
 def inbox_ready(snapshot):
@@ -4012,11 +4073,11 @@ def decision_detail(snapshot, trigger, failure):
     if budget_reached(snapshot, trigger) or blocked_needs_user(snapshot, trigger, failure):
         dishes = [*dishes, trigger.dish]
     if questions:
-        return lowest_id(questions)
+        return lowest_id(questions, snapshot.warn)
     if tickets:
-        return lowest_id(tickets)
+        return lowest_id(tickets, snapshot.warn)
     if dishes:
-        return lowest_id(dishes)
+        return lowest_id(dishes, snapshot.warn)
     return "decision"
 
 
@@ -4099,7 +4160,7 @@ def occasion_yes(level, occasion, forced):
 
 
 def reply_for(snapshot, trigger, failure, unsent):
-    """The one reply. A store that reports to the executive admin uses that rule first, unless --unsent is set. Otherwise the first held occasion wins the token."""
+    """The one reply. A store that reports to the executive admin uses that rule first, unless --unsent is set. The reply is yes when any held occasion qualifies at this reporting level. The printed occasion is the first qualifying one, and the first held occasion when none qualify."""
     if snapshot.reports_to and not unsent:
         close = ("close", "--to-file") if trigger.wake == "evening" or is_drained(snapshot, trigger) else None
         if trigger.wake == "user":
@@ -4108,13 +4169,17 @@ def reply_for(snapshot, trigger, failure, unsent):
     found = held_occasions(snapshot, trigger, failure, unsent)
     if not found:
         return Reply(False, "routine", routine_detail(trigger), None)
-    occasion, detail, forced = found[0]
-    yes = occasion_yes(snapshot.reporting, occasion, forced)
-    yeses = [name for name, _, flag in found if occasion_yes(snapshot.reporting, name, flag)]
+    qualifying = [(name, detail) for name, detail, flag in found if occasion_yes(snapshot.reporting, name, flag)]
+    if qualifying:
+        occasion, detail = qualifying[0]
+        yes = True
+    else:
+        occasion, detail = found[0][0], found[0][1]
+        yes = False
     close = None
     if snapshot.reporting == "digest" and yes:
         close = ("close", "--to-file")
-    elif any(name in CLOSE_OCCASIONS for name in yeses):
+    elif any(name in CLOSE_OCCASIONS for name, _detail in qualifying):
         close = ("close",)
     return Reply(yes, occasion, detail, close)
 
@@ -4156,8 +4221,8 @@ def land_follow(dish_id):
 
 
 def pause_if():
-    return If("the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker",
-              "run next again with --failure stuck")
+    return If("the queue is paused and this thread cannot fix it and this is not a bounce handed to a fresh worker and --failure stuck was not passed",
+              "run next --failure stuck")
 
 
 def pass_words(snapshot, dish):
@@ -4212,15 +4277,18 @@ def prefix_cues(snapshot, trigger, failure):
             recorded = f"Record pass record for {dish_id} with verdict {trigger.verdict}. No sha is recorded.{extra}"
         cues = [See(recorded)]
         if trigger.verdict in ("send-back", "pass-with-edits"):
-            if budget_reached(snapshot, trigger) and not maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget")):
+            run = maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget"))
+            already = snapshot.round_counts.get(dish_id, 0) >= ROUND_BUDGET
+            if not run and not already and budget_reached(snapshot, trigger):
                 cues.append(If(f"{dish_id} reaches the round budget and no decision is open",
                                f"run 86 add --dish {dish_id} --round-budget"))
-            cues.append(If(f"the old worker's wait for {dish_id} is terminal",
-                           f"run dish {dish_id} --state in-progress"))
+            elif not run and not already:
+                cues.append(If(f"the old worker's wait for {dish_id} is terminal and {dish_id} may take a fix round",
+                               f"run dish {dish_id} --state in-progress"))
         elif trigger.verdict == "pass":
             cues.append(See(pass_words(snapshot, dish)))
         elif trigger.verdict == "blocked" and failure != "fixable":
-            cues.append(If(f"only the user can unblock {dish_id}", f"run 86 add --dish {dish_id}"))
+            cues.append(See(f"Only the user can unblock {dish_id}. Ask with 86 add --dish {dish_id} --question --options --default."))
         return cues
     if wake == "checks":
         dish = dish_by_id(snapshot, dish_id)
@@ -4291,7 +4359,10 @@ def older_than_hour(at, moment):
 
 
 def admin_sends(snapshot, trigger, failure, after_close):
-    """Owed event lines for the admin thread. report and drained follow the close cue."""
+    """Owed event lines for the admin thread. report and drained follow the close cue.
+
+    A blocked row is an admin event only while that ticket's rail state is waiting.
+    """
     if not snapshot.reports_to:
         return []
     thread = snapshot.reports_to
@@ -4318,15 +4389,19 @@ def admin_sends(snapshot, trigger, failure, after_close):
     if decision_holds(snapshot, trigger, failure):
         questions, _, _ = fresh_decision_ids(snapshot)
         if questions:
-            row = next(item for item in snapshot.decisions if item["id"] == lowest_id(questions))
+            row = next(item for item in snapshot.decisions if item["id"] == lowest_id(questions, snapshot.warn))
             cues.append(send(f"decision {name} {row['id']}: {row['question']} Options: {row['options']}. Default: {row['default']}."))
         else:
             cues.append(send(f"decision {name}: sent after 86 add prints the id"))
     if failure == "stuck":
         cues.append(send(f"failed {name}: cannot fix this"))
+    waiting = {row["id"] for row in snapshot.tickets if row["state"] == "waiting"}
     for ident, at in snapshot.blocked_since:
-        if older_than_hour(at, snapshot.moment):
-            cues.append(send(f"blocked {name} {ident}: waiting since {at}. Lease ids are not in the store."))
+        if ident not in waiting or not older_than_hour(at, snapshot.moment):
+            continue
+        cues.append(If(f"watch still shows {ident} blocked",
+                       f"t3_thread_send {thread} mode queue clientRequestId blocked:{snapshot.place}/{ident}: "
+                       f"blocked {name} {ident}: waiting since {at}. Lease ids are not in the store."))
     if from_user_request(snapshot, trigger):
         cues.append(send(f"reply {name}: sent after the answer"))
     return cues
@@ -4347,6 +4422,11 @@ def tail_cues(snapshot, trigger, failure, reply):
     for dish_id, sentence in snapshot.progress:
         if dish_id not in named and dish_id not in held:
             cues.append(See(sentence))
+    for dish_id, where in snapshot.report_gaps:
+        if dish_id in held:
+            continue
+        cues.append(If(f"reports/{dish_id}.md is absent or older than the reported mark",
+                       f"read the worker thread ({where}) and get the report"))
     seen = set()
     for debt in snapshot.debts:
         run = maybe_run(snapshot, ("86", "add", "--dish", debt.dish, "--round-budget"))
@@ -4377,7 +4457,10 @@ def tail_cues(snapshot, trigger, failure, reply):
         cues.append(pause_if())
     cues.extend(admin_sends(snapshot, trigger, failure, False))
     if reply.close:
-        cues.append(Run(reply.close))
+        if snapshot.close_refusal:
+            cues.append(See(snapshot.close_refusal))
+        else:
+            cues.append(Run(reply.close))
     cues.extend(admin_sends(snapshot, trigger, failure, True))
     return cues
 
