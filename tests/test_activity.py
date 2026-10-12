@@ -3404,7 +3404,7 @@ class GoalStripTest(OutputCase):
             self.assertIn(kept, html)
             self.assertIn(kept, text)
 
-    def test_each_shown_item_is_under_its_goal_once_and_the_counts_match(self):
+    def test_each_shown_item_is_in_one_group_and_the_counts_match(self):
         fixture = self.fixture
         fixture.meta["thread"] = ""
         for ident, state, summary in (
