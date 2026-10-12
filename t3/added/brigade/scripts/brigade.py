@@ -3800,7 +3800,7 @@ class Debt:
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One read of the store. It holds no plan and no live restaurant."""
+    """One read of the store. It holds no plan. warn prints on standard error and writes nothing."""
 
     reporting: str
     reports_to: str
@@ -3822,6 +3822,8 @@ class Snapshot:
     passes: dict
     blocked_since: tuple
     moment: datetime
+    close_refusal: str
+    warn: object
 
 
 def dish_by_id(snapshot, ident):
@@ -3838,8 +3840,16 @@ def open_for(snapshot, ident):
     return None
 
 
-def lowest_id(idents):
-    return min(idents, key=lambda ident: int(ident[1:]))
+def lowest_id(idents, warn):
+    """The lowest id. A suffix that is not a base-10 integer warns and sorts after every numeric suffix."""
+    ranked = []
+    for ident in idents:
+        try:
+            ranked.append((0, int(ident[1:], 10), ident))
+        except ValueError:
+            warn(f"{ident} has no base-10 id suffix")
+            ranked.append((1, 0, ident))
+    return min(ranked)[2]
 
 
 def crossing_send_back(restaurant, dish_id):
@@ -3881,6 +3891,29 @@ def load_inbox(restaurant):
     return tuple(found)
 
 
+def counted_timebox(restaurant, dish):
+    """The row next passes to dish_progress. An empty timebox stays empty. A timebox that is not a base-10 integer warns and reads as 60."""
+    cell = dish.get("timebox") or ""
+    if cell == "":
+        return dish
+    try:
+        int(cell, 10)
+    except ValueError:
+        restaurant.warn(f"{dish['id']} timebox {cell} is not a base-10 integer")
+        return {**dish, "timebox": "60"}
+    return dish
+
+
+def malformed_close(restaurant):
+    """The first malformed row rows names, in TABLES order, or empty when every table parses."""
+    for table in TABLES:
+        try:
+            restaurant.rows(table)
+        except MalformedTable as error:
+            return str(error)
+    return ""
+
+
 def load_snapshot(restaurant, moment):
     """Read the store under the caller's lock. The caller already refused a bad owner."""
     read_labels(restaurant, EVERY_ROW)
@@ -3894,7 +3927,10 @@ def load_snapshot(restaurant, moment):
     for dish in dishes:
         if dish["state"] != "in-progress" or dish.get("reported") != "yes":
             continue
-        for sentence in dish_progress(restaurant, dish, moment, dish["id"] in open_dishes):
+        held = dish["id"] in open_dishes
+        if not held:
+            dish = counted_timebox(restaurant, dish)
+        for sentence in dish_progress(restaurant, dish, moment, held):
             if "no report-back" in sentence:
                 continue
             if sentence.startswith(f"{dish['id']}: reported ") or sentence.startswith(f"{dish['id']}: report written "):
@@ -3923,7 +3959,7 @@ def load_snapshot(restaurant, moment):
         tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
         tuple(events_since(restaurant, since).values()), counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
-        tuple(blocked_since.items()), moment)
+        tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn)
 
 
 def inbox_ready(snapshot):
@@ -4012,11 +4048,11 @@ def decision_detail(snapshot, trigger, failure):
     if budget_reached(snapshot, trigger) or blocked_needs_user(snapshot, trigger, failure):
         dishes = [*dishes, trigger.dish]
     if questions:
-        return lowest_id(questions)
+        return lowest_id(questions, snapshot.warn)
     if tickets:
-        return lowest_id(tickets)
+        return lowest_id(tickets, snapshot.warn)
     if dishes:
-        return lowest_id(dishes)
+        return lowest_id(dishes, snapshot.warn)
     return "decision"
 
 
@@ -4325,7 +4361,7 @@ def admin_sends(snapshot, trigger, failure, after_close):
     if decision_holds(snapshot, trigger, failure):
         questions, _, _ = fresh_decision_ids(snapshot)
         if questions:
-            row = next(item for item in snapshot.decisions if item["id"] == lowest_id(questions))
+            row = next(item for item in snapshot.decisions if item["id"] == lowest_id(questions, snapshot.warn))
             cues.append(send(f"decision {name} {row['id']}: {row['question']} Options: {row['options']}. Default: {row['default']}."))
         else:
             cues.append(send(f"decision {name}: sent after 86 add prints the id"))
@@ -4384,7 +4420,10 @@ def tail_cues(snapshot, trigger, failure, reply):
         cues.append(pause_if())
     cues.extend(admin_sends(snapshot, trigger, failure, False))
     if reply.close:
-        cues.append(Run(reply.close))
+        if snapshot.close_refusal:
+            cues.append(See(snapshot.close_refusal))
+        else:
+            cues.append(Run(reply.close))
     cues.extend(admin_sends(snapshot, trigger, failure, True))
     return cues
 

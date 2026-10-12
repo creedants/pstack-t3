@@ -8504,6 +8504,62 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual(self.run_raw("next", "admin", "A3"), (1, "", "brigade: no request A3 in the inbox\n"))
         self.assertEqual(self.store_files(), before)
 
+    def test_next_warns_when_a_timebox_is_not_a_base_10_integer(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--reported")
+        self.brigade("set", "--reporting", "digest")
+        path = self.at / "dishes.tsv"
+        lines = path.read_text().splitlines()
+        header = lines[0].split("\t")
+        fields = lines[1].split("\t")
+        self.assertLess(header.index("timebox"), len(fields))
+        self.assertIn("T", fields[header.index("at")])
+        self.assertEqual(fields[header.index("reported")], "yes")
+        fields[header.index("timebox")] = "sixty"
+        lines[1] = "\t".join(fields)
+        path.write_text("\n".join(lines) + "\n")
+        code, out, err = self.run_raw("next")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Traceback", err + out)
+        self.assertIn("brigade: warning: D1 timebox sixty is not a base-10 integer\n", err)
+        sheet = out.splitlines()
+        self.assertEqual([line for line in sheet if line.startswith("reply:")], [sheet[-1]])
+        fields[header.index("timebox")] = ""
+        lines[1] = "\t".join(fields)
+        path.write_text("\n".join(lines) + "\n")
+        code, out, err = self.run_raw("next")
+        self.assertEqual(code, 0)
+        self.assertNotIn("timebox", err)
+        self.assertNotIn("Traceback", err + out)
+
+    def test_next_warns_when_an_id_suffix_is_not_a_base_10_integer(self):
+        self.fired_bug_fix()
+        self.park_item()
+        path = self.at / "86.tsv"
+        text = path.read_text()
+        self.assertIn("\nQ1\t", text)
+        path.write_text(text.replace("\nQ1\t", "\nQx\t", 1))
+        code, out, err = self.run_raw("next")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Traceback", err + out)
+        self.assertEqual(err.count("brigade: warning: Qx has no base-10 id suffix"), 1)
+        sheet = out.splitlines()
+        self.assertEqual([line for line in sheet if line.startswith("reply:")], [sheet[-1]])
+
+    def test_next_sees_a_malformed_edits_row_instead_of_close(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--reporting", "digest")
+        self.brigade("set", "--reports-to", "admin-thread")
+        (self.at / "edits.tsv").write_text("at\tdish\tfrom\tto\treport\nnot-a-row\n")
+        code, out, err = self.run_raw("next", "evening")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Traceback", err + out)
+        self.assertNotIn("run close", out)
+        self.assertIn("see bridge-kit/perf/edits.tsv line 2 is malformed; fix or remove it", out)
+        self.assertIn("see t3_thread_send admin-thread mode queue: report perf: the path close --to-file prints", out)
+        sheet = out.splitlines()
+        self.assertTrue(sheet[-1].startswith("reply:"))
+
     def test_next_old_store(self):
         self.store_from_before_kinds()
         self.assertFalse((self.at / "goals.tsv").exists())
