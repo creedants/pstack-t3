@@ -124,10 +124,10 @@ def build(destination, update_lock=False, skip_lock=False):
         staged = Path(temporary) / "skills"
         render(staged)
         sys.path.insert(0, str(ROOT / "scripts"))
-        from check import check_tree
+        from check import badge_findings, check_tree
         from catalog import write
 
-        findings = check_tree(staged)
+        findings = check_tree(staged) + badge_findings(ROOT / "README.md", ROOT / "upstream.json")
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, destination)

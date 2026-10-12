@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree also reports a README upstream badge that is missing or that disagrees with the version in upstream.json.
+check_tree judges only the tree it is given. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -76,16 +76,22 @@ _BADGE_LINE = re.compile(
 )
 
 
-def _body_lines(text):
-    if text.endswith("\n"):
-        return text[:-1].split("\n")
-    return text.split("\n")
+def _split_lines(text):
+    parts = []
+    for raw in text.splitlines(keepends=True):
+        if raw.endswith("\r\n"):
+            parts.append((raw[:-2], "\r\n"))
+        elif raw.endswith("\n") or raw.endswith("\r"):
+            parts.append((raw[:-1], raw[-1:]))
+        else:
+            parts.append((raw, ""))
+    return parts
 
 
 def _hits(text):
     hits = []
-    for line in _body_lines(text):
-        match = _BADGE_LINE.fullmatch(line)
+    for content, _ending in _split_lines(text):
+        match = _BADGE_LINE.fullmatch(content)
         if match:
             hits.append(match)
     return hits
@@ -95,7 +101,8 @@ def _readme_text(path):
     try:
         if not path.is_file():
             return None
-        return path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            return handle.read()
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -121,24 +128,25 @@ def rewritten_readme(path, version):
     text = _readme_text(path)
     if text is None:
         return None
-    hits = _hits(text)
-    if len(hits) != 1:
+    parts = _split_lines(text)
+    hit_index = None
+    hit_match = None
+    for index, (content, _ending) in enumerate(parts):
+        match = _BADGE_LINE.fullmatch(content)
+        if match:
+            if hit_index is not None:
+                return None
+            hit_index = index
+            hit_match = match
+    if hit_index is None or hit_match is None:
         return None
-    lines = _body_lines(text)
-    match = hits[0]
-    for index, line in enumerate(lines):
-        if line != match.group(0):
-            continue
-        url_start, url_end = match.span("url")
-        alt_start, alt_end = match.span("alt")
-        line = line[:alt_start] + version + line[alt_end:]
-        line = line[:url_start] + version + line[url_end:]
-        lines[index] = line
-        break
-    rewritten = "\n".join(lines)
-    if text.endswith("\n"):
-        rewritten += "\n"
-    return rewritten
+    content, ending = parts[hit_index]
+    url_start, url_end = hit_match.span("url")
+    alt_start, alt_end = hit_match.span("alt")
+    content = content[:alt_start] + version + content[alt_end:]
+    content = content[:url_start] + version + content[url_end:]
+    parts[hit_index] = (content, ending)
+    return "".join(content + ending for content, ending in parts)
 
 
 def badge_findings(readme, upstream):
@@ -274,7 +282,6 @@ def check_tree(root):
                     findings.append(f"{rel}: broken link {target}")
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
-    findings.extend(badge_findings(README_PATH, UPSTREAM_PATH))
     return findings
 
 
@@ -335,6 +342,8 @@ def fence_findings(tests_dir):
 def main(argv):
     tree = Path(argv[0]) if argv else Path(__file__).resolve().parents[1] / "skills"
     problems = check_tree(tree) + fence_findings(TESTS_DIR)
+    if not argv:
+        problems += badge_findings(README_PATH, UPSTREAM_PATH)
     print("\n".join(problems) or "ok")
     return 1 if problems else 0
 

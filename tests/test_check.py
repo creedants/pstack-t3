@@ -387,7 +387,21 @@ class BadgeCheckTest(unittest.TestCase):
                     readme.write_text(text)
                     self.assertEqual(check.badge_findings(readme, upstream), expected)
 
-    def test_check_tree_includes_the_repository_badge(self):
+    def test_badge_findings_read_a_crlf_readme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream.json"
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            readme = root / "README.md"
+            readme.write_bytes(README_AT_1_0_0.replace("\n", "\r\n").encode())
+            self.assertEqual(check.badge_findings(readme, upstream), [DISAGREE_1_0_0])
+            agreed = README_AT_1_0_0.replace("upstream%20pstack-1.0.0", "upstream%20pstack-1.1.0").replace(
+                "upstream pstack 1.0.0", "upstream pstack 1.1.0"
+            )
+            readme.write_bytes(agreed.replace("\n", "\r\n").encode())
+            self.assertEqual(check.badge_findings(readme, upstream), [])
+
+    def test_check_tree_judges_only_the_given_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             skill = root / "skills/demo"
@@ -398,7 +412,24 @@ class BadgeCheckTest(unittest.TestCase):
             readme.write_text(README_AT_1_0_0)
             upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
             with mock.patch.object(check, "README_PATH", readme), mock.patch.object(check, "UPSTREAM_PATH", upstream):
-                self.assertEqual(check.check_tree(root / "skills"), [DISAGREE_1_0_0])
+                self.assertEqual(check.check_tree(root / "skills"), [])
+                self.assertEqual(check.badge_findings(readme, upstream), [DISAGREE_1_0_0])
+
+    def test_an_explicit_tree_gets_no_repository_badge_finding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skills = Path(directory) / "skills"
+            skills.mkdir()
+            tests = tests_tree(directory, {})
+            readme = Path(directory) / "README.md"
+            upstream = Path(directory) / "upstream.json"
+            readme.write_text(README_AT_1_0_0)
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            output = io.StringIO()
+            with mock.patch.object(check, "TESTS_DIR", tests), mock.patch.object(
+                check, "README_PATH", readme
+            ), mock.patch.object(check, "UPSTREAM_PATH", upstream), contextlib.redirect_stdout(output):
+                status = check.main([str(skills)])
+            self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
 if __name__ == "__main__":
