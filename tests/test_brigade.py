@@ -9094,6 +9094,49 @@ class BrigadeTest(unittest.TestCase):
                                  self.doc_line((doc,), timebox=120))
                 self.assertEqual(self.store_files(), before)
 
+    def test_fire_untracked_nested_repository_directory_refuses(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            nested = self.project / "t3/added/new-skill"
+            (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+            (nested / "SKILL.md").write_text("# Skill\n")
+            subprocess.run(["git", "init", "-q"], cwd=nested, capture_output=True, check=True)
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            log = (self.at / "log.tsv").read_bytes()
+            rail = (self.at / "rail.tsv").read_bytes()
+            dishes = (self.at / "dishes.tsv").read_bytes()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
+                             self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "rail.tsv").read_bytes(),
+                              (self.at / "dishes.tsv").read_bytes()), (log, rail, dishes))
+
+    def test_fire_nested_repository_symlink_is_not_followed(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            nested = self.project / "t3/added/new-skill"
+            (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+            (nested / "SKILL.md").write_text("# Skill\n")
+            subprocess.run(["git", "init", "-q"], cwd=nested, capture_output=True, check=True)
+            outside = Path(self.temporary.name) / "outside"
+            outside.mkdir()
+            (outside / "SKILL.md").write_text("# Outside\n")
+            os.symlink(outside, nested / "link")
+            before = self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
+                             self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
+            self.assertEqual(self.store_files(), before)
+
     def test_next_points_at_startable_with_one_see_line(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix a")

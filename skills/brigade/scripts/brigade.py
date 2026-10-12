@@ -2958,6 +2958,8 @@ def _can_cover_catalog(parts):
 # The path t3 added brigade scripts does not cover that file.
 # The file list is the gate own inventory from the repository the lease is for.
 # The gate inventory holds tracked plus untracked files and serves directory coverage only.
+# The gate walks an opaque directory entry on disk, so a file inside it is seen even when git reports the directory as one entry.
+# That walk follows no symbolic link and skips a nested repository's git directory.
 # Other commands keep their tracked only behavior.
 # An explicit SKILL dot md path counts by its form whether or not the index holds it.
 # The check never opens the user path and never reads outside that repository.
@@ -2968,6 +2970,17 @@ def _can_cover_catalog(parts):
 # When git ls files fails, the four fixed names still match by prefix.
 # When git ls files fails, a lease path that is exactly one skill directory counts as that path plus slash SKILL dot md.
 # When git ls files fails, a wider path that covers a skill root counts as that root with trailing slash.
+def _walk_opaque(directory, prefix):
+    found = set()
+    for current, directories, filenames in os.walk(directory, followlinks=False):
+        directories[:] = [name for name in directories
+                          if name != ".git" and not os.path.islink(os.path.join(current, name))]
+        relative = os.path.relpath(current, directory)
+        head = prefix if relative == os.curdir else f"{prefix}{relative.replace(os.sep, '/')}/"
+        found.update(f"{head}{name}" for name in filenames if not os.path.islink(os.path.join(current, name)))
+    return found
+
+
 def _gate_inventory(project_root):
     try:
         result = subprocess.run(["git", "-C", str(project_root), "ls-files", "--cached", "--others", "-z"],
@@ -2976,7 +2989,11 @@ def _gate_inventory(project_root):
         return None
     if result.returncode != 0:
         return None
-    return frozenset(name for name in result.stdout.split("\0") if name)
+    names = set(name for name in result.stdout.split("\0") if name)
+    root = Path(str(project_root))
+    for name in [name for name in names if name.endswith("/")]:
+        names.update(_walk_opaque(str(root / name), name))
+    return frozenset(names)
 
 
 def _held_from_tracked(parts, tracked, gate_files=None):
