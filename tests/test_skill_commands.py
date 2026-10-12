@@ -1,5 +1,8 @@
 """Each `$B ticket add` and `$B fire` command line in the brigade skill that contains `--`.
 
+The two live skill tests read the skill file. The three regression tests read only
+the fixed fixture in this module. A valid edit to the live skill leaves them passing.
+
 Expansion. The filler recognizes three marks when a line has them. `a|b|c` is one token of
 alternatives, split on `|`. `[...]` wraps tokens the line includes. The brackets are not
 arguments. `<words>` is a placeholder, and a placeholder may contain spaces. `<words>` glued to
@@ -29,6 +32,18 @@ from tests import test_brigade
 COMMAND_LINE_FLOOR = 7
 
 FOLLOW_UP = "## Follow-ups\n\n- File the skill line.\n"
+
+FIXTURE_SKILL = """```bash
+$B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]
+$B ticket add --from-report reports/D2.md [--dry-run]
+$B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3]
+$B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minutes> --paths <files and directories the dish will change> [--branch <name>]
+$B ticket add --from-report reports/D1.md
+```"""
+
+# The fixture holds one kind line, two fire lines, and two report lines. The three
+# regression tests below read only this fixture. The two live skill tests above
+# read only the skill file. A valid edit to the live skill leaves the fixture tests passing.
 
 # Quoted "..." fills from "...quoted". A bare "..." fills from "...bare".
 FILL = {
@@ -548,7 +563,8 @@ class SkillCommandTest(test_brigade.BrigadeTest):
             self.run_tape(tape)
 
     def test_kind_expansion_keeps_broken_ref_and_request_flags(self):
-        spans = command_spans(skill_text())
+        """The fixture kind line keeps a broken ref or request flag for the parser."""
+        spans = command_spans(FIXTURE_SKILL)
         kind_spans = [span for span in spans if len(_filled_argvs(span)) > 1]
         self.assertGreaterEqual(len(kind_spans), 1)
         span = kind_spans[0]
@@ -563,7 +579,8 @@ class SkillCommandTest(test_brigade.BrigadeTest):
             self.assertIn(f"SKILL.md line {mutated.line}", str(caught.exception))
 
     def test_fire_without_tickets_fails_with_its_line(self):
-        spans = command_spans(skill_text())
+        """Each fixture fire line without its tickets flag fails with its line."""
+        spans = command_spans(FIXTURE_SKILL)
         fire_spans = [span for span in spans if span.text.startswith("$B fire")]
         self.assertGreaterEqual(len(fire_spans), 2)
         for span in fire_spans:
@@ -574,7 +591,8 @@ class SkillCommandTest(test_brigade.BrigadeTest):
             self.assertIn(f"SKILL.md line {span.line}", str(caught.exception))
 
     def test_renamed_from_report_fails_with_its_line(self):
-        spans = command_spans(skill_text())
+        """The lone fixture report passes and the renamed fixture report fails with its line."""
+        spans = command_spans(FIXTURE_SKILL)
         report_spans = [span for span in spans if "--from-report" in span.text]
         self.assertGreaterEqual(len(report_spans), 2)
         target = max(report_spans, key=lambda item: item.line)
