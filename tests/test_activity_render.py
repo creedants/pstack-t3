@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from dataclasses import replace
 from pathlib import Path
 
@@ -107,21 +108,46 @@ def wide_page(goal_names):
     return replace(page(*groups, items=items, coordinator=row("coordinator")), goals=goals, flight=MOD["flight_of"](items, goals))
 
 
-def find_browser():
-    """The first browser of BROWSERS on PATH, or None when PATH holds none of them."""
+def confined_run(browser, target, directory, prefix):
+    """Run browser on target with a profile under directory and browser state confined there."""
+    environment = dict(os.environ)
+    for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s"), ("TMPDIR", "t")):
+        path = Path(directory) / name
+        path.mkdir(parents=True, exist_ok=True)
+        environment[variable] = str(path)
+    profile = tempfile.mkdtemp(prefix=prefix, dir=directory)
+    return subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
+                          capture_output=True, text=True, timeout=120, check=True, env=environment).stdout
+
+
+def select_browser(directory):
+    """The first browser of BROWSERS that starts on a small valid document under directory."""
+    unavailable = []
+    target = Path(directory) / "probe.html"
+    target.write_text(f"<div id=o></div>{PINNED}{LOAD}")
     for name in BROWSERS:
         found = shutil.which(name)
-        if found:
-            return found
-    return None
+        if found is None:
+            unavailable.append(f"{name} not on PATH")
+            continue
+        try:
+            confined_run(found, target, directory, "q")
+        except subprocess.CalledProcessError as failed:
+            unavailable.append(f"{found} exited {failed.returncode}")
+        except subprocess.TimeoutExpired:
+            unavailable.append(f"{found} timed out")
+        except OSError as failed:
+            unavailable.append(f"{found} failed to start with {failed}")
+        else:
+            return found, unavailable
+    return None, unavailable
 
 
 def measure(browser, document, directory):
-    """The height in CSS pixels of the #o element, which the load script writes as the document's title."""
-    target = directory / "page.html"
+    """The height in CSS pixels of the #o element with browser state confined under directory."""
+    target = Path(directory) / "page.html"
     target.write_text(document.replace("<div id=o></div>", f"<div id=o></div>{PINNED}") + LOAD)
-    drawn = subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", "--window-size=390,2000", "--dump-dom", str(target)],
-                           capture_output=True, text=True, timeout=120, check=True).stdout
+    drawn = confined_run(browser, target, directory, "u")
     return float(TITLE.search(drawn).group(1))
 
 
@@ -130,9 +156,9 @@ class RenderHeightTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.browser = find_browser()
+        self.browser, unavailable = select_browser(self.root)
         if self.browser is None:
-            self.skipTest(f"no headless browser on PATH, looked for {' '.join(BROWSERS)}")
+            self.skipTest(f"no working headless browser: {'; '.join(unavailable)}")
 
     def test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame(self):
         # The four pages the reviewer of pull request 192 measured, each with the reserved height, the timeline rows, and the flight groups the fit leaves on it.
@@ -151,3 +177,28 @@ class RenderHeightTest(unittest.TestCase):
                 height = measure(self.browser, MOD["render_html"](fitted, CLEAN), self.root)
                 self.assertLessEqual(height, reserved)
                 self.assertLessEqual(height, MOD["FRAME_HEIGHT"])
+
+
+class BrowserSelectionTest(unittest.TestCase):
+    def test_broken_browser_on_path_leaves_no_working_browser_and_names_its_exit(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as root:
+            stub = Path(bin_dir) / "chromium"
+            stub.write_text("#!/bin/sh\nprintf 'browser cannot start\n' >&2\nexit 127\n")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": bin_dir}):
+                browser, unavailable = select_browser(root)
+        self.assertIsNone(browser)
+        self.assertEqual(len(unavailable), len(BROWSERS))
+        self.assertTrue(any("exited 127" in each for each in unavailable))
+
+    def test_working_candidate_is_used_after_a_broken_first_one(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as root:
+            broken = Path(bin_dir) / "chromium"
+            broken.write_text("#!/bin/sh\nexit 127\n")
+            broken.chmod(0o755)
+            working = Path(bin_dir) / "chromium-browser"
+            working.write_text("#!/bin/sh\nexit 0\n")
+            working.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": bin_dir}):
+                browser, _ = select_browser(root)
+        self.assertEqual(browser, str(working))
