@@ -117,13 +117,15 @@ STORE_RECORD = "restaurant.json"
 STORE_LOCK = "restaurant.lock"
 UNITS_TABLE = "dishes.tsv"
 LOG_TABLE = "log.tsv"
+GOALS_TABLE = "goals.tsv"
 STORE_COLUMNS = {
     UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported", "kind", "goal"),
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
+    GOALS_TABLE: ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
 }
 # How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
 ADDED_COLUMNS = {UNITS_TABLE: 2}
-TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log"}
+TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table"}
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
 RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
@@ -145,6 +147,7 @@ OTHER_PROVIDER = ("Other", 6)
 OTHER_MODEL = "other model"
 UNGROUPED = "Not tied to a work item"
 UNNAMED = "work item"
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
 TITLE_CHARS = 60
 LABEL_CHARS = 40
 
@@ -189,6 +192,18 @@ class SourceError(ActivityError):
 
 
 @dataclass(frozen=True)
+class GoalRecord:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Goal:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
 class Unit:
     id: str
     state: str
@@ -197,6 +212,8 @@ class Unit:
     worker: str
     earlier_workers: tuple[str, ...]
     task: str
+    kind: str = ""
+    goal: str = ""
 
 
 @dataclass(frozen=True)
@@ -206,6 +223,7 @@ class Store:
     coordinators: tuple[str, ...]
     units: tuple[Unit, ...]
     project_root: str = ""
+    goals: tuple[GoalRecord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -287,6 +305,8 @@ class Item:
     no_link: str = ""
     # The work item's position among the store's work items, so two work items that print alike stay two. No form prints it.
     key: int = 0
+    kind: str = ""
+    goal: str = ""
 
 
 @dataclass(frozen=True)
@@ -328,6 +348,8 @@ class Page:
     items: tuple[Item, ...]
     hidden: Hidden
     fold: int = 0
+    goals: tuple[Goal, ...] = ()
+    flight: Optional["Flight"] = None
 
 
 def parser():
@@ -473,6 +495,18 @@ def record_text(meta, key):
     return value
 
 
+def goals_of(directory):
+    seen = set()
+    kept = []
+    for row in read_table(directory, GOALS_TABLE):
+        ident = row["id"]
+        if not ident or ident in seen:
+            continue
+        seen.add(ident)
+        kept.append(GoalRecord(ident, row["name"]))
+    return tuple(kept)
+
+
 def read_store(directory):
     try:
         try:
@@ -487,6 +521,7 @@ def read_store(directory):
             raise ActivityError("this is the executive admin's store; pass one coordinator's store directory")
         units = read_table(directory, UNITS_TABLE)
         log = read_table(directory, LOG_TABLE)
+        goals = goals_of(directory)
     except OSError as error:
         raise ActivityError(f"cannot read the store ({error.strerror}); check its permissions and run this again") from None
     earlier = {}
@@ -494,12 +529,12 @@ def read_store(directory):
         if row["kind"] == "worker" and row["state"] == "retired" and row["note"]:
             earlier.setdefault(row["id"], []).append(row["note"])
     by_id = {
-        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"])
+        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"], row["kind"], row["goal"])
         for row in units
     }
     name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
     coordinators = tuple(value for value in (record_text(meta, "thread"), record_text(meta, "previousThread")) if value.strip())
-    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root)
+    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals)
 
 
 def roots_of(store):
@@ -1185,16 +1220,21 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy, key):
+def item_of(unit, privacy, key, goal_ids=()):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key)
+    kind = unit.kind if unit.kind in KINDS else ""
+    goal = unit.goal if unit.goal in goal_ids else ""
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal)
 
 
 def build_page(store, t3, window, privacy):
     """Each string of the page that comes from the store or from T3 is a value privacy.field, privacy.model, or privacy.link returned, or a label short() cut from a field() value.
     The other strings are the constants of this file and numbers. No page type holds a thread id, a sub-agent id, or a path.
     """
+    goals = tuple(Goal(record.id, clip(privacy.field(record.name), SUMMARY_BYTES)) for record in store.goals)
+    goal_ids = {goal.id for goal in goals}
+
     def row(agent, depth, label):
         turn = open_turn(agent)
         return Row(depth, label, privacy.model(agent.model), PROVIDERS.get(agent.provider, OTHER_PROVIDER)[0], status_of(agent),
@@ -1218,7 +1258,7 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy, keys[unit]) if unit else None, rows, len(active) - subagents, subagents))
+        groups.append(Group(item_of(units[unit], privacy, keys[unit], goal_ids) if unit else None, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1236,9 +1276,9 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy, keys[unit.id]) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
-    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden)
+    return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals)
 
 
 KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
