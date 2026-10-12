@@ -4099,7 +4099,7 @@ def occasion_yes(level, occasion, forced):
 
 
 def reply_for(snapshot, trigger, failure, unsent):
-    """The one reply. A store that reports to the executive admin uses that rule first, unless --unsent is set. Otherwise the first held occasion wins the token."""
+    """The one reply. A store that reports to the executive admin uses that rule first, unless --unsent is set. The reply is yes when any held occasion qualifies at this reporting level. The printed occasion is the first qualifying one, and the first held occasion when none qualify."""
     if snapshot.reports_to and not unsent:
         close = ("close", "--to-file") if trigger.wake == "evening" or is_drained(snapshot, trigger) else None
         if trigger.wake == "user":
@@ -4108,13 +4108,17 @@ def reply_for(snapshot, trigger, failure, unsent):
     found = held_occasions(snapshot, trigger, failure, unsent)
     if not found:
         return Reply(False, "routine", routine_detail(trigger), None)
-    occasion, detail, forced = found[0]
-    yes = occasion_yes(snapshot.reporting, occasion, forced)
-    yeses = [name for name, _, flag in found if occasion_yes(snapshot.reporting, name, flag)]
+    qualifying = [(name, detail) for name, detail, flag in found if occasion_yes(snapshot.reporting, name, flag)]
+    if qualifying:
+        occasion, detail = qualifying[0]
+        yes = True
+    else:
+        occasion, detail = found[0][0], found[0][1]
+        yes = False
     close = None
     if snapshot.reporting == "digest" and yes:
         close = ("close", "--to-file")
-    elif any(name in CLOSE_OCCASIONS for name in yeses):
+    elif any(name in CLOSE_OCCASIONS for name, _detail in qualifying):
         close = ("close",)
     return Reply(yes, occasion, detail, close)
 
