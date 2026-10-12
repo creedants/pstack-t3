@@ -1553,10 +1553,29 @@ LINE_PX = 16
 FOOT_TEXT = 203
 FOOT_CHARS = 60
 NOTE_CHARS = 64
+# The reservation counts M, W, m, and w as two slots. A count line counts as 1 + n // COUNT_CHARS lines.
+COUNT_CHARS = 50
+# A line a count line wraps to reserves this many pixels.
+COUNT_LINE_PX = 19
+# The reservation counts this gap between count lines.
+COUNT_GAP_PX = 8
 
 
 def text_lines(characters, per_line):
     return 1 + characters // per_line
+
+
+def count_slots(text):
+    """Slots in one count line. M, W, m, and w take two. Every other character takes one."""
+    return sum(2 if char in "MWmw" else 1 for char in text)
+
+
+def flight_column_px(flight):
+    """Pixels of the grouped count column and its headings. None reserves 0. A flight with no groups reserves 0. Each count line reserves COUNT_LINE_PX for each line it wraps to. COUNT_GAP_PX sits between count lines. Each heading reserves GROUP_PX."""
+    if flight is None or not flight.groups:
+        return 0
+    rows = [text_lines(count_slots(count_line(group)), COUNT_CHARS) for group in flight.groups]
+    return COUNT_LINE_PX * sum(rows) + COUNT_GAP_PX * (len(rows) - 1) + GROUP_PX * len(rows)
 
 
 def fixed_height(page, said):
@@ -1570,15 +1589,14 @@ def fixed_height(page, said):
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
-    A grouped strip adds LINE_PX for each count line and GROUP_PX for each heading.
+    A grouped strip adds flight_column_px.
     """
     rows = [row for group in page.groups for row in group.rows]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
     for status in OPEN:
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
         total += HEADING_PX + OPEN_PX * lines if lines else 0
-    if page.flight is not None:
-        total += (LINE_PX + GROUP_PX) * len(page.flight.groups)
+    total += flight_column_px(page.flight)
     return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
 
 
@@ -1600,8 +1618,7 @@ def framed(page, limit):
     listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
     items = tuple(item for item, keep in zip(page.items, listed) if keep)
     flight = flight_of(items, page.goals)
-    groups = len(flight.groups) if flight is not None else 0
-    left -= (STRIP_PX + CHIP_PX * len(items) + (LINE_PX + GROUP_PX) * groups) if items else 0
+    left -= (STRIP_PX + CHIP_PX * len(items) + flight_column_px(flight)) if items else 0
 
     def tier(row):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2

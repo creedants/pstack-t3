@@ -2144,6 +2144,25 @@ class FrameTest(OutputCase):
         self.assertLessEqual(MOD["height"](cut), limit)
         self.assertLess(sum(len(one.rows) for one in cut.groups), 4)
 
+    def test_height_counts_wrapped_count_lines_and_gaps_for_eight_wide_groups(self):
+        wide = "W" * 36
+        wide_goals = tuple(MOD["Goal"](f"G{number}", wide) for number in range(8))
+        short_goals = tuple(MOD["Goal"](f"G{number}", f"Ship {number}") for number in range(8))
+
+        def built(goals):
+            items = tuple(MOD["Item"](f"D{number}", "summary", "working", "go", "", True, "", 0, "feature", f"G{number}") for number in range(8))
+            groups = tuple(group(items[number], row(f"w{number}a"), row(f"w{number}b", depth=1)) for number in range(8))
+            made = page(*groups, items=items, coordinator=row("coordinator"))
+            return replace(made, goals=goals, flight=MOD["flight_of"](items, goals))
+
+        short_page, wide_page = built(short_goals), built(wide_goals)
+        self.assertEqual((MOD["height"](short_page), MOD["height"](wide_page)), (1886, 2038))
+        fitted, _ = MOD["fit"](wide_page, 15999, CLEAN, 1960)
+        self.assertLessEqual(MOD["height"](fitted), 1960)
+        self.assertLess(sum(len(one.rows) for one in fitted.groups), 16)
+        kept, _ = MOD["fit"](short_page, 15999, CLEAN, 1960)
+        self.assertEqual(sum(len(one.rows) for one in kept.groups), 16)
+
     def test_max_bytes_16001_prints_the_77_rows_the_byte_limit_alone_leaves_and_a_page_under_the_frame_is_the_same_with_and_without_it(self):
         busy(self.fixture).write()
         self.assertEqual(sum(len(lines) for _, lines in data_of(self.document("--max-bytes", "16001"))["G"]), 77)
