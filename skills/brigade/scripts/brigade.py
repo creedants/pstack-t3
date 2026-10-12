@@ -1333,6 +1333,7 @@ HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
 THREADS_SECTION = (2, "Threads")
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
 FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
+FENCE_OPEN_INDENTED = re.compile(r" {0,3}(?:(`{3,})[^`]*|(~{3,}).*)")
 
 
 def fence_open(line):
@@ -1342,6 +1343,17 @@ def fence_open(line):
     backtick, or that starts there with three or more tildes.
     """
     opened = FENCE_OPEN.fullmatch(line)
+    run = opened.group(1) or opened.group(2) if opened else None
+    return (run[0], len(run)) if run else None
+
+
+def threads_fence_open(line):
+    """The (character, length) of the fence a line of a worker report opens, or None when it opens none.
+
+    A fence opens at a line that starts, after up to three spaces, with three or more backticks and holds no
+    other backtick, or that starts there with three or more tildes.
+    """
+    opened = FENCE_OPEN_INDENTED.fullmatch(line)
     run = opened.group(1) or opened.group(2) if opened else None
     return (run[0], len(run)) if run else None
 
@@ -2168,9 +2180,10 @@ def report_threads(text):
     """The children a report's ## Threads section lists, and every line that could not be read.
 
     The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
-    tuple of `(line number, reason)` pairs. A fenced block that opens at the first column is skipped, so no
-    line inside one is read. A report with no ## Threads section holds no child. A line of the section that holds text but is not
-    one item is reported by its number, and a line with no text is skipped. A heading deeper than the
+    tuple of `(line number, reason)` pairs. A fenced block that opens after up to three spaces is
+    skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line of
+    the section that holds text but is not one item is reported by its number, and a line with no text is
+    skipped. A heading deeper than the
     section's own or a second ## Threads heading while the first is still open is reported by its number
     and ends the scan. An item whose thread id the table would change is reported by its number too. A
     role that is well formed but is not one of CHILD_ROLES is reported by its number, and named with the
@@ -2183,7 +2196,7 @@ def report_threads(text):
             if fence_close(line, fence):
                 fence = None
             continue
-        opened = fence_open(line)
+        opened = threads_fence_open(line)
         if opened:
             fence = opened
             continue
@@ -5140,8 +5153,8 @@ def parser():
         "flag for.\n"
         "\n"
         "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
-        "is not blank, is not a heading, and is not inside a fenced block that opens at the first column is one "
-        "list item of the form - <role> `<thread id>` <seat>.\n"
+        "is not blank, is not a heading, and is not inside a fenced block that opens after up to three spaces is "
+        "one list item of the form - <role> `<thread id>` <seat>.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
         "then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and "

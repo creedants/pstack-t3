@@ -1485,6 +1485,35 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
 
+    def test_a_threads_example_in_a_fence_indented_three_spaces_adds_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n"
+                                  "   ```markdown\n"
+                                  "## Threads\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "## Other example section\n"
+                                  "   ```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 passed")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_threads_example_in_a_fence_indented_four_spaces_is_not_a_fence_so_it_adds_a_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n"
+                                  "    ```markdown\n"
+                                  "## Threads\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "## Other example section\n"
+                                  "    ```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 passed")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
+
     def test_a_role_the_report_cannot_hold_is_refused_by_its_number_and_name(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--thread", THREAD_A)
