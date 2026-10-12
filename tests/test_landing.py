@@ -11,7 +11,6 @@ import shlex
 import shutil
 import signal
 import sqlite3
-import struct
 import subprocess
 import sys
 import tempfile
@@ -105,12 +104,22 @@ SLOT_HOLD = (
     "mark('exit')\n"
     "Path('finished').touch()\n"
 )
-# A stepped caller waits for the test between attempts. A marked caller sleeps for real. Both mark each failed attempt.
+# A stepped caller waits for the test between attempts. A marked caller sleeps for real. Both mark each failed attempt,
+# and touch blocking before a lock call that has to wait.
 SLOT_WRAPPED = (
-    "import os, subprocess, sys, time\n"
+    "import fcntl, os, subprocess, sys, time\n"
     "from pathlib import Path\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import land\n"
+    "flock = fcntl.flock\n"
+    "def announced(handle, operation):\n"
+    "    if operation == fcntl.LOCK_EX:\n"
+    "        try:\n"
+    "            return flock(handle, operation | fcntl.LOCK_NB)\n"
+    "        except BlockingIOError:\n"
+    "            Path('blocking').touch()\n"
+    "    return flock(handle, operation)\n"
+    "land.fcntl.flock = announced\n"
     "count = 0\n"
     "sleep = time.sleep\n"
     "def waiting(seconds):\n"
@@ -130,7 +139,6 @@ SLOT_WRAPPED = (
     "        sys.exit(subprocess.run(sys.argv[4:]).returncode)\n"
     "sys.exit(land.main(['slot', *sys.argv[4:]]))\n"
 )
-TURN_MUTEX = 4096
 
 # A holder that keeps its slot until the release fifo is written, so a test can read a waiter's report.
 HOLD_SCRIPT = (
@@ -303,10 +311,6 @@ if __name__ == "__main__":
 '''
 
 
-def ofd_lock(descriptor, byte, kind, blocking=False):
-    fcntl.fcntl(descriptor, 38 if blocking else 37, struct.pack("hhqqi4x", kind, os.SEEK_SET, byte, 1, 0))
-
-
 class SlotCaller:
     def __init__(self, name, process, directory, release, retry):
         self.name, self.process, self.directory, self.release, self.retry = name, process, directory, release, retry
@@ -400,23 +404,6 @@ class SlotCallers:
     def release(self, caller):
         os.write(caller.release, b"x")
         self.test.assertEqual(caller.process.wait(timeout=20), 0)
-
-    def turn_locks(self):
-        """Return the bytes of governor/turn that /proc/locks shows as held, and the bytes callers block on."""
-        held, blocked = set(), set()
-        try:
-            stat = (self.governor / "turn").stat()
-        except FileNotFoundError:
-            return held, blocked
-        # /proc/locks prints the device as lowercase hex major and minor, then the inode.
-        identity = f"{os.major(stat.st_dev):02x}:{os.minor(stat.st_dev):02x}:{stat.st_ino}"
-        for line in Path("/proc/locks").read_text().splitlines():
-            fields = line.split()[1:]
-            waits = fields[0] == "->"
-            fields = fields[waits:]
-            if fields[0] == "OFDLCK" and fields[4] == identity:
-                (blocked if waits else held).add(int(fields[5]))
-        return held, blocked
 
     def events(self):
         return [tuple(line.split()) for line in self.log.read_text().splitlines()]
@@ -3848,6 +3835,16 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(slot("--exclusive", "--", "true"), (0, "", ""))
         self.assertEqual(slot(), (1, "", "land: slot needs a command after --\n"))
 
+    def test_a_file_finder_leaves_among_the_tickets_does_not_stop_a_slot(self):
+        tickets = self.base / "state/pstack-t3/governor/tickets"
+        tickets.mkdir(parents=True)
+        (tickets / ".DS_Store").write_bytes(b"\0Bud1")
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "true"],
+                                capture_output=True, text=True, timeout=20, env=env)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), [".DS_Store"])
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
@@ -3927,17 +3924,13 @@ os.execv({real!r}, [{real!r}, *args])
         kill(slots.queued(slots.start("ticketed", marked=True)))
         slots.release(holder)
         slots.release(slots.enter(slots.start("after-ticketed")))
+        self.assertEqual(list((slots.governor / "tickets").iterdir()), [])
 
-        turn = os.open(slots.governor / "turn", os.O_RDWR)
-        try:
-            ofd_lock(turn, TURN_MUTEX, fcntl.F_WRLCK, blocking=True)
-            blocked = slots.start("blocked")
-            slots.wait(lambda: slots.turn_locks()[1] == {TURN_MUTEX}, "the waiter blocks on the turn mutex")
+        with open(slots.governor / "tickets.lock", "a") as mutex:
+            fcntl.flock(mutex, fcntl.LOCK_EX)
+            blocked = slots.start("blocked", marked=True)
+            slots.wait(lambda: (blocked.directory / "blocking").exists(), "the waiter blocks on the turn mutex")
             kill(blocked)
-            slots.wait(lambda: slots.turn_locks()[1] == set(), "the killed waiter left the turn mutex")
-            ofd_lock(turn, TURN_MUTEX, fcntl.F_UNLCK)
-        finally:
-            os.close(turn)
         slots.release(slots.enter(slots.start("after-blocked")))
         self.assertEqual(slots.entries(), ["holder", "after-ticketed", "after-blocked"])
 
@@ -4352,9 +4345,9 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertTrue(marker.exists(), "the reporting probe did not pause holding the free slot")
 
         landing = slots.start("landing", pool="landing")
-        slots.wait(lambda: TURN_MUTEX in slots.turn_locks()[1] or landing.started,
+        slots.wait(lambda: (landing.directory / "blocking").exists() or landing.started,
                    "the landing caller blocks on the turn mutex the paused probe holds")
-        self.assertIn(TURN_MUTEX, slots.turn_locks()[1])
+        self.assertTrue((landing.directory / "blocking").exists())
         self.assertFalse(landing.started)
 
         os.write(gate, b"x")
