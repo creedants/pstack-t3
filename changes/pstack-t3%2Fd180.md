@@ -1,0 +1,1 @@
+- Synced to upstream pstack 0.15.20 at 1b6d44ff26d4e242f4e8f68c391e6d2f7ca16def. Launch must reach a usable state from an empty data dir, including migrations and seed data. A journey whose seed lacks a precondition reports a failure with the reason in that feature's `Gotchas`. A proof run in a stand-in lists every setup step the stand-in did that the target will not.
