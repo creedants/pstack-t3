@@ -9015,6 +9015,85 @@ class BrigadeTest(unittest.TestCase):
                          "drop --kind, or run ticket set T1 --kind feature first when no item in flight names T1")
         self.assertEqual(self.store_files(), before)
 
+    def test_fire_leading_slash_parent_path_refuses_and_changes_no_file(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            log = (self.at / "log.tsv").read_bytes()
+            rail = (self.at / "rail.tsv").read_bytes()
+            dishes = (self.at / "dishes.tsv").read_bytes()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "/../docs/guide.md", "--timebox", "120", ok=False),
+                             self.doc_line(("docs/guide.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "rail.tsv").read_bytes(),
+                              (self.at / "dishes.tsv").read_bytes()), (log, rail, dishes))
+
+    def test_lease_parts_match_landing_canonical(self):
+        brigade = runpy.run_path(str(SCRIPT))
+        land = runpy.run_path(str(ROOT / "t3/added/landing/scripts/land.py"))
+        lease_parts = brigade["_lease_parts"]
+        canonical = land["canonical"]
+        inside = (
+            ("/docs/guide.md", "docs/guide.md"),
+            ("//docs//guide.md", "docs/guide.md"),
+            ("docs/./guide.md", "docs/guide.md"),
+            ("docs/a/../guide.md", "docs/guide.md"),
+            ("\\docs\\guide.md", "docs/guide.md"),
+            ("/../docs/guide.md", "docs/guide.md"),
+            ("/t3/added/../added/brigade", "t3/added/brigade"),
+            ("t3/added//brigade/", "t3/added/brigade"),
+            ("/", ""),
+            (".", ""),
+            ("/.", ""),
+            ("/./docs/guide.md", "docs/guide.md"),
+            ("docs//guide.md", "docs/guide.md"),
+        )
+        for raw, want in inside:
+            with self.subTest(raw=raw):
+                self.assertEqual(lease_parts(raw), [want])
+                self.assertEqual(canonical(raw), want)
+        outside = ("../docs/guide.md", "a/../../b", "..", "../")
+        for raw in outside:
+            with self.subTest(raw=raw):
+                self.assertEqual(lease_parts(raw), [])
+                with self.assertRaises(land["LandError"]):
+                    canonical(raw)
+
+    def test_fire_untracked_skill_file_path_refuses(self):
+        self.git_project()
+        self.open()
+        for path in ("t3/added/new-skill/SKILL.md", "skills/new-skill/SKILL.md"):
+            with self.subTest(path=path):
+                (self.project / path).parent.mkdir(parents=True, exist_ok=True)
+                (self.project / path).write_text("# Skill\n")
+                ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {path}")
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix", "--summary", "Long",
+                                              "--paths", path, "--timebox", "120", ok=False),
+                                 self.doc_line((path,), timebox=120))
+                self.assertEqual(self.store_files(), before)
+
+    def test_fire_untracked_skill_directory_refuses(self):
+        self.git_project()
+        self.open()
+        for directory, doc in (("t3/added/new-skill", "t3/added/new-skill/SKILL.md"),
+                               ("skills/new-skill", "skills/new-skill/SKILL.md")):
+            with self.subTest(directory=directory):
+                (self.project / doc).parent.mkdir(parents=True, exist_ok=True)
+                (self.project / doc).write_text("# Skill\n")
+                ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {directory}")
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix", "--summary", "Long",
+                                              "--paths", directory, "--timebox", "120", ok=False),
+                                 self.doc_line((doc,), timebox=120))
+                self.assertEqual(self.store_files(), before)
+
     def test_next_points_at_startable_with_one_see_line(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix a")
@@ -9851,6 +9930,22 @@ class AdminTest(StoresTest):
         report = self.admin("close", "--dry-run").splitlines()
         block = report[report.index("### docs") + 2]
         self.assertRegex(block, r"^- \S+ goal G1 open: activity view$")
+
+    def test_sync_and_close_hide_a_doc_row_but_keep_its_relay(self):
+        self.open("docs")
+        self.open_admin()
+        self.brigade("docs", "ticket", "add", "--kind", "fix", "--summary", "Work")
+        self.brigade("docs", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Work")
+        self.assertNotEqual(self.admin("sync"), "nothing new")
+        before_close = self.admin("close", "--dry-run")
+        self.assertEqual(self.admin("sync"), "nothing new")
+        log = self.dir("docs") / "log.tsv"
+        log.write_text(log.read_text() + "2026-10-12T00:00:00+00:00\tdoc\tD1\titem\tdoc-item\n")
+        self.assertEqual(self.admin("sync"), "nothing new")
+        self.assertEqual(self.admin("close", "--dry-run"), before_close)
+        self.assertIn(("doc", "D1", "item", "doc-item"),
+                      [(row["kind"], row["id"], row["state"], row["note"]) for _, row in self.relays()])
+        self.assertNotIn(" doc ", self.admin("close", "--dry-run"))
 
     def test_goal_add_goal_set_and_goal_list_work_in_the_executive_admins_store(self):
         self.open_admin()

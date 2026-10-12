@@ -2923,8 +2923,8 @@ def _lease_parts(paths):
             if "" not in found:
                 found.append("")
             continue
-        value = posixpath.normpath(raw.strip().replace("\\", "/").lstrip("/"))
-        if value == ".":
+        value = posixpath.normpath(raw.strip().replace("\\", "/")).lstrip("/")
+        if value in (".", ""):
             value = ""
         if value == ".." or value.startswith("../"):
             continue
@@ -2947,7 +2947,7 @@ def _can_cover_catalog(parts):
     return False
 
 
-# Each comma separated paths part uses backslash to slash, then strips leading slash, then normpath.
+# Each comma separated paths part uses backslash to slash, then normpath, then strips leading slash.
 # A part that becomes dot dot or starts with dot dot slash is outside the repository and is ignored here.
 # Empty paths holds nothing and reads no git.
 # A blank component or dot becomes empty string and covers every path in the repository.
@@ -2956,7 +2956,10 @@ def _can_cover_catalog(parts):
 # A lease path also covers a document when the document starts with the path plus slash.
 # For example t3 added brigade covers t3 added brigade SKILL dot md.
 # The path t3 added brigade scripts does not cover that file.
-# The file list is tracked paths from the repository the lease is for.
+# The file list is the gate own inventory from the repository the lease is for.
+# The gate inventory holds tracked plus untracked files and serves directory coverage only.
+# Other commands keep their tracked only behavior.
+# An explicit SKILL dot md path counts by its form whether or not the index holds it.
 # The check never opens the user path and never reads outside that repository.
 # The four fixed names count even when the index omits them.
 # A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one of the three roots.
@@ -2965,13 +2968,28 @@ def _can_cover_catalog(parts):
 # When git ls files fails, the four fixed names still match by prefix.
 # When git ls files fails, a lease path that is exactly one skill directory counts as that path plus slash SKILL dot md.
 # When git ls files fails, a wider path that covers a skill root counts as that root with trailing slash.
-def _held_from_tracked(parts, tracked):
+def _gate_inventory(project_root):
+    try:
+        result = subprocess.run(["git", "-C", str(project_root), "ls-files", "--cached", "--others", "-z"],
+                                capture_output=True, encoding="utf-8", errors="surrogateescape")
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return frozenset(name for name in result.stdout.split("\0") if name)
+
+
+def _held_from_tracked(parts, tracked, gate_files=None):
     held = set()
     for fixed in _fixed_docs():
         if any(_covers(part, fixed) for part in parts):
             held.add(fixed)
     if tracked is not None:
-        for path in tracked.files:
+        for part in parts:
+            if _is_skill_file(part):
+                held.add(part)
+        files = gate_files if gate_files is not None else tracked.files
+        for path in files:
             if _is_skill_file(path) and any(_covers(part, path) for part in parts):
                 held.add(path)
         return tuple(sorted(held))
@@ -3044,7 +3062,9 @@ def prepare_doc_fire(project_root, paths, timebox, ticket_count, doc_item):
         return PreparedDocFire((), timebox, ticket_count, doc_item)
     if not _can_cover_catalog(parts):
         return PreparedDocFire((), timebox, ticket_count, doc_item)
-    return PreparedDocFire(_held_from_tracked(parts, tracked_paths(project_root)), timebox, ticket_count, doc_item)
+    tracked = tracked_paths(project_root)
+    gate_files = _gate_inventory(project_root) if tracked is not None else None
+    return PreparedDocFire(_held_from_tracked(parts, tracked, gate_files), timebox, ticket_count, doc_item)
 
 
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=(), doc_item=False):
@@ -3890,6 +3910,7 @@ def sync(admin):
     Each coordinator's bytes are copied under its shared lock. The admin's lock is taken only after that lock is
     released, so no command holds two stores' locks. A relay id is the coordinator's store path and the row's byte
     offset, which a tail repair never moves, so a rerun after a crash copies nothing twice.
+    A document item row is relayed but prints nothing.
     Returns the lines to print and the malformed-line failures.
     """
     cursors = admin.meta.get("cursors") or {}
@@ -3916,7 +3937,8 @@ def sync(admin):
                     continue
                 admin.append("log.tsv", {"at": now(), "kind": "relay", "id": ident, "state": "copied",
                                          "note": json.dumps(row, separators=(",", ":"))})
-                lines.append(f"{name} {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}")
+                if row["kind"] != "doc":
+                    lines.append(f"{name} {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}")
             # A sync that started later may have read further and moved this cursor already.
             cursors[store] = max(end, int(cursors.get(store, 0)))
         admin.change_meta(cursors=cursors, lastActivityAt=now())
@@ -3925,7 +3947,7 @@ def sync(admin):
 
 def admin_sections(admin, since):
     """The admin's report adds the rulings recorded or changed since the last one, each coordinator's relayed
-    events, and each coordinator's newest report."""
+    events except document items, and each coordinator's newest report."""
     events = [event for event in admin.rows("log.tsv") if event["at"] > since]
     changed = {event["id"] for event in events if event["kind"] == "ruling"}
     changed.update(ident for ident, _, _ in unlogged_rulings(admin))
@@ -3941,7 +3963,7 @@ def admin_sections(admin, since):
     for name in siblings(admin.dir, admin.meta.get("projectRoot")):
         directory = admin.dir.parent / name
         closeouts = sorted((directory / "closeouts").glob("*.md"))
-        rows = by_store.get(store_path(directory), [])
+        rows = [row for row in by_store.get(store_path(directory), []) if row["kind"] != "doc"]
         if not rows and not closeouts:
             continue
         blocks += [f"### {name}", "", *(f"- {row['at']} {row['kind']} {row['id']} {row['state']}: {row['note']}" for row in rows)]
