@@ -36,7 +36,7 @@ Start from the upstream file and change only what T3 changes. Upstream's rules, 
 3. Link the runtime by relative path (`../pstack-runtime/SKILL.md` from a SKILL.md, `../../pstack-runtime/SKILL.md` from a playbook) when the step needs it. Do not paste runtime content.
 4. Keep tool names unprefixed (`delegate_task`, not `mcp__t3-code__delegate_task`).
 5. Run `python3 scripts/build.py`. The build fails on Cursor leftovers (see `scripts/check.py`), broken links, bad frontmatter, a poteto-mode playbook bullet whose file does not exist, override or persona drift, or a README upstream badge that is missing or disagrees with `upstream.json`.
-6. Run `python3 scripts/build.py --update-lock` only after reviewing that the override or persona matches the current upstream file.
+6. Run `python3 scripts/build.py --update-lock` only after reviewing the override or persona against its current vendored counterpart. If either file is absent, confirm that absence before refreshing the lock.
 
 `python3 scripts/sync_upstream.py --merge` syncs and, for each override or persona whose upstream file changed, either writes a clean three-way merge of it or leaves the override or persona as it is and names it. Add `--conflicts <dir>` to also write git's conflict-marked merge of each override or persona whose merge conflicts under `<dir>`, a path outside the checkout that does not exist yet. A persona's conflict-marked merge is written to `<dir>/agents/<name>.md`. A clean merge can carry a new Cursor mechanism in upstream's lines, so a merged override or persona still needs the review in step 6 and the build's Cursor-leftover check, which `python3 scripts/build.py --skip-lock` reaches while the lock is stale.
 
