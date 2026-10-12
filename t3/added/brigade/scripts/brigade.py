@@ -2168,8 +2168,8 @@ def report_threads(text):
     """The children a report's ## Threads section lists, and every line that could not be read.
 
     The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
-    tuple of `(line number, reason)` pairs. A fenced block is skipped, so no line inside one is read. A
-    report with no ## Threads section holds no child. A line of the section that holds text but is not
+    tuple of `(line number, reason)` pairs. A fenced block that opens at the first column is skipped, so no
+    line inside one is read. A report with no ## Threads section holds no child. A line of the section that holds text but is not
     one item is reported by its number, and a line with no text is skipped. A heading deeper than the
     section's own or a second ## Threads heading while the first is still open is reported by its number
     and ends the scan. An item whose thread id the table would change is reported by its number too. A
@@ -5140,7 +5140,7 @@ def parser():
         "flag for.\n"
         "\n"
         "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
-        "is not blank and is not inside a fenced block is one list item of the form "
+        "is not blank and is not inside a fenced block that opens at the first column is one list item of the form "
         "- <role> `<thread id>` <seat>.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
