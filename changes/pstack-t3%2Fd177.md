@@ -1,0 +1,1 @@
+- Ketchup names T3 tools for its before and after visuals. A screenshot is `preview_snapshot` with `includeImage` true and `save` true when `preview_status` already lists a tab. A video is `preview_recording_start` then `preview_recording_stop`. Ketchup never calls `preview_open`. A table or a chart is one HTML page checked with `html_preview` then published with `html_render`.
