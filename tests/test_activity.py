@@ -3406,6 +3406,7 @@ class GoalStripTest(OutputCase):
         fixture.write()
         stamp = "2026-10-10T11:00:00.000Z"
         write_goals(fixture, [
+            ("G0", stamp, "paused", "Empty shelf", "purpose text", "done test", "1", ""),
             ("G1", stamp, "open", "Ship the parser", "purpose text", "done test", "1", ""),
             ("G2", stamp, "done", "Retire the queue", "purpose text", "done test", "1", ""),
         ])
@@ -3441,6 +3442,9 @@ class GoalStripTest(OutputCase):
         for ident in ("D1", "D2", "D3", "D4", "D5"):
             self.assertEqual(html.count(ident), 1)
             self.assertEqual(text.count(ident), 1)
+        for absent in ("Empty shelf", "purpose text", "done test", "G0", "G1", "G2", "G9"):
+            self.assertNotIn(absent, html)
+            self.assertNotIn(absent, text)
         drawn = painted(self, html)["texts"]
         self.assertEqual(drawn[-22:], [
             "Ship the parser · 1 working", "Ship the parser", "D1", "Parser work", "working",
