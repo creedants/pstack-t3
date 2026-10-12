@@ -8761,6 +8761,390 @@ class BrigadeTest(unittest.TestCase):
         recorded = [(kind, store) for kind, store, _only in runpy.run_path(str(SCRIPT))["ADMIN_LINES"]]
         self.assertEqual(recorded, rows)
 
+    SHARED_DOCS = ("README.md", "docs/guide.md", "t3/runtime.md", "t3/setup.md", "t3/added/brigade/SKILL.md",
+                   "t3/overrides/brigade/SKILL.md", "skills/brigade/SKILL.md")
+
+    def doc_tail(self, count):
+        return ("drop it from --paths and give the sentences as follow-ups, or pass --doc-item" if count == 1
+                else "drop them from --paths and give the sentences as follow-ups, or pass --doc-item")
+
+    def doc_line(self, docs, timebox=None, count=None):
+        docs = tuple(sorted(docs))
+        if len(docs) == 1:
+            head = f"{docs[0]} is a shared document"
+        elif len(docs) == 2:
+            head = f"{docs[0]} and {docs[1]} are shared documents"
+        else:
+            head = f"{', '.join(docs[:-1])}, and {docs[-1]} are shared documents"
+        reasons = []
+        if timebox is not None:
+            reasons.append(f"--timebox is {timebox}, over 90 minutes")
+        if count is not None:
+            reasons.append(f"--tickets names {count} tickets")
+        return f"brigade: {head} and {', and '.join(reasons)}; {self.doc_tail(len(docs))}"
+
+    def doc_log_note(self, directory, dish):
+        for line in (directory / "log.tsv").read_text().splitlines()[1:]:
+            kind, ident, state, note = line.split("\t")[1:5]
+            if kind == "doc" and ident == dish and state == "item":
+                return note
+        self.fail(f"no doc item row for {dish}")
+
+    def test_fire_shared_doc_timebox_limit(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        for doc in self.SHARED_DOCS:
+            with self.subTest(doc=doc):
+                first = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Fix {doc} quickly")
+                proc = self.fire_with_fake_land(case, "--tickets", first, "--station", "bug-fix", "--summary", f"Fix {doc}",
+                                                "--paths", doc, "--timebox", "90")
+                out, err = proc.communicate(timeout=20)
+                self.assertEqual((proc.returncode, err.strip()), (0, ""), doc)
+                dish = out.strip()
+                self.assertTrue(dish.startswith("D"), (doc, out))
+                second = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Fix {doc} slowly")
+                before = self.store_files()
+                calls = (case / "land-calls").read_text() if (case / "land-calls").exists() else ""
+                proc = self.fire_with_fake_land(case, "--tickets", second, "--station", "bug-fix", "--summary", f"Fix {doc}",
+                                                "--paths", doc, "--timebox", "91")
+                out, err = proc.communicate(timeout=20)
+                self.assertEqual((proc.returncode, err.strip()), (1, self.doc_line((doc,), timebox=91)), doc)
+                self.assertEqual(self.store_files(), before, doc)
+                self.assertEqual((case / "land-calls").read_text() if (case / "land-calls").exists() else "", calls, doc)
+
+    def test_fire_shared_doc_with_two_tickets_is_refused(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        for doc in self.SHARED_DOCS:
+            with self.subTest(doc=doc):
+                self.brigade("ticket", "add", "--kind", "fix", "--summary", f"First {doc}")
+                self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Second {doc}")
+                ids = f"T{2 * self.SHARED_DOCS.index(doc) + 1},T{2 * self.SHARED_DOCS.index(doc) + 2}"
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", ids, "--station", "bug-fix", "--summary", f"Fix {doc}",
+                                              "--paths", doc, "--timebox", "60", ok=False),
+                                 self.doc_line((doc,), count=2))
+                self.assertEqual(self.store_files(), before)
+
+    def test_fire_shared_doc_with_ride_along_counts_every_ticket(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.goal("activity view")
+        self.goal("current with upstream")
+        self.brigade("ticket", "add", "--summary", "Lead work", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "Ride work", "--kind", "polish", "--goal", "G2", "--priority", "low")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T2", "--ride-along", "T2", "--station", "bug-fix",
+                                      "--summary", "Both", "--paths", "docs/guide.md", "--timebox", "60", ok=False),
+                         self.doc_line(("docs/guide.md",), count=2))
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_shared_doc_with_doc_item_records_the_doc_row(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        for doc in self.SHARED_DOCS:
+            with self.subTest(doc=doc):
+                ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {doc}")
+                proc = self.fire_with_fake_land(case, "--tickets", ident, "--station", "bug-fix", "--summary", f"Long {doc}",
+                                                "--paths", doc, "--timebox", "120", "--doc-item")
+                out, err = proc.communicate(timeout=20)
+                self.assertEqual((proc.returncode, err.strip()), (0, ""), doc)
+                dish = out.strip().split()[0]
+                self.assertEqual(self.doc_log_note(self.at, dish), f"doc-item: {doc}")
+                row = self.table_row(self.at, "dishes.tsv", dish)
+                self.assertEqual((row["tickets"], row["timebox"]), (ident, "120"))
+
+    def test_fire_doc_item_with_no_shared_doc_records_bare_note(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Plain work")
+        proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "bug-fix", "--summary", "Plain",
+                                        "--paths", "src/app.py", "--doc-item")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""))
+        dish = out.strip().split()[0]
+        self.assertEqual(self.doc_log_note(self.at, dish), "doc-item")
+
+    def test_fire_directory_holding_a_skill_file_names_that_file(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long skill work")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Skill",
+                                      "--paths", "t3/added/brigade", "--timebox", "120", ok=False),
+                         self.doc_line(("t3/added/brigade/SKILL.md",), timebox=120))
+        self.assertEqual(self.store_files(), before)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Scripts work")
+        proc = self.fire_with_fake_land(case, "--tickets", "T2", "--station", "bug-fix", "--summary", "Scripts",
+                                        "--paths", "t3/added/brigade/scripts", "--timebox", "120")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""))
+        self.assertTrue(out.strip().startswith("D1"), out)
+
+    def test_fire_similar_paths_hold_no_shared_doc(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Backup work")
+        proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "bug-fix", "--summary", "Backup",
+                                        "--paths", "docs/guide.md.bak", "--timebox", "120")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""), "a sibling path does not match")
+        self.assertTrue(out.strip().startswith("D1"), out)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Nested readme work")
+        proc = self.fire_with_fake_land(case, "--tickets", "T2", "--station", "bug-fix", "--summary", "Nested",
+                                        "--paths", "notes/README.md", "--timebox", "120")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""), "only the repository-root README.md counts")
+        self.assertTrue(out.strip().startswith("D2"), out)
+
+    def test_fire_shared_doc_refusal_changes_no_file(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            log = (self.at / "log.tsv").read_bytes()
+            rail = (self.at / "rail.tsv").read_bytes()
+            dishes = (self.at / "dishes.tsv").read_bytes()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "docs/guide.md", "--timebox", "120", ok=False),
+                             self.doc_line(("docs/guide.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "rail.tsv").read_bytes(),
+                              (self.at / "dishes.tsv").read_bytes()), (log, rail, dishes))
+        case = self.fake_land()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Second")
+        second = self.store / "bridge-kit" / "second"
+        self.run_at(second, "ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+        before = {str(path.relative_to(second)): path.read_bytes() for path in sorted(second.rglob("*"))
+                  if path.is_file() and path.name != "restaurant.lock"}
+        proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                        "--paths", "docs/guide.md", "--timebox", "120")
+        _, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (1, self.doc_line(("docs/guide.md",), timebox=120)))
+        self.assertFalse((case / "land-calls").exists())
+        after = {str(path.relative_to(second)): path.read_bytes() for path in sorted(second.rglob("*"))
+                 if path.is_file() and path.name != "restaurant.lock"}
+        self.assertEqual(after, before)
+
+    def test_fire_shared_doc_refusal_order(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Third")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "First"), "D1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Again",
+                                      "--paths", "docs/guide.md", "--timebox", "120", ok=False),
+                         "brigade: T1 is assigned, not waiting")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Second",
+                                      "--paths", "docs/guide.md", "--timebox", "120", ok=False),
+                         self.doc_line(("docs/guide.md",), timebox=120))
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Second",
+                                      "--paths", "docs/guide.md", "--timebox", "120", "--kind", "feature", ok=False),
+                         self.doc_line(("docs/guide.md",), timebox=120))
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_shared_doc_refusal_precedes_no_kind_before_a_lease(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.rail_before_kinds("a")
+        before = self.store_files()
+        proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "feature", "--summary", "Do a",
+                                        "--paths", "docs/guide.md", "--timebox", "120")
+        _, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()),
+                         (1, self.doc_line(("docs/guide.md",), timebox=120)))
+        self.assertFalse((case / "land-calls").exists())
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_shared_doc_wins_over_a_lease_clash(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            self.land("lease", "claim", "--holder", "engine/D9", "--paths", "docs/guide.md")
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "docs/guide.md", "--timebox", "120", ok=False),
+                             self.doc_line(("docs/guide.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+
+    def test_fire_doc_item_keeps_workers_kind_and_lease_checks(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
+            self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "First")
+            self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Second",
+                                          "--paths", "docs/guide.md", "--timebox", "120", "--doc-item", ok=False),
+                             "brigade: nothing fired: 1 of 1 workers running")
+            self.assertEqual(self.blocked_note(self.at, "T2"),
+                             {"kind": "workers", "tickets": ["T2"], "station": "bug-fix", "summary": "Second",
+                              "paths": "docs/guide.md", "timebox": 120, "doc_item": True})
+            self.brigade("dish", "D1", "--state", "sent-back")
+            unblocked = next(part for part in self.brigade("watch").splitlines() if "unblocked; run" in part)
+            self.assertIn("--doc-item", unblocked)
+            ran = self.bash_unblocked(self.at, unblocked)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+            dish = ran.stdout.strip().split()[0]
+            self.assertEqual(self.doc_log_note(self.at, dish), "doc-item: docs/guide.md")
+
+    def test_fire_doc_item_kind_mismatch_still_refuses(self):
+        self.open()
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a",
+                                      "--paths", "docs/guide.md", "--timebox", "120", "--doc-item", "--kind", "feature",
+                                      ok=False),
+                         "brigade: T1 has kind fix, and --kind feature does not match it; "
+                         "drop --kind, or run ticket set T1 --kind feature first when no item in flight names T1")
+        self.assertEqual(self.store_files(), before)
+
+    def test_fire_leading_slash_parent_path_refuses_and_changes_no_file(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            log = (self.at / "log.tsv").read_bytes()
+            rail = (self.at / "rail.tsv").read_bytes()
+            dishes = (self.at / "dishes.tsv").read_bytes()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "/../docs/guide.md", "--timebox", "120", ok=False),
+                             self.doc_line(("docs/guide.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "rail.tsv").read_bytes(),
+                              (self.at / "dishes.tsv").read_bytes()), (log, rail, dishes))
+
+    def test_lease_parts_match_landing_canonical(self):
+        brigade = runpy.run_path(str(SCRIPT))
+        land = runpy.run_path(str(ROOT / "t3/added/landing/scripts/land.py"))
+        lease_parts = brigade["_lease_parts"]
+        canonical = land["canonical"]
+        inside = (
+            ("/docs/guide.md", "docs/guide.md"),
+            ("//docs//guide.md", "docs/guide.md"),
+            ("docs/./guide.md", "docs/guide.md"),
+            ("docs/a/../guide.md", "docs/guide.md"),
+            ("\\docs\\guide.md", "docs/guide.md"),
+            ("/../docs/guide.md", "docs/guide.md"),
+            ("/t3/added/../added/brigade", "t3/added/brigade"),
+            ("t3/added//brigade/", "t3/added/brigade"),
+            ("/", ""),
+            (".", ""),
+            ("/.", ""),
+            ("/./docs/guide.md", "docs/guide.md"),
+            ("docs//guide.md", "docs/guide.md"),
+        )
+        for raw, want in inside:
+            with self.subTest(raw=raw):
+                self.assertEqual(lease_parts(raw), [want])
+                self.assertEqual(canonical(raw), want)
+        outside = ("../docs/guide.md", "a/../../b", "..", "../")
+        for raw in outside:
+            with self.subTest(raw=raw):
+                self.assertEqual(lease_parts(raw), [])
+                with self.assertRaises(land["LandError"]):
+                    canonical(raw)
+
+    def test_fire_untracked_skill_file_path_refuses(self):
+        self.git_project()
+        self.open()
+        for path in ("t3/added/new-skill/SKILL.md", "skills/new-skill/SKILL.md"):
+            with self.subTest(path=path):
+                (self.project / path).parent.mkdir(parents=True, exist_ok=True)
+                (self.project / path).write_text("# Skill\n")
+                ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {path}")
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix", "--summary", "Long",
+                                              "--paths", path, "--timebox", "120", ok=False),
+                                 self.doc_line((path,), timebox=120))
+                self.assertEqual(self.store_files(), before)
+
+    def test_fire_untracked_skill_directory_refuses(self):
+        self.git_project()
+        self.open()
+        for directory, doc in (("t3/added/new-skill", "t3/added/new-skill/SKILL.md"),
+                               ("skills/new-skill", "skills/new-skill/SKILL.md")):
+            with self.subTest(directory=directory):
+                (self.project / doc).parent.mkdir(parents=True, exist_ok=True)
+                (self.project / doc).write_text("# Skill\n")
+                ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {directory}")
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix", "--summary", "Long",
+                                              "--paths", directory, "--timebox", "120", ok=False),
+                                 self.doc_line((doc,), timebox=120))
+                self.assertEqual(self.store_files(), before)
+
+    def test_fire_untracked_nested_repository_directory_refuses(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            nested = self.project / "t3/added/new-skill"
+            (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+            (nested / "SKILL.md").write_text("# Skill\n")
+            subprocess.run(["git", "init", "-q"], cwd=nested, capture_output=True, check=True)
+            leases = self.land("lease", "list")
+            before = self.store_files()
+            log = (self.at / "log.tsv").read_bytes()
+            rail = (self.at / "rail.tsv").read_bytes()
+            dishes = (self.at / "dishes.tsv").read_bytes()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
+                             self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
+            self.assertEqual(self.land("lease", "list"), leases)
+            self.assertEqual(self.store_files(), before)
+            self.assertEqual(((self.at / "log.tsv").read_bytes(), (self.at / "rail.tsv").read_bytes(),
+                              (self.at / "dishes.tsv").read_bytes()), (log, rail, dishes))
+
+    def test_fire_nested_repository_symlink_is_not_followed(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            nested = self.project / "t3/added/new-skill"
+            (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+            (nested / "SKILL.md").write_text("# Skill\n")
+            subprocess.run(["git", "init", "-q"], cwd=nested, capture_output=True, check=True)
+            outside = Path(self.temporary.name) / "outside"
+            outside.mkdir()
+            (outside / "SKILL.md").write_text("# Outside\n")
+            os.symlink(outside, nested / "link")
+            before = self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                          "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
+                             self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
+            self.assertEqual(self.store_files(), before)
+
+    def test_next_points_at_startable_with_one_see_line(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix a")
+        lines = self.brigade("next").splitlines()
+        see = [line for line in lines if line.startswith("see ")]
+        self.assertEqual(see, ["see Run startable and take the first ticket it prints as startable, "
+                               "with every ticket it prints as rides with that ticket."])
+
 
 class StoresTest(unittest.TestCase):
     """Two or three coordinators on one project root, as `app/<name>` under the store."""
@@ -9589,6 +9973,22 @@ class AdminTest(StoresTest):
         report = self.admin("close", "--dry-run").splitlines()
         block = report[report.index("### docs") + 2]
         self.assertRegex(block, r"^- \S+ goal G1 open: activity view$")
+
+    def test_sync_and_close_hide_a_doc_row_but_keep_its_relay(self):
+        self.open("docs")
+        self.open_admin()
+        self.brigade("docs", "ticket", "add", "--kind", "fix", "--summary", "Work")
+        self.brigade("docs", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Work")
+        self.assertNotEqual(self.admin("sync"), "nothing new")
+        before_close = self.admin("close", "--dry-run")
+        self.assertEqual(self.admin("sync"), "nothing new")
+        log = self.dir("docs") / "log.tsv"
+        log.write_text(log.read_text() + "2026-10-12T00:00:00+00:00\tdoc\tD1\titem\tdoc-item\n")
+        self.assertEqual(self.admin("sync"), "nothing new")
+        self.assertEqual(self.admin("close", "--dry-run"), before_close)
+        self.assertIn(("doc", "D1", "item", "doc-item"),
+                      [(row["kind"], row["id"], row["state"], row["note"]) for _, row in self.relays()])
+        self.assertNotIn(" doc ", self.admin("close", "--dry-run"))
 
     def test_goal_add_goal_set_and_goal_list_work_in_the_executive_admins_store(self):
         self.open_admin()
