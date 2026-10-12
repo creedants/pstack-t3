@@ -215,7 +215,7 @@ the state, name, counts, purpose, and done test of each open or paused goal and 
 ## brigade.py fire
 
 ```text
-brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON] [--kind KIND] [--ride-along RIDE_ALONG]
+brigade.py [flags] fire --tickets TICKETS --station STATION --summary SUMMARY [--task TASK] [--thread THREAD] [--branch BRANCH] [--timebox TIMEBOX] [--paths PATHS] [--mode MODE] [--reason REASON] [--kind KIND] [--ride-along RIDE_ALONG] [--doc-item]
 ```
 
 group tickets into one dish and assign it to a station
@@ -234,6 +234,7 @@ group tickets into one dish and assign it to a station
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |
 | `--ride-along RIDE_ALONG` |  |  |  | comma-separated ids from --tickets, not the first, that may be under another goal than the first ticket's; each must have priority low and must not be a feature; every other ticket after the first must have the first ticket's goal or no goal |
+| `--doc-item` |  |  |  | allow a shared document in --paths and record it as a document item |
 
 ## brigade.py brief
 

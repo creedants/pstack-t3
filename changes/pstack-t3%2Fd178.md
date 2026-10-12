@@ -1,0 +1,1 @@
+- `fire` refuses a lease holding `README.md`, `docs/guide.md`, `t3/runtime.md`, `t3/setup.md`, or a `SKILL.md` under `t3/added/`, `t3/overrides/`, or `skills/` when timebox is over 90 or tickets are more than one, unless `--doc-item`.

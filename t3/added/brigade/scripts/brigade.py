@@ -2513,7 +2513,7 @@ def refusal_kind(message):
     return "lease"
 
 
-def block_note(kind, ids, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
+def block_note(kind, ids, station, summary, paths, timebox, branch="", reason="", work="", ride_along=(), doc_item=False):
     """`kind` is the kind of block. `work` is the --kind fire was given, and `ride_along` the ids --ride-along named."""
     note = {"kind": kind, "tickets": list(ids), "station": station, "summary": summary,
             "paths": paths, "timebox": timebox}
@@ -2525,12 +2525,14 @@ def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""
         note["work"] = work
     if ride_along:
         note["ride_along"] = list(ride_along)
+    if doc_item:
+        note["doc_item"] = True
     return json.dumps(note, separators=(",", ":"))
 
 
-def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason="", work="", ride_along=()):
+def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason="", work="", ride_along=(), doc_item=False):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
-    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason, work, ride_along)
+    note = block_note(kind, ids, station, summary, paths, timebox, branch, reason, work, ride_along, doc_item)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -2601,7 +2603,7 @@ def lease_check(project_root, holder_name, paths):
 
 
 def fire_command(ident, note):
-    """Shell-quoted fire line. Each option is one --name=value word so a value that starts with - stays the value."""
+    """Shell-quoted fire line. Each option is one --name=value word, except --doc-item which is a bare word, so a value that starts with - stays the value."""
     tickets = ",".join(note.get("tickets") or [ident])
     pairs = [
         ("tickets", tickets),
@@ -2617,9 +2619,13 @@ def fire_command(ident, note):
         pairs.append(("kind", note["work"]))
     if note.get("ride_along"):
         pairs.append(("ride-along", ",".join(note["ride_along"])))
+    if note.get("doc_item"):
+        pairs.append(("doc-item", None))
     if note.get("reason"):
         pairs += [("mode", "full"), ("reason", note["reason"])]
-    words = ["fire", *(f"--{name}={value}" for name, value in pairs)]
+    words = ["fire"]
+    for name, value in pairs:
+        words.append(f"--{name}" if value is None else f"--{name}={value}")
     return " ".join(shlex.quote(str(word)) for word in words)
 
 
@@ -2875,7 +2881,173 @@ def write_lead_kind(restaurant, ids, kind):
         restaurant.save_rows("rail.tsv", rows)
 
 
-def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=()):
+@dataclass(frozen=True)
+class _SharedDoc:
+    root: str
+    kind: str
+
+
+_CATALOG = (
+    _SharedDoc("README.md", "file"),
+    _SharedDoc("docs/guide.md", "file"),
+    _SharedDoc("t3/runtime.md", "file"),
+    _SharedDoc("t3/setup.md", "file"),
+    _SharedDoc("t3/added/", "skill"),
+    _SharedDoc("t3/overrides/", "skill"),
+    _SharedDoc("skills/", "skill"),
+)
+
+
+def _fixed_docs():
+    return tuple(doc.root for doc in _CATALOG if doc.kind == "file")
+
+
+def _skill_roots():
+    return tuple(doc.root for doc in _CATALOG if doc.kind == "skill")
+
+
+def _covers(lease, doc):
+    return lease == "" or doc == lease or doc.startswith(lease + "/")
+
+
+def _is_skill_file(doc):
+    return doc.endswith("/SKILL.md") and doc.startswith(("t3/added/", "t3/overrides/", "skills/"))
+
+
+def _lease_parts(paths):
+    if not paths:
+        return []
+    found = []
+    for raw in paths.split(","):
+        if raw.strip() == "":
+            if "" not in found:
+                found.append("")
+            continue
+        value = posixpath.normpath(raw.strip().replace("\\", "/").lstrip("/"))
+        if value == ".":
+            value = ""
+        if value == ".." or value.startswith("../"):
+            continue
+        if value not in found:
+            found.append(value)
+    return found
+
+
+def _can_cover_catalog(parts):
+    for part in parts:
+        if part == "":
+            return True
+        for fixed in _fixed_docs():
+            if fixed == part or fixed.startswith(part + "/"):
+                return True
+        for root in _skill_roots():
+            stripped = root.rstrip("/")
+            if part == stripped or stripped.startswith(part + "/") or part.startswith(stripped + "/"):
+                return True
+    return False
+
+
+# Each comma separated paths part uses backslash to slash, then strips leading slash, then normpath.
+# A part that becomes dot dot or starts with dot dot slash is outside the repository and is ignored here.
+# Empty paths holds nothing and reads no git.
+# A blank component or dot becomes empty string and covers every path in the repository.
+# A lease path covers a document when the path is empty string.
+# A lease path also covers a document when the document equals the path.
+# A lease path also covers a document when the document starts with the path plus slash.
+# For example t3 added brigade covers t3 added brigade SKILL dot md.
+# The path t3 added brigade scripts does not cover that file.
+# The file list is tracked paths from the repository the lease is for.
+# The check never opens the user path and never reads outside that repository.
+# The four fixed names count even when the index omits them.
+# A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one of the three roots.
+# Vendor is not in the catalog.
+# The changelog fragment that with fragment appends is not part of the check.
+# When git ls files fails, the four fixed names still match by prefix.
+# When git ls files fails, a lease path that is exactly one skill directory counts as that path plus slash SKILL dot md.
+# When git ls files fails, a wider path that covers a skill root counts as that root with trailing slash.
+def _held_from_tracked(parts, tracked):
+    held = set()
+    for fixed in _fixed_docs():
+        if any(_covers(part, fixed) for part in parts):
+            held.add(fixed)
+    if tracked is not None:
+        for path in tracked.files:
+            if _is_skill_file(path) and any(_covers(part, path) for part in parts):
+                held.add(path)
+        return tuple(sorted(held))
+    for part in parts:
+        if _is_skill_file(part):
+            held.add(part)
+        comps = part.split("/") if part else []
+        if len(comps) == 3 and comps[0] == "t3" and comps[1] in ("added", "overrides") and comps[2]:
+            held.add(part + "/SKILL.md")
+        elif len(comps) == 2 and comps[0] == "skills" and comps[1]:
+            held.add(part + "/SKILL.md")
+        for root in _skill_roots():
+            stripped = root.rstrip("/")
+            if part == "" or part == stripped or stripped.startswith(part + "/"):
+                held.add(root)
+    return tuple(sorted(held))
+
+
+@dataclass(frozen=True)
+class DocRefused:
+    line: str
+
+
+@dataclass(frozen=True)
+class DocAllowed:
+    _note: str | None
+
+    def record(self, restaurant, dish_id):
+        if self._note is None:
+            return
+        restaurant.log("doc", dish_id, "item", self._note)
+
+
+@dataclass(frozen=True)
+class PreparedDocFire:
+    _held: tuple[str, ...]
+    _timebox: int
+    _ticket_count: int
+    _doc_item: bool
+
+    def decide(self):
+        held = tuple(sorted(self._held))
+        if not held:
+            return DocAllowed("doc-item" if self._doc_item else None)
+        if self._doc_item:
+            return DocAllowed("doc-item: " + ", ".join(held))
+        if not (self._timebox > 90 or self._ticket_count > 1):
+            return DocAllowed(None)
+        if len(held) == 1:
+            docs = f"{held[0]} is a shared document"
+        elif len(held) == 2:
+            docs = f"{held[0]} and {held[1]} are shared documents"
+        else:
+            docs = f"{', '.join(held[:-1])}, and {held[-1]} are shared documents"
+        reasons = []
+        if self._timebox > 90:
+            reasons.append(f"--timebox is {self._timebox}, over 90 minutes")
+        if self._ticket_count > 1:
+            reasons.append(f"--tickets names {self._ticket_count} tickets")
+        reason = ", and ".join(reasons)
+        drop = "drop it" if len(held) == 1 else "drop them"
+        return DocRefused(f"{docs} and {reason}; {drop} from --paths and give the sentences as follow-ups, or pass --doc-item")
+
+
+def prepare_doc_fire(project_root, paths, timebox, ticket_count, doc_item):
+    parts = _lease_parts(paths)
+    if not parts:
+        return PreparedDocFire((), timebox, ticket_count, doc_item)
+    if not (doc_item or timebox > 90 or ticket_count > 1):
+        return PreparedDocFire((), timebox, ticket_count, doc_item)
+    if not _can_cover_catalog(parts):
+        return PreparedDocFire((), timebox, ticket_count, doc_item)
+    return PreparedDocFire(_held_from_tracked(parts, tracked_paths(project_root)), timebox, ticket_count, doc_item)
+
+
+def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=(), doc_item=False):
     """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
 
     The kind and goal check runs twice, each time under the store lock. The first run comes after the owner check, unfireable, and the worker
@@ -2886,17 +3058,23 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
     of a ticket changes, so a ticket that rides along keeps its own.
     """
     while True:
+        project_root = restaurant.meta.get("projectRoot", "")
+        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item)
         with restaurant.checked():
             restaurant.fence()
             refusal = unfireable(restaurant, ids)
             if refusal:
                 raise BrigadeError(refusal)
+            gate = prepared.decide()
+            if isinstance(gate, DocRefused):
+                raise BrigadeError(gate.line)
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
             leased = with_fragment(paths, known) if paths else ""
             full = workers_full(restaurant)
             if full:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
+                               doc_item)
                 raise BrigadeError(f"nothing fired: {full}")
             _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if refusal:
@@ -2908,10 +3086,14 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
         except ClaimError as error:
             with restaurant.checked():
                 record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
-                               kind, ride_along)
+                               kind, ride_along, doc_item)
             raise BrigadeError(f"nothing fired: {error}") from error
+        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item)
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
+            gate = prepared.decide()
+            if not refusal and isinstance(gate, DocRefused):
+                refusal = gate.line
             current = restaurant.next_id("dishes.tsv")
             full = None if refusal else workers_full(restaurant)
             label = None
@@ -2924,6 +3106,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                                                  "branch": branch, "summary": summary, "timebox": timebox,
                                                  "lease": lease, "paths": leased, "kind": label.kind, "goal": label.goal})
                 restaurant.log("dish", dish, "in-progress", summary)
+                gate.record(restaurant, dish)
                 if reason:
                     record_escalation(restaurant, dish, reason)
                 rows = restaurant.rows("rail.tsv")
@@ -2936,7 +3119,8 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
                 return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
             if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along)
+                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
+                               doc_item)
                 refusal = full
         if lease:
             release_lease(restaurant, lease)
@@ -4671,6 +4855,8 @@ def parser():
                    help="comma-separated ids from --tickets, not the first, that may be under another goal than the first "
                         "ticket's; each must have priority low and must not be a feature; every other ticket after the "
                         "first must have the first ticket's goal or no goal")
+    p.add_argument("--doc-item", action="store_true",
+                   help="allow a shared document in --paths and record it as a document item")
 
     p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
     p.add_argument("id")
@@ -4994,7 +5180,7 @@ def run(argv):
         ids = [ident.strip() for ident in args.tickets.split(",") if ident.strip()]
         ride_along = [ident.strip() for ident in args.ride_along.split(",") if ident.strip()]
         return fire(restaurant, ids, args.station, args.task, args.thread, args.branch, args.summary, args.timebox,
-                    args.paths, args.reason, args.kind or "", ride_along)
+                    args.paths, args.reason, args.kind or "", ride_along, args.doc_item)
     if args.command == "watch":
         return watch(restaurant)
     if args.command == "startable":
