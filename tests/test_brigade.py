@@ -8257,6 +8257,30 @@ class BrigadeTest(unittest.TestCase):
         self.init_landing()
         self.assertEqual(self.execute_conditionals(landed), ["land.py status --holder perf/D1 --sha abc"])
 
+    def test_next_omits_the_fix_round_at_the_round_budget(self):
+        self.fresh()
+        below = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.assertIn("if the old worker's wait for D1 is terminal and D1 may take a fix round: run dish D1 --state in-progress", below)
+        self.assertNotIn("round-budget", below)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.execute_conditionals(below), ["dish D1 --state in-progress"])
+        self.fresh()
+        for number in range(3):
+            self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--author", CLAUDE, "--verifier", CODEX)
+        owed = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.assertIn("\nrun 86 add --dish D1 --round-budget\n", f"\n{owed}\n")
+        self.assertNotIn("run dish D1 --state in-progress", owed)
+        self.execute_sheet(owed)
+        self.fresh()
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        crossing = self.next_sheet("review", "D1", "--verdict", "send-back")
+        self.assertIn("if D1 reaches the round budget and no decision is open: run 86 add --dish D1 --round-budget", crossing)
+        self.assertNotIn("run dish D1 --state in-progress", crossing)
+        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.assertEqual(self.execute_conditionals(crossing), ["86 add --dish D1 --round-budget"])
+
     def test_next_facts(self):
         self.fired_bug_fix()
         self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
@@ -8281,7 +8305,7 @@ class BrigadeTest(unittest.TestCase):
         self.assertNotIn("sha abc", review)
         self.assertNotIn("D2 is send-back", review)
         self.assertNotIn("D2 sent-back", review)
-        self.assertIn("if the old worker's wait for D2 is terminal: run dish D2 --state in-progress", review)
+        self.assertIn("if the old worker's wait for D2 is terminal and D2 may take a fix round: run dish D2 --state in-progress", review)
         self.assertNotIn("run pass", review)
         self.assertFalse(any(line.startswith("run dish D2") for line in review.splitlines()))
         (self.at / "inbox").mkdir()

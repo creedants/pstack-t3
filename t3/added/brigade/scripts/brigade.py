@@ -4216,11 +4216,14 @@ def prefix_cues(snapshot, trigger, failure):
             recorded = f"Record pass record for {dish_id} with verdict {trigger.verdict}. No sha is recorded.{extra}"
         cues = [See(recorded)]
         if trigger.verdict in ("send-back", "pass-with-edits"):
-            if budget_reached(snapshot, trigger) and not maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget")):
+            run = maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget"))
+            already = snapshot.round_counts.get(dish_id, 0) >= ROUND_BUDGET
+            if not run and not already and budget_reached(snapshot, trigger):
                 cues.append(If(f"{dish_id} reaches the round budget and no decision is open",
                                f"run 86 add --dish {dish_id} --round-budget"))
-            cues.append(If(f"the old worker's wait for {dish_id} is terminal",
-                           f"run dish {dish_id} --state in-progress"))
+            elif not run and not already:
+                cues.append(If(f"the old worker's wait for {dish_id} is terminal and {dish_id} may take a fix round",
+                               f"run dish {dish_id} --state in-progress"))
         elif trigger.verdict == "pass":
             cues.append(See(pass_words(snapshot, dish)))
         elif trigger.verdict == "blocked" and failure != "fixable":
