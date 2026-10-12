@@ -3961,6 +3961,19 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual([path.name for path in tickets.iterdir()], [])
         self.assertEqual(lock.stat().st_nlink, 1)
 
+    def test_a_slot_runs_when_its_ticket_is_removed_while_it_waits(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.start("waiter", stepped=True)
+        self.assertEqual(slots.settle(waiter), "waiting")
+        names = sorted(path.name for path in (slots.governor / "tickets").iterdir())
+        self.assertEqual(len(names), 1)
+        (slots.governor / "tickets" / names[0]).unlink()
+        slots.release(holder)
+        self.assertEqual(slots.step(waiter), "started")
+        slots.release(waiter)
+        self.assertEqual(slots.entries(), ["holder", "waiter"])
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
