@@ -9,6 +9,8 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 Sketch types, function signatures, class shapes, and module boundaries with `not implemented` bodies and pseudocode. Synthesize across multiple model perspectives, then fill in code against the chosen sketch.
 
+Prefer independent design readers and a judge from another inference provider. Same-provider or lead-produced sketches are valid availability fallbacks. Changing models within a provider is optional. Keep two structurally distinct alternatives, disclose the fallback, and continue per [Review availability](../pstack-runtime/SKILL.md#review-availability).
+
 ## Start
 
 Open a todolist with one entry per phase before starting.

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # No comments
 
-Spawn Comment Sicko. Act on accepted findings.
+Prefer a fresh Comment Sicko reviewer. If no reviewer can run, the lead reads the persona and performs the same audit, reporting that it was lead review. Follow [Review availability](../pstack-runtime/SKILL.md#review-availability). Act on accepted findings.
 
 Defer to Comment Sicko's fresh perspective.
 

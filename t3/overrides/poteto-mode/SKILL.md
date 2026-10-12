@@ -26,6 +26,8 @@ Use [swarm](../swarm/SKILL.md) for finite independent coverage. Use [mesh](../me
 
 Resolve models against the live catalog only when launching work. Respect unavailable providers, actual permission modes, fixed checks and budgets. These choices reduce avoidable overhead; they are not a benchmark claim that one policy is always fastest.
 
+Prefer another inference provider for review, then a fresh same-provider reviewer, then disclosed lead review when no reviewer can run. Changing models within a provider is optional. Follow [Review availability](../pstack-runtime/SKILL.md#review-availability). Missing provider diversity never stalls a task; real failed checks still do.
+
 ## Non-negotiables
 
 The Principles section below grounds every trigger. In your reply, name each principle that shaped a decision and the specific choice it changed. Cite only principles whose leaf SKILL.md you read this session.

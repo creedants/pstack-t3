@@ -7,7 +7,7 @@ description: "Spawn Comment Sicko, fix accepted findings, and offer encodings fo
 
 Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.
 
-Spawn Comment Sicko. Act on accepted findings.
+Prefer a fresh Comment Sicko reviewer. If no reviewer can run, the lead reads the persona and performs the same audit, reporting that it was lead review. Follow [Review availability](../pstack-runtime/SKILL.md#review-availability). Act on accepted findings.
 
 Defer to Comment Sicko's fresh perspective.
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Interrogate
 
-Spawn one reviewer per configured model to adversarially review code changes. The adversarial signal comes from model diversity, not assigned personas. The deliverable is a synthesized verdict. Do NOT auto-apply changes.
+Prefer reviewers across configured available inference providers to adversarially review code changes. Use one fresh same-provider reviewer when that is all that can run, or lead review when no reviewer can run, per [Review availability](../pstack-runtime/SKILL.md#review-availability). Provider diversity strengthens the adversarial signal. It is preferred, not required for progress. Changing models within a provider is optional. The deliverable is a synthesized verdict. Do NOT auto-apply changes.
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
 
@@ -36,7 +36,7 @@ JSON
 
 The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `interrogate reviewers` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles).
 
-Launch all reviewers in a single message with `delegate_task`, one per seat of the `interrogate reviewers` role, labeled Reviewer A, B, and so on to match the seat count.
+Launch available reviewers in a single message with `delegate_task`, one per seat of the `interrogate reviewers` role, labeled Reviewer A, B, and so on to match the seat count.
 
 Each reviewer gets `mode: "async"`, `role: "review"`, a `task` that is the filled template below, which is a read-only brief, a `clientRequestId` stable per seat, such as `interrogate-<slug>-a`, and `target` set to its seat's resolved target. Omit `target` for an `inherit` seat, so that reviewer runs on the parent model.
 

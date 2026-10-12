@@ -1,1 +1,2 @@
 - Add a persistent project interface and finite peer meshes with durable ordinary T3 threads, direct messaging, shared SQLite claims, and exact-commit Git integration. Poteto can select an execution strategy for each follow-up. Add reversible Codex and Claude activation, portable Windows check capacity, and capability-gated visual peer placement.
+- Prefer cross-provider review while allowing fresh same-provider or disclosed lead review when capacity or subscriptions limit reviewers. Preserve exact-head checks and ownership gates.

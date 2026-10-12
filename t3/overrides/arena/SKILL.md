@@ -10,6 +10,8 @@ Open a todolist with one entry per phase (Frame, Fan out, Cross-judge, Pick, Gra
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
 
+Prefer candidates from different inference providers, but use available same-provider candidates or lead-produced candidates when agents cannot run. Changing models within a provider is optional. Keep the competing designs and rubric; report the missing independence per [Review availability](../pstack-runtime/SKILL.md#review-availability). A missing cross-judge alone does not block synthesis.
+
 ## Phase A: Frame
 
 Every candidate gets the same prompt, so the prompt is the contract.
@@ -36,7 +38,7 @@ If a candidate produces no output, proceed with N-1 and note the dropout.
 
 ## Phase C: Cross-judge
 
-After all Phase B candidates complete (collect them per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation)), choose one seat from the `arena cross-judge pool` role. Resolve it with the same quoted heredoc and `--role "arena cross-judge pool"`. Prefer a seat whose model family differs from the parent's model (`inheritedModel` in `orchestrator_capabilities`). Compare models, not providers, because one provider can serve another's models. If every seat shares the parent's family, say the judge is not cross-family. Spawn one judge child on that seat with `delegate_task`, `mode: "async"`, `role: "review"`, and a read-only brief that says "do not edit files, commit, or push." It sees the rubric and the candidates by path label, scores each criterion, and recommends a base with rationale. It runs in parallel with your reading in Phase D. Don't spawn it while candidates are still writing.
+After all Phase B candidates complete (collect them per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation)), choose one seat from the `arena cross-judge pool` role. Resolve it with the same quoted heredoc and `--role "arena cross-judge pool"`. Prefer a seat on another inference provider from the parent (`inheritedProviderInstanceId` in `orchestrator_capabilities`). If no other provider can run, use a fresh same-provider judge; changing models is optional. If no judge can run, apply the rubric yourself and disclose lead review. Record the actual providers and models without claiming cross-provider independence for a fallback. When a seat can run, spawn one judge child on it with `delegate_task`, `mode: "async"`, `role: "review"`, and a read-only brief that says "do not edit files, commit, or push." It sees the rubric and the candidates by path label, scores each criterion, and recommends a base with rationale. It runs in parallel with your reading in Phase D. Don't spawn it while candidates are still writing.
 
 ## Phase D: Pick a base
 
