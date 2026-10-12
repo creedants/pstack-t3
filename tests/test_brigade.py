@@ -8398,7 +8398,7 @@ class BrigadeTest(unittest.TestCase):
         blocked = self.next_sheet("review", "D1", "--verdict", "blocked")
         self.assertEqual(blocked.splitlines()[-1], "reply: yes (decision: D1)")
         self.assertIn("run close --to-file", blocked)
-        self.assertIn("see Only the user can unblock D1. Ask with 86 add --dish D1 --question --options --default.", blocked)
+        self.assertIn("if only the user can unblock D1: ask with 86 add --dish D1 --question --options --default", blocked)
         self.assertNotIn("if only the user can unblock D1: run 86 add --dish D1", blocked)
         fixable = self.next_sheet("review", "D1", "--verdict", "blocked", "--failure", "fixable")
         self.assertEqual(fixable.splitlines()[-1], "reply: no (failure: fixable)")

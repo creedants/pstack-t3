@@ -3255,6 +3255,8 @@ def dish_progress(restaurant, dish, moment, held=False):
     if not dish["thread"] and len(starts) > 1:
         return [f"{dish['id']}: in progress with no worker thread; launch a fresh worker"]
     start = starts[-1]
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
     minutes = int((moment - start).total_seconds() // 60)
     timebox = int(dish.get("timebox") or 60)
     report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
@@ -3908,7 +3910,10 @@ def report_is_current(restaurant, dish):
     if not path.exists():
         return False
     written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-    return written >= attempt_starts(restaurant, dish)[-1]
+    start = attempt_starts(restaurant, dish)[-1]
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return written >= start
 
 
 def counted_timebox(restaurant, dish):
@@ -3948,13 +3953,13 @@ def load_snapshot(restaurant, moment):
     for dish in dishes:
         if dish["state"] != "in-progress" or dish.get("reported") != "yes":
             continue
-        held = dish["id"] in open_dishes
-        if not held:
-            dish = counted_timebox(restaurant, dish)
+        if dish["id"] in open_dishes:
+            continue
+        dish = counted_timebox(restaurant, dish)
         if not report_is_current(restaurant, dish):
             gaps.append((dish["id"], worker_where(dish)))
             continue
-        for sentence in dish_progress(restaurant, dish, moment, held):
+        for sentence in dish_progress(restaurant, dish, moment):
             if "no report-back" in sentence:
                 continue
             if sentence.startswith(f"{dish['id']}: reported ") or sentence.startswith(f"{dish['id']}: report written "):
@@ -4051,7 +4056,10 @@ def budget_reached(snapshot, trigger):
         return False
     if open_for(snapshot, trigger.dish):
         return False
-    return snapshot.round_counts.get(trigger.dish, 0) + 1 >= ROUND_BUDGET
+    count = snapshot.round_counts.get(trigger.dish, 0)
+    if trigger.verdict == "send-back":
+        count += 1
+    return count >= ROUND_BUDGET
 
 
 def blocked_needs_user(snapshot, trigger, failure):
@@ -4288,7 +4296,8 @@ def prefix_cues(snapshot, trigger, failure):
         elif trigger.verdict == "pass":
             cues.append(See(pass_words(snapshot, dish)))
         elif trigger.verdict == "blocked" and failure != "fixable":
-            cues.append(See(f"Only the user can unblock {dish_id}. Ask with 86 add --dish {dish_id} --question --options --default."))
+            cues.append(If(f"only the user can unblock {dish_id}",
+                           f"ask with 86 add --dish {dish_id} --question --options --default"))
         return cues
     if wake == "checks":
         dish = dish_by_id(snapshot, dish_id)

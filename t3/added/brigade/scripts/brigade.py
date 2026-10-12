@@ -4296,7 +4296,8 @@ def prefix_cues(snapshot, trigger, failure):
         elif trigger.verdict == "pass":
             cues.append(See(pass_words(snapshot, dish)))
         elif trigger.verdict == "blocked" and failure != "fixable":
-            cues.append(See(f"Only the user can unblock {dish_id}. Ask with 86 add --dish {dish_id} --question --options --default."))
+            cues.append(If(f"only the user can unblock {dish_id}",
+                           f"ask with 86 add --dish {dish_id} --question --options --default"))
         return cues
     if wake == "checks":
         dish = dish_by_id(snapshot, dish_id)
