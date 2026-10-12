@@ -1555,7 +1555,7 @@ FOOT_CHARS = 60
 NOTE_CHARS = 64
 # The reservation counts M, W, m, and w as two slots. A count line counts as 1 + n // COUNT_CHARS lines.
 COUNT_CHARS = 50
-# A wrapped count line reserves this many pixels.
+# A line a count line wraps to reserves this many pixels.
 COUNT_LINE_PX = 19
 # The reservation counts this gap between count lines.
 COUNT_GAP_PX = 8
@@ -1571,7 +1571,7 @@ def count_slots(text):
 
 
 def flight_column_px(flight):
-    """Pixels of the grouped count column and its headings. None reserves 0. A flight with no groups reserves 0. Each count line reserves COUNT_LINE_PX for each line it wraps to. COUNT_GAP_PX sits between lines. Each heading reserves GROUP_PX."""
+    """Pixels of the grouped count column and its headings. None reserves 0. A flight with no groups reserves 0. Each count line reserves COUNT_LINE_PX for each line it wraps to. COUNT_GAP_PX sits between count lines. Each heading reserves GROUP_PX."""
     if flight is None or not flight.groups:
         return 0
     rows = [text_lines(count_slots(count_line(group)), COUNT_CHARS) for group in flight.groups]
