@@ -7,6 +7,8 @@ description: poteto's agent style for concise, detailed responses, deliberate su
 
 Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.
 
+Bundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolute path in every `delegate_task` brief.
+
 ## Non-negotiables
 
 The Principles section below grounds every trigger. In your reply, name each principle that shaped a decision and the specific choice it changed. Cite only principles whose leaf SKILL.md you read this session.
