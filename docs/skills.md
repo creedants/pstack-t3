@@ -59,7 +59,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | [`no-comments`](../skills/no-comments/SKILL.md) | Spawn Comment Sicko, fix accepted findings, and offer encodings for claimed constraints. |
 | [`technical-writing`](../skills/technical-writing/SKILL.md) | Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages. |
 | [`typescript-best-practices`](../skills/typescript-best-practices/SKILL.md) | TypeScript best practices. Use when reading or editing any .ts or .tsx file. |
-| [`unslop`](../skills/unslop/SKILL.md) | Cut AI tells from any writing. Must always apply. |
+| [`unslop`](../skills/unslop/SKILL.md) | Cut AI tells from any writing. |
 
 ## Setup and authoring
 
