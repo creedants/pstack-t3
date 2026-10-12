@@ -3946,6 +3946,21 @@ os.execv({real!r}, [{real!r}, *args])
         shared = fcntl.LOCK_SH | fcntl.LOCK_NB
         self.assertEqual(recorded, [(True, shared), (True, shared)])
 
+    def test_a_ticket_hard_linked_to_the_turn_mutex_does_not_stop_a_slot(self):
+        governor = self.base / "state/pstack-t3/governor"
+        tickets = governor / "tickets"
+        tickets.mkdir(parents=True)
+        lock = governor / "tickets.lock"
+        lock.write_bytes(b"")
+        os.link(lock, tickets / "1-worker")
+        env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "slot", "--", "true"],
+            capture_output=True, text=True, timeout=20, env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual([path.name for path in tickets.iterdir()], [])
+        self.assertEqual(lock.stat().st_nlink, 1)
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
