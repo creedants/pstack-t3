@@ -212,7 +212,7 @@ class OverrideLockTest(unittest.TestCase):
             ],
         )
 
-    def test_a_locked_key_with_no_t3_file_keeps_the_locked_but_no_override_sentence(self):
+    def test_a_locked_key_with_no_t3_file_keeps_the_locked_but_no_persona_or_override_sentence(self):
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         self.write_lock(
             {
