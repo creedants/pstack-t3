@@ -3845,6 +3845,54 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(sorted(path.name for path in tickets.iterdir()), [".DS_Store"])
 
+    def test_a_ticket_shaped_fifo_directory_or_symlink_does_not_stop_a_slot(self):
+        outside = self.base / "outside.pipe"
+        os.mkfifo(outside)
+        env_base = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
+        failures = []
+
+        def admit(name, setup):
+            home = self.base / "homes" / name
+            tickets = home / "pstack-t3/governor/tickets"
+            tickets.mkdir(parents=True)
+            setup(tickets)
+            env = dict(env_base)
+            env["XDG_STATE_HOME"] = str(home)
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "slot", "--", "true"],
+                    capture_output=True, text=True, timeout=20, env=env)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{name} timed out")
+                return
+            if (result.returncode, result.stderr) != (0, ""):
+                tail = result.stderr.strip().splitlines()[-1] if result.stderr else ""
+                failures.append(f"{name} rc={result.returncode} {tail}")
+
+        admit("fifo", lambda tickets: os.mkfifo(tickets / "1-worker"))
+        admit("directory", lambda tickets: (tickets / "1-worker").mkdir())
+        admit("symlink", lambda tickets: (tickets / "1-worker").symlink_to(outside))
+        self.assertEqual(failures, [])
+        for name in ("fifo", "directory", "symlink"):
+            left = self.base / "homes" / name / "pstack-t3/governor/tickets"
+            self.assertEqual([path.name for path in left.iterdir()], [], name)
+        self.assertTrue(outside.is_fifo())
+
+        slots = SlotCallers(self, 1)
+        tickets = slots.governor / "tickets"
+        tickets.mkdir()
+        directory = tickets / "1-worker"
+        directory.mkdir()
+        (directory / "child").write_text("stay")
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.queued(slots.start("waiter", marked=True))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["1-worker", "2-worker"])
+        self.assertTrue((tickets / "2-worker").is_file())
+        slots.release(holder)
+        slots.release(slots.enter(waiter))
+        self.assertEqual([path.name for path in tickets.iterdir()], ["1-worker"])
+        self.assertEqual((directory / "child").read_text(), "stay")
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
