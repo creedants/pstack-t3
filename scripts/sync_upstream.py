@@ -7,7 +7,7 @@ upstream file changed. Re-port each one, then run `build.py --update-lock`.
 With --check, sync nothing. Print each path upstream changed since the pinned
 commit and what pstack-t3 does with that path, and write nothing in the checkout.
 
-With --merge, sync and, for each file in t3/overrides or t3/agents whose vendored
+With --merge, sync and, for each override and each persona whose vendored
 file changed, either write a clean three-way merge of it or leave it as it is and
 name it. The merge base is the file in vendor/pstack before the sync, used only
 when its sha256 is the one in t3/overrides.lock.json. The lock is never refreshed.

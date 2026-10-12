@@ -1,0 +1,1 @@
+- Corrected three lock and merge descriptions and one test name to state only what the code does.

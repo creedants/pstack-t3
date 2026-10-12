@@ -151,8 +151,8 @@ def check_lock(update):
     for key in locked:
         if key in current:
             continue
-        # A locked key whose vendored file is gone still has its T3 file, so upstream moved. Any other
-        # locked key names an entry with no T3 file.
+        # A locked key missing from the current digests that still has its T3 file is a persona with no
+        # vendored counterpart. Any other locked key names an entry with no T3 file.
         row = by_key.get(key)
         noun = entry_noun(key)
         detail = (
@@ -235,7 +235,7 @@ def replace_tree(source, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--update-lock", action="store_true", help="accept current vendored digests for every override and persona")
+    parser.add_argument("--update-lock", action="store_true", help="record digests for overrides and personas with a counterpart and null for overrides without one, omitting personas without one")
     parser.add_argument("--skip-lock", action="store_true", help="check a work-in-progress port without the drift lock")
     parser.add_argument("--out", type=Path, default=ROOT / "skills")
     args = parser.parse_args()
