@@ -3493,6 +3493,51 @@ class GoalStripTest(OutputCase):
         self.out("--text")
         self.assertEqual((listing(fixture.store), listing(fixture.database.parent)), before)
 
+    def test_a_finished_labeled_item_shows_its_goal_and_kind_in_text(self):
+        fixture = self.fixture
+        fixture.coordinator(turns=(("completed", 60, 50),))
+        fixture.unit("D1", "merged", "Finished parser", thread=worker(1))
+        fixture.thread(worker(1), title="D1 worker", turns=(("completed", 30, 20),))
+        fixture.write()
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open",
+                               "Ship the parser", "purpose-secret", "done-secret", "1", "")])
+        widen_items(fixture, {"D1": ("feature", "G1")})
+        lines = self.out("--text").splitlines()
+        self.assertEqual(lines[lines.index("Work items") + 1:], [
+            "  Ship the parser   1 merged",
+            "  Ship the parser",
+            "    feature   D1   merged   Finished parser   1 agent, 10m at work",
+        ])
+        html = self.document()
+        self.assertIn("Finished parser", html)
+        self.assertNotIn("Ship the parser", html)
+        self.assertNotIn("F", data_of(html))
+
+    def test_text_groups_a_finished_item_when_the_strip_item_has_no_labels(self):
+        fixture = self.fixture
+        fixture.coordinator(turns=(("completed", 60, 50),))
+        fixture.unit("D1", "merged", "Finished parser", thread=worker(1))
+        fixture.unit("D2", "in-progress", "Open shelf")
+        fixture.thread(worker(1), title="D1 worker", turns=(("completed", 30, 20),))
+        fixture.write()
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open",
+                               "Ship the parser", "purpose-secret", "done-secret", "1", "")])
+        widen_items(fixture, {"D1": ("feature", "G1")})
+        lines = self.out("--text").splitlines()
+        self.assertEqual(lines[lines.index("Work items") + 1:], [
+            "  Ship the parser   1 merged",
+            "  Ship the parser",
+            "    feature   D1   merged   Finished parser   1 agent, 10m at work",
+            "  Unassigned   1 working",
+            "  Unassigned",
+            "    D2   working   Open shelf   no activity in this window",
+        ])
+        html = self.document()
+        self.assertIn("Open shelf", html)
+        self.assertNotIn("Ship the parser", html)
+        self.assertNotIn("Unassigned", html)
+        self.assertNotIn("F", data_of(html))
+
 
 if __name__ == "__main__":
     unittest.main()
