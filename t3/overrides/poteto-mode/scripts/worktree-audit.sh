@@ -6,8 +6,13 @@
 # deletion stays a human-gated step in the playbook, and the playbook checks
 # T3 thread bindings with T3's tools, which this script cannot see.
 #
-# Usage: worktree-audit.sh [repo-path] [--t3-worktrees DIR]
-# Env:   TRUNK=<branch>     override the trunk branch (default: origin/HEAD, else main)
+# Usage: worktree-audit.sh [-b|--base <ref>] [repo-path] [--t3-worktrees DIR]
+#   repo-path defaults to the current repo.
+#   -b sets the ref the MERGED column checks against (e.g. origin/integration).
+#   Without it the base is origin/HEAD, then origin/main, then origin/master.
+#   origin/HEAD is the remote's default branch, not necessarily the branch PRs
+#   merge into; pass -b when they differ.
+# Env:   TRUNK=<branch>     override the trunk branch used when -b is absent (as origin/<branch>)
 #        T3CODE_HOME=<dir>  T3 data dir, the variable T3's server reads (else ~/.t3)
 #        T3_HOME=<dir>      data dir when T3CODE_HOME is unset
 #        T3_WORKTREES=<dir> configured worktree directory for this run
@@ -28,8 +33,19 @@ set -u
 invoke_pwd=$(pwd)
 repo=""
 flag_root=""
+flag_base=""
 while [ $# -gt 0 ]; do
 	case "$1" in
+		-b|--base)
+			flag="$1"
+			shift
+			if [ $# -eq 0 ] || [ -z "${1:-}" ]; then
+				echo "worktree-audit: $flag needs a ref" >&2
+				exit 2
+			fi
+			flag_base="$1"
+			;;
+		-h|--help) sed -n '2,/^set -u/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
 		--t3-worktrees)
 			shift
 			if [ $# -eq 0 ] || [ -z "${1:-}" ]; then
@@ -303,15 +319,41 @@ human() {
 
 # Main worktree is the first entry; everything else is a candidate.
 main_wt=$(git worktree list --porcelain | sed -n 's/^worktree //p' | head -1)
+git rev-parse --git-dir >/dev/null 2>&1 || { echo "error: not a git repo: $repo" >&2; exit 1; }
 
-trunk="${TRUNK:-$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')}"
-trunk="${trunk:-main}"
-
-# origin/<trunk> drives the merge check. Best-effort; stale is fine for a first pass.
-git fetch origin "$trunk" --quiet 2>/dev/null \
-	|| echo "warn: could not fetch origin/$trunk; MERGED may be stale" >&2
-git rev-parse --verify --quiet "origin/$trunk" >/dev/null \
-	|| echo "warn: origin/$trunk does not exist; MERGED shows ?" >&2
+base="$flag_base"
+if [ -z "$base" ] && [ -n "${TRUNK:-}" ]; then
+	case "$TRUNK" in
+	origin/*) base="$TRUNK" ;;
+	*) base="origin/$TRUNK" ;;
+	esac
+fi
+if [ -z "$base" ]; then
+	for cand in "$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master; do
+		[ -n "$cand" ] && git rev-parse --verify --quiet "$cand^{commit}" >/dev/null && { base="$cand"; break; }
+	done
+	[ -n "$base" ] && echo "warn: no -b given; MERGED checks against $base" >&2
+fi
+if [ -z "$base" ]; then
+	echo "warn: no base ref (origin/HEAD, origin/main, origin/master all missing); MERGED shows ?" >&2
+else
+	# The base drives the merge check. The fetch is best-effort (stale is fine for
+	# a first pass) and runs before the check, since -b may name a branch not
+	# fetched yet. The explicit refspec creates it even in a single-branch clone.
+	case "$base" in
+	origin/*) git fetch origin "+refs/heads/${base#origin/}:refs/remotes/$base" --quiet 2>/dev/null \
+		|| echo "warn: could not fetch $base; MERGED may be stale" >&2 ;;
+	esac
+	if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1; then
+		if [ -n "$flag_base" ] || [ -n "${TRUNK:-}" ]; then
+			echo "error: base ref not found: $base" >&2
+			exit 1
+		fi
+		echo "warn: base ref not found: $base; MERGED shows ?" >&2
+		base=""
+	fi
+fi
+[ -n "$base" ] && echo "# base: $base"
 
 # PR state by branch, fetched once. Empty if gh or jq is unavailable.
 prs=$(mktemp)
@@ -364,10 +406,10 @@ EOF
 	recent=no
 	[ "$active_ts" -gt 0 ] && [ $(( (now - active_ts) / 86400 )) -le "$recent_days" ] && recent=yes
 
-	# Squash-merged branches are not ancestors of trunk, so PR state is the
+	# Squash-merged branches are not ancestors of the base, so PR state is the
 	# real signal; merge-base only catches fast-forward/rebase merges.
-	if ! git rev-parse --verify --quiet "origin/$trunk" >/dev/null; then merged="?"
-	elif git merge-base --is-ancestor "$head" "origin/$trunk" 2>/dev/null; then merged=YES
+	if [ -z "$base" ]; then merged="?"
+	elif git merge-base --is-ancestor "$head" "$base" 2>/dev/null; then merged=YES
 	else merged=no; fi
 
 	# Distinguish real WIP (tracked edits) from disposable untracked scratch.
