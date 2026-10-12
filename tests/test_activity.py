@@ -2133,6 +2133,17 @@ class FrameTest(OutputCase):
         self.assertEqual(cut.hidden, MOD["Hidden"](dropped_items=1, dropped_agents=2, cut_agents=1))
         self.assertEqual((MOD["height"](cut), cut.fold), (607, 0))
 
+    def test_the_frame_keeps_room_for_each_strip_group(self):
+        goal = MOD["Goal"]("G1", "Ship")
+        chip = MOD["Item"]("D1", "one", "working", "go", "", True, "", 1, "feature", "G1")
+        built = page(group(None, *(row(f"worker {number}") for number in range(4))), items=(chip,),
+                     hidden=MOD["Hidden"](dropped_items=1, dropped_agents=1, cut_agents=1, cut_in_flight=1))
+        built = replace(built, goals=(goal,), flight=MOD["flight_of"]((chip,), (goal,)))
+        limit = MOD["height"](built) - 1
+        cut = MOD["framed"](built, limit)
+        self.assertLessEqual(MOD["height"](cut), limit)
+        self.assertLess(sum(len(one.rows) for one in cut.groups), 4)
+
     def test_max_bytes_16001_prints_the_77_rows_the_byte_limit_alone_leaves_and_a_page_under_the_frame_is_the_same_with_and_without_it(self):
         busy(self.fixture).write()
         self.assertEqual(sum(len(lines) for _, lines in data_of(self.document("--max-bytes", "16001"))["G"]), 77)

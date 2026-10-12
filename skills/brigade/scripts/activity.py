@@ -1599,7 +1599,9 @@ def framed(page, limit):
     drawn = [group.item for group in page.groups]
     listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
     items = tuple(item for item, keep in zip(page.items, listed) if keep)
-    left -= STRIP_PX + CHIP_PX * len(items) if items else 0
+    flight = flight_of(items, page.goals)
+    groups = len(flight.groups) if flight is not None else 0
+    left -= (STRIP_PX + CHIP_PX * len(items) + (LINE_PX + GROUP_PX) * groups) if items else 0
 
     def tier(row):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
