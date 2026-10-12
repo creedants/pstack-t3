@@ -109,6 +109,20 @@ FOOTER = [
     "Once the merges are written, review each merged override and re-port each override whose row says so. "
     "Then run python3 scripts/build.py --update-lock, which runs the build's Cursor-leftover check.",
 ]
+README_AT_1_0_0 = (
+    "Preamble keeps 1.0.0 and upstream pstack.\n"
+    '  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license MIT"></a>\n'
+    '  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-1.0.0-555.svg" alt="upstream pstack 1.0.0"></a>\n'
+    "Postscript keeps 1.0.0.\n"
+)
+README_AT_1_1_0 = (
+    "Preamble keeps 1.0.0 and upstream pstack.\n"
+    '  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license MIT"></a>\n'
+    '  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-1.1.0-555.svg" alt="upstream pstack 1.1.0"></a>\n'
+    "Postscript keeps 1.0.0.\n"
+)
+BADGE_LINE_1_0_0 = '  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-1.0.0-555.svg" alt="upstream pstack 1.0.0"></a>'
+REFUSAL = "README.md has no upstream badge in the expected form\n"
 
 
 def fence_git_environment():
@@ -168,10 +182,12 @@ def new_checkout(directory, repository, pinned):
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts/sync_upstream.py")
     shutil.copy(ROOT / "scripts/build.py", root / "scripts/build.py")
+    shutil.copy(ROOT / "scripts/check.py", root / "scripts/check.py")
     write_tree(root, T3_TREE)
     write_tree(root / "vendor", {name: text for name, text in PINNED_TREE.items() if name.startswith("pstack/")})
     meta = {"repository": str(repository), "commit": pinned, "path": "pstack", "version": "1.0.0"}
     (root / "upstream.json").write_text(json.dumps(meta, indent=2) + "\n")
+    (root / "README.md").write_text(README_AT_1_0_0)
     return root
 
 
@@ -488,6 +504,68 @@ class SyncTest(CheckoutCase):
             {path.relative_to(vendor).as_posix(): path.read_text() for path in vendor.rglob("*") if path.is_file()},
             expected,
         )
+
+
+class BadgeSyncTest(CheckoutCase):
+    def test_a_newer_upstream_rewrites_the_badge_and_leaves_every_other_readme_byte(self):
+        head = commit(self.upstream, {PLUGIN: '{"name": "pstack", "version": "1.1.0"}\n'})
+        endings = (
+            ("lf", README_AT_1_0_0, README_AT_1_1_0),
+            ("crlf", README_AT_1_0_0.replace("\n", "\r\n"), README_AT_1_1_0.replace("\n", "\r\n")),
+            ("mixed", README_AT_1_0_0.replace("\n", "\r\n", 1), README_AT_1_1_0.replace("\n", "\r\n", 1)),
+            ("no final newline", README_AT_1_0_0[:-1], README_AT_1_1_0[:-1]),
+        )
+        for flags in ((), ("--ref", head), ("--merge",), ("--merge", "--ref", head)):
+            for name, before, after in endings:
+                with self.subTest(flags=flags, endings=name):
+                    (self.root / "README.md").write_bytes(before.encode())
+                    result = self.sync(*flags)
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual((self.root / "README.md").read_bytes(), after.encode())
+                    self.assertEqual(
+                        json.loads((self.root / "upstream.json").read_text()),
+                        {"repository": str(self.upstream), "commit": head, "path": "pstack", "version": "1.1.0"},
+                    )
+
+    def test_a_missing_badge_exits_before_the_pin_write(self):
+        commit(self.upstream, {PLUGIN: '{"name": "pstack", "version": "1.1.0"}\n'})
+        duplicated = README_AT_1_0_0.replace(BADGE_LINE_1_0_0, BADGE_LINE_1_0_0 + "\n" + BADGE_LINE_1_0_0, 1)
+        split = README_AT_1_0_0.replace(
+            BADGE_LINE_1_0_0, BADGE_LINE_1_0_0.replace('"><img', '">\n<img', 1), 1
+        )
+        for flags in ((), ("--merge",)):
+            for name, text in (
+                ("deleted", None),
+                ("not a badge", "not a badge\n"),
+                ("duplicated", duplicated),
+                ("split", split),
+            ):
+                with self.subTest(flags=flags, readme=name):
+                    readme = self.root / "README.md"
+                    if text is None:
+                        readme.unlink(missing_ok=True)
+                    else:
+                        readme.write_text(text)
+                    before = snapshot(self.root)
+                    result = self.sync(*flags)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", REFUSAL))
+                    self.assertEqual(snapshot(self.root), before)
+                    if text is None:
+                        self.assertFalse(readme.exists())
+                    else:
+                        self.assertEqual(readme.read_text(), text)
+
+    def test_a_prerelease_version_exits_with_its_own_message_and_writes_nothing(self):
+        commit(self.upstream, {PLUGIN: '{"name": "pstack", "version": "1.0.0-rc1"}\n'})
+        expected = "upstream version 1.0.0-rc1 cannot be carried by the README upstream badge\n"
+        for flags in ((), ("--merge",)):
+            with self.subTest(flags=flags):
+                (self.root / "README.md").write_text(README_AT_1_0_0)
+                before = snapshot(self.root)
+                result = self.sync(*flags)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", expected))
+                self.assertEqual(snapshot(self.root), before)
+                self.assertEqual((self.root / "README.md").read_text(), README_AT_1_0_0)
 
 
 class MergeTest(CheckoutCase):

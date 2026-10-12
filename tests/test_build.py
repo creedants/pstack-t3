@@ -6,8 +6,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import check  # noqa: E402
 
 CASES = (
     ("t3/added/brigade/scripts/brigade.py", "brigade/scripts/brigade.py", 0o644),
@@ -82,6 +86,18 @@ class BuildModeTest(unittest.TestCase):
                     if expected is not None:
                         self.assertEqual(source_mode, expected, source_rel)
                         self.assertEqual(built_mode, expected, output_rel)
+
+    def test_build_fails_when_the_repository_badge_is_stale(self):
+        import build
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "skills"
+            stale = ["README.md badge url 0.0.0 alt 0.0.0 disagrees with upstream.json version 1.1.0"]
+            with mock.patch.object(check, "badge_findings", return_value=stale):
+                with self.assertRaises(SystemExit) as raised:
+                    build.build(out)
+            self.assertIn("check failed", str(raised.exception))
+            self.assertIn(stale[0], str(raised.exception))
 
 
 class BuildReferenceTest(unittest.TestCase):

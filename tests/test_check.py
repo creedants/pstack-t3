@@ -1,7 +1,9 @@
 import contextlib
 import inspect
 import io
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,6 +67,41 @@ def tests_tree(directory, modules):
 
 
 COPY = "Copy fence_git_environment and setUpModule from tests/test_landing.py"
+README_AT_1_0_0 = (
+    "Preamble keeps 1.0.0 and upstream pstack.\n"
+    '  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license MIT"></a>\n'
+    '  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-1.0.0-555.svg" alt="upstream pstack 1.0.0"></a>\n'
+    "Postscript keeps 1.0.0.\n"
+)
+DISAGREE_1_0_0 = "README.md badge url 1.0.0 alt 1.0.0 disagrees with upstream.json version 1.1.0"
+ABSENT_1_1_0 = "README.md has no upstream badge and upstream.json version is 1.1.0"
+
+
+def badge_line(url, alt):
+    return (
+        f'  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-{url}-555.svg" '
+        f'alt="upstream pstack {alt}"></a>\n'
+    )
+
+
+def checker_checkout(root, readme):
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy(ROOT / "scripts/check.py", scripts / "check.py")
+    roles = root / "t3/scripts"
+    roles.mkdir(parents=True)
+    shutil.copy(ROOT / "t3/scripts/roles.py", roles / "roles.py")
+    skill = root / "skills/demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
+    tests_tree(root, {})
+    (root / "upstream.json").write_text(json.dumps({"version": "1.1.0"}) + "\n")
+    if readme is not None:
+        (root / "README.md").write_text(readme)
+
+
+def run_check(root):
+    return subprocess.run([sys.executable, "scripts/check.py"], cwd=root, capture_output=True, text=True)
 
 
 class FenceCheckTest(unittest.TestCase):
@@ -312,6 +349,87 @@ class SamplerOutputTest(unittest.TestCase):
             lines = out.read_text().splitlines()
         self.assertEqual(lines[0].split("\t"), list(measure_capacity.COLUMNS))
         self.assertEqual(lines[1].split("\t")[0], "x")
+
+
+class BadgeCheckTest(unittest.TestCase):
+    def test_check_py_names_an_older_badge_and_exits_nonzero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checker_checkout(root, README_AT_1_0_0)
+            result = run_check(root)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (1, DISAGREE_1_0_0 + "\n", ""))
+            self.assertEqual((root / "README.md").read_text(), README_AT_1_0_0)
+
+    def test_check_py_names_a_missing_badge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checker_checkout(root, None)
+            result = run_check(root)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (1, ABSENT_1_1_0 + "\n", ""))
+            self.assertFalse((root / "README.md").exists())
+
+    def test_badge_findings_name_each_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream.json"
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            readme = root / "README.md"
+            cases = (
+                ("url", badge_line("1.0.0", "1.1.0"), ["README.md badge url 1.0.0 alt 1.1.0 disagrees with upstream.json version 1.1.0"]),
+                ("alt", badge_line("1.1.0", "1.0.0"), ["README.md badge url 1.1.0 alt 1.0.0 disagrees with upstream.json version 1.1.0"]),
+                ("both", badge_line("1.0.0", "1.2.0"), ["README.md badge url 1.0.0 alt 1.2.0 disagrees with upstream.json version 1.1.0"]),
+                ("agreement", badge_line("1.1.0", "1.1.0"), []),
+                ("two lines", badge_line("1.1.0", "1.1.0") + badge_line("1.0.0", "1.0.0"), [ABSENT_1_1_0]),
+                ("not a badge", "not a badge\n", [ABSENT_1_1_0]),
+            )
+            for name, text, expected in cases:
+                with self.subTest(slot=name):
+                    readme.write_text(text)
+                    self.assertEqual(check.badge_findings(readme, upstream), expected)
+
+    def test_badge_findings_read_a_crlf_readme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream.json"
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            readme = root / "README.md"
+            readme.write_bytes(README_AT_1_0_0.replace("\n", "\r\n").encode())
+            self.assertEqual(check.badge_findings(readme, upstream), [DISAGREE_1_0_0])
+            agreed = README_AT_1_0_0.replace("upstream%20pstack-1.0.0", "upstream%20pstack-1.1.0").replace(
+                "upstream pstack 1.0.0", "upstream pstack 1.1.0"
+            )
+            readme.write_bytes(agreed.replace("\n", "\r\n").encode())
+            self.assertEqual(check.badge_findings(readme, upstream), [])
+
+    def test_check_tree_judges_only_the_given_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "skills/demo"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
+            readme = root / "README.md"
+            upstream = root / "upstream.json"
+            readme.write_text(README_AT_1_0_0)
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            with mock.patch.object(check, "README_PATH", readme), mock.patch.object(check, "UPSTREAM_PATH", upstream):
+                self.assertEqual(check.check_tree(root / "skills"), [])
+                self.assertEqual(check.badge_findings(readme, upstream), [DISAGREE_1_0_0])
+
+    def test_an_explicit_tree_gets_no_repository_badge_finding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skills = Path(directory) / "skills"
+            skills.mkdir()
+            tests = tests_tree(directory, {})
+            readme = Path(directory) / "README.md"
+            upstream = Path(directory) / "upstream.json"
+            readme.write_text(README_AT_1_0_0)
+            upstream.write_text(json.dumps({"version": "1.1.0"}) + "\n")
+            output = io.StringIO()
+            with mock.patch.object(check, "TESTS_DIR", tests), mock.patch.object(
+                check, "README_PATH", readme
+            ), mock.patch.object(check, "UPSTREAM_PATH", upstream), contextlib.redirect_stdout(output):
+                status = check.main([str(skills)])
+            self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
 if __name__ == "__main__":

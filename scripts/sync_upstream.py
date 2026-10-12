@@ -19,6 +19,11 @@ override whose merge conflicts to DIR/<its path under t3/overrides>. The files
 are written before the sync writes anything in the checkout, and under
 --dry-run too. DIR is refused when it resolves to the checkout or a path under
 it, and when it exists. DIR is not created when no override conflicts.
+
+When the sync writes upstream.json it also rewrites the README upstream badge
+so the url and the alt text carry the new version. When the badge line is
+missing or not in the expected form, the sync prints one line naming README.md
+and exits with status 1 before it writes upstream.json or replaces vendor/pstack.
 """
 
 import argparse
@@ -342,8 +347,7 @@ def main():
     meta = json.loads(UPSTREAM.read_text())
     if args.check:
         return check(args, meta)
-    if args.merge:
-        sys.dont_write_bytecode = True
+    sys.dont_write_bytecode = True
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         try:
             checkout = Path(temporary) / "plugins"
@@ -357,6 +361,17 @@ def main():
             import build
 
             outcomes = ()
+            if not args.dry_run:
+                import check as readme_check
+
+                version = plugin.get("version", meta.get("version"))
+                if not isinstance(version, str) or re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", version) is None:
+                    print(f"upstream version {version} cannot be carried by the README upstream badge", file=sys.stderr)
+                    return 1
+                new_readme = readme_check.rewritten_readme(ROOT / "README.md", version)
+                if new_readme is None:
+                    print("README.md has no upstream badge in the expected form", file=sys.stderr)
+                    return 1
             if args.merge:
                 lock = json.loads(build.LOCK.read_text()) if build.LOCK.exists() else {}
                 outcomes = plan_merges(build.T3 / "overrides", build.VENDOR / "skills", source / "skills", lock)
@@ -376,7 +391,8 @@ def main():
         shutil.rmtree(source / ".git", ignore_errors=True)
         build.replace_tree(source, ROOT / "vendor/pstack")
     previous = meta["commit"]
-    meta.update(commit=commit, version=plugin.get("version", meta.get("version")))
+    meta.update(commit=commit, version=version)
+    (ROOT / "README.md").write_bytes(new_readme.encode("utf-8"))
     UPSTREAM.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"vendor/pstack: {previous[:12]} -> {commit[:12]} ({meta['version']})")
     if args.merge:
