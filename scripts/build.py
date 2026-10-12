@@ -3,12 +3,15 @@
 
 vendor/pstack      upstream pstack, byte-identical to upstream.json's commit
 t3/overrides/      whole-file replacements, keyed by skill-relative path
+t3/agents/         personas copied into skills/pstack-runtime/agents/, keyed agents/<name>.md
 t3/added/          files with no upstream counterpart
 t3/removed.txt     upstream paths that pstack-t3 does not ship
-t3/overrides.lock.json  sha256 of each upstream file an override replaces
+t3/overrides.lock.json  sha256 of vendored counterparts for skill overrides and personas
 
-An override whose upstream file changed since it was written fails the build
-until it is reviewed or re-ported and the lock refreshed with --update-lock.
+An override or a persona whose vendored file changed since it was written
+fails the build until it is reviewed or re-ported and the lock refreshed
+with --update-lock. Refreshing the lock omits personas with no vendored
+counterpart. A stale persona pin reports drift until the lock is refreshed.
 """
 
 import argparse
@@ -18,6 +21,7 @@ import re
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +42,54 @@ def sha256(path):
 
 def relative_files(base):
     return sorted(p.relative_to(base) for p in base.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+
+
+def persona_files():
+    return sorted((T3 / "agents").glob("*.md"))
+
+
+@dataclass(frozen=True)
+class Replacement:
+    """One file under t3 that may replace a vendored one, and every path that names it.
+
+    lock_key is the key in t3/overrides.lock.json, a skill-relative path for an
+    override and agents/<name>.md for a persona. problem_label is what the build
+    names when the replacement drifts. conflict_rel is the path under the
+    directory --conflicts writes to, so it equals lock_key. Refreshing the lock
+    records the vendored digest for a persona with a counterpart and omits a
+    persona with no counterpart. A stale persona pin still reports drift.
+    """
+
+    lock_key: str
+    problem_label: str
+    t3_path: str
+    upstream_rel: str
+    conflict_rel: str
+
+    @property
+    def pins(self):
+        return (VENDOR / self.upstream_rel).is_file()
+
+    @property
+    def persona(self):
+        return self.lock_key.startswith("agents/")
+
+
+def replacements():
+    """Every replacement the lock may carry, overrides first, then personas."""
+    rows = []
+    for rel in relative_files(T3 / "overrides"):
+        if rel.parts[0] == "agents":
+            raise SystemExit(
+                f"t3/overrides/{rel.as_posix()}: a persona belongs in t3/agents; "
+                "the lock reserves the agents/ prefix, so skill overrides under t3/overrides/agents are unsupported"
+            )
+        key = rel.as_posix()
+        rows.append(Replacement(key, key, f"t3/overrides/{key}", f"skills/{key}", key))
+    for persona in persona_files():
+        key = f"agents/{persona.name}"
+        rows.append(Replacement(key, f"t3/agents/{persona.name}", f"t3/agents/{persona.name}", key, key))
+    return rows
 
 
 def removed_paths():
@@ -66,25 +118,49 @@ def normalize_skill(text, skill):
     return "---\n" + "\n".join(lines) + "\n---\n\n" + body
 
 
+def entry_noun(lock_key):
+    """The word a drift message uses for the entry a lock key names."""
+    return "persona" if lock_key.startswith("agents/") else "override"
+
+
 def check_lock(update):
-    overrides = T3 / "overrides"
+    rows = replacements()
+    by_key = {row.lock_key: row for row in rows}
     current = {}
-    for rel in relative_files(overrides):
-        upstream = VENDOR / "skills" / rel
-        current[str(rel)] = sha256(upstream) if upstream.exists() else None
+    for row in rows:
+        if row.pins:
+            current[row.lock_key] = sha256(VENDOR / row.upstream_rel)
+        elif not row.persona:
+            current[row.lock_key] = None
     if update:
         LOCK.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
         return []
     locked = json.loads(LOCK.read_text()) if LOCK.exists() else {}
     problems = []
-    for rel, digest in current.items():
-        if rel not in locked:
-            problems.append(f"{rel}: override not in overrides.lock.json (run build.py --update-lock after reviewing)")
-        elif locked[rel] != digest:
-            problems.append(f"{rel}: upstream changed since this override was written; review or re-port it, then --update-lock")
-    for rel in locked:
-        if rel not in current:
-            problems.append(f"{rel}: locked but no override exists (run --update-lock)")
+    for key, digest in current.items():
+        if key not in locked:
+            problems.append(
+                f"{by_key[key].problem_label}: {entry_noun(key)} not in overrides.lock.json "
+                "(run build.py --update-lock after reviewing)"
+            )
+        elif locked[key] != digest:
+            problems.append(
+                f"{by_key[key].problem_label}: upstream changed since this {entry_noun(key)} was written; "
+                "review or re-port it, then --update-lock"
+            )
+    for key in locked:
+        if key in current:
+            continue
+        # A locked key whose vendored file is gone still has its T3 file, so upstream moved. Any other
+        # locked key names an entry with no T3 file.
+        row = by_key.get(key)
+        noun = entry_noun(key)
+        detail = (
+            f"upstream changed since this {noun} was written; review or re-port it, then --update-lock"
+            if row
+            else f"locked but no {noun} exists (run --update-lock)"
+        )
+        problems.append(f"{row.problem_label if row else key}: {detail}")
     return problems
 
 
@@ -159,7 +235,7 @@ def replace_tree(source, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--update-lock", action="store_true", help="accept current upstream digests for every override")
+    parser.add_argument("--update-lock", action="store_true", help="accept current vendored digests for every override and persona")
     parser.add_argument("--skip-lock", action="store_true", help="check a work-in-progress port without the drift lock")
     parser.add_argument("--out", type=Path, default=ROOT / "skills")
     args = parser.parse_args()

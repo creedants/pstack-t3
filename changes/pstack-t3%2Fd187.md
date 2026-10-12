@@ -1,0 +1,7 @@
+- A persona under `t3/agents` with a vendored counterpart and a stale lock fails `python3 scripts/build.py` and names `t3/agents/<name>.md`.
+- `python3 scripts/sync_upstream.py --merge` merges a changed persona like an override.
+- A conflicted persona leaves `t3/agents/<name>.md` as is and saves the marked merge under `DIR/agents/<name>.md`.
+- Refreshing the lock removes entries for personas with no vendored counterpart. A stale entry for a deleted counterpart reports drift until the lock is refreshed.
+- A file under `t3/overrides/agents` fails the build.
+- `t3/overrides.lock.json` holds persona digests under `agents/<name>.md`.
+- A skill override with no vendored counterpart keeps its key in `t3/overrides.lock.json` with a null value, and a lock refresh keeps that key.
