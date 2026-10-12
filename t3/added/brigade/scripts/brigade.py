@@ -3255,6 +3255,8 @@ def dish_progress(restaurant, dish, moment, held=False):
     if not dish["thread"] and len(starts) > 1:
         return [f"{dish['id']}: in progress with no worker thread; launch a fresh worker"]
     start = starts[-1]
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
     minutes = int((moment - start).total_seconds() // 60)
     timebox = int(dish.get("timebox") or 60)
     report_path = restaurant.dir / "reports" / f"{dish['id']}.md"
@@ -3908,7 +3910,10 @@ def report_is_current(restaurant, dish):
     if not path.exists():
         return False
     written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-    return written >= attempt_starts(restaurant, dish)[-1]
+    start = attempt_starts(restaurant, dish)[-1]
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return written >= start
 
 
 def counted_timebox(restaurant, dish):
@@ -3948,13 +3953,13 @@ def load_snapshot(restaurant, moment):
     for dish in dishes:
         if dish["state"] != "in-progress" or dish.get("reported") != "yes":
             continue
-        held = dish["id"] in open_dishes
-        if not held:
-            dish = counted_timebox(restaurant, dish)
+        if dish["id"] in open_dishes:
+            continue
+        dish = counted_timebox(restaurant, dish)
         if not report_is_current(restaurant, dish):
             gaps.append((dish["id"], worker_where(dish)))
             continue
-        for sentence in dish_progress(restaurant, dish, moment, held):
+        for sentence in dish_progress(restaurant, dish, moment):
             if "no report-back" in sentence:
                 continue
             if sentence.startswith(f"{dish['id']}: reported ") or sentence.startswith(f"{dish['id']}: report written "):

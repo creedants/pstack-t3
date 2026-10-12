@@ -8620,6 +8620,50 @@ class BrigadeTest(unittest.TestCase):
         self.assertNotIn("see D1: reported ", stale)
         self.assertNotIn("running ", stale)
 
+        def stamp_attempt(at):
+            path = self.at / "log.tsv"
+            lines = path.read_text().splitlines()
+            rewritten = [lines[0]]
+            found = False
+            for row in lines[1:]:
+                fields = row.split("\t")
+                if not found and fields[1:4] == ["dish", "D1", "in-progress"]:
+                    fields[0] = at
+                    row = "\t".join(fields)
+                    found = True
+                rewritten.append(row)
+            self.assertTrue(found)
+            path.write_text("\n".join(rewritten) + "\n")
+
+        self.fresh()
+        self.brigade("dish", "D1", "--reported")
+        self.brigade("86", "add", "--dish", "D1", "--question", "Which way?", "--options", "a,b", "--default", "a")
+        reports = self.at / "reports"
+        reports.mkdir()
+        (reports / "D1.md").write_text("held\n")
+        stamp_attempt("2026-10-11T03:00:00")
+        code, out, err = self.run_raw("next")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.splitlines(), [
+            "wake: unspecified",
+            "reporting: milestones",
+            "see D1: open decision Q1: Which way?; launch no worker or verifier until 86 answer Q1",
+            "run close",
+            "reply: yes (decision: Q1)",
+        ])
+        self.fresh()
+        self.brigade("dish", "D1", "--reported")
+        reports = self.at / "reports"
+        reports.mkdir()
+        (reports / "D1.md").write_text("current\n")
+        stamp_attempt("2020-01-01T00:00:00")
+        code, out, err = self.run_raw("next")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Traceback", err + out)
+        self.assertTrue(any(line.startswith("see D1: report written ") for line in out.splitlines()))
+        self.assertNotIn("reports/D1.md is absent", out)
+
     def backdate_blocked(self, ident, hours):
         stamp = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="microseconds")
         path = self.at / "log.tsv"
