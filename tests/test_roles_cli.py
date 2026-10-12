@@ -1052,7 +1052,7 @@ class ModeCliTest(unittest.TestCase):
             "- With no excluded seat, it runs `validate`'s checks on the roles it is about to store. "
             "When they list a problem, it prints each one and writes nothing unless `--force` is passed. "
             "Fix each problem and rerun. Do not pass `--force` unless the user asks. "
-            "Write refuses a seat on a metered OpenCode model unless that same file's allow list names the full model id. "
+            "Write refuses a seat on a metered OpenCode model unless that same file's allow list names the full model id or `--force` is passed. "
             "Pass the allow flag on write with that id and rerun.\n",
             text,
         )
