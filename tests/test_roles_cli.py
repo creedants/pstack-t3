@@ -4773,6 +4773,8 @@ class WriteFilesCliTest(unittest.TestCase):
 
 PICKLE = "opencode/big-pickle"
 SPACE_BUNNY = "opencode/space-bunny-free"
+GO_STEP = "opencode-go/step-5-preview-free"
+DEEPSEEK = "opencode-go/deepseek-v4.1-flash"
 
 
 def catalog_model(model_id, **fields):
@@ -4840,6 +4842,23 @@ def relaunch_bug_fix(notes=None):
         payload["notes"] = notes
     payload["report"] = (
         "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5"
+    )
+    return payload
+
+
+def verifier_panel(notes=None):
+    payload = {
+        "decision": "panel",
+        "role": "verifiers",
+        "failed": "codex/gpt-6.1-sol",
+        "seats": [bare_seat("opencode", PICKLE), bare_seat("opencode-go", GO_STEP)],
+        "rule": PANEL_RULE,
+    }
+    if notes is not None:
+        payload["notes"] = notes
+    payload["report"] = (
+        "verifiers: codex/gpt-6.1-sol hit its usage limit; every paid reviewer backup is out, "
+        "so review backups runs 2 seats; land only if no reviewer reproduces a blocker and at least two pass"
     )
     return payload
 
@@ -5220,3 +5239,216 @@ class OpenCodeAllowCliTest(unittest.TestCase):
             self.assertEqual(shown.stdout, dumped(shown_bug_fix(
                 str(repo.user), bare_seat("opencode", PICKLE), mode_source=str(repo.user),
             )))
+
+    def open_panel_catalog(self, directory, extra=()):
+        repo = Repo(directory)
+        path = repo.directory / "catalog.json"
+        repo.put(path, {"providers": [
+            {
+                "providerInstanceId": "opencode",
+                "driverKind": "opencode",
+                "canRunChildTask": True,
+                "models": [catalog_model(PICKLE)],
+            },
+            {
+                "providerInstanceId": "opencode-go",
+                "driverKind": "opencode",
+                "canRunChildTask": True,
+                "models": [catalog_model(GO_STEP)],
+            },
+            *extra,
+        ]})
+        return repo, str(path)
+
+    def backup_verifiers(self, repo, catalog):
+        return subprocess.run(
+            [
+                sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+                "--cwd", str(repo.directory), "--catalog", catalog,
+                "--role", "verifiers", "--provider", "codex", "--model", "gpt-6.1-sol",
+                "--author", "claudeAgent/claude-opus-5-5",
+                "--out", "grok", "--out", "claudeAgent",
+                "--brief-mode", "light",
+            ],
+            env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
+            capture_output=True,
+            text=True,
+            input=_LIMIT,
+        )
+
+    def test_an_unlisted_metered_panel_gets_the_allow_notes(self):
+        seats = [bare_seat("opencode", PICKLE), bare_seat("opencode-go", GO_STEP)]
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.open_panel_catalog(directory)
+            repo.put(repo.user, {"version": 1, "roles": {"review backups": seats}})
+            repo.put(repo.project, {
+                "version": 1,
+                "roles": {"verifiers": seats},
+                "opencodeAllow": [PICKLE, GO_STEP],
+            })
+            user_before = repo.user.read_bytes()
+            project_before = repo.project.read_bytes()
+            completed = self.backup_verifiers(repo, catalog)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stderr, "")
+            self.assertEqual(completed.stdout, dumped(verifier_panel([
+                metered_line("review backups", "opencode", PICKLE),
+                metered_line("review backups", "opencode-go", GO_STEP),
+            ])))
+            self.assertEqual(repo.user.read_bytes(), user_before)
+            self.assertEqual(repo.project.read_bytes(), project_before)
+
+    def test_a_panel_allowed_by_the_file_that_supplied_it_gets_no_notes(self):
+        seats = [bare_seat("opencode", PICKLE), bare_seat("opencode-go", GO_STEP)]
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.open_panel_catalog(directory)
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {"review backups": seats},
+                "opencodeAllow": [PICKLE, GO_STEP],
+            })
+            repo.put(repo.project, {"version": 1, "roles": {"verifiers": ["inherit"]}})
+            user_before = repo.user.read_bytes()
+            project_before = repo.project.read_bytes()
+            completed = self.backup_verifiers(repo, catalog)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stderr, "")
+            self.assertEqual(completed.stdout, dumped(verifier_panel()))
+            self.assertNotIn("\n  \"notes\"", completed.stdout)
+            self.assertEqual(repo.user.read_bytes(), user_before)
+            self.assertEqual(repo.project.read_bytes(), project_before)
+
+    def test_a_worker_backup_does_not_gain_panel_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, catalog = self.open_panel_catalog(directory, (
+                {
+                    "providerInstanceId": "claudeAgent",
+                    "canRunChildTask": True,
+                    "models": [catalog_model("claude-opus-5-5")],
+                },
+                {
+                    "providerInstanceId": "codex",
+                    "canRunChildTask": True,
+                    "models": [catalog_model("gpt-6.1-sol")],
+                },
+            ))
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {
+                    "review backups": [
+                        bare_seat("opencode", PICKLE),
+                        bare_seat("opencode-go", GO_STEP),
+                    ],
+                    "bug-fix": [bare_seat("grok", "grok-4.7")],
+                },
+            })
+            user_before = repo.user.read_bytes()
+            self.assertFalse(repo.project.exists())
+            completed = self.backup_bug_fix(repo, catalog)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stderr, "")
+            self.assertEqual(completed.stdout, dumped(relaunch_bug_fix()))
+            self.assertEqual(repo.user.read_bytes(), user_before)
+            self.assertFalse(repo.project.exists())
+
+    def test_write_refuses_opencode_go_when_driver_kind_is_missing(self):
+        provider = {
+            "providerInstanceId": "opencode-go",
+            "canRunChildTask": True,
+            "models": [catalog_model(DEEPSEEK)],
+        }
+        seat = f"bug-fix=opencode-go/{DEEPSEEK}"
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [provider]})
+            catalog = str(path)
+            refused = self.write_bug_fix(repo, catalog, "opencode-go", DEEPSEEK)
+            self.assertEqual(refused.returncode, 2)
+            self.assertEqual(refused.stdout, "")
+            self.assertEqual(refused.stderr, refusal("bug-fix", "opencode-go", DEEPSEEK))
+            self.assertFalse(repo.user.exists())
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [provider]})
+            catalog = str(path)
+            refused = repo.run("write", "--project", "--catalog", catalog, "--set", seat)
+            self.assertEqual(refused.returncode, 2)
+            self.assertEqual(refused.stdout, "")
+            self.assertEqual(refused.stderr, refusal("bug-fix", "opencode-go", DEEPSEEK))
+            self.assertFalse(repo.project.exists())
+            self.assertFalse(repo.user.exists())
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [provider]})
+            catalog = str(path)
+            seeded = self.write_bug_fix(repo, catalog, "opencode-go", DEEPSEEK, "--force")
+            self.assertEqual(seeded.returncode, 0, seeded.stderr)
+            self.assertEqual(repo.user.read_text(), dumped(user_document({
+                "bug-fix": [bare_seat("opencode-go", DEEPSEEK)],
+            })))
+            self.assertNotIn("opencodeAllow", repo.user.read_text())
+            before = repo.user.read_bytes()
+            kept = repo.run("write", "--catalog", catalog, "--keep", "--budget", "small")
+            self.assertEqual(kept.returncode, 2)
+            self.assertEqual(kept.stdout, "")
+            self.assertEqual(kept.stderr, refusal("bug-fix", "opencode-go", DEEPSEEK))
+            self.assertEqual(repo.user.read_bytes(), before)
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [provider]})
+            catalog = str(path)
+            seeded = repo.run("write", "--project", "--catalog", catalog, "--set", seat, "--force")
+            self.assertEqual(seeded.returncode, 0, seeded.stderr)
+            self.assertEqual(repo.project.read_text(), dumped({
+                "version": 1,
+                "roles": {"bug-fix": [bare_seat("opencode-go", DEEPSEEK)]},
+            }))
+            self.assertNotIn("opencodeAllow", repo.project.read_text())
+            before = repo.project.read_bytes()
+            kept = repo.run(
+                "write", "--project", "--catalog", catalog, "--keep", "--budget", "small",
+            )
+            self.assertEqual(kept.returncode, 2)
+            self.assertEqual(kept.stdout, "")
+            self.assertEqual(kept.stderr, refusal("bug-fix", "opencode-go", DEEPSEEK))
+            self.assertEqual(repo.project.read_bytes(), before)
+            self.assertFalse(repo.user.exists())
+
+    def test_a_missing_driver_kind_on_another_id_writes_without_an_allow_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [{
+                "providerInstanceId": "other",
+                "canRunChildTask": True,
+                "models": [catalog_model("other/paid")],
+            }]})
+            completed = self.write_bug_fix(repo, str(path), "other", "other/paid")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, f"wrote {repo.user}\n")
+            self.assertEqual(completed.stderr, "")
+            self.assertEqual(repo.user.read_text(), dumped(user_document({
+                "bug-fix": [bare_seat("other", "other/paid")],
+            })))
+            self.assertNotIn("opencodeAllow", repo.user.read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, {"providers": [{
+                "providerInstanceId": "opencode-go",
+                "driverKind": "grok",
+                "canRunChildTask": True,
+                "models": [catalog_model(DEEPSEEK)],
+            }]})
+            completed = self.write_bug_fix(repo, str(path), "opencode-go", DEEPSEEK)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, f"wrote {repo.user}\n")
+            self.assertEqual(completed.stderr, "")
+            self.assertEqual(repo.user.read_text(), dumped(user_document({
+                "bug-fix": [bare_seat("opencode-go", DEEPSEEK)],
+            })))
+            self.assertNotIn("opencodeAllow", repo.user.read_text())
