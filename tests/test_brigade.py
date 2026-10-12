@@ -8560,6 +8560,47 @@ class BrigadeTest(unittest.TestCase):
         sheet = out.splitlines()
         self.assertTrue(sheet[-1].startswith("reply:"))
 
+    def backdate_blocked(self, ident, hours):
+        stamp = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="microseconds")
+        path = self.at / "log.tsv"
+        lines = path.read_text().splitlines()
+        rewritten = [lines[0]]
+        found = False
+        for line in lines[1:]:
+            fields = line.split("\t")
+            if not found and fields[1:4] == ["ticket", ident, "blocked"]:
+                fields[0] = stamp
+                line = "\t".join(fields)
+                found = True
+            rewritten.append(line)
+        self.assertTrue(found, ident)
+        path.write_text("\n".join(rewritten) + "\n")
+        return stamp
+
+    def test_next_asks_about_a_blocked_ticket_only_while_it_waits(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "One")
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Two", ok=False)
+        self.assertEqual(refused, "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("set", "--reports-to", "admin-thread")
+        young = self.next_sheet("liveness")
+        self.assertNotIn("watch still shows T2 blocked", young)
+        stamp = self.backdate_blocked("T2", 2)
+        waiting = self.next_sheet("liveness")
+        self.assertIn(
+            "if watch still shows T2 blocked: t3_thread_send admin-thread mode queue "
+            f"clientRequestId blocked:bridge-kit/perf/T2: blocked perf T2: waiting since {stamp}. "
+            "Lease ids are not in the store.",
+            waiting)
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Two")
+        self.assertIn("T2 assigned", self.brigade("ticket", "list"))
+        assigned = self.next_sheet("liveness")
+        self.assertNotIn("watch still shows T2 blocked", assigned)
+        self.assertNotIn("clientRequestId blocked:", assigned)
+
     def test_next_old_store(self):
         self.store_from_before_kinds()
         self.assertFalse((self.at / "goals.tsv").exists())

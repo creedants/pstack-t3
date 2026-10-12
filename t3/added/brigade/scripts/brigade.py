@@ -3824,6 +3824,7 @@ class Snapshot:
     moment: datetime
     close_refusal: str
     warn: object
+    place: str
 
 
 def dish_by_id(snapshot, ident):
@@ -3959,7 +3960,8 @@ def load_snapshot(restaurant, moment):
         tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
         tuple(events_since(restaurant, since).values()), counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
-        tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn)
+        tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
+        store_path(restaurant.dir))
 
 
 def inbox_ready(snapshot):
@@ -4334,7 +4336,10 @@ def older_than_hour(at, moment):
 
 
 def admin_sends(snapshot, trigger, failure, after_close):
-    """Owed event lines for the admin thread. report and drained follow the close cue."""
+    """Owed event lines for the admin thread. report and drained follow the close cue.
+
+    A blocked row is an admin event only while that ticket's rail state is waiting.
+    """
     if not snapshot.reports_to:
         return []
     thread = snapshot.reports_to
@@ -4367,9 +4372,13 @@ def admin_sends(snapshot, trigger, failure, after_close):
             cues.append(send(f"decision {name}: sent after 86 add prints the id"))
     if failure == "stuck":
         cues.append(send(f"failed {name}: cannot fix this"))
+    waiting = {row["id"] for row in snapshot.tickets if row["state"] == "waiting"}
     for ident, at in snapshot.blocked_since:
-        if older_than_hour(at, snapshot.moment):
-            cues.append(send(f"blocked {name} {ident}: waiting since {at}. Lease ids are not in the store."))
+        if ident not in waiting or not older_than_hour(at, snapshot.moment):
+            continue
+        cues.append(If(f"watch still shows {ident} blocked",
+                       f"t3_thread_send {thread} mode queue clientRequestId blocked:{snapshot.place}/{ident}: "
+                       f"blocked {name} {ident}: waiting since {at}. Lease ids are not in the store."))
     if from_user_request(snapshot, trigger):
         cues.append(send(f"reply {name}: sent after the answer"))
     return cues
