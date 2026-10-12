@@ -322,7 +322,9 @@ def _open_ticket(path):
 def _waiting(tickets, before):
     """Return the number and kind of each live ticket below before, or of every ticket when before is None, in ticket order.
     Deletes each dead ticket it finds. A ticket is live while its waiter holds the flock on its file, so a killed waiter's ticket
-    is dead. A caller passes its own number, because where flock is emulated per process its own lock would probe free.
+    is dead. The probe takes a shared lock on its read-only open. That conflicts with the waiter's exclusive lock. An exclusive
+    lock on the read-only open fails with EBADF where flock is a POSIX lock, including an NFS client.
+    A caller passes its own number, because where flock is emulated per process its own lock would probe free.
     Only a regular file is a ticket. Runs under the turn mutex."""
     found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
                    if match and (before is None or int(match[1]) < before))
@@ -333,7 +335,7 @@ def _waiting(tickets, before):
             continue
         with probe:
             try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 live.append((number, kind))
                 continue
