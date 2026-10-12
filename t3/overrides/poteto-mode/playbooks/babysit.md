@@ -22,4 +22,4 @@ Babysitting starts when the user asks for it, which is normally once a phase or 
 
 `drive` ends at merge-ready. Landing the stack is `playbooks/shipping.md`.
 
-**Reply:** the mode, the frontier and its active-forge state, the watcher's four-column table on GitHub, what you fixed versus dismissed with reasons, what is still pending, whether each open PR you are driving is watched, and any fallback heartbeat (none, or its cadence and `nextRunAt`), and what needs the human.
+**Reply:** whether each open PR you are driving is watched, and any fallback heartbeat (none, or its cadence and `nextRunAt`).
