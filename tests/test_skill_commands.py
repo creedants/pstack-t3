@@ -42,7 +42,7 @@ $B ticket add --from-report reports/D1.md
 ```"""
 
 # The fixture holds one kind line, two fire lines, and two report lines. The three
-# regression tests below read only this fixture. The two live skill tests above
+# regression tests below read only this fixture. The two live skill tests
 # read only the skill file. A valid edit to the live skill leaves the fixture tests passing.
 
 # Quoted "..." fills from "...quoted". A bare "..." fills from "...bare".
