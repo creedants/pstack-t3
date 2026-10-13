@@ -302,7 +302,7 @@ class ProbeContractTest(unittest.TestCase):
             "chrome not found",
         ])
 
-    def test_timeout_skip_states_the_seconds_the_probe_waited(self):
+    def test_timeout_skip_names_the_exception_timeout(self):
         def runner(browser, *args, **kwargs):
             raise subprocess.TimeoutExpired(browser, 7)
 
