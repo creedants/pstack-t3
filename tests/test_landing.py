@@ -4101,21 +4101,13 @@ os.execv({real!r}, [{real!r}, *args])
         holds.mkdir(parents=True, exist_ok=True)
         (holds / "worker-0").write_text(json.dumps(
             {"kind": "worker", "pid": 2 ** 31 - 1, "repo": str(self.work), "started": time.time(), "command": "make"}))
-        held = open(land.governor_dir() / "worker-0", "a")
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        try:
-            self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
-        finally:
-            fcntl.flock(held, fcntl.LOCK_UN)
-            held.close()
+        self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
 
     def test_a_malformed_record_prints_unknown_without_failing(self):
         self.governor(1)
         holds = land.governor_dir() / "holds"
         holds.mkdir(parents=True, exist_ok=True)
         record = holds / "worker-0"
-        held = open(land.governor_dir() / "worker-0", "a")
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # The reader names a record only while its writer holds the record's own lock, so lock it.
         writer = os.open(record, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
         fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -4129,16 +4121,12 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
         finally:
             os.close(writer)
-            fcntl.flock(held, fcntl.LOCK_UN)
-            held.close()
 
     def test_a_record_start_no_float_can_hold_reads_as_unknown(self):
         self.governor(1)
         holds = land.governor_dir() / "holds"
         holds.mkdir(parents=True, exist_ok=True)
         record = holds / "worker-0"
-        held = open(land.governor_dir() / "worker-0", "a")
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         writer = os.open(record, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
         fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
@@ -4152,8 +4140,6 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assertIn("for unknown", land._format_wait(15, holders))
         finally:
             os.close(writer)
-            fcntl.flock(held, fcntl.LOCK_UN)
-            held.close()
 
     def test_a_record_start_no_float_can_hold_leaves_the_waiter_running(self):
         self.governor(1)

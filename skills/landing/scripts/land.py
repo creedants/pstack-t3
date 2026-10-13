@@ -325,7 +325,10 @@ def _short_command(command):
 
 
 def _repo_text(repo):
-    """The repository as an absolute path string. None selects the working directory."""
+    """The repository as an absolute path string, or None when the path cannot be resolved.
+
+    A repo of None selects the working directory.
+    """
     try:
         return os.path.abspath(repo or os.getcwd())
     except (OSError, ValueError, TypeError):
@@ -458,7 +461,11 @@ def _clear():
 
 
 def _live_holders(names):
-    """The holders of the named busy slots, distinct, each named by its record."""
+    """The holders of the named busy slots, distinct by pid.
+
+    Each named slot reads its own record. A record whose own lock no writer holds names
+    nobody, so that slot reads as unknown.
+    """
     holders, seen = [], set()
     for name in names:
         holder = _record_holder(_hold_path(name))
@@ -477,7 +484,11 @@ def _held_for(holder):
 
 
 def _format_wait(elapsed, holders):
-    """One line naming each current holder: kind, repository, hold duration, short command."""
+    """One line naming each holder by kind, repository, hold duration, and short command.
+
+    A holder with no proven record reads as unknown, and so does each field its record
+    does not carry. Zero holders produce no holder text.
+    """
     named = []
     for holder in holders:
         if holder == _UNKNOWN:
