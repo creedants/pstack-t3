@@ -22,10 +22,15 @@ jobs:
         run: |
           set -e
           browser=$(python3 - <<'PY'
+          import sys
           import tempfile
           from tests.test_activity_render import select_browser
           with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
               path, unavailable = select_browser(directory)
+          if path is None:
+              print("no working headless browser: " + "; ".join(unavailable), file=sys.stderr)
+              with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+                  path, unavailable = select_browser(directory)
           if path is None:
               print("no working headless browser: " + "; ".join(unavailable))
               raise SystemExit(1)
