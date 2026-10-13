@@ -73,7 +73,7 @@ def support_source(fence=None):
 
 
 def brigade_tree(directory, support, modules):
-    """tests_tree plus tests/brigade/support.py and the given tests/brigade modules."""
+    """tests_tree plus tests/brigade and the given modules. support.py is written only when support is not None."""
     tests = tests_tree(directory, {})
     brigade = tests / "brigade"
     brigade.mkdir()

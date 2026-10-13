@@ -463,14 +463,17 @@ def fence_findings(tests_dir):
     area module. Files in subdirectories are not checked.
 
     The last binding of the name setUpModule in an area module body decides.
-    Importing that name from tests.brigade.support at level 0, or from
+    A from-import of that name from tests.brigade.support at level 0, or from
     .support at level 1, passes even when the import lists other names and the
-    module defines its own class. An import that mentions setUpModule under
-    another name, or binds that name to a different imported name, is an alias
-    finding. An import that binds the name from any other module is a finding.
-    An assignment or annotated assignment of the name is a finding. A def
-    setUpModule uses the top-level fence rules. Those findings end with
-    Import setUpModule from the brigade support path.
+    module defines its own class. A from-import that renames setUpModule away,
+    or that binds the name setUpModule to a different imported name, is an
+    alias finding when that is the last binding. A from-import that binds the
+    name from any other module is a finding. A plain import that binds the
+    name setUpModule is that same other-module finding. A plain import that
+    only renames setUpModule away does not bind the name. An assignment or
+    annotated assignment of the name is a finding. A def setUpModule uses the
+    top-level fence rules. Those findings end with Import setUpModule from
+    the brigade support path.
 
     Only a statement in the module body can bind the name. An area module that
     does not bind the name still passes when every body statement imports
