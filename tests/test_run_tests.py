@@ -1405,6 +1405,247 @@ class RunTestsTest(unittest.TestCase):
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
 
+    def test_a_gate_exits_nonzero_for_failure_cancelled_skipped_or_an_empty_part_result(self):
+        # This starts a process because the check is an exit status.
+        cases = (
+            (("success", "success", "success", "success"), True),
+            (("failure", "success", "success", "success"), False),
+            (("success", "cancelled", "success", "success"), False),
+            (("success", "success", "skipped", "success"), False),
+            (("success", "success", "success", ""), False),
+        )
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            for prefix, script in gate_scripts(text, reader):
+                for results, ok in cases:
+                    with self.subTest(reader=reader, prefix=prefix, results=results):
+                        status = gate_script_status(script, prefix, results)
+                        if ok:
+                            self.assertEqual(status, 0)
+                        else:
+                            self.assertNotEqual(status, 0)
+
+    def test_set_plus_e_or_a_false_if_or_or_true_makes_a_failed_part_exit_zero(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for name in GATE_BLOCK_MUTATIONS:
+            mutated = workflow_with_gate_mutation(text, name)
+            for reader in gate_readers():
+                with self.subTest(mutation=name, reader=reader):
+                    for prefix, script in gate_scripts(mutated, reader):
+                        expected = mutate_gate_block(name, result_block(text, prefix))
+                        self.assertEqual(script, expected)
+                        with self.assertRaises(AssertionError) as caught:
+                            report_failed_part(script, prefix)
+                        self.assertEqual(str(caught.exception), "gate exited 0 with a failed part")
+
+    def test_a_folded_gate_block_fails_instead_of_running_its_selected_lines(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        lines = text.splitlines(keepends=True)
+        for prefix in ("part_310", "part_312"):
+            start, _stop, _indent, _block = result_block_span(lines, prefix)
+            marker = lines[start - 1]
+            if marker.rstrip("\n").lstrip(" ") != "- run: |":
+                raise AssertionError(prefix)
+            lines[start - 1] = marker.replace("run: |", "run: >", 1)
+        folded = "".join(lines)
+        with self.assertRaises(AssertionError) as caught:
+            gate_scripts(folded, "indent")
+        self.assertIn("cannot find the result block", str(caught.exception))
+
+
+GATES = (("test_310", "part_310"), ("test_312", "part_312"))
+GATE_BLOCK_MUTATIONS = ("or_true", "set_plus_e", "if_false")
+
+
+def gate_readers() -> tuple[str, ...]:
+    try:
+        import yaml
+    except ImportError:
+        return ("indent",)
+    return ("yaml", "indent")
+
+
+def gate_scripts(text: str, reader: str = "auto") -> tuple[tuple[str, str], ...]:
+    if reader == "auto":
+        reader = gate_readers()[0]
+    if reader == "yaml":
+        return yaml_gate_scripts(text)
+    if reader == "indent":
+        return indent_gate_scripts(text)
+    raise AssertionError(reader)
+
+
+def yaml_gate_scripts(text: str) -> tuple[tuple[str, str], ...]:
+    try:
+        import yaml
+    except ImportError:
+        raise AssertionError("cannot find the result block") from None
+    loaded = yaml.safe_load(text)
+    jobs = loaded.get("jobs") if isinstance(loaded, dict) else None
+    if not isinstance(jobs, dict):
+        raise AssertionError("cannot find the gate job")
+    scripts = []
+    for gate, prefix in GATES:
+        job = jobs.get(gate)
+        if not isinstance(job, dict):
+            raise AssertionError("cannot find gate job " + gate)
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            raise AssertionError("cannot find the result block of gate job " + gate)
+        needle = "${{ needs." + prefix + "_"
+        found = []
+        for step in steps:
+            run = step.get("run") if isinstance(step, dict) else None
+            if isinstance(run, str) and needle in run:
+                found.append(run if run.endswith("\n") else run + "\n")
+        if len(found) != 1:
+            raise AssertionError("cannot find the result block of gate job " + gate)
+        scripts.append((prefix, found[0]))
+    return tuple(scripts)
+
+
+def indent_gate_scripts(text: str) -> tuple[tuple[str, str], ...]:
+    lines = text.splitlines(keepends=True)
+    scripts = []
+    for gate, prefix in GATES:
+        body = job_body(lines, gate)
+        if body is None:
+            raise AssertionError("cannot find gate job " + gate)
+        if any("\t" in line for line in body):
+            raise AssertionError("cannot find the result block of gate job " + gate)
+        needle = "${{ needs." + prefix + "_"
+        blocks = [block for block in literal_run_blocks(body) if needle in block]
+        if len(blocks) != 1:
+            raise AssertionError("cannot find the result block of gate job " + gate)
+        scripts.append((prefix, blocks[0]))
+    return tuple(scripts)
+
+
+def job_body(lines: list[str], gate: str) -> list[str] | None:
+    header = None
+    for index, line in enumerate(lines):
+        stripped = line.rstrip("\n")
+        if stripped.startswith(" ") and stripped.strip() == gate + ":":
+            header = index
+            break
+    if header is None:
+        return None
+    indent = len(lines[header]) - len(lines[header].lstrip(" "))
+    body = []
+    for line in lines[header + 1:]:
+        if line.strip() and (len(line) - len(line.lstrip(" "))) <= indent:
+            break
+        body.append(line)
+    return body
+
+
+def literal_run_blocks(body: list[str]) -> list[str]:
+    blocks = []
+    index = 0
+    while index < len(body):
+        stripped = body[index].rstrip("\n").lstrip(" ")
+        marker = stripped[2:] if stripped.startswith("- ") else stripped
+        if marker == "run: |":
+            parent = len(body[index]) - len(body[index].lstrip(" "))
+            index += 1
+            raw = []
+            while index < len(body):
+                nxt = body[index]
+                if nxt.strip() and (len(nxt) - len(nxt.lstrip(" "))) <= parent:
+                    break
+                raw.append(nxt)
+                index += 1
+            blocks.append(dedent_block(raw))
+            continue
+        index += 1
+    return blocks
+
+
+def dedent_block(raw: list[str]) -> str:
+    content = None
+    for line in raw:
+        if line.strip():
+            content = len(line) - len(line.lstrip(" "))
+            break
+    if content is None:
+        raise AssertionError("cannot find the result block")
+    kept = []
+    for line in raw:
+        if not line.strip():
+            kept.append("\n")
+            continue
+        width = len(line) - len(line.lstrip(" "))
+        if width < content:
+            raise AssertionError("cannot find the result block")
+        kept.append(line[content:])
+    return "".join(kept)
+
+
+def result_block_span(lines: list[str], prefix: str) -> tuple[int, int, int, str]:
+    needle = "${{ needs." + prefix + "_1.result }}"
+    starts = [index for index, line in enumerate(lines) if needle in line]
+    if len(starts) != 1:
+        raise AssertionError("cannot find the result block of " + prefix)
+    start = starts[0]
+    stop = start + 1
+    while stop < len(lines) and ("${{ needs." + prefix + "_") in lines[stop]:
+        stop += 1
+    if stop - start != 4:
+        raise AssertionError("cannot find the result block of " + prefix)
+    indent = len(lines[start]) - len(lines[start].lstrip(" "))
+    block = "".join(line[indent:] for line in lines[start:stop])
+    return start, stop, indent, block
+
+
+def result_block(text: str, prefix: str) -> str:
+    lines = text.splitlines(keepends=True)
+    _start, _stop, _indent, block = result_block_span(lines, prefix)
+    return block
+
+
+def mutate_gate_block(name: str, block: str) -> str:
+    lines = block.splitlines(keepends=True)
+    if name == "or_true":
+        return "".join(line.rstrip("\n") + " || true\n" for line in lines)
+    if name == "set_plus_e":
+        return "set +e\n" + block
+    if name == "if_false":
+        return "if false; then\n" + "".join("  " + line for line in lines) + "fi\n"
+    raise AssertionError(name)
+
+
+def workflow_with_gate_mutation(text: str, name: str) -> str:
+    lines = text.splitlines(keepends=True)
+    for prefix in ("part_310", "part_312"):
+        start, stop, indent, block = result_block_span(lines, prefix)
+        mutated = mutate_gate_block(name, block)
+        replacement = []
+        for line in mutated.splitlines(keepends=True):
+            body = line if line.endswith("\n") else line + "\n"
+            replacement.append((" " * indent + body) if body.strip() else "\n")
+        lines[start:stop] = replacement
+    return "".join(lines)
+
+
+def report_failed_part(script: str, prefix: str) -> None:
+    status = gate_script_status(script, prefix, ("failure", "success", "success", "success"))
+    if status == 0:
+        raise AssertionError("gate exited 0 with a failed part")
+
+
+def gate_script_status(script: str, prefix: str, results: tuple[str, ...]) -> int:
+    body = script
+    for index, result in enumerate(results, start=1):
+        token = "${{ needs." + prefix + "_" + str(index) + ".result }}"
+        if token not in body:
+            raise AssertionError(token)
+        body = body.replace(token, result, 1)
+    if "${{" in body:
+        raise AssertionError(body)
+    completed = subprocess.run(["bash", "-e", "-c", body], capture_output=True, text=True)
+    return completed.returncode
+
 
 class BuildShardsTest(unittest.TestCase):
     def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):
@@ -1424,6 +1665,64 @@ class BuildShardsTest(unittest.TestCase):
 
     def test_no_test_makes_no_shard(self):
         self.assertEqual(run_tests.build_shards(()), [])
+
+    def test_a_part_queue_starts_one_test_shards_before_larger_shards_and_a_full_queue_keeps_build_order(self):
+        plan = []
+        seq = 0
+        for module, count in (("big", 11), ("early", 1), ("late", 1)):
+            for _ in range(count):
+                plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
+                seq += 1
+        shards = run_tests.build_shards(tuple(plan))
+        self.assertEqual([shard.module for shard in shards], ["big", "big", "early", "late"])
+        self.assertEqual(run_tests.launch_order(shards, False), tuple(shards))
+        front = run_tests.launch_order(shards, True)
+        self.assertEqual([shard.number for shard in front], [3, 4, 1, 2])
+        self.assertEqual([len(shard.seqs) for shard in front], [1, 1, 6, 5])
+
+    def test_a_part_run_passes_one_test_shards_to_the_pool_ahead_of_larger_shards(self):
+        plan = []
+        seq = 0
+        for module, count in (("big", 11), ("early", 1), ("late", 1)):
+            for _ in range(count):
+                plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
+                seq += 1
+        received = []
+
+        def list_tests(start, scratch, timeout, pause):
+            return tuple(plan)
+
+        def run_pool(shards, jobs, timeout, launch_one, finish, tick, pause):
+            received.append(tuple(shards))
+
+        class Still:
+            inherited = False
+
+            def pause(self, owned):
+                return None
+
+            def sweep(self):
+                return []
+
+        # list_tests starts a child. Watch replaces SIGINT and SIGTERM. When it is the child subreaper, its sweep kills processes below this one.
+        originals = (run_tests.list_tests, run_tests.run_pool, run_tests.Watch)
+        run_tests.list_tests = list_tests
+        run_tests.run_pool = run_pool
+        run_tests.Watch = Still
+        self.addCleanup(setattr, run_tests, "list_tests", originals[0])
+        self.addCleanup(setattr, run_tests, "run_pool", originals[1])
+        self.addCleanup(setattr, run_tests, "Watch", originals[2])
+        sink = open(os.devnull, "w")
+        self.addCleanup(sink.close)
+        previous = sys.stderr
+        sys.stderr = sink
+        self.addCleanup(setattr, sys, "stderr", previous)
+        with tempfile.TemporaryDirectory() as directory:
+            run_tests.run(Path(directory), 1, 30, (1, 1))
+        self.assertEqual(
+            [(shard.number, len(shard.seqs)) for batch in received for shard in batch],
+            [(3, 1), (4, 1), (1, 6), (2, 5)],
+        )
 
 
 class AccountTest(unittest.TestCase):
