@@ -662,30 +662,58 @@ def library_wording_findings(tests_dir):
 
 
 def _machine_value_hits(text, identity):
-    name, word = "A-Za-z0-9._-", "A-Za-z0-9_-"
+    name, word_body = "A-Za-z0-9._-", "A-Za-z0-9_"
+    word = word_body + "-"
     home, user, first_host_label = (re.escape(value) for value in (identity.home, identity.user, identity.host.split(".")[0]))
     patterns = []
     if len(identity.home) > 1:
         as_a_whole_path_prefix = rf"(?<![{name}]){home}(?![{name}])"
         patterns.append(("home directory", as_a_whole_path_prefix, 0))
     if len(identity.user) > 1:
-        after_a_slash_or_a_tilde = rf"(?<=[/~]){user}(?![{name}])"
+        after_a_tilde = rf"(?<=~){user}(?![{name}])"
         before_an_at_sign = rf"(?<![{name}]){user}(?=@)"
-        patterns.append(("user name", f"{after_a_slash_or_a_tilde}|{before_an_at_sign}", 0))
+        after_a_name_and_a_slash = rf"(?<=[{name}]/){user}(?![{name}])"
+        as_the_only_absolute_segment = rf"(?<![{name}])/{user}(?![{name}])(?!/)"
+        patterns.append(("user name", "|".join((
+            after_a_tilde, before_an_at_sign, after_a_name_and_a_slash, as_the_only_absolute_segment,
+        )), 0))
     if len(identity.host.split(".")[0]) > 1:
         after_an_at_sign_or_two_slashes = rf"(?:(?<=@)|(?<=//)){first_host_label}(?![{word}])"
-        before_a_domain_or_a_port = rf"(?<![{word}]){first_host_label}(?=\.[A-Za-z0-9]|:[0-9])"
-        patterns.append(("host name", f"{after_an_at_sign_or_two_slashes}|{before_a_domain_or_a_port}", re.IGNORECASE))
+        before_a_port = rf"(?<![{word}]){first_host_label}(?=:[0-9])"
+        before_a_domain = rf'(?<![{word_body}/$"-]){first_host_label}(?=\.[A-Za-z0-9])'
+        patterns.append(("host name", "|".join((
+            after_an_at_sign_or_two_slashes, before_a_port, before_a_domain,
+        )), re.IGNORECASE))
     return [(kind, number, line) for number, line in enumerate(text.splitlines(), 1)
             for kind, pattern, flags in patterns if re.search(pattern, line, flags)]
 
 
 def machine_value_findings(ops_dir, operations_doc, identity):
-    """Report the given identity's home directory, user name, or host name in a path or address.
+    """Report the given identity's home directory, user name, or host name at the positions below.
 
     Scan every file under ops_dir, sorted, then operations_doc. Read text with
     errors='replace'. Skip a pattern when the home, the user name, or the
     first host label has length 1 or less.
+    The home matches as a whole path prefix when each side is absent or outside
+    the name class A-Za-z0-9._- (letters, digits, dot, underscore, and hyphen).
+    A user name matches after a tilde, or after a name-class character and a
+    slash, when the next character is outside that class. It matches as the
+    only segment of an absolute path when the slash has no name-class character
+    before it and the next character is neither a name-class character nor a
+    slash. It matches before an at sign when the previous character is outside
+    that class. It does not match as the first segment of a longer absolute
+    path, so </dev/null is quiet for the user dev and cd /root/foo reports the
+    home /root without the user root.
+    A host label matches after an at sign or two slashes when the next
+    character is outside the word class A-Za-z0-9_- (letters, digits, underscore,
+    and hyphen). It matches before a colon and a digit when the previous character
+    is outside that class. It matches before a dot and an alphanumeric when
+    the previous character is outside that class and is not a slash, a dollar
+    sign, or a double quote. The host match is case insensitive and uses the
+    first label. For the label ops, "ops.conf" does not match and ping ops.lan
+    does. For the label app, $APP.prev does not match and curl app:3773/x does.
+    For the label config, ops/config.example does not match, and //config/share
+    and see config.json match.
     Each hit becomes
     f"{rel}:{number}: holds this machine's {kind}"
     with kind one of 'home directory', 'user name', or 'host name', in that
