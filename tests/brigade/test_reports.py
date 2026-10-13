@@ -341,7 +341,8 @@ class ReportsTest(BrigadeTest):
         line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         asked = "List each follow-up as one top-level list item under a `"
         heading = line.split(asked, 1)[1].split("`", 1)[0]
-        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there."), line)
+        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there. "
+                                      "Name each file a follow-up touches by its repository path in backticks."), line)
         self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
         self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
                          "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
