@@ -31,10 +31,17 @@ class BriefsTest(BrigadeTest):
         report = f"{self.at}/reports/D1.md"
         for part in ("PURPOSE: Make startup fast.", "TICKETS: T1: Startup is slow", "branch `perf/d1`, started from `origin/main`",
                      "leased to you as L4: src/boot.ts", "- Median cold start below 400 ms", "slot --exclusive --",
+                     "A later commit that changes only prose does not rerun it.",
                      "TIMEBOX: 60 minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
                      f"Write it to {report}", "1. Write in plain engineering prose.",
                      f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
+        orders = text.split("STANDING ORDERS:\n", 1)[1]
+        numbered = orders.split("\n\n")[-1].splitlines()
+        self.assertEqual(len(numbered), 10)
+        self.assertEqual(numbered[0], "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.")
+        self.assertEqual(numbered[-1], "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?")
+        self.assertNotIn("Run builds and tests through", text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
