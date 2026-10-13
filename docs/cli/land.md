@@ -263,5 +263,5 @@ run a heavy command under a governor slot
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--exclusive` |  |  |  | hold every slot: for benchmarks that need a quiet machine |
-| `--repo REPO` |  |  | `.` | the repository this command works in (default: current directory) |
+| `--repo REPO` |  |  | `.` | the repository to name in the holder record (default: current directory) |
 | `cmd` |  |  |  |  |

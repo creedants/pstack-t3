@@ -2603,7 +2603,7 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
-    p.add_argument("--repo", default=".", help="the repository this command works in (default: current directory)")
+    p.add_argument("--repo", default=".", help="the repository to name in the holder record (default: current directory)")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     return top
 
