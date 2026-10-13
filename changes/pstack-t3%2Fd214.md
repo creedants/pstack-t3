@@ -1,0 +1,1 @@
+- A worker brief ends its standing orders with ten numbered test rules, and its verify section runs affected modules while working and the full chain once after the last commit. The review step asks, for each new or changed test, which change makes that test fail and nothing else fail.
