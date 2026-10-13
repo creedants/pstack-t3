@@ -166,6 +166,58 @@ GROUP_SLEEP = (
     "time.sleep(3600)\n"
 )
 
+# The parent keeps the default SIGTERM handler. The child ignores SIGTERM and records its pid and process group.
+IGNORING_GROUP = (
+    "import os, signal, sys, time\n"
+    "from pathlib import Path\n"
+    "parent_path, child_path = sys.argv[1], sys.argv[2]\n"
+    "Path(parent_path).write_text(str(os.getpid()))\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    time.sleep(3600)\n"
+    "time.sleep(3600)\n"
+)
+
+# The parent exits 0 after the child file has a pid line. The child ignores SIGTERM and sleeps.
+# It closes the standard streams so its inherited pipe does not keep the capture open.
+BACKGROUND_CHILD = (
+    "import os, signal, sys, time\n"
+    "from pathlib import Path\n"
+    "child_path = sys.argv[1]\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    os.close(0)\n"
+    "    os.close(1)\n"
+    "    os.close(2)\n"
+    "    time.sleep(3600)\n"
+    "path = Path(child_path)\n"
+    "deadline = time.monotonic() + 10\n"
+    "while '\\n' not in (path.read_text() if path.exists() else '') and time.monotonic() < deadline:\n"
+    "    time.sleep(0.01)\n"
+    "raise SystemExit(0)\n"
+)
+
+# The wrapper sleeps inside _publish. The cap can pass after the slots lock and before the command starts.
+SLOW_PUBLISH_MAIN = (
+    "import sys, time\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "land.EXCLUSIVE_CAP_GRACE = 0.05\n"
+    "original = land._publish\n"
+    "def slow_publish(*args, **kwargs):\n"
+    "    print(f'all-slots-taken {time.monotonic()}', flush=True)\n"
+    "    time.sleep(0.6)\n"
+    "    return original(*args, **kwargs)\n"
+    "land._publish = slow_publish\n"
+    "code = land.main(sys.argv[2:])\n"
+    "print(f'exit {time.monotonic()}', flush=True)\n"
+    "sys.exit(code)\n"
+)
+
 # A waiter with a shortened report interval. It runs its wrapped command once it holds a slot.
 WAIT_SCRIPT = (
     "import sys\n"
@@ -4306,6 +4358,157 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertNotIn("exclusive cap", stderr)
         self.assert_slots_free()
 
+    def release_recorded_group(self, *paths):
+        pids = []
+        for path in paths:
+            if not path.exists():
+                continue
+            for part in path.read_text().split():
+                try:
+                    pids.append(int(part))
+                except ValueError:
+                    continue
+        if not pids:
+            return
+        try:
+            os.killpg(pids[0], signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_an_exclusive_cap_kills_a_same_group_child_that_ignores_sigterm_after_the_leader_exits(self):
+        self.governor(1)
+        parent_path, child_path = self.base / "cap-parent.pid", self.base / "cap-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
+             str(parent_path), str(child_path)],
+            cap=0.4, grace=0.15)
+        try:
+            child_line = self.wait_for_line(child_path)
+            code = process.wait(timeout=10)
+            parent_pid = int(parent_path.read_text())
+            child_pid, child_group = (int(part) for part in child_line.split())
+            self.assertEqual(child_group, parent_pid)
+            self.assert_dead(parent_pid)
+            self.assert_dead(child_pid)
+            stderr = process.stderr.read()
+            self.assertEqual(code, 124)
+            self.assertEqual(
+                stderr,
+                "land: stopped the command at the 0.4s exclusive cap. "
+                "--for sets a longer cap and needs --reason past 0.4s.\n")
+            self.assert_slots_free()
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
+
+    def test_sigint_to_an_exclusive_land_py_kills_a_same_group_child_that_ignores_sigterm(self):
+        self.governor(1)
+        code, stderr = self.signal_exclusive_ignoring_child(signal.SIGINT)
+        self.assertEqual(code, -2)
+        self.assertIn("KeyboardInterrupt", stderr)
+        self.assertNotIn("exclusive cap", stderr)
+
+    def test_sigterm_to_an_exclusive_land_py_kills_a_same_group_child_that_ignores_sigterm(self):
+        self.governor(1)
+        code, stderr = self.signal_exclusive_ignoring_child(signal.SIGTERM)
+        self.assertEqual(code, 143)
+        self.assertNotIn("exclusive cap", stderr)
+
+    def test_sighup_to_an_exclusive_land_py_kills_a_same_group_child_that_ignores_sigterm(self):
+        self.governor(1)
+        code, stderr = self.signal_exclusive_ignoring_child(signal.SIGHUP)
+        self.assertEqual(code, 129)
+        self.assertNotIn("exclusive cap", stderr)
+
+    def signal_exclusive_ignoring_child(self, signum):
+        parent_path = self.base / f"signal-{signum}-parent.pid"
+        child_path = self.base / f"signal-{signum}-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
+             str(parent_path), str(child_path)],
+            cap=30, grace=0.2)
+        try:
+            child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+            self.assertEqual(child_group, int(parent_path.read_text()))
+            os.kill(process.pid, signum)
+            code = process.wait(timeout=10)
+            self.assert_dead(child_pid)
+            self.assert_slots_free()
+            stderr = process.stderr.read()
+            return code, stderr
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
+
+    def test_an_exclusive_command_that_finishes_leaves_a_background_child(self):
+        self.governor(1)
+        child_path = self.base / "background-child.pid"
+        child = None
+        try:
+            result = self.run_exclusive(
+                ["slot", "--exclusive", "--", sys.executable, "-c", BACKGROUND_CHILD, str(child_path)],
+                cap=30, timeout=10)
+            child = int(child_path.read_text().split()[0])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("exclusive cap", result.stderr)
+            time.sleep(0.2)
+            os.kill(child, 0)
+            self.assert_slots_free()
+        finally:
+            if child is None and child_path.exists():
+                parts = child_path.read_text().split()
+                if parts:
+                    try:
+                        child = int(parts[0])
+                    except ValueError:
+                        child = None
+            if child is not None:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(child, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.02)
+
+    def test_an_exclusive_deadline_is_when_every_slot_is_locked(self):
+        self.governor(1)
+        result = subprocess.run(
+            [sys.executable, "-c", SLOW_PUBLISH_MAIN, str(SCRIPT.parent),
+             "slot", "--exclusive", "--for", "0.2", "--",
+             sys.executable, "-c", "print('command-finished', flush=True)"],
+            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("all-slots-taken", result.stdout)
+        self.assertNotIn("command-finished", result.stdout)
+        self.assertEqual(
+            result.stderr,
+            "land: stopped the command at the 0.2s exclusive cap. "
+            "--for sets a longer cap and needs --reason past 600s.\n")
+        lines = result.stdout.splitlines()
+        self.assertEqual([line.split()[0] for line in lines], ["all-slots-taken", "exit"])
+        taken = float(lines[0].split()[1])
+        exited = float(lines[1].split()[1])
+        self.assertGreaterEqual(exited - taken, 0.5)
+        self.assert_slots_free()
+
     def test_bad_exclusive_flags_are_refused_before_a_slot_is_taken(self):
         self.governor(1)
         holder = self.start_holder(kind="worker", command="make test")
@@ -4366,6 +4569,12 @@ os.execv({real!r}, [{real!r}, *args])
              sys.executable, "-c", "print('why')"],
             cap=2, grace=0.05, timeout=10)
         self.assertEqual((named.returncode, named.stdout), (0, "why\n"), named.stderr)
+        refused = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "0.8", "--", sys.executable, "-c", "print('no')"],
+            cap=0.4, cap_max=0.8, timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stdout, "")
+        self.assertEqual(refused.stderr, "land: --for over 0.4 seconds needs --reason\n")
 
     def test_an_exclusive_holder_record_and_its_wait_line_carry_the_cap_and_the_reason(self):
         self.governor(1)

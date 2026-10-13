@@ -623,12 +623,12 @@ def _raise_exit(signum, frame):
 @contextlib.contextmanager
 def _held(kind, repo, command, cap=None, reason=None):
     """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
-    held, records = _admit(kind, repo, command, cap, reason)
+    held, records, acquired = _admit(kind, repo, command, cap, reason)
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
     for signum in previous:
         signal.signal(signum, _raise_exit)
     try:
-        yield
+        yield acquired
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -658,6 +658,8 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
             taken = None
             if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
                 taken = _try_take(kind, handles, slots)
+            if taken is not None:
+                acquired = time.monotonic()
             if taken is None and ticket is None:
                 ticket = _take_ticket(gate, place, kind)
             if taken is None:
@@ -668,7 +670,7 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
                 _ofd_unlock(place, TURN_PLACE + ticket)
             _ofd_unlock(gate, TURN_MUTEX)
             if taken is not None:
-                return list(handles.values()), records
+                return list(handles.values()), records, acquired
             waited = time.time() - started
             if _report_due(waited, reported):
                 line = _format_wait(waited, _live_holders(busy))
@@ -695,10 +697,10 @@ def exclusive_slot(repo=None, command=None, cap=None, reason=None):
     A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    with _held("exclusive", repo, command, cap, reason):
+    with _held("exclusive", repo, command, cap, reason) as acquired:
         os.environ["LAND_SLOT"] = "exclusive"
         try:
-            yield
+            yield acquired
         finally:
             os.environ.pop("LAND_SLOT", None)
 
@@ -707,9 +709,11 @@ _real_sleep = time.sleep
 
 
 def exclusive_command(command, repo, for_text, reason_text):
-    """Hold every slot, run command, and stop its session at the cap.
+    """Hold every slot, run command, and stop its process group at the cap.
 
     command is an argv list. for_text and reason_text are the raw flag strings, or None.
+    The deadline starts when every slot is locked, before the holder records are written.
+    A command whose cap has already passed does not start.
     Returns the command's status, or EXCLUSIVE_CAP_STATUS.
     """
     seconds, reason = _parse_exclusive_cap(for_text, reason_text)
@@ -728,34 +732,55 @@ def exclusive_command(command, repo, for_text, reason_text):
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
-            process.wait()
+            if process.returncode is None:
+                process.wait()
             return
+        # The unreaped leader is how SIGKILL stays on this command's group. Its pid is the process group id, and a zombie holds that pid until it is reaped, so the kernel cannot reuse the id for another process group.
         try:
-            wait_with_real_sleep(process, EXCLUSIVE_CAP_GRACE)
-        except subprocess.TimeoutExpired:
-            pass
+            grace_ends = time.monotonic() + EXCLUSIVE_CAP_GRACE
+            while True:
+                try:
+                    exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                except ChildProcessError:
+                    # The leader is already reaped, so this pid no longer proves the command's group.
+                    if process.returncode is None:
+                        try:
+                            process.wait()
+                        except ChildProcessError:
+                            process.returncode = -1
+                    return
+                remaining = grace_ends - time.monotonic()
+                if exited is not None:
+                    if remaining > 0:
+                        _real_sleep(remaining)
+                    break
+                if remaining <= 0:
+                    break
+                _real_sleep(min(0.05, remaining))
         except BaseException:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait()
+            if process.returncode is None:
+                process.wait()
             raise
-        else:
-            return
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        process.wait()
+        if process.returncode is None:
+            process.wait()
 
-    with exclusive_slot(repo=repo, command=" ".join(command), cap=seconds, reason=reason):
-        origin = time.monotonic()
+    with exclusive_slot(repo=repo, command=" ".join(command), cap=seconds, reason=reason) as acquired:
+        if seconds - (time.monotonic() - acquired) <= 0:
+            _report_cap(seconds)
+            return EXCLUSIVE_CAP_STATUS
         process = subprocess.Popen(command, start_new_session=True)
         try:
             if hasattr(process, "_sigint_wait_secs"):
                 process._sigint_wait_secs = 0  # CPython waits 0.25s on SIGINT after setsid, and the child did not see that signal.
-            remaining = seconds - (time.monotonic() - origin)
+            remaining = seconds - (time.monotonic() - acquired)
             try:
                 wait_with_real_sleep(process, max(0.0, remaining))
             except subprocess.TimeoutExpired:
