@@ -14,6 +14,19 @@ from .support import (
 
 
 class CallTest(unittest.TestCase):
+    def _in_process(self):
+        name = "PSTACK_TEST_REAL_PROCESS"
+        previous = os.environ.get(name)
+        os.environ.pop(name, None)
+
+        def restore():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+
+        self.addCleanup(restore)
+
     def _directory(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -227,6 +240,7 @@ class CallTest(unittest.TestCase):
             os.umask(outer_umask)
 
     def test_the_next_test_loads_the_script_again(self):
+        self._in_process()
         directory = self._directory()
         log = directory / "log.txt"
         script = self._write(
@@ -258,6 +272,7 @@ class CallTest(unittest.TestCase):
             other.doCleanups()
 
     def test_a_cached_function_runs_again_on_the_next_call(self):
+        self._in_process()
         directory = self._directory()
         script = self._write(
             directory,
@@ -297,18 +312,15 @@ class CallTest(unittest.TestCase):
             """,
         )
         name = "PSTACK_TEST_REAL_PROCESS"
+        self._in_process()
+        first = call(self, script, [])
+        self.assertEqual(first.code, 0, first.stderr)
+        self.assertEqual(first.stdout_text().strip(), str(os.getpid()))
+        os.environ[name] = "1"
+        second = call(self, script, [])
+        self.assertEqual(second.code, 0, second.stderr)
+        self.assertNotEqual(second.stdout_text().strip(), str(os.getpid()))
         os.environ.pop(name, None)
-        try:
-            first = call(self, script, [])
-            self.assertEqual(first.code, 0, first.stderr)
-            self.assertEqual(first.stdout_text().strip(), str(os.getpid()))
-            os.environ[name] = "1"
-            second = call(self, script, [])
-            self.assertEqual(second.code, 0, second.stderr)
-            self.assertNotEqual(second.stdout_text().strip(), str(os.getpid()))
-            del os.environ[name]
-            third = call(self, script, [])
-            self.assertEqual(third.code, 0, third.stderr)
-            self.assertEqual(third.stdout_text().strip(), str(os.getpid()))
-        finally:
-            os.environ.pop(name, None)
+        third = call(self, script, [])
+        self.assertEqual(third.code, 0, third.stderr)
+        self.assertEqual(third.stdout_text().strip(), str(os.getpid()))
