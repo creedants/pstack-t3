@@ -161,8 +161,10 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
 def verify_rule(land):
     return (
         "While working, run only the affected test modules. "
+        f"Run all builds and tests through `python3 {land} slot -- <command>`. "
+        "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. "
         "Run the claims check before the final verification. "
-        f"Run the full verification chain once, after the last commit, through `python3 {land} slot -- <command>`. "
+        "Run the full verification chain once, after the last commit. "
         "The chain is the first bullet of this section. "
         "A later commit that changes only prose does not rerun it. "
         "A fix round runs the affected modules while working and one full run at the end."
