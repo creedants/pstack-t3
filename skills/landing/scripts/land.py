@@ -14,6 +14,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 import posixpath
 import re
@@ -218,9 +219,9 @@ TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
 REPORT_AFTER = 15
 REPORT_EVERY = 60
 
-# A holder record names its holder. kind is one of the three kinds or None. pid is identity for
-# dedupe only and never a liveness test. started is a wall-clock float. command is the wrapped
-# command shortened to its first 80 characters.
+# A holder record names its holder. kind is one of the three kinds or None. pid identifies
+# records for dedupe and cleanup. started is a wall-clock float. command is a rendering of
+# the wrapped command with at most 80 characters.
 _Holder = namedtuple("_Holder", "kind pid repo started command")
 _UNKNOWN = _Holder(None, None, None, None, None)
 
@@ -317,11 +318,10 @@ def _take_ticket(gate, place, kind):
 
 
 def _short_command(command):
-    """The wrapped command shortened to its first 80 characters, with newlines flattened to spaces."""
+    """The wrapped command's first 80 characters, with CR and LF flattened to spaces."""
     if not command:
         return None
-    text = command.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    return text[:80] or None
+    return command[:80].replace("\r\n", " ").replace("\r", " ").replace("\n", " ") or None
 
 
 def _repo_text(repo):
@@ -337,11 +337,41 @@ def _hold_path(name):
 
 
 def _dump_holder(path, holder):
-    """Write one holder record atomically, replacing whatever the slot file's previous holder left."""
+    """Write one holder record atomically, replacing whatever the slot file's previous holder left.
+
+    The record is written to a temporary file whose descriptor is already locked, and that inode
+    is renamed into place, so the record lock travels with the record.
+    Returns the descriptor, still locked, for the caller to release when it lets the slot go.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(dict(zip(_Holder._fields, holder))))
-    os.replace(temporary, path)
+    descriptor = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.pwrite(descriptor, json.dumps(dict(zip(_Holder._fields, holder))).encode(), 0)
+        os.replace(temporary, path)
+    except BaseException:
+        os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
+    return descriptor
+
+
+def _release_records(records):
+    """Unlock and close the record descriptors this process published."""
+    for descriptor in records:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _finite(value):
+    """True for a start time a record may hold and formatting can use."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
 
 
 def _read_holder(path):
@@ -360,9 +390,29 @@ def _read_holder(path):
         kind if kind in ("worker", "landing", "exclusive") else None,
         pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
         repo if isinstance(repo, str) and repo else None,
-        started if isinstance(started, (int, float)) and not isinstance(started, bool) else None,
+        started if _finite(started) else None,
         command,
     )
+
+
+def _record_holder(path):
+    """The holder a record names, or unknown when the record's own lock proves nothing.
+
+    A waiter takes a shared lock on the record file to test it. A failed shared lock proves an
+    exclusive writer still holds that record, so the record names a live holder. A record the
+    waiter could lock itself, and one it could not read, both name nobody.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return _UNKNOWN
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return _read_holder(path)
+    finally:
+        os.close(descriptor)
+    return _UNKNOWN
 
 
 def _slot_busy(handles, name):
@@ -375,20 +425,26 @@ def _slot_busy(handles, name):
     return False
 
 
-def _held_names(handles):
+def _busy_names(handles):
+    """The slot names held by someone else. Runs under the turn mutex, so no caller can observe a probe's lock."""
     return [name for name in handles if _slot_busy(handles, name)]
 
 
 def _publish(kind, handles, taken, repo, command):
-    """Write one holder record for each slot just taken, before the turn mutex unlocks."""
+    """Write one holder record for each slot just taken, before the turn mutex unlocks.
+
+    Returns the locked record descriptors, one per slot whose write succeeded.
+    """
     holder = _Holder(kind, os.getpid(), _repo_text(repo), time.time(), _short_command(command))
+    records = []
     for name, handle in handles.items():
         if handle not in taken:
             continue
         try:
-            _dump_holder(_hold_path(name), holder)
+            records.append(_dump_holder(_hold_path(name), holder))
         except OSError:
             pass
+    return records
 
 
 def _clear():
@@ -401,11 +457,11 @@ def _clear():
                 pass
 
 
-def _live_holders(handles):
-    """The distinct holders whose slot flocks are actually held, named by their records."""
+def _live_holders(names):
+    """The holders of the named busy slots, distinct, each named by its record."""
     holders, seen = [], set()
-    for name in _held_names(handles):
-        holder = _read_holder(_hold_path(name))
+    for name in names:
+        holder = _record_holder(_hold_path(name))
         key = holder.pid if holder.pid is not None else holder
         if key in seen:
             continue
@@ -447,7 +503,7 @@ def _raise_exit(signum, frame):
 @contextlib.contextmanager
 def _held(kind, repo, command):
     """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
-    held = _admit(kind, repo, command)
+    held, records = _admit(kind, repo, command)
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
     for signum in previous:
         signal.signal(signum, _raise_exit)
@@ -459,6 +515,7 @@ def _held(kind, repo, command):
         _clear()
         for handle in held:
             handle.close()
+        _release_records(records)
 
 
 def _admit(kind, repo=None, command=None):
@@ -467,6 +524,7 @@ def _admit(kind, repo=None, command=None):
     slots = governor_slots()
     handles = {name: open(directory / name, "a") for name in _slot_names("exclusive", slots)}
     turns = []
+    records = []
     try:
         # Two opens, so that unlocking the mutex byte on gate keeps the ticket byte locked on place.
         for _ in range(2):
@@ -482,19 +540,22 @@ def _admit(kind, repo=None, command=None):
                 taken = _try_take(kind, handles, slots)
             if taken is None and ticket is None:
                 ticket = _take_ticket(gate, place, kind)
-            if taken is not None:
-                _publish(kind, handles, taken, repo, command)
+            if taken is None:
+                busy = _busy_names(handles)
+            else:
+                records = _publish(kind, handles, taken, repo, command)
             if taken is not None and ticket is not None:
                 _ofd_unlock(place, TURN_PLACE + ticket)
             _ofd_unlock(gate, TURN_MUTEX)
             if taken is not None:
-                return list(handles.values())
+                return list(handles.values()), records
             waited = time.time() - started
             if _report_due(waited, reported):
-                print(_format_wait(waited, _live_holders(handles)), file=sys.stderr, flush=True)
+                print(_format_wait(waited, _live_holders(busy)), file=sys.stderr, flush=True)
                 reported = waited
             time.sleep(0.5)
     except BaseException:
+        _release_records(records)
         for handle in handles.values():
             handle.close()
         raise
@@ -2603,7 +2664,8 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
-    p.add_argument("--repo", default=".", help="the repository to name in the holder record (default: current directory)")
+    p.add_argument("--repo", dest="slot_repo", default=None,
+                   help="the repository to name in the holder record (default: current directory)")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     return top
 
@@ -2615,7 +2677,7 @@ def run(argv):
         if not command:
             raise LandError("slot needs a command after --")
         holder = (exclusive_slot if args.exclusive else slot)
-        with holder(repo=args.repo, command=" ".join(command)):
+        with holder(repo=args.slot_repo or args.repo, command=" ".join(command)):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,

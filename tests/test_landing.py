@@ -150,6 +150,42 @@ WAIT_SCRIPT = (
     "    print('ran', flush=True)\n"
 )
 
+# A waiter whose busy-slot probe stops after it takes the named free slot. It touches the marker and
+# waits on the fifo before it unlocks that handle, so a test holds the probe's slot lock.
+REPORT_SCRIPT = (
+    "import fcntl, os, sys\n"
+    "from pathlib import Path\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "marker, release, target, after, every, repo, command = sys.argv[2:9]\n"
+    "land.REPORT_AFTER = float(after)\n"
+    "land.REPORT_EVERY = float(every)\n"
+    "paused = []\n"
+    "def slow_busy(handles, name):\n"
+    "    try:\n"
+    "        fcntl.flock(handles[name], fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+    "    except BlockingIOError:\n"
+    "        return True\n"
+    "    if name != target or paused:\n"
+    "        fcntl.flock(handles[name], fcntl.LOCK_UN)\n"
+    "        return False\n"
+    "    paused.append(name)\n"
+    "    Path(marker).touch()\n"
+    "    os.read(os.open(release, os.O_RDONLY), 1)\n"
+    "    fcntl.flock(handles[name], fcntl.LOCK_UN)\n"
+    "    return False\n"
+    "land._slot_busy = slow_busy\n"
+    "with land.slot('worker', repo=repo, command=command):\n"
+    "    print('ran', flush=True)\n"
+)
+
+# A command that prints the repository its own holder record names, so a test reads a real record.
+RECORD_REPO_SCRIPT = (
+    "import json, os\n"
+    "from pathlib import Path\n"
+    "print(json.loads(Path(os.environ['XDG_STATE_HOME'], 'pstack-t3', 'governor', 'holds', 'worker-0').read_text())['repo'])\n"
+)
+
 # The fixture is the slot code of the last version before the turn file and must not be updated to match the script.
 # LandError and state_home are the names that code calls. main only parses slot and runs the command inside slot or exclusive_slot.
 PREVIOUS_SLOT_SCRIPT = '''\
@@ -4065,34 +4101,122 @@ os.execv({real!r}, [{real!r}, *args])
         holds.mkdir(parents=True, exist_ok=True)
         (holds / "worker-0").write_text(json.dumps(
             {"kind": "worker", "pid": 2 ** 31 - 1, "repo": str(self.work), "started": time.time(), "command": "make"}))
-        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+        held = open(land.governor_dir() / "worker-0", "a")
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            self.assertEqual(land._live_holders(handles), [])
+            self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
         finally:
-            for handle in handles.values():
-                handle.close()
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
 
     def test_a_malformed_record_prints_unknown_without_failing(self):
         self.governor(1)
         holds = land.governor_dir() / "holds"
         holds.mkdir(parents=True, exist_ok=True)
         record = holds / "worker-0"
-        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
         held = open(land.governor_dir() / "worker-0", "a")
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             for content in ("{ not json", ""):
                 record.write_text(content)
-                holders = land._live_holders(handles)
+                holders = land._live_holders(["worker-0"])
                 self.assertEqual(holders, [land._UNKNOWN])
                 self.assertEqual(land._format_wait(15, holders), "land: waited 15s for a slot; unknown")
             record.unlink()
-            self.assertEqual(land._live_holders(handles), [land._UNKNOWN])
+            self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
         finally:
             fcntl.flock(held, fcntl.LOCK_UN)
             held.close()
-            for handle in handles.values():
-                handle.close()
+
+    def test_a_record_start_no_float_can_hold_reads_as_unknown(self):
+        self.governor(1)
+        holds = land.governor_dir() / "holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        record = holds / "worker-0"
+        held = open(land.governor_dir() / "worker-0", "a")
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        writer = os.open(record, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+        fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            for started in ("-1e309", "1e400", "1" + "0" * 399):
+                text = ('{"kind": "worker", "pid": %d, "repo": %s, "started": %s, "command": "make"}'
+                        % (os.getpid(), json.dumps(str(self.work)), started)).encode()
+                os.pwrite(writer, text, 0)
+                os.ftruncate(writer, len(text))
+                holders = land._live_holders(["worker-0"])
+                self.assertEqual([holder.started for holder in holders], [None])
+                self.assertIn("for unknown", land._format_wait(15, holders))
+        finally:
+            os.close(writer)
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+
+    def test_a_record_start_no_float_can_hold_leaves_the_waiter_running(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="make test")
+        record = land._hold_path("worker-0")
+        saved = json.loads(record.read_text())
+        damaged = re.sub(r'"started": [^,}]+', '"started": -1e309', json.dumps(saved))
+        self.assertNotEqual(damaged, json.dumps(saved))
+        descriptor = os.open(record, os.O_WRONLY)
+        try:
+            os.pwrite(descriptor, damaged.encode(), 0)
+            os.ftruncate(descriptor, len(damaged))
+        finally:
+            os.close(descriptor)
+        release = os.open(self.base / "holder-worker" / "release", os.O_WRONLY)
+        try:
+            code, stdout, _, line = self.run_waiter(WAIT_SCRIPT, release, after="0.2")
+        finally:
+            os.close(release)
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "ran\n")
+        self.assertRegex(line, rf"^land: waited \d+s for a slot; worker {re.escape(str(self.work))} "
+                                rf"for unknown: make test$")
+
+    def test_an_old_holder_with_no_record_names_an_unknown_holder(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="dead-command")
+        self.assertEqual(land._read_holder(land._hold_path("worker-0")).command, "dead-command")
+        os.kill(holder.pid, signal.SIGKILL)
+        self.assertEqual(holder.wait(timeout=20), -signal.SIGKILL)
+        old = self.base / "old/land.py"
+        old.parent.mkdir()
+        old.write_text(PREVIOUS_SLOT_SCRIPT)
+        directory = self.base / "old-holder"
+        directory.mkdir()
+        release, took = directory / "release", directory / "took"
+        os.mkfifo(release)
+        read_byte = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "Path(sys.argv[2]).touch()\n"
+            "os.read(os.open(sys.argv[1], os.O_RDONLY), 1)\n"
+        )
+        previous = subprocess.Popen(
+            [sys.executable, str(old), "slot", "--", sys.executable, "-c", read_byte, str(release), str(took)],
+            cwd=directory, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop_previous():
+            if previous.poll() is None:
+                os.killpg(previous.pid, signal.SIGKILL)
+            previous.wait(timeout=20)
+        self.addCleanup(stop_previous)
+        deadline = time.monotonic() + 20
+        while not took.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(took.exists(), "the previous holder did not take the worker slot")
+
+        gate = os.open(release, os.O_WRONLY)
+        try:
+            code, stdout, stderr, line = self.run_waiter(WAIT_SCRIPT, gate, after="0.2")
+        finally:
+            os.close(gate)
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "ran\n")
+        self.assertEqual(stderr, line + "\n")
+        self.assertRegex(line, r"^land: waited \d+s for a slot; unknown$")
 
     def test_the_wrapped_command_exit_status_and_output_are_unchanged(self):
         self.governor(1)
@@ -4106,17 +4230,67 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_the_record_holds_only_the_first_80_characters_of_the_command(self):
         self.governor(1)
-        command = "x" * 120
-        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
-        try:
-            land._publish("worker", handles, [handles["worker-0"]], str(self.work), command)
-            record = json.loads(land._hold_path("worker-0").read_text())
-        finally:
-            for handle in handles.values():
-                handle.close()
-        self.assertEqual(record["command"], command[:80])
+
+        def stored(command):
+            handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+            try:
+                records = land._publish("worker", handles, [handles["worker-0"]], str(self.work), command)
+                return json.loads(land._hold_path("worker-0").read_text())
+            finally:
+                land._release_records(records)
+                for handle in handles.values():
+                    handle.close()
+
+        record = stored("x" * 120)
+        crlf = stored("x" * 60 + "\r\n" * 10 + "SECRET")
+        self.assertEqual(record["command"], "x" * 80)
         self.assertEqual(len(record["command"]), 80)
+        self.assertEqual(crlf["command"], "x" * 60 + " " * 10)
+        self.assertNotIn("SECRET", crlf["command"])
         self.assertEqual(set(record), set(land._Holder._fields))
+
+    def test_a_reporting_probe_cannot_let_a_later_landing_caller_pass_an_earlier_exclusive(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        exclusive = slots.start("exclusive", "--exclusive", stepped=True)
+        self.assertEqual(slots.settle(exclusive), "waiting")
+        directory = self.base / "caller-reporter"
+        directory.mkdir()
+        marker, release = directory / "probe", directory / "release"
+        os.mkfifo(release)
+        # Keep both ends open so the write that resumes the probe never waits for a reader.
+        gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        reporter = subprocess.Popen(
+            [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "worker-0",
+             "0.2", "0.2", str(self.work), "make test"],
+            cwd=directory, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop_reporter():
+            if reporter.poll() is None:
+                os.killpg(reporter.pid, signal.SIGKILL)
+            reporter.wait(timeout=20)
+        self.addCleanup(stop_reporter)
+
+        slots.release(holder)
+        deadline = time.monotonic() + 20
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(marker.exists(), "the reporting probe did not pause holding the free slot")
+
+        landing = slots.start("landing", pool="landing")
+        slots.wait(lambda: TURN_MUTEX in slots.turn_locks()[1] or landing.started,
+                   "the landing caller blocks on the turn mutex the paused probe holds")
+        self.assertIn(TURN_MUTEX, slots.turn_locks()[1])
+        self.assertFalse(landing.started)
+
+        os.write(gate, b"x")
+        stop_reporter()
+        self.assertEqual(slots.step(exclusive), "started")
+        self.assertFalse(landing.started)
+        slots.release(exclusive)
+        slots.release(slots.enter(landing))
+        self.assertEqual(slots.entries(), ["holder", "exclusive", "landing"])
 
     def test_a_holder_publishes_its_record_and_clears_it_on_release(self):
         self.governor(1)
@@ -4151,9 +4325,25 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(holder.wait(timeout=20), 128 + signal.SIGTERM)
         self.assertFalse(land._hold_path("worker-0").exists())
 
+    def test_the_slot_repo_flag_names_the_repository_from_either_position(self):
+        self.governor(1)
+        chosen = self.base / "chosen"
+        chosen.mkdir()
+        for position in ("before", "after"):
+            with self.subTest(position=position):
+                chosen_flag = ["--repo", str(chosen)] if position == "before" else []
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), *chosen_flag, "slot",
+                     *([] if position == "before" else ["--repo", str(chosen)]), "--",
+                     sys.executable, "-c", RECORD_REPO_SCRIPT],
+                    cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), str(chosen))
+
     def test_the_slot_repo_flag_defaults_to_the_working_directory(self):
-        self.assertEqual(land.parser().parse_args(["slot", "--", "true"]).repo, ".")
-        self.assertEqual(land._repo_text("."), os.getcwd())
+        args = land.parser().parse_args(["slot", "--", "true"])
+        self.assertEqual((args.slot_repo, args.repo), (None, "."))
+        self.assertEqual(land._repo_text(args.slot_repo or args.repo), os.getcwd())
 
     def reserve(self, prefix, paths, ruling, *extra, ok=True):
         return self.land("lease", "reserve", "--for", prefix, "--paths", paths, "--ruling", ruling, *ADMIN, *extra, ok=ok)
