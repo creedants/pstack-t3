@@ -175,7 +175,7 @@ BRIGADE_LIB = ("__init__", "seam", "shared", "store", "reports", "tickets", "lea
 
 
 def check_brigade_lib(base):
-    """Every area module the brigade entry imports. A missing one fails the build."""
+    """The brigade_lib files the build requires. A missing one fails the build."""
     if not (base / "brigade" / "scripts" / "brigade.py").is_file():
         return
     missing = [f"brigade_lib/{name}.py" for name in BRIGADE_LIB
