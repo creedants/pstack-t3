@@ -24,7 +24,7 @@ jobs:
           browser=$(python3 - <<'PY'
           import tempfile
           from tests.test_activity_render import select_browser
-          with tempfile.TemporaryDirectory() as directory:
+          with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
               path, unavailable = select_browser(directory)
           if path is None:
               print("no working headless browser: " + "; ".join(unavailable))
