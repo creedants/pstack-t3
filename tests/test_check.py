@@ -745,6 +745,77 @@ class CheckoutRuleTest(unittest.TestCase):
             "ops/t3-nightly-update.sh:1: holds this machine's home directory",
         ])
 
+    def test_dev_null_does_not_report_the_user_dev(self):
+        who = check.Identity("/home/dev", "dev", "docs")
+        ops, document = self._ops_repo("</dev/null\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [])
+
+    def test_a_tilde_dev_reports_the_user(self):
+        who = check.Identity("/home/dev", "dev", "docs")
+        ops, document = self._ops_repo("see ~dev/notes\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's user name",
+        ])
+
+    def test_a_longer_root_path_reports_the_home_and_not_the_user(self):
+        who = check.Identity("/root", "root", "x")
+        ops, document = self._ops_repo("cd /root/foo\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's home directory",
+        ])
+
+    def test_a_quoted_ops_conf_does_not_report_the_host(self):
+        who = check.Identity("/home/alice", "alice", "ops")
+        ops, document = self._ops_repo('echo "ops.conf"\n', "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [])
+
+    def test_ping_ops_lan_reports_the_host(self):
+        who = check.Identity("/home/alice", "alice", "ops")
+        ops, document = self._ops_repo("ping ops.lan\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+        ])
+
+    def test_config_example_after_one_slash_does_not_report_the_host(self):
+        who = check.Identity("/home/alice", "alice", "config")
+        ops, document = self._ops_repo("cp ops/config.example dest\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [])
+
+    def test_config_after_two_slashes_reports_the_host(self):
+        who = check.Identity("/home/alice", "alice", "config")
+        ops, document = self._ops_repo("open //config/share\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+        ])
+
+    def test_dollar_app_prev_does_not_report_the_host(self):
+        who = check.Identity("/home/alice", "alice", "app")
+        ops, document = self._ops_repo("cp $APP.prev dest\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [])
+
+    def test_app_before_a_port_reports_the_host(self):
+        who = check.Identity("/home/alice", "alice", "app")
+        ops, document = self._ops_repo("curl app:3773/x\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+        ])
+
+    def test_a_quoted_dotted_host_reports_the_host(self):
+        who = check.Identity("/home/zed", "zed", "box7.lan")
+        text = 'ssh "box7.lan"\nHOST="box7.lan"\nserver = "box7.lan"\nssh "BOX7.LAN"\nssh "box7.lan:2222"\n'
+        ops, document = self._ops_repo(text, "ok\n")
+        hit = "ops/t3-nightly-update.sh:%d: holds this machine's host name"
+        self.assertEqual(check.machine_value_findings(ops, document, who), [hit % n for n in range(1, 6)])
+
+    def test_a_dotted_host_in_a_slash_path_reports_the_host(self):
+        who = check.Identity("/home/zed", "zed", "box7.lan")
+        text = "export BACKUPS=/mnt/box7.lan/archives\nscp backup:/box7.lan/data dest\n"
+        ops, document = self._ops_repo(text, "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+            "ops/t3-nightly-update.sh:2: holds this machine's host name",
+        ])
+
     def _pair(self, roles, install):
         root = self._directory()
         roles_path = root / "roles.py"
