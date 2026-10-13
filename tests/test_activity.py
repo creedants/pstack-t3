@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zlib
 from dataclasses import replace
@@ -1131,6 +1132,16 @@ class FilterTest(unittest.TestCase):
         kept = "Run /code-review today on the queue for kit-d7-audit-task-2 and prekit-d7-audit-taskpost with x=/code-review and (/code-review) or code review and pre-code-review of a-b-c"
         self.assertEqual(clean(kept), kept)
         self.assertEqual(MOD["Privacy"]().clean("see kit-d7-audit-task now"), "see kit-d7-audit-task now")
+
+    def test_clean_removes_a_hyphenated_request_name_from_the_end_of_a_30000_character_value_of_m_and_spaces(self):
+        text = ("m " * 14994) + " code-review"
+        self.assertEqual(len(text), 30000)
+        self.assertEqual(MOD["Privacy"](requests={"code-review"}).clean(text), ("m " * 14993) + "m")
+
+    def test_clean_removes_a_percent_encoded_hyphenated_request_name_from_the_end_of_a_30000_character_value_of_m_and_spaces(self):
+        text = ("m " * 14993) + " code%2Dreview"
+        self.assertEqual(len(text), 30000)
+        self.assertEqual(MOD["Privacy"](requests={"code-review"}).clean(text), ("m " * 14992) + "m")
 
     def test_clean_removes_a_request_name_with_a_hyphen_and_an_underscore_a_dot_or_a_doubled_hyphen_anywhere_in_a_word_when_it_is_4_or_more_characters(self):
         clean = MOD["Privacy"](requests={"odd_name-1", "v1.2-check", "two--parts"}).clean
@@ -3323,6 +3334,15 @@ class BudgetTest(OutputCase):
         self.assertIn(f"{cut} pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", data["N"])
         whole = data_of(self.document("--max-bytes", "500000"))
         self.assertEqual(([item[4] for item in whole["I"] if not item[4]], [note for note in whole["N"] if "pull request" in note]), ([], []))
+
+    def test_text_form_of_a_page_with_a_30000_character_model_of_m_and_request_name_helper_task_is_125520_bytes_within_2_seconds(self):
+        fixture = self.long_values()
+        started = time.perf_counter()
+        whole = fixture.stdout_bytes("--text", "--max-bytes", "500000")
+        elapsed = time.perf_counter() - started
+        self.assertEqual(len(whole), 125520)
+        self.assertNotIn(b"helper-task", whole)
+        self.assertLess(elapsed, 2.0, elapsed)
 
 
 class WindowTest(OutputCase):
