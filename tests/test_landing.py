@@ -172,7 +172,7 @@ EXCLUSIVE_MAIN = (
     "sys.exit(land.main(sys.argv[5:]))\n"
 )
 
-# EXCLUSIVE_MAIN where os has no waitid, as on macOS.
+# EXCLUSIVE_MAIN after os.waitid is removed, so the grace uses the fallback.
 EXCLUSIVE_MAIN_WITHOUT_WAITID = "import os\nvars(os).pop('waitid', None)\n" + EXCLUSIVE_MAIN
 
 # A command that forks one child in the same process group and writes both pids.

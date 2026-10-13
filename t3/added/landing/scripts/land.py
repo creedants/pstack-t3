@@ -238,7 +238,7 @@ def _slot_names(kind, slots):
     return _slot_table(slots)[kind]
 
 
-# A waiter's ticket is governor/tickets/<number>-<kind>. The number is its place in line.
+# A waiter's ticket is governor/tickets/<number>-<kind>. A lower number is earlier.
 TICKET = re.compile("([1-9][0-9]*)-(" + "|".join(_slot_table(0)) + ")")
 
 
