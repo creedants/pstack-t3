@@ -5,8 +5,10 @@ from .support import (
     CODEX,
     Path,
     ROOT,
+    ProcessReason,
     SCRIPT,
     _owner_words,
+    real_popen,
     _shown_root,
     _wait_for_path,
     json,
@@ -114,17 +116,24 @@ class BriefsTest(BrigadeTest):
         self.open()
         self.fire_one()
         self.brigade("set", "--thread", "thread-coord")
-        waiting = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    *_owner_words(self.at),
-                                    "brief", "D1", "--fields", "-"],
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # race between two processes
+        waiting = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+             *_owner_words(self.at), "brief", "D1", "--fields", "-"],
+            stdin=subprocess.PIPE,
+        )
         try:
             time.sleep(0.3)
             self.assertIsNone(waiting.poll())
-            others = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                        *_owner_words(self.at), *args],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                      for args in (("status",), ("watch",), ("ticket", "add", "--kind", "fix", "--summary", "second"))]
+            others = []
+            for args in (("status",), ("watch",), ("ticket", "add", "--kind", "fix", "--summary", "second")):
+                # race between two processes
+                others.append(real_popen(
+                    ProcessReason.RACE,
+                    [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+                     *_owner_words(self.at), *args],
+                ))
             outputs = [other.communicate(timeout=10) for other in others]
             self.assertEqual([other.returncode for other in others], [0, 0, 0], outputs)
             self.assertEqual(outputs[2][0].strip(), "T2")

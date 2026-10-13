@@ -1,14 +1,14 @@
 from .support import (
     setUpModule,
+    ProcessReason,
     SCRIPT,
     StoresTest,
     _HandoffRace,
     _shown_root,
     json,
     os,
+    real_process,
     runpy,
-    subprocess,
-    sys,
     tempfile,
 )
 
@@ -496,8 +496,10 @@ class HandoffTest(StoresTest, _HandoffRace):
         self.assertEqual(self.brigade("core", "watch", ok=False), line)
         self.assertEqual(self.brigade("docs", "ticket", "list", ok=False), line)
         for words, cwd in ((("walk",), None), (("--at", ".", "ticket", "list"), self.dir("docs"))):
-            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), *words],
-                                    capture_output=True, text=True, cwd=cwd)
+            # inherited environment
+            result = real_process(
+                ProcessReason.INHERITED_ENV, SCRIPT, ["--store", str(self.store), *words], cwd=cwd,
+            )
             self.assertEqual((result.returncode, result.stderr.strip()), (1, line), words)
 
     def test_walk_prints_every_other_store_and_exits_1_when_one_store_has_a_malformed_table(self):
@@ -507,7 +509,8 @@ class HandoffTest(StoresTest, _HandoffRace):
         self.brigade("docs", "ticket", "add", "--kind", "fix", "--summary", "b")
         rail = self.dir("docs") / "rail.tsv"
         rail.write_text(rail.read_text() + "not a row\n")
-        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        # inherited environment
+        walked = real_process(ProcessReason.INHERITED_ENV, SCRIPT, ["--store", str(self.store), "walk"])
         self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
             f"{_shown_root(self.project)}: no landing contract",
             "  core (reports milestones): waiting tickets: 1",
@@ -524,7 +527,8 @@ class HandoffTest(StoresTest, _HandoffRace):
         rail.write_text(rail.read_text() + "not a row\n")
         verdicts = self.dir("engine") / "pass.tsv"
         verdicts.write_text(verdicts.read_text() + "not a row\n")
-        walked = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "walk"], capture_output=True, text=True)
+        # inherited environment
+        walked = real_process(ProcessReason.INHERITED_ENV, SCRIPT, ["--store", str(self.store), "walk"])
         self.assertEqual((walked.returncode, walked.stdout, walked.stderr), (1, "\n".join([
             f"{_shown_root(self.project)}: no landing contract",
             "  core: app/core/rail.tsv line 2 is malformed; fix or remove it",

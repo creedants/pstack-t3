@@ -8,6 +8,8 @@ from .support import (
     ROOT,
     SCRIPT,
     THREAD_A,
+    ProcessReason,
+    real_process,
     THREAD_B,
     THREAD_C,
     _ItemsRace,
@@ -50,9 +52,13 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_the_built_brigade_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
         self.fired_bug_fix()
         built = ROOT / "skills/brigade/scripts/brigade.py"
-        result = subprocess.run([sys.executable, str(built), "--store", str(self.store), "--at", str(self.at),
-                                 *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
-                                 "--author", self.BEDROCK, "--verifier", CLAUDE], capture_output=True, text=True)
+        # process exit status
+        result = real_process(
+            ProcessReason.EXIT_STATUS, built,
+            ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
+             "pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+             "--author", self.BEDROCK, "--verifier", CLAUDE],
+        )
         self.assertEqual((result.returncode, result.stdout), (1, ""))
         self.assertEqual(result.stderr.strip(), self.same_family_refusal(self.BEDROCK, CLAUDE))
         self.assertEqual(self.pass_rows(), [])

@@ -4,7 +4,9 @@ from .support import (
     CLAUDE,
     CODEX,
     Path,
+    ProcessReason,
     SCRIPT,
+    real_process,
     _ReportingRace,
     _owner_words,
     _shown_root,
@@ -227,7 +229,8 @@ class ReportingTest(BrigadeTest, _ReportingRace):
 
     def test_status_help_names_the_thread_line_then_counts(self):
         env = os.environ | {"COLUMNS": "300"}
-        result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
+        # -h output
+        result = real_process(ProcessReason.HELP, SCRIPT, ["--help"], env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("status              the thread line first, then counts, then workers outside the executive admin's store, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to, mode, and owner when present", result.stdout)
         self.assertNotIn("one line of counts", result.stdout)
