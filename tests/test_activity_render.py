@@ -148,7 +148,7 @@ def skip_segments(items):
 def select_browser(directory):
     """The first browser of BROWSERS that starts on a small valid document under directory.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path encountered is probed at most once with a timeout of PROBE_TIMEOUT seconds.
+    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except a real path whose last component is snap. That path is keyed by the which path, so each command on that launcher is probed on its own.
     """
     items = []
     by_resolved = {}
@@ -160,10 +160,11 @@ def select_browser(directory):
             items.append(BrowserMiss(name))
             continue
         resolved = os.path.realpath(found)
-        binary = by_resolved.get(resolved)
+        key = found if os.path.basename(resolved) == "snap" else resolved
+        binary = by_resolved.get(key)
         if binary is None:
             binary = BrowserBinary(found, [name])
-            by_resolved[resolved] = binary
+            by_resolved[key] = binary
             items.append(binary)
             try:
                 confined_run(found, target, directory, "q", PROBE_TIMEOUT)
@@ -274,6 +275,29 @@ class ProbeContractTest(unittest.TestCase):
             runner,
         )
         self.assertEqual(calls, ["/opt/a"])
+
+    def test_a_working_second_command_on_the_snap_launcher_is_probed(self):
+        calls = []
+
+        def runner(browser, *args, **kwargs):
+            calls.append(browser)
+            if browser == "/snap/bin/chrome":
+                return ""
+            raise subprocess.CalledProcessError(127, browser)
+
+        browser, unavailable = probe_with(
+            {"chromium": "/snap/bin/chromium", "chrome": "/snap/bin/chrome"},
+            {"/snap/bin/chromium": "/usr/bin/snap", "/snap/bin/chrome": "/usr/bin/snap"},
+            runner,
+        )
+        self.assertEqual(calls, ["/snap/bin/chromium", "/snap/bin/chrome"])
+        self.assertEqual(browser, "/snap/bin/chrome")
+        self.assertEqual(unavailable, [
+            "chromium (/snap/bin/chromium) exited 127",
+            "chromium-browser not found",
+            "google-chrome not found",
+            "google-chrome-stable not found",
+        ])
 
     def test_probe_timeout_is_twenty_seconds(self):
         timeouts = []
