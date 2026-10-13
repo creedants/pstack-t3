@@ -1,0 +1,1 @@
+- `dish --thread` compares a non-empty id after `stored` cleans it. A padded id of the current worker writes no retirement, and the next unpadded command is accepted. A whitespace-only id stays raw, so it still clears that worker.
