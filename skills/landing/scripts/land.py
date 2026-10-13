@@ -229,7 +229,6 @@ _Hold = namedtuple("_Hold", "acquired names")
 
 
 def _slot_table(slots):
-    """Return the slot filenames each kind needs, in lock order."""
     workers = [f"worker-{index}" for index in range(slots)]
     return {"worker": workers, "landing": ["landing-0"], "exclusive": ["landing-0"] + workers}
 
@@ -249,7 +248,6 @@ def _conflicts(earlier, later):
 
 
 def _turn(mutex):
-    """Block until this caller holds the turn mutex, the flock on governor/tickets.lock."""
     try:
         fcntl.flock(mutex, fcntl.LOCK_EX)
     except OSError as error:
@@ -525,7 +523,7 @@ def _slot_busy(handles, name):
 
 
 def _busy_names(handles, names):
-    """The slot names held by someone else. Runs under the turn mutex. Callers that hold this mutex cannot observe a probe's lock."""
+    """The slot names held by someone else. Runs under the turn mutex."""
     return [name for name in names if _slot_busy(handles, name)]
 
 
@@ -704,7 +702,6 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
                 acquired = time.monotonic()
             if taken is None and ticket is None:
                 number = max((live for live, _ in waiting), default=0) + 1
-                # A name still here is one _waiting could not remove.
                 while os.path.lexists(tickets / f"{number}-{kind}"):
                     number += 1
                 ticket = open(tickets / f"{number}-{kind}", "x")
@@ -743,7 +740,6 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
 
 
 def _show_hold(pool, names):
-    """Set LAND_SLOT to pool and LAND_SLOT_FILES to the locked slot filenames, sorted and separated by one space."""
     os.environ["LAND_SLOT"] = pool
     os.environ["LAND_SLOT_FILES"] = " ".join(sorted(names))
 
