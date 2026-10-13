@@ -796,6 +796,10 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
+        if args.thread:
+            canonical = stored("dishes.tsv", "thread", args.thread)
+            if canonical:
+                args.thread = canonical
         worker = any(value and value != current.get(field, "") for field, value in (("thread", args.thread), ("task", args.task)))
         if args.state == "in-progress" or worker:
             refusal = fix_round_refusal(restaurant, current)
