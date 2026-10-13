@@ -1425,3 +1425,80 @@ class ItemsTest(BrigadeTest, _ItemsRace):
                                           "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
                              self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
             self.assertEqual(self.store_files(), before)
+
+    def test_a_refused_fire_that_records_a_block_records_paths_on_a_ticket_that_has_none(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix the gate")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
+                                   "--paths", "src", ok=False)
+            self.assertEqual(refused, "brigade: nothing fired: paths overlap L1 held by engine/D1 on src")
+            self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "src")
+            self.assertEqual(len((self.at / "dishes.tsv").read_text().splitlines()), 1)
+            self.assertIn("engine/D1", self.land("lease", "list"))
+            self.assertEqual(self.brigade("startable"), "\n".join([
+                "workers: 0 of 2 running, 2 idle, auto-start: normal",
+                "waiting tickets: 1, blocked: 1",
+                "T1 normal fix, 0m: blocked, waiting on L1 (engine/D1); src",
+            ]))
+            self.assertEqual(self.brigade("ticket", "list"),
+                             "T1 waiting normal fix [user] Fix the gate blocked: lease")
+            self.assertEqual(self.brigade("watch"), "\n".join([
+                "workers: 0 of 2 running, 2 idle, auto-start: normal",
+                "T1: waiting on L1 (engine/D1)",
+            ]))
+
+    def test_a_fire_keeps_paths_a_ticket_already_records(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Keep mine", "--paths", "lib")
+            self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
+            refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Keep mine",
+                                   "--paths", "src", ok=False)
+            self.assertIn("nothing fired: paths overlap L1 held by engine/D1", refused)
+            self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "lib")
+            self.assertEqual(self.blocked_note(self.at, "T1")["paths"], "src")
+            self.land("lease", "release", "L1")
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Keep mine",
+                                          "--paths", "src"), "D1 (lease L2 held by perf/D1)")
+            self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "lib")
+            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src,changes/perf%2Fd1.md")
+
+    def test_a_dropped_item_keeps_the_paths_its_fire_recorded(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix the gate")
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
+                                          "--paths", "src"), "D1 (lease L1 held by perf/D1)")
+            self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "src")
+            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src,changes/perf%2Fd1.md")
+            self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+            self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "src")
+            self.assertEqual(self.brigade("startable"), "\n".join([
+                "workers: 0 of 2 running, 2 idle, auto-start: normal",
+                "waiting tickets: 1, startable: 1",
+                "T1 normal fix, 0m: startable; src",
+                "  Fix the gate",
+            ]))
+            self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal fix [user] Fix the gate")
+            self.assertEqual(self.brigade("watch"), "\n".join([
+                "workers: 0 of 2 running, 2 idle, auto-start: normal",
+                "no work in progress",
+            ]))
+
+    def test_a_fire_with_no_paths_leaves_an_empty_paths_cell_empty(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix the gate")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate")
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["paths"], "")
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Wait")
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Wait", "--paths", "",
+                               ok=False)
+        self.assertIn("nothing fired: 1 of 1 workers running", refused)
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["paths"], "")
+        self.assertEqual(self.blocked_note(self.at, "T2")["paths"], "")

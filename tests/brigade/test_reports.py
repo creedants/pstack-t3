@@ -341,7 +341,8 @@ class ReportsTest(BrigadeTest):
         line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         asked = "List each follow-up as one top-level list item under a `"
         heading = line.split(asked, 1)[1].split("`", 1)[0]
-        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there."), line)
+        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there. "
+                                      "Name each file a follow-up touches by its repository path in backticks."), line)
         self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
         self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
                          "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
@@ -458,9 +459,34 @@ class ReportsTest(BrigadeTest):
                                  "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
                 self.assertEqual(self.tables(), before)
 
-    def test_from_report_files_a_line_that_is_only_three_hyphens_as_a_follow_up(self):
+    def test_from_report_skips_a_line_that_is_only_three_hyphens(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n---\n"), "T2 added from perf/reports/D1.md#1: ---")
+        before = (self.at / "rail.tsv").read_bytes()
+        skipped = "reports/D1.md lists no follow-ups; nothing added"
+        for body in ("## Follow-ups\n\n---\n", "## Follow-ups\n\n  ---  \n", "## Follow-ups\n\n- ---\n",
+                     "## Follow-ups\n\n  - ---  \n", "## Follow-ups\n\n-   ---\n"):
+            self.assertEqual(self.follow_ups_in(body), skipped)
+            self.assertEqual(self.follow_ups_in(body, "--dry-run"), skipped)
+        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+    def test_from_report_still_files_a_longer_hyphen_line_and_keeps_the_lines_around_a_skipped_one(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n---\n- Fix b.\n").splitlines(), [
+            "T2 added from perf/reports/D1.md#1: Fix a.",
+            "T3 added from perf/reports/D1.md#2: Fix b.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the gate.\n\n---\n\nName the file.\n").splitlines(), [
+            "T4 added from perf/reports/D1.md#1: Reword the gate.",
+            "T5 added from perf/reports/D1.md#2: Name the file.",
+        ])
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Run it.\n\n```\n---\n```\n").splitlines(), [
+            "T6 added from perf/reports/D1.md#1: Run it. ``` --- ```",
+        ])
+        for body, line in (("## Follow-ups\n\n----\n", "----"),
+                           ("## Follow-ups\n\n* ---\n", "---"),
+                           ("## Follow-ups\n\n--- extra\n", "--- extra"),
+                           ("## Follow-ups\n\n1. ---\n", "---")):
+            self.assertEqual(self.follow_ups_in(body, "--dry-run"), f"would add from perf/reports/D1.md#1: {line}")
 
     def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
         self.fired_bug_fix()

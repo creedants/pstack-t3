@@ -301,6 +301,13 @@ class BriefsTest(BrigadeTest):
         write = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("- Write it to "))
         self.assertEqual(lines[start:write + 1], ["REPORT:", self.WAIT, lines[write]])
 
+    def test_the_report_section_names_each_file_by_repository_path(self):
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        self.assertIn("Name each file a follow-up touches by its repository path in backticks.", text)
+        write = next(line for line in text.splitlines() if line.startswith("- Write it to "))
+        self.assertTrue(write.endswith("Name each file a follow-up touches by its repository path in backticks."))
+
     def test_an_orchestrate_brief_carries_the_same_bounded_wait(self):
         self.coordinator(station="orchestrate", mode="full")
         text = self.brigade(*self.BRIEF)

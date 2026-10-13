@@ -25,7 +25,7 @@ from brigade_lib.leases import ClaimError, claim_lease, holder, refusal_kind, re
 from brigade_lib.reviews import fix_round_refusal, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug
 from brigade_lib.store import KIND_CHOICE, LEASED_STATES, STATION_KIND
-from brigade_lib.tickets import ActsOn, Label, priority_of, read_labels, tracked_paths
+from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, read_labels, tracked_paths
 
 ATTEMPT_AFTER = {"sent-back": "fix", "queued": "bounce"}
 
@@ -55,9 +55,29 @@ def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""
     return json.dumps(note, separators=(",", ":"))
 
 
+def record_fire_paths(restaurant, ids, paths):
+    """Write `paths` onto each id in `ids` that records no paths.
+
+    An empty `paths` writes nothing. A ticket that already records paths keeps them.
+    `paths` is the raw string `fire` was given.
+    """
+    if not paths:
+        return
+    wanted = set(ids)
+    rows = restaurant.rows("rail.tsv")
+    changed = False
+    for row in rows:
+        if row["id"] in wanted and not paths_of(row):
+            row["paths"] = paths
+            changed = True
+    if changed:
+        restaurant.save_rows("rail.tsv", rows)
+
+
 def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, branch="", reason="", work="", ride_along=(), doc_item=False):
     waiting = {row["id"] for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"}
     note = block_note(kind, ids, station, summary, paths, timebox, branch, reason, work, ride_along, doc_item)
+    record_fire_paths(restaurant, [ident for ident in ids if ident in waiting], paths)
     for ident in ids:
         if ident in waiting:
             restaurant.log("ticket", ident, "blocked", note)
@@ -403,6 +423,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 gate.record(restaurant, dish)
                 if reason:
                     record_escalation(restaurant, dish, reason)
+                record_fire_paths(restaurant, ids, paths)
                 rows = restaurant.rows("rail.tsv")
                 for row in rows:
                     if row["id"] in ids:
