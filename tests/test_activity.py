@@ -1143,6 +1143,30 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(len(text), 30000)
         self.assertEqual(MOD["Privacy"](requests={"code-review"}).clean(text), ("m " * 14992) + "m")
 
+    def test_found_yields_the_reviewed_request_name_spans(self):
+        privacy = MOD["Privacy"](requests={"code-review"})
+        self.assertEqual(privacy.clean("m" * 30000 + "-"), "m" * 30000 + "-")
+        cases = (
+            ("code-review", [(0, 11)]),
+            ("/code-review", []),
+            ("src/code-review", [(4, 15)]),
+            ("x=/code-review", []),
+            ("(/code-review)", []),
+            ("pre-code-review", []),
+            ("code-review--code-review", [(0, 11), (13, 24)]),
+            ("code-review code-review", [(0, 11), (12, 23)]),
+            ("code-review-", [(0, 11)]),
+            ("-code-review", [(1, 12)]),
+            ("/-code-review", [(2, 13)]),
+            ("x_code-review", [(2, 13)]),
+            ("x//code-review", [(3, 14)]),
+            ("//code-review", [(2, 13)]),
+            ("m" * 30000 + "-", []),
+        )
+        for text, spans in cases:
+            with self.subTest(text[:24]):
+                self.assertEqual(list(privacy.found(text)), spans)
+
     def test_clean_removes_a_request_name_with_a_hyphen_and_an_underscore_a_dot_or_a_doubled_hyphen_anywhere_in_a_word_when_it_is_4_or_more_characters(self):
         clean = MOD["Privacy"](requests={"odd_name-1", "v1.2-check", "two--parts"}).clean
         self.assertEqual(clean("see odd_name-1 and preODD_NAME-1post and v1.2-check-2 and odd%5Fname%2D1 and xtwo--partsx end"), "see and and and and end")
