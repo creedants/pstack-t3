@@ -123,7 +123,7 @@ class BrowserBinary:
 
 
 def confined_run(browser, target, directory, prefix, timeout):
-    """Run browser on target for timeout seconds with a profile under directory and browser state confined there."""
+    """Run browser on target with a timeout of timeout seconds, a profile under directory, and browser state confined there."""
     environment = dict(os.environ)
     for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s"), ("TMPDIR", "t")):
         path = Path(directory) / name
@@ -148,7 +148,7 @@ def skip_segments(items):
 def select_browser(directory):
     """The first browser of BROWSERS that starts on a small valid document under directory.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. One real path is probed once, for PROBE_TIMEOUT seconds.
+    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path encountered is probed at most once with a timeout of PROBE_TIMEOUT seconds.
     """
     items = []
     by_resolved = {}
