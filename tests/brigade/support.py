@@ -1601,7 +1601,7 @@ class BrigadeTest(unittest.TestCase):
         return case
 
     def fire_with_fake_land(self, case, *words):
-        """The child replaces `LAND` before `main`. The test does not overlap it with another started process. The asserted status is one that `call` cannot return."""
+        """The child replaces `LAND` before `main`. The test does not overlap it with another started process."""
         support = Path(__file__).resolve()
         tail = _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at), "fire", *words])
         proc = real_popen(
