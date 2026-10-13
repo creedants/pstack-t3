@@ -1407,8 +1407,6 @@ class RunTestsTest(unittest.TestCase):
 
     def test_a_gate_exits_nonzero_for_failure_cancelled_skipped_or_an_empty_part_result(self):
         # This starts a process because the check is an exit status.
-        import yaml
-        jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
         cases = (
             (("success", "success", "success", "success"), True),
             (("failure", "success", "success", "success"), False),
@@ -1416,15 +1414,36 @@ class RunTestsTest(unittest.TestCase):
             (("success", "success", "skipped", "success"), False),
             (("success", "success", "success", ""), False),
         )
-        for gate, prefix in (("test_310", "part_310"), ("test_312", "part_312")):
-            script = next(step["run"] for step in jobs[gate]["steps"] if "needs." in step.get("run", ""))
+        for prefix, script in gate_scripts((ROOT / ".github" / "workflows" / "ci.yml").read_text()):
             for results, ok in cases:
-                with self.subTest(gate=gate, results=results):
+                with self.subTest(prefix=prefix, results=results):
                     status = gate_script_status(script, prefix, results)
                     if ok:
                         self.assertEqual(status, 0)
                     else:
                         self.assertNotEqual(status, 0)
+
+
+def gate_scripts(text: str) -> tuple[tuple[str, str], ...]:
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        jobs = yaml.safe_load(text)["jobs"]
+        scripts = []
+        for gate, prefix in (("test_310", "part_310"), ("test_312", "part_312")):
+            script = next(step["run"] for step in jobs[gate]["steps"] if "needs." in step.get("run", ""))
+            scripts.append((prefix, script))
+        return tuple(scripts)
+    scripts = []
+    for prefix in ("part_310", "part_312"):
+        needle = "${{ needs." + prefix + "_"
+        lines = [line.strip() for line in text.splitlines() if needle in line]
+        if len(lines) != 4:
+            raise AssertionError(prefix)
+        scripts.append((prefix, "\n".join(lines) + "\n"))
+    return tuple(scripts)
 
 
 def gate_script_status(script: str, prefix: str, results: tuple[str, ...]) -> int:
