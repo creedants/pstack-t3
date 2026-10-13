@@ -1,0 +1,1 @@
+- A `fire` that names nonempty `--paths` records that string on each of its tickets that records none, on a successful fire and on a refused fire that records a block. A ticket that already records paths keeps them. The recorded string is the one `--paths` gave, and the lease still takes that string plus the changelog fragment.
