@@ -8,11 +8,12 @@
 `--config FILE` counts only as the first two arguments. `ARCHIVE_T3_HOME` in that
 file names T3 Code's home.
 
-Run it from inside a T3 agent session: it calls T3's own `t3_thread_organize`
-tool over the session's local tool endpoint, with the session's credential from
-T3_CODE_MCP_AUTHORIZATION. It reads T3's state database read-only to choose the
-threads and never writes to it. With `--selection-only` it prints candidates
-and never reads the credential.
+Direct archiving requires `T3_CODE_MCP_AUTHORIZATION` in the session. Native
+Claude sessions on T3 Code nightly 20261013.3053 do not receive that variable,
+so use `--selection-only` and archive each selected thread with the host's
+`t3_thread_organize` tool. The script reads T3's state database read-only to
+choose threads and never writes to it. With `--selection-only` it prints
+candidates and never reads the credential.
 
 With `--batch-dir` and `--selection-only` it creates that directory and does
 not archive. When ids are selected it writes them to new files `batch-1.txt`,
