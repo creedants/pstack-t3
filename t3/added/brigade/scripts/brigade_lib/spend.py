@@ -141,7 +141,7 @@ class _Row:
 
 
 class _Store:
-    """rows and warn only. Every other lookup is a write this command refuses."""
+    """rows and warn only. Every other attribute raises spend is read-only."""
 
     def __init__(self, restaurant):
         object.__setattr__(self, "_restaurant", restaurant)
