@@ -1,0 +1,1 @@
+- Nightlies 20261012.3010 through 20261013.3042 can store Claude 5.1 pre-tool thinking as an assistant message, and 0.0.46-nightly.20261012.3010 or later can continue an eligible thread after a restart, so archive a worker only after its run is terminal and its child work is no longer pending.
