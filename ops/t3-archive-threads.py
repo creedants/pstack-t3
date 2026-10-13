@@ -3,7 +3,7 @@
 
     t3-archive-threads.py [--config FILE] --project pstack-t3 [--older-than-hours 24]
                           [--coordinator ID] [--keep ID ...] [--top-level-settled] [--dry-run]
-                          [--selection-only]
+                          [--selection-only] [--batch-dir DIR] [--batch-size N]
 
 `--config FILE` counts only as the first two arguments. `ARCHIVE_T3_HOME` in that
 file names T3 Code's home.
@@ -13,6 +13,15 @@ tool over the session's local tool endpoint, with the session's credential from
 T3_CODE_MCP_AUTHORIZATION. It reads T3's state database read-only to choose the
 threads and never writes to it. With `--selection-only` it prints candidates
 and never reads the credential.
+
+With `--batch-dir` and `--selection-only` it creates that directory and does
+not archive. When ids are selected it writes them to new files `batch-1.txt`,
+`batch-2.txt`, and so on under that directory. Each file holds at most
+`--batch-size` ids, one id per line, in the order `--selection-only` prints.
+It prints one line per file as the path, a tab, and the count. When there are
+no ids it writes no file. Each file is meant for a helper that archives every
+id in it with the T3 tool `t3_thread_organize`, action `archive`, always
+passing `threadId`.
 
 What it archives. A sub-agent thread is archived only when it is not already
 archived, it has no run that is running, queued, starting, preparing, or
@@ -205,6 +214,16 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
     return picked, skipped
 
 
+def at_least_one(text):
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer {text!r}")
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
+
 def main():
     file, argv = config_file_and_other_arguments(sys.argv[1:], os.environ)
     userdata = Path(read_config(file)["ARCHIVE_T3_HOME"]) / "userdata"
@@ -217,10 +236,34 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--selection-only", action="store_true",
                     help="print candidate thread ids as a sorted JSON array of strings on stdout and exit without archiving")
+    ap.add_argument("--batch-dir", metavar="DIR",
+                    help="with --selection-only, create DIR when it does not exist yet, write each selected id on its own line into batch files of at most --batch-size ids, and print each file path, a tab, and its count")
+    ap.add_argument("--batch-size", type=at_least_one, default=140, metavar="N",
+                    help="at most this many ids in each batch file (default 140)")
     a = ap.parse_args(argv)
+    if a.batch_dir is not None and not a.selection_only:
+        print(f"{ME}: --batch-dir needs --selection-only", file=sys.stderr)
+        return 2
     picked, skipped = choose(userdata / "statev2.sqlite", a.project, a.older_than_hours, set(a.keep), a.coordinator, a.top_level_settled)
     if a.selection_only:
-        print(json.dumps(sorted(picked)))
+        ids = sorted(picked)
+        if a.batch_dir is None:
+            print(json.dumps(ids))
+            return 0
+        directory = Path(a.batch_dir)
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            print(f"{ME}: {a.batch_dir} already exists", file=sys.stderr)
+            return 1
+        lines = []
+        for start in range(0, len(ids), a.batch_size):
+            chunk = ids[start:start + a.batch_size]
+            path = directory / f"batch-{len(lines) + 1}.txt"
+            path.write_text("".join(f"{item}\n" for item in chunk))
+            lines.append(f"{path}\t{len(chunk)}")
+        if lines:
+            print("\n".join(lines))
         return 0
     print(f"to archive: {len(picked)}; skipped: " + ", ".join(f"{k} {v}" for k, v in skipped.items()))
     if a.dry_run or not picked:
