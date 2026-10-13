@@ -2151,7 +2151,7 @@ class _TicketsRace:
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
         refused = real_process(
-            ProcessReason.EXIT_STATUS, Path(__file__).resolve(),
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
             _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at),
                                            "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"]))
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
@@ -2285,12 +2285,12 @@ class _WakeRace:
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
         refused = real_process(
-            ProcessReason.EXIT_STATUS, Path(__file__).resolve(),
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
             _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at),
                                            "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"]))
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
         watched = real_process(
-            ProcessReason.EXIT_STATUS, Path(__file__).resolve(),
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
             _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at), "watch"]))
         self.assertEqual(watched.returncode, 0, watched.stderr)
         self.assertEqual(watched.stdout.strip(),

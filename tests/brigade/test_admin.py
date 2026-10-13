@@ -12,6 +12,7 @@ from .support import (
     json,
     os,
     ProcessReason,
+    real_process,
     real_popen,
     runpy,
     subprocess,
@@ -615,16 +616,16 @@ class AdminTest(StoresTest, _AdminRace):
             data = os.read(fd, 16)
             reads[0] += len(data)
             if reads[0] == 42 and data:
-                proc = real_popen(
+                proc = real_process(
                     ProcessReason.EXIT_STATUS,
-                    [sys.executable, "-B", "-c",
+                    "-B",
+                    ["-c",
                      "import runpy,sys; g=runpy.run_path(sys.argv[1]); r=g['Restaurant'](sys.argv[2]); "
                      "r.append('log.tsv',{'at':'2026-10-06T00:00:01Z','kind':'ticket','id':'T7',"
                      "'state':'waiting','note':'from app/engine/T7'})",
                      str(SCRIPT), str(docs.dir)],
-                    text=True)
-                _, err = proc.communicate(timeout=3)
-                self.assertEqual(proc.returncode, 0, err)
+                    timeout=3)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
             return data
 
         original_read = glob["read_chunk"]
