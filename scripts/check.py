@@ -681,9 +681,11 @@ def _machine_value_hits(text, identity):
         after_an_at_sign_or_two_slashes = rf"(?:(?<=@)|(?<=//)){first_host_label}(?![{word}])"
         before_a_port = rf"(?<![{word}]){first_host_label}(?=:[0-9])"
         before_a_domain = rf'(?<![{word_body}/$"-]){first_host_label}(?=\.[A-Za-z0-9])'
-        patterns.append(("host name", "|".join((
-            after_an_at_sign_or_two_slashes, before_a_port, before_a_domain,
-        )), re.IGNORECASE))
+        host_forms = [after_an_at_sign_or_two_slashes, before_a_port, before_a_domain]
+        if len(identity.host.split(".")) > 1:
+            as_the_whole_host = rf'(?<![{word_body}$-]){re.escape(identity.host)}(?![{word}])'
+            host_forms.append(as_the_whole_host)
+        patterns.append(("host name", "|".join(host_forms), re.IGNORECASE))
     return [(kind, number, line) for number, line in enumerate(text.splitlines(), 1)
             for kind, pattern, flags in patterns if re.search(pattern, line, flags)]
 
@@ -709,11 +711,16 @@ def machine_value_findings(ops_dir, operations_doc, identity):
     and hyphen). It matches before a colon and a digit when the previous character
     is outside that class. It matches before a dot and an alphanumeric when
     the previous character is outside that class and is not a slash, a dollar
-    sign, or a double quote. The host match is case insensitive and uses the
-    first label. For the label ops, "ops.conf" does not match and ping ops.lan
-    does. For the label app, $APP.prev does not match and curl app:3773/x does.
-    For the label config, ops/config.example does not match, and //config/share
-    and see config.json match.
+    sign, or a double quote. These three matches use the first label. Every
+    host match is case insensitive. When the host name has more than one label,
+    the whole host name also matches when the previous character is absent or
+    outside the word class and is not a dollar sign, and the next character is
+    absent or outside the word class. For the label ops, "ops.conf" does not
+    match and ping ops.lan does. For the label app, $APP.prev does not match
+    and curl app:3773/x does. For the label config, ops/config.example does not
+    match, and //config/share and see config.json match. For the host box7.lan,
+    ssh "box7.lan", HOST="box7.lan", and /mnt/box7.lan/archives match, and
+    $box7.lan does not.
     Each hit becomes
     f"{rel}:{number}: holds this machine's {kind}"
     with kind one of 'home directory', 'user name', or 'host name', in that
