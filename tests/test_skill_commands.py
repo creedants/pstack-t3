@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
 
-from tests import test_brigade
+import tests.brigade.support as test_brigade
 
 COMMAND_LINE_FLOOR = 7
 
