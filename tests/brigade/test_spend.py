@@ -371,13 +371,13 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  model not recorded  in 15  cache-read 80  cache-write 5  out 20\n"
+            "  model not recorded  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
             "threads without a token source 0\n",
         )
         self.assertNotIn("1000000", out + err)
         self.assertNotIn("500000", out + err)
         self.assertNotIn("native-session-sentinel", out + err)
-        self.assertNotIn("reasoning", out)
+        self.assertNotIn("reasoningTokens", out)
         code, json_out, json_err = self.streams(
             "spend", "--tokens", "--json", "--t3-home", str(base), env=self.token_env(),
         )
@@ -385,6 +385,7 @@ class SpendTest(BrigadeTest):
         report = json.loads(json_out)
         self.assertEqual(report["rows"][0]["models"], [{
             "model": "model not recorded", "in": 15, "cache_read": 80, "cache_write": 5, "out": 20,
+            "reasoning": 4,
         }])
         self.assertEqual(report["threads_without_a_token_source"], 0)
         self.assertNotIn("dollars", report["rows"][0]["models"][0])
@@ -426,7 +427,7 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  claude-opus-4-6  in 13  cache-read 4  cache-write 1  out 27\n"
+            "  claude-opus-4-6  in 13  cache-read 4  cache-write 1  out 27  reasoning 0\n"
             "threads without a token source 0\n",
         )
         self.assertNotIn("999", out + err)
@@ -470,7 +471,7 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  model not recorded  in 9  cache-read 2  cache-write 1  out 4\n"
+            "  model not recorded  in 9  cache-read 2  cache-write 1  out 4  reasoning 1\n"
             "threads without a token source 0\n",
         )
         self.assertEqual(self.store_files(), before_store)
@@ -497,9 +498,9 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  claude-haiku-4-5  in 8  cache-read 0  cache-write 0  out 2\n"
-            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  $0.012000\n"
-            "  claude-sonnet-4-6  in 4  cache-read 1  cache-write 1  out 3\n"
+            "  claude-haiku-4-5  in 8  cache-read 0  cache-write 0  out 2  reasoning 0\n"
+            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  reasoning 0  $0.012000\n"
+            "  claude-sonnet-4-6  in 4  cache-read 1  cache-write 1  out 3  reasoning 0\n"
             "threads without a token source 0\n",
         )
 

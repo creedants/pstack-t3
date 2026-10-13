@@ -422,6 +422,7 @@ class _Counts:
     cache_read: int
     cache_write: int
     outgoing: int
+    reasoning: int
 
 
 @dataclass(frozen=True)
@@ -438,6 +439,7 @@ def _add(left, right):
     return _Counts(
         left.incoming + right.incoming, left.cache_read + right.cache_read,
         left.cache_write + right.cache_write, left.outgoing + right.outgoing,
+        left.reasoning + right.reasoning,
     )
 
 
@@ -655,7 +657,7 @@ def _turn_sql(count):
 def _turn_totals(rows):
     if not rows:
         return None
-    incoming = cache_read = cache_write = outgoing = 0
+    incoming = cache_read = cache_write = outgoing = reasoning_total = 0
     for row in rows:
         status, values, kinds = row[0], row[1:6], row[6:12]
         # json_extract turns JSON true into 1, so only a JSON integer counts.
@@ -663,7 +665,7 @@ def _turn_totals(rows):
             return None
         if any(type(value) is not int or value < 0 for value in values):
             return None
-        fresh, cached, created, output, _reasoning = values
+        fresh, cached, created, output, reasoning = values
         # Claude input_tokens already excludes cache. T3 inputTokens includes it.
         fresh -= cached + created
         if fresh < 0:
@@ -672,7 +674,8 @@ def _turn_totals(rows):
         cache_read += cached
         cache_write += created
         outgoing += output
-    return {MODEL_MISSING: _Counts(incoming, cache_read, cache_write, outgoing)}
+        reasoning_total += reasoning
+    return {MODEL_MISSING: _Counts(incoming, cache_read, cache_write, outgoing, reasoning_total)}
 
 
 def _claude_base():
@@ -727,7 +730,8 @@ def _claude_totals(native):
         return None
     totals = {}
     for call in kept.values():
-        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing)
+        # This log has no reasoning counter. Output is not increased to invent one.
+        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing, 0)
         totals[call.model] = _add(totals[call.model], counts) if call.model in totals else counts
     return totals
 
@@ -835,7 +839,7 @@ def _dollars(counts, rate):
 def _model_line(name, counts, dollars):
     line = (
         f"  {name}  in {counts.incoming}  cache-read {counts.cache_read}  "
-        f"cache-write {counts.cache_write}  out {counts.outgoing}"
+        f"cache-write {counts.cache_write}  out {counts.outgoing}  reasoning {counts.reasoning}"
     )
     if dollars is not None:
         line += f"  ${dollars}"
@@ -853,6 +857,7 @@ def _json_models(models, prices):
             "cache_read": counts.cache_read,
             "cache_write": counts.cache_write,
             "out": counts.outgoing,
+            "reasoning": counts.reasoning,
         }
         dollars = _dollars(counts, (prices or {}).get(name))
         if dollars is not None:
