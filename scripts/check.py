@@ -528,7 +528,7 @@ def fence_findings(tests_dir):
 
 @dataclasses.dataclass(frozen=True)
 class Identity:
-    """home, user, and host of the machine whose values must not appear in ops or the operations doc."""
+    """home, user, and host compared as a path or an address in ops and the operations doc."""
 
     home: str
     user: str
