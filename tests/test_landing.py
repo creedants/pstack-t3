@@ -678,7 +678,7 @@ def _slot_busy(handles, name):
 
 
 def _busy_names(handles, names):
-    """The slot names held by someone else. Runs under the turn mutex. Callers that consult the turn file cannot observe a probe's lock."""
+    """The slot names held by someone else. Runs under the turn mutex."""
     return [name for name in names if _slot_busy(handles, name)]
 
 
