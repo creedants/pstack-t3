@@ -343,9 +343,11 @@ def _target_binds(target, name):
 def _setup_name_binding(statement):
     if isinstance(statement, ast.FunctionDef) and statement.name == FENCE_SETUP:
         return "def"
+    if isinstance(statement, (ast.AsyncFunctionDef, ast.ClassDef)) and statement.name == FENCE_SETUP:
+        return "assign"
     if isinstance(statement, ast.Assign) and any(_target_binds(target, FENCE_SETUP) for target in statement.targets):
         return "assign"
-    if isinstance(statement, ast.AnnAssign) and _target_binds(statement.target, FENCE_SETUP):
+    if isinstance(statement, ast.AnnAssign) and statement.value is not None and _target_binds(statement.target, FENCE_SETUP):
         return "assign"
     if isinstance(statement, ast.Import):
         for alias in statement.names:
@@ -465,15 +467,21 @@ def fence_findings(tests_dir):
     The last binding of the name setUpModule in an area module body decides.
     A from-import of that name from tests.brigade.support at level 0, or from
     .support at level 1, passes even when the import lists other names and the
-    module defines its own class. A from-import that renames setUpModule away,
-    or that binds the name setUpModule to a different imported name, is an
-    alias finding when that is the last binding. A from-import that binds the
-    name from any other module is a finding. A plain import that binds the
-    name setUpModule is that same other-module finding. A plain import that
-    only renames setUpModule away does not bind the name. An assignment or
-    annotated assignment of the name is a finding. A def setUpModule uses the
-    top-level fence rules. Those findings end with Import setUpModule from
-    the brigade support path.
+    module defines a class with another name. A later statement that binds the
+    name replaces that import. A from-import that binds the name setUpModule
+    to a different imported name is an alias binding. A from-import that
+    renames setUpModule away does not bind the name. That from-import after a
+    binding does not replace that binding. The alias finding applies when no
+    actual binding of the name was found. A from-import that binds the name
+    from any other module is a finding. A plain import that binds the name
+    setUpModule is that same other-module finding. A plain import that only
+    renames setUpModule away does not bind the name. An assignment of the name
+    is a finding. An annotated assignment with a value is a finding. An
+    annotation with no value does not bind the name. A def setUpModule uses
+    the top-level fence rules. An async def setUpModule or a class statement
+    named setUpModule is a finding, including when a valid import came
+    earlier. Those findings end with Import setUpModule from the brigade
+    support path.
 
     Only a statement in the module body can bind the name. An area module that
     does not bind the name still passes when every body statement imports
