@@ -56,7 +56,7 @@ def block_note(kind, ids, station, summary, paths, timebox, branch="", reason=""
 
 
 def record_fire_paths(restaurant, ids, paths):
-    """Write `paths` onto each id in `ids` whose paths cell is empty.
+    """Write `paths` onto each id in `ids` that records no paths.
 
     An empty `paths` writes nothing. A ticket that already records paths keeps them.
     `paths` is the raw string `fire` was given.
