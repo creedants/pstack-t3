@@ -1,0 +1,1 @@
+- `test_persona_truncated_by_one_sentence` takes the persona's last sentence from `t3/agents/poteto-agent.md`, the text after the final `. `, and `check-brief` still rejects that shorter body.
