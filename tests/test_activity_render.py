@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 try:
@@ -21,6 +21,8 @@ CLEAN = test_activity.CLEAN
 MOD = test_activity.MOD
 
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome")
+PROBE_TIMEOUT = 20
+RENDER_TIMEOUT = 120
 BUDGET = 15999
 # The frame fit() reserves.
 FRAME = MOD["FRAME_HEIGHT"] - MOD["FRAME_MARGIN"]
@@ -108,8 +110,20 @@ def wide_page(goal_names):
     return replace(page(*groups, items=items, coordinator=row("coordinator")), goals=goals, flight=MOD["flight_of"](items, goals))
 
 
-def confined_run(browser, target, directory, prefix):
-    """Run browser on target with a profile under directory and browser state confined there."""
+@dataclass(frozen=True)
+class BrowserMiss:
+    name: str
+
+
+@dataclass
+class BrowserBinary:
+    which_path: str
+    names: list
+    failure: str | None = None
+
+
+def confined_run(browser, target, directory, prefix, timeout):
+    """Run browser on target for timeout seconds with a profile under directory and browser state confined there."""
     environment = dict(os.environ)
     for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s"), ("TMPDIR", "t")):
         path = Path(directory) / name
@@ -117,37 +131,60 @@ def confined_run(browser, target, directory, prefix):
         environment[variable] = str(path)
     profile = tempfile.mkdtemp(prefix=prefix, dir=directory)
     return subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
-                          capture_output=True, text=True, timeout=120, check=True, env=environment).stdout
+                          capture_output=True, text=True, timeout=timeout, check=True, env=environment).stdout
+
+
+def skip_segments(items):
+    """One segment per missing name and per failed binary, after later aliases are on the record."""
+    lines = []
+    for item in items:
+        if isinstance(item, BrowserMiss):
+            lines.append(f"{item.name} not found")
+        elif item.failure is not None:
+            lines.append(f"{', '.join(item.names)} ({item.which_path}) {item.failure}")
+    return lines
 
 
 def select_browser(directory):
-    """The first browser of BROWSERS that starts on a small valid document under directory."""
-    unavailable = []
+    """The first browser of BROWSERS that starts on a small valid document under directory.
+
+    shutil.which resolves each name. os.path.realpath resolves each hit. One real path is probed once, for PROBE_TIMEOUT seconds.
+    """
+    items = []
+    by_resolved = {}
     target = Path(directory) / "probe.html"
     target.write_text(f"<div id=o></div>{PINNED}{LOAD}")
     for name in BROWSERS:
         found = shutil.which(name)
         if found is None:
-            unavailable.append(f"{name} not on PATH")
+            items.append(BrowserMiss(name))
             continue
-        try:
-            confined_run(found, target, directory, "q")
-        except subprocess.CalledProcessError as failed:
-            unavailable.append(f"{found} exited {failed.returncode}")
-        except subprocess.TimeoutExpired:
-            unavailable.append(f"{found} timed out")
-        except OSError as failed:
-            unavailable.append(f"{found} failed to start with {failed}")
+        resolved = os.path.realpath(found)
+        binary = by_resolved.get(resolved)
+        if binary is None:
+            binary = BrowserBinary(found, [name])
+            by_resolved[resolved] = binary
+            items.append(binary)
+            try:
+                confined_run(found, target, directory, "q", PROBE_TIMEOUT)
+            except subprocess.CalledProcessError as failed:
+                binary.failure = f"exited {failed.returncode}"
+            except subprocess.TimeoutExpired as failed:
+                binary.failure = f"timed out after {failed.timeout} seconds"
+            except OSError as failed:
+                binary.failure = f"failed to start with {failed}"
+            else:
+                return found, skip_segments(items)
         else:
-            return found, unavailable
-    return None, unavailable
+            binary.names.append(name)
+    return None, skip_segments(items)
 
 
 def measure(browser, document, directory):
     """The height in CSS pixels of the #o element with browser state confined under directory."""
     target = Path(directory) / "page.html"
     target.write_text(document.replace("<div id=o></div>", f"<div id=o></div>{PINNED}") + LOAD)
-    drawn = confined_run(browser, target, directory, "u")
+    drawn = confined_run(browser, target, directory, "u", RENDER_TIMEOUT)
     return float(TITLE.search(drawn).group(1))
 
 
@@ -202,3 +239,91 @@ class BrowserSelectionTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"PATH": bin_dir}):
                 browser, _ = select_browser(root)
         self.assertEqual(browser, str(working))
+
+
+def probe_with(which_map, resolved, runner):
+    """Call select_browser with stubbed which, realpath, and confined_run. No process starts."""
+    original = os.path.realpath
+
+    def which(name):
+        return which_map.get(name)
+
+    def realpath(path):
+        if path in resolved:
+            return resolved[path]
+        return original(path)
+
+    with tempfile.TemporaryDirectory() as root, \
+            mock.patch("shutil.which", side_effect=which), \
+            mock.patch("os.path.realpath", side_effect=realpath), \
+            mock.patch(f"{__name__}.confined_run", side_effect=runner):
+        return select_browser(root)
+
+
+class ProbeContractTest(unittest.TestCase):
+    def test_two_names_for_one_binary_are_probed_once(self):
+        calls = []
+
+        def runner(browser, *args, **kwargs):
+            calls.append(browser)
+            raise subprocess.CalledProcessError(127, browser)
+
+        probe_with(
+            {"chromium": "/opt/a", "chromium-browser": "/opt/b"},
+            {"/opt/a": "/snap/one", "/opt/b": "/snap/one"},
+            runner,
+        )
+        self.assertEqual(calls, ["/opt/a"])
+
+    def test_probe_timeout_is_twenty_seconds(self):
+        timeouts = []
+
+        def runner(browser, target, directory, prefix, timeout):
+            timeouts.append(timeout)
+            return ""
+
+        probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+        self.assertEqual(timeouts, [PROBE_TIMEOUT])
+        self.assertEqual(PROBE_TIMEOUT, 20)
+
+    def test_skip_reason_names_each_alias_and_the_exit(self):
+        def runner(browser, *args, **kwargs):
+            raise subprocess.CalledProcessError(127, browser)
+
+        _, unavailable = probe_with(
+            {"chromium": "/opt/a", "chromium-browser": "/opt/b"},
+            {"/opt/a": "/snap/one", "/opt/b": "/snap/one"},
+            runner,
+        )
+        self.assertEqual(unavailable, [
+            "chromium, chromium-browser (/opt/a) exited 127",
+            "google-chrome not found",
+            "google-chrome-stable not found",
+            "chrome not found",
+        ])
+
+    def test_timeout_skip_states_the_seconds_the_probe_waited(self):
+        def runner(browser, *args, **kwargs):
+            raise subprocess.TimeoutExpired(browser, 7)
+
+        _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+        self.assertEqual(unavailable[0], "chromium (/opt/a) timed out after 7 seconds")
+
+    def test_render_keeps_its_own_timeout(self):
+        timeouts = []
+
+        def runner(browser, target, directory, prefix, timeout):
+            timeouts.append(timeout)
+            return "<title>10</title>"
+
+        with tempfile.TemporaryDirectory() as root, mock.patch(f"{__name__}.confined_run", side_effect=runner):
+            measure("/opt/a", "<div id=o></div>", root)
+        self.assertEqual(timeouts, [RENDER_TIMEOUT])
+        self.assertEqual(RENDER_TIMEOUT, 120)
+
+    def test_success_returns_the_which_path(self):
+        def runner(*args, **kwargs):
+            return ""
+
+        browser, _ = probe_with({"chromium": "/opt/link"}, {"/opt/link": "/snap/real"}, runner)
+        self.assertEqual(browser, "/opt/link")
