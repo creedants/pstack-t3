@@ -462,11 +462,11 @@ def _clear():
 
 
 def _live_holders(names):
-    """The holders of the named busy slots, distinct by pid.
+    """The holders of the named busy slots, distinct by pid when pid is set, otherwise by the whole holder.
 
     Each named slot checks its own record. The record is read only when the nonblocking
     shared lock fails with errno EAGAIN or EWOULDBLOCK. A successful lock, a failed open,
-    or any other lock error names nobody, so that slot reads as unknown.
+    or any other lock error returns unknown for that slot.
     """
     holders, seen = [], set()
     for name in names:
@@ -486,7 +486,7 @@ def _held_for(holder):
 
 
 def _format_wait(elapsed, holders):
-    """One line naming each holder by kind, repository, hold duration, and short command.
+    """One line naming each proven holder by kind, repository, hold duration, and short command.
 
     A holder with no proven record reads as unknown, and so does each field its record
     does not carry. Zero holders produce no holder text.
