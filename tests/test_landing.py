@@ -1,5 +1,6 @@
 import ast
 import contextlib
+import errno
 import fcntl
 import hashlib
 import inspect
@@ -131,7 +132,7 @@ HOLD_SCRIPT = (
     "sys.path.insert(0, sys.argv[1])\n"
     "import land\n"
     "kind, repo, command, ready, release = sys.argv[2:7]\n"
-    "slot = land.exclusive_slot if kind == 'exclusive' else (lambda **kw: land.slot('worker', **kw))\n"
+    "slot = land.exclusive_slot if kind == 'exclusive' else (lambda **kw: land.slot(kind, **kw))\n"
     "with slot(repo=repo, command=command):\n"
     "    Path(ready).touch()\n"
     "    os.read(os.open(release, os.O_RDONLY), 1)\n"
@@ -4103,6 +4104,26 @@ os.execv({real!r}, [{real!r}, *args])
             {"kind": "worker", "pid": 2 ** 31 - 1, "repo": str(self.work), "started": time.time(), "command": "make"}))
         self.assertEqual(land._live_holders(["worker-0"]), [land._UNKNOWN])
 
+    def test_an_unlocked_stale_record_reads_as_unknown_when_the_lock_fails_with_enolck(self):
+        self.governor(1)
+        directory = land.governor_dir()
+        slot = os.open(directory / "worker-0", os.O_RDWR | os.O_CREAT, 0o666)
+        fcntl.flock(slot, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(os.close, slot)
+        holds = directory / "holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        record = holds / "worker-0"
+        record.write_text(json.dumps(
+            {"kind": "worker", "pid": 2147483647, "repo": "/dead/repo", "started": 1, "command": "dead-command"}))
+        self.assertEqual(land._record_holder(record), land._UNKNOWN)
+        with mock.patch.object(land.fcntl, "flock", side_effect=OSError(errno.ENOLCK, "No locks available")):
+            holders = land._live_holders(["worker-0"])
+            line = land._format_wait(15, holders)
+        self.assertEqual(holders, [land._UNKNOWN])
+        self.assertEqual(line, "land: waited 15s for a slot; unknown")
+        self.assertNotIn("dead-command", line)
+        self.assertNotIn("/dead/repo", line)
+
     def test_a_malformed_record_prints_unknown_without_failing(self):
         self.governor(1)
         holds = land.governor_dir() / "holds"
@@ -4281,6 +4302,117 @@ os.execv({real!r}, [{real!r}, *args])
         slots.release(exclusive)
         slots.release(slots.enter(landing))
         self.assertEqual(slots.entries(), ["holder", "exclusive", "landing"])
+
+    def test_a_worker_waiter_names_the_worker_holder_and_not_the_landing_holder(self):
+        self.governor(1)
+        self.start_holder(kind="worker", command="worker-command")
+        landing = self.start_holder(kind="landing", command="landing-command")
+        release = os.open(self.base / "holder-worker" / "release", os.O_WRONLY)
+        try:
+            _, stdout, stderr, line = self.run_waiter(WAIT_SCRIPT, release, after="0.2")
+            self.assertEqual(stdout, "ran\n")
+            self.assertEqual(stderr, line + "\n")
+            self.assertRegex(line, rf"^land: waited \d+s for a slot; worker {re.escape(str(self.work))} "
+                                    rf"for \d+s: worker-command$")
+            self.assertNotIn("landing-command", stderr)
+            self.assertNotIn("landing ", line)
+        finally:
+            os.close(release)
+            if landing.poll() is None:
+                with open(self.base / "holder-landing" / "release", "w") as handle:
+                    handle.write("x")
+            landing.wait(timeout=20)
+
+    def test_a_worker_waiter_never_locks_the_landing_slot_while_it_reports(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="worker-command")
+        try:
+            self._worker_waiter_leaves_the_landing_slot_unlocked()
+        finally:
+            if holder.poll() is None:
+                with open(self.base / "holder-worker" / "release", "w") as handle:
+                    handle.write("x")
+            holder.wait(timeout=20)
+
+    def _worker_waiter_leaves_the_landing_slot_unlocked(self):
+        directory = self.base / "reporter"
+        directory.mkdir()
+        marker, release = directory / "probe", directory / "release"
+        os.mkfifo(release)
+        gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, gate)
+        err = directory / "err"
+        err_handle = open(err, "w")
+        reporter = subprocess.Popen(
+            [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "landing-0",
+             "0.2", "60", str(self.work), "make test"],
+            cwd=directory, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=err_handle)
+
+        def stop_reporter():
+            if reporter.poll() is None:
+                os.killpg(reporter.pid, signal.SIGKILL)
+            reporter.wait(timeout=20)
+            err_handle.close()
+        self.addCleanup(stop_reporter)
+
+        deadline = time.monotonic() + 5
+        line = ""
+        while time.monotonic() < deadline:
+            if marker.exists():
+                self.fail("the worker waiter locked the landing slot while reporting")
+            if err.exists() and "\n" in err.read_text():
+                line = err.read_text().strip().splitlines()[0]
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("the worker waiter printed no report")
+        self.assertRegex(line, rf"^land: waited \d+s for a slot; worker {re.escape(str(self.work))} "
+                                rf"for \d+s: worker-command$")
+        self.assertFalse(marker.exists())
+
+        old = self.base / "old/land.py"
+        old.parent.mkdir()
+        old.write_text(PREVIOUS_SLOT_SCRIPT)
+        entered, old_release = directory / "entered", directory / "old-release"
+        os.mkfifo(old_release)
+        old_gate = os.open(old_release, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, old_gate)
+        driver = (
+            "import importlib.util, os, sys\n"
+            "from pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('oldland', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "with module.slot('landing'):\n"
+            "    Path(sys.argv[2]).touch()\n"
+            "    os.read(os.open(sys.argv[3], os.O_RDONLY), 1)\n"
+        )
+        caller = subprocess.Popen(
+            [sys.executable, "-c", driver, str(old), str(entered), str(old_release)],
+            cwd=directory, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop_caller():
+            if caller.poll() is None:
+                try:
+                    os.write(old_gate, b"x")
+                except OSError:
+                    pass
+                try:
+                    caller.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    os.killpg(caller.pid, signal.SIGKILL)
+                    caller.wait(timeout=20)
+        self.addCleanup(stop_caller)
+
+        deadline = time.monotonic() + 5
+        while not entered.exists() and time.monotonic() < deadline:
+            if marker.exists():
+                self.fail("the worker waiter locked the landing slot while the old caller waited")
+            time.sleep(0.02)
+        self.assertTrue(entered.exists(), "the pre-turn-file landing caller did not enter")
+        self.assertFalse(marker.exists())
 
     def test_a_holder_publishes_its_record_and_clears_it_on_release(self):
         self.governor(1)

@@ -399,11 +399,10 @@ def _read_holder(path):
 
 
 def _record_holder(path):
-    """The holder a record names, or unknown when the record's own lock proves nothing.
+    """The holder a record names when a conflicting lock proves a writer, or unknown.
 
-    A waiter takes a shared lock on the record file to test it. A failed shared lock proves an
-    exclusive writer still holds that record, so the record names a live holder. A record the
-    waiter could lock itself, and one it could not read, both name nobody.
+    The record is read only when the nonblocking shared lock fails with errno EAGAIN or
+    EWOULDBLOCK. A successful lock, a failed open, or any other lock error returns unknown.
     """
     try:
         descriptor = os.open(path, os.O_RDONLY)
@@ -411,8 +410,10 @@ def _record_holder(path):
         return _UNKNOWN
     try:
         fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except OSError:
-        return _read_holder(path)
+    except OSError as error:
+        if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+            return _read_holder(path)
+        return _UNKNOWN
     finally:
         os.close(descriptor)
     return _UNKNOWN
@@ -428,9 +429,9 @@ def _slot_busy(handles, name):
     return False
 
 
-def _busy_names(handles):
-    """The slot names held by someone else. Runs under the turn mutex, so no caller can observe a probe's lock."""
-    return [name for name in handles if _slot_busy(handles, name)]
+def _busy_names(handles, names):
+    """The slot names held by someone else. Runs under the turn mutex. Callers that consult the turn file cannot observe a probe's lock."""
+    return [name for name in names if _slot_busy(handles, name)]
 
 
 def _publish(kind, handles, taken, repo, command):
@@ -463,8 +464,9 @@ def _clear():
 def _live_holders(names):
     """The holders of the named busy slots, distinct by pid.
 
-    Each named slot reads its own record. A record whose own lock no writer holds names
-    nobody, so that slot reads as unknown.
+    Each named slot checks its own record. The record is read only when the nonblocking
+    shared lock fails with errno EAGAIN or EWOULDBLOCK. A successful lock, a failed open,
+    or any other lock error names nobody, so that slot reads as unknown.
     """
     holders, seen = [], set()
     for name in names:
@@ -552,7 +554,7 @@ def _admit(kind, repo=None, command=None):
             if taken is None and ticket is None:
                 ticket = _take_ticket(gate, place, kind)
             if taken is None:
-                busy = _busy_names(handles)
+                busy = _busy_names(handles, _slot_names(kind, slots))
             else:
                 records = _publish(kind, handles, taken, repo, command)
             if taken is not None and ticket is not None:
