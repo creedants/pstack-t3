@@ -1438,7 +1438,7 @@ class ArchiveTest(OpsTest):
         self.assertNotIn("top", done.archived)
         self.assertNotIn("kid-old", done.archived)
 
-    def test_a_runless_child_whose_rows_are_all_terminal_and_which_is_past_the_cutoff_is_selected(self):
+    def test_a_child_whose_rows_are_all_terminal_and_which_is_past_the_cutoff_is_selected(self):
         threads = (("top", P1, None, (), OLD, "S"), ("kid-done", P1, "top", ("completed",), OLD, "S"))
         nodes = (("kid-done", "kid-done-run-0", "completed"),)
         subagents = (("top", "top-run-0", "kid-done", "provider_native", "completed"),)
@@ -1494,6 +1494,51 @@ class ArchiveTest(OpsTest):
                                  T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(world.stub.requests, [])
+
+    def test_an_ancestor_above_a_deleted_bridge_whose_child_has_a_pending_runless_node_is_not_selected(self):
+        threads = (("root", P1, None, (), OLD, ""), ("ancestor", P1, "root", (), OLD, "S"),
+                   ("bridge", P1, "ancestor", (), OLD, "D"), ("kid-live", P1, "bridge", (), OLD, "S"))
+        nodes = (("kid-live", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_a_child_below_a_deleted_bridge_whose_ancestor_has_a_pending_runless_node_is_not_selected(self):
+        threads = (("root", P1, None, (), OLD, ""), ("ancestor-live", P1, "root", (), OLD, "S"),
+                   ("bridge", P1, "ancestor-live", (), OLD, "D"), ("kid-old", P1, "bridge", (), OLD, "S"))
+        nodes = (("ancestor-live", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_an_ancestor_above_a_bridge_in_another_project_whose_child_has_a_pending_runless_node_is_not_selected(self):
+        threads = (("root", P1, None, (), OLD, ""), ("ancestor", P1, "root", (), OLD, "S"),
+                   ("bridge", P2, "ancestor", (), OLD, "S"), ("kid-live", P1, "bridge", (), OLD, "S"))
+        nodes = (("kid-live", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_a_child_below_a_bridge_in_another_project_whose_ancestor_has_a_pending_runless_node_is_not_selected(self):
+        threads = (("root", P1, None, (), OLD, ""), ("ancestor-live", P1, "root", (), OLD, "S"),
+                   ("bridge", P2, "ancestor-live", (), OLD, "S"), ("kid-old", P1, "bridge", (), OLD, "S"))
+        nodes = (("ancestor-live", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_an_ancestor_of_a_deleted_bridge_with_a_pending_runless_node_is_not_selected(self):
+        threads = (("root", P1, None, (), OLD, ""), ("ancestor", P1, "root", (), OLD, "S"),
+                   ("bridge", P1, "ancestor", (), OLD, "D"))
+        nodes = (("bridge", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
 
 
 class ScanTest(OpsTest):

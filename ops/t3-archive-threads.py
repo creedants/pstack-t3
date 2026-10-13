@@ -154,14 +154,19 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         p = json.loads(payload or "{}")
         info[tid] = {"parent": (p.get("lineage") or {}).get("parentThreadId"), "updated": upd, "archived": arch,
                      "settled": bool(p.get("settledAt")), "pinned": bool(p.get("pinnedAt"))}
+    parents, archived_at = {}, {}
+    for tid, arch, payload in c.execute("select thread_id, archived_at, payload_json from orchestration_v2_projection_threads"):
+        p = json.loads(payload or "{}")
+        parents[tid] = (p.get("lineage") or {}).get("parentThreadId")
+        archived_at[tid] = arch
 
     def ancestors(tid):
         out, seen = [], {tid}
-        cur = info.get(tid, {}).get("parent")
+        cur = parents.get(tid)
         while cur and cur not in seen:
             seen.add(cur)
             out.append(cur)
-            cur = info.get(cur, {}).get("parent")
+            cur = parents.get(cur)
         return out
 
     def root(tid):
@@ -185,7 +190,7 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         elif tid in live or tid in shielded:
             skipped["live"] += 1
         elif i["parent"]:
-            block = any(a in live and a != coordinator and not info.get(a, {}).get("archived") for a in ancestors(tid))
+            block = any(a in live and a != coordinator and not archived_at.get(a) for a in ancestors(tid))
             if block:
                 skipped["under a running thread"] += 1
             elif i["updated"] > cutoff:
