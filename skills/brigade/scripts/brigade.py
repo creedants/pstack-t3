@@ -43,6 +43,7 @@ def _drop_cached_brigade(*names):
         del _sys.modules[_n]
 
 
+_prior_brigade = {n: m for n, m in _sys.modules.items() if n == "brigade_lib" or n.startswith("brigade_lib.")}
 _drop_cached_brigade("brigade_lib")
 _pkg = "_brigade_ns_" + _uuid.uuid4().hex
 _alias = _types.ModuleType(_pkg)
@@ -65,13 +66,13 @@ try:
     from brigade_lib.store import ADDED_COLUMNS, ADMIN_COMMANDS, ADMIN_DIR, ADMIN_LINES, ADMIN_MENU, ADMIN_NAME, AUTOFIRE, CHILD_ROLES, CLAIM_WAIT_SECONDS, CLOSED_GOAL_STATES, COUNTED_STATES, DISH_STATES, EDITS_VERDICT, GENERATED_ROOT, GOAL_MOVES, GOAL_STATES, HELD_LOCKS, HOUSE_RULES, IN_FLIGHT_STATES, KINDS, KIND_CHOICE, LEASED_STATES, LINE_SUFFIX, LIVE_TICKET_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MENU, MESSAGE_ONLY, MODES, NEEDS_CONTRACT, NOTHING_HANDED, OFF_MENU_TEMPLATE, OPEN_LINES, OPEN_RUN_MINUTES, OWING_STATES, PREFIX, PRIORITIES_BY_RANK, PURPOSE_TEMPLATE, REPORTING, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, RULING_KINDS, RULING_RULES, RULING_STATES, Restaurant, SNAPSHOT_CHUNK, SOURCE_PRIORITY, SOURCE_ROOT, STATION_KIND, TABLES, THREADS_WRITERS, THREAD_COMMAND_ROLES, THREAD_ROLES, TICKET_STATES, UNSENT, VERDICTS, WORKER_ROLES, WORK_COMMANDS, _read_meta, holder_prefix, intake_owner, is_admin, is_timestamp, menu_section, open_restaurant, parse_row, read_chunk, refuse_owned_intake, reporting_of, roles_script, sibling_lines, siblings, store_path, store_root, wait_for_meta, write_atomic
     from brigade_lib.tickets import ActsOn, EVERY_ROW, Fault, FollowUps, GOALS_ONLY, Goal, Label, LabelCounts, Labels, NO_WORK, Tally, Tracked, add_goal, add_ticket, append_ticket, base_source, count_labels, file_follow_ups, finish_request, finished_requests, follow_up_kind, follow_ups, frozen_label, goal_share, goal_work, handed_count, handoff_id, in_flight_tickets, inbox_file, intake_list, is_live, label_words, move_ticket, open_goal, paths_of, pattern_directory, priority_of, quoted_paths, read_goal, read_label, read_labels, record_paths, refuse_live_ref, request_files, says_no_work, set_goal, set_intake, sibling_named, sibling_rails, take_inbox, take_tickets, taken_row, tell, ticket_paths, tracked_paths, unique_names, whole_share
     from brigade_lib.wake import CLOSE_OCCASIONS, DRAIN_LABELS, Debt, If, NO_WORKER, OCCASION_ORDER, ROUTINE_DETAILS, Reply, Run, STANDINGS, STARTS_AFTER, See, Snapshot, Standing, StandingText, Trigger, Waiting, YES_OCCASIONS, accepted_argv, admin_sends, blocked_needs_user, budget_reached, closing_options, compile_sheet, counted_timebox, crossing_send_back, cue_line, decision_detail, decision_holds, dish_by_id, dish_progress, format_sheet, fresh_decision_ids, from_user_request, hang_attempt, held_occasions, holder_of, housekeeping, inbox_cues, inbox_ready, is_drained, land_follow, lease_refusals, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, merge_accepted, merge_why, next_text, note_unsent, occasion_yes, older_than_hour, open_for, open_item_decisions, option_key, pass_words, pause_if, plan, prefix_cues, record_hang, reply_for, report_is_current, request_text, routine_detail, startable, startable_lines, tail_cues, ticket_lines, trigger_from, waiting_ticket, wake_label, watch, worker_where
+    from brigade_lib import seam
+    seam.bind(globals())
 finally:
     _sys.dont_write_bytecode = _bw
-    del _bw
-from brigade_lib import seam
-seam.bind(globals())
-_drop_cached_brigade("brigade_lib", _pkg)
-del _drop_cached_brigade, _pkg, _alias, _libdir, _types, _uuid
+    _drop_cached_brigade("brigade_lib", _pkg)
+    _sys.modules.update(_prior_brigade)
+del _bw, _drop_cached_brigade, _pkg, _alias, _libdir, _types, _uuid, _prior_brigade
 
 # next sets this. A write or a land.py call then raises instead of changing a store.
 READ_ONLY = False
@@ -644,6 +645,26 @@ def run(argv):
         return command(restaurant, args, rails=rails)
 
 
+def _rebound_for_restart(restaurant, ident, thread):
+    """True when `thread` is the one open worker row started after the latest sent-back dish row, no queued or in-progress dish row follows that row, and that id is not retired."""
+    if not thread or thread in set(retired_worker_threads(restaurant, ident)):
+        return False
+    departed = ""
+    for row in restaurant.rows("log.tsv"):
+        if row["id"] != ident or row["kind"] != "dish":
+            continue
+        if row["state"] == "sent-back":
+            departed = row["at"]
+        elif row["state"] in ("queued", "in-progress"):
+            departed = ""
+    if not departed:
+        return False
+    open_rows = [row for row in restaurant.rows("threads.tsv")
+                 if row["dish"] == ident and row["role"] in WORKER_ROLES and not row["end"]
+                 and row["thread"] == thread and row["start"] > departed]
+    return len(open_rows) == 1
+
+
 def command(restaurant, args, contract=None, rails=None):
     if args.command == "set":
         meta = restaurant.meta
@@ -796,6 +817,10 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
+        if args.thread:
+            canonical = stored("dishes.tsv", "thread", args.thread)
+            if canonical:
+                args.thread = canonical
         worker = any(value and value != current.get(field, "") for field, value in (("thread", args.thread), ("task", args.task)))
         if args.state == "in-progress" or worker:
             refusal = fix_round_refusal(restaurant, current)
@@ -812,13 +837,17 @@ def command(restaurant, args, contract=None, rails=None):
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
         entering = args.state == "in-progress" and current["state"] != "in-progress"
-        restart = entering and current["state"] in ("sent-back", "queued")
+        restart = entering and current["state"] in ATTEMPT_AFTER
         replacing = (bool(args.thread) and args.thread != current.get("thread", "")
                      and current["state"] == "in-progress" and args.state in (None, "in-progress"))
-        thread = "" if restart and args.thread is None else args.thread
+        rebound = _rebound_for_restart(restaurant, args.id, current.get("thread", "")) if restart else False
+        if restart and args.thread is None and rebound:
+            thread = current.get("thread", "")
+        else:
+            thread = "" if restart and args.thread is None else args.thread
         recorded = set(retired_worker_threads(restaurant, args.id))
         earlier = set(recorded)
-        if restart and current.get("thread"):
+        if restart and current.get("thread") and not rebound:
             earlier.add(current["thread"])
         if thread and thread in earlier:
             raise BrigadeError(f"thread {thread} is an earlier attempt of {args.id}; a send-back launches a fresh worker")
