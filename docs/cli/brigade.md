@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`.
 
 ## brigade.py open
 
@@ -300,6 +300,21 @@ record one open run after report-back, once per attempt
 | `--provider PROVIDER` | yes |  |  |  |
 | `--minutes MINUTES` | yes |  |  |  |
 
+## brigade.py thread
+
+```text
+brigade.py [flags] thread --role ROLE --thread THREAD --seat SEAT dish
+```
+
+record one thread an item used, for a role no other command writes
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  |  |
+| `--role ROLE` | yes | `panel member` |  | the row's role; the other six roles are written by dish --thread, --reviewer-thread, or a report |
+| `--thread THREAD` | yes |  |  | the thread id |
+| `--seat SEAT` | yes |  |  | the thread's seat as provider/model |
+
 ## brigade.py dish
 
 ```text
@@ -338,8 +353,18 @@ record or check a review verdict for a dish at a head SHA
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--member | --late] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--member | --late] dish
 ```
+
+Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The child rows come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
+
+That section starts with the heading `## Threads` on a line of its own, and every other line of it that is not blank, is not a heading, and is not inside a fenced block that opens after up to three spaces is one list item of the form - \<role> `\<thread id>` \<seat>.
+
+This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is `mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.
+
+The three roles a child may take are code delegate, claims check, and architect runner. A child whose role is any of the other four is refused, because dish --thread writes the worker rows, --reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A report with no ## Threads section adds no row and is not an error. A line that is not one such item is refused by its number. An item whose thread id the table would change is refused by its number too. So is a heading deeper than the section's own, and so is a second ## Threads heading while the first is still open, and those two end the scan. A role that is well formed but is not one of the three is refused by its number and named.
+
+Any refusal happens before the pass row is written, so nothing is recorded and no partial row is written.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
@@ -353,6 +378,7 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 | `--same-family` |  |  |  | allow it when no other family is runnable |
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
 | `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
+| `--reviewer-thread REVIEWER_THREAD` |  |  |  | the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 

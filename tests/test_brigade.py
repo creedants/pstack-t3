@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/brigade.py"
 CODEX = "codex/gpt-6.1-sol"
 CLAUDE = "claudeAgent/claude-opus-5-5"
+# Thread ids the threads.tsv tests use. No real thread id appears in this repository.
+THREAD_A = "mcp:00000000-0000-4000-8000-000000000001"
+THREAD_B = "mcp:00000000-0000-4000-8000-000000000002"
+THREAD_C = "mcp:00000000-0000-4000-8000-000000000003"
+THREAD_D = "mcp:00000000-0000-4000-8000-000000000004"
 HELD_QUESTION = "D1: grok could not pass the seat's options: refused. Move this coordinator to a provider that passes them?"
 HELD_LINE = (
     "D1: open decision Q1: D1: grok could not pass the seat's options: refused. "
@@ -900,6 +905,13 @@ class BrigadeTest(unittest.TestCase):
     def tables(self):
         return {path.name: path.read_bytes() for path in sorted(self.at.glob("*.tsv"))}
 
+    def thread_rows(self):
+        """Every row of threads.tsv, with each timestamp replaced by `stamp` and an empty cell left empty."""
+        lines = [line for line in (self.at / "threads.tsv").read_text().splitlines() if line]
+        keys = lines[0].split("\t")
+        return [["stamp" if key in ("at", "start", "end") and value else value
+                 for key, value in zip(keys, line.split("\t"))] for line in lines[1:]]
+
     def follow_ups_in(self, body, *extra, name="D1.md", ok=True, owner=True):
         self.review_file(name, body)
         return self.brigade("ticket", "add", "--from-report", f"reports/{name}", *extra, ok=ok, owner=owner)
@@ -1343,6 +1355,322 @@ class BrigadeTest(unittest.TestCase):
                                           "--author", CLAUDE, "--verifier", CODEX, *flags, ok=False),
                              "brigade: no D9 in dishes.tsv")
         self.assertEqual(self.pass_rows(), [])
+
+    def test_the_first_dish_thread_writes_the_worker_row_open_at_attempt_one(self):
+        self.fired_bug_fix()
+        self.assertEqual((self.at / "threads.tsv").read_text(),
+                         "at\tdish\tattempt\trole\tthread\tseat\tstart\tend\n")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], THREAD_A)
+
+    def test_a_second_attempt_after_a_send_back_gets_role_fix_worker_attempt_two_and_closes_the_first_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "test asserts the bug")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"],
+                          ["D1", "2", "fix worker", THREAD_B, "", "stamp", ""]])
+
+    def test_the_same_dish_thread_command_twice_adds_one_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        after = (self.at / "threads.tsv").read_bytes()
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+        self.assertEqual((self.at / "threads.tsv").read_bytes(), after)
+
+    def test_pass_record_writes_the_reviewer_row_and_child_rows_with_the_thread_and_the_report(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n")
+        self.record("abc", "pass")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n"
+                                  f"- claims check `{THREAD_C}` {CODEX}\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_D),
+                         "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "reviewer", THREAD_D, CODEX, "", "stamp"],
+                          ["D1", "1", "code delegate", THREAD_B, "opencode-go/step-5-preview-free", "", "stamp"],
+                          ["D1", "1", "claims check", THREAD_C, CODEX, "", "stamp"]])
+        after = (self.at / "threads.tsv").read_bytes()
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_D,
+                                      "--same-family"), "D1 sent-back")
+        self.assertEqual((self.at / "threads.tsv").read_bytes(), after)
+
+    def test_pass_record_reads_a_report_with_a_threads_section_with_none_and_with_one_unreadable_line(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n")
+        self.record("abc", "pass")
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
+        self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check\n")
+        before = self.store_files()
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "ghi", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
+                         "- <role> `<thread id>` <seat>; nothing recorded")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
+
+    def test_a_padded_report_thread_id_is_refused_by_its_number_and_a_rerun_adds_no_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n")
+        self.record("abc", "pass")
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- claims check ` {THREAD_B} ` grok/grok-4.7\n")
+        before = self.store_files()
+        for _ in range(2):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                          "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                             "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
+                             "table would change; nothing recorded")
+            self.assertEqual(self.store_files(), before)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_whitespace_only_report_thread_id_is_refused_and_writes_no_thread_cell(self):
+        self.fired_bug_fix()
+        self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check ` ` grok/grok-4.7\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
+                         "table would change; nothing recorded")
+        self.assertEqual((self.at / "threads.tsv").read_text(),
+                         "at\tdish\tattempt\trole\tthread\tseat\tstart\tend\n")
+
+    def test_a_longer_outer_fence_holding_shorter_fences_adds_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  "````markdown\n"
+                                  "```text\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "```\n"
+                                  "````\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_mixed_backtick_and_tilde_fences_add_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  "```text\n"
+                                  "~~~\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "~~~\n"
+                                  "```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_threads_example_in_a_fence_indented_three_spaces_adds_no_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n"
+                                  "   ```markdown\n"
+                                  "## Threads\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "## Other example section\n"
+                                  "   ```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 passed")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_threads_example_in_a_fence_indented_four_spaces_is_not_a_fence_so_it_adds_a_child_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n"
+                                  "    ```markdown\n"
+                                  "## Threads\n"
+                                  f"- claims check `{THREAD_B}` grok/grok-4.7\n"
+                                  "## Other example section\n"
+                                  "    ```\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 passed")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
+
+    def test_a_role_the_report_cannot_hold_is_refused_by_its_number_and_name(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", f"findings\n\n## Threads\n\n- fixer `{THREAD_B}` grok/grok-4.7\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 holds role 'fixer', which is not "
+                         "code delegate, claims check, or architect runner; nothing recorded")
+        for role, writer in (("fix worker", "dish <item> --thread <id>"), ("reviewer", "pass record --reviewer-thread <id>"),
+                             ("panel member", "thread <dish> --role \"panel member\"")):
+            with self.subTest(role=role):
+                self.review_file("D1.md", f"findings\n\n## Threads\n\n- {role} `{THREAD_B}` grok/grok-4.7\n")
+                self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                              "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                                 f"brigade: D1: reports/D1.md cannot be read; line 5 holds role '{role}', "
+                                 f"which {writer} writes; nothing recorded")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_refused_thread_write_changes_no_file_in_the_store(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check\n")
+        before = self.store_files()
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        for extra in (("--reviewer-thread", THREAD_B),):
+            self.assertEqual(self.brigade(*member, "--verifier", CODEX, *extra, ok=False),
+                             "brigade: --member takes no --reviewer-thread; record a panel member's row with "
+                             f"thread D1 --role \"panel member\" --thread <id> --seat <provider/model>")
+        self.assert_refused_choice(self.brigade("thread", "D1", "--role", "worker", "--thread", THREAD_C,
+                                               "--seat", "grok/grok-4.7", ok=False),
+                                   "--role", "worker", ("panel member",))
+        self.assert_refused_choice(self.brigade("thread", "D1", "--role", "architect runner", "--thread", THREAD_C,
+                                               "--seat", "grok/grok-4.7", ok=False),
+                                   "--role", "architect runner", ("panel member",))
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
+                         "- <role> `<thread id>` <seat>; nothing recorded")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_an_old_store_whose_threads_table_is_lost_starts_the_next_worker_row_at_attempt_one(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "test asserts the bug")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        (self.at / "threads.tsv").unlink()
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 in-progress")
+        self.assertEqual((self.at / "threads.tsv").read_text().splitlines()[0],
+                         "at\tdish\tattempt\trole\tthread\tseat\tstart\tend")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_B, "", "stamp", ""]])
+
+    def test_a_store_with_no_threads_table_runs_status_watch_dish_and_pass_record_unchanged(self):
+        self.fired_bug_fix()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "next")
+        (self.at / "threads.tsv").unlink()
+        files = sorted(self.store_files())
+        self.assertEqual(self.brigade("status").splitlines()[0], "thread not recorded")
+        self.assertEqual(self.brigade("watch"),
+                         "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (no worker recorded)")
+        self.assertEqual(self.brigade("startable").splitlines()[:2],
+                         ["workers: 1 of 2 running, 1 idle, auto-start: normal", "waiting tickets: 1, unknown: 1"])
+        self.assertEqual(self.brigade("dish", "D1"), "D1 in-progress")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 passed")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc"), f"D1 at abc passed review by {CODEX}")
+        self.assertFalse((self.at / "threads.tsv").exists())
+        self.assertEqual(sorted(self.store_files()), files)
+
+    def test_dish_reported_and_a_state_change_close_the_worker_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--reported"), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"]])
+        self.brigade("dish", "D1", "--thread", THREAD_B)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"],
+                          ["D1", "2", "fix worker", THREAD_B, "", "stamp", "stamp"]])
+        self.brigade("dish", "D1", "--thread", THREAD_C)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped", "--stopped", "run-1"),
+                         "D1 dropped; T1 waiting again")
+        self.assertEqual([row[2:5] for row in self.thread_rows()],
+                         [["1", "worker", THREAD_A], ["2", "fix worker", THREAD_B], ["3", "fix worker", THREAD_C]])
+        self.assertEqual([row[7] for row in self.thread_rows()], ["stamp", "stamp", "stamp"])
+
+    def test_dish_thread_with_reported_closes_that_worker_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A, "--reported"), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"]])
+
+    def test_dish_thread_with_a_state_that_ends_the_attempt_closes_that_worker_row(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_A, "--state", "in-review"), "D1 in-review")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"]])
+
+    def test_a_state_flag_that_changes_nothing_leaves_the_worker_row_open(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_a_replacement_worker_started_with_its_state_and_thread_together_keeps_its_row_open(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", THREAD_B), "D1 in-progress")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", "stamp"],
+                          ["D1", "2", "fix worker", THREAD_B, "", "stamp", ""]])
+
+    def test_the_thread_command_records_a_panel_member_and_a_report_records_an_architect_runner_and_a_rerun_adds_nothing(self):
+        self.fired_bug_fix()
+        self.assertEqual(self.brigade("thread", "D1", "--role", "panel member", "--thread", THREAD_A,
+                                      "--seat", "grok/grok-4.7"), "D1: panel member on record")
+        self.review_file("D1.md", f"findings\n\n## Threads\n\n- architect runner `{THREAD_B}` "
+                                  "opencode-go/muse-spark-1.3-contributor\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX),
+                         "D1 sent-back")
+        after = (self.at / "threads.tsv").read_bytes()
+        self.assertEqual(self.brigade("thread", "D1", "--role", "panel member", "--thread", THREAD_A,
+                                      "--seat", "grok/grok-4.7"), "D1: panel member already on record")
+        self.assertEqual((self.at / "threads.tsv").read_bytes(), after)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "panel member", THREAD_A, "grok/grok-4.7", "", "stamp"],
+                          ["D1", "1", "architect runner", THREAD_B,
+                           "opencode-go/muse-spark-1.3-contributor", "", "stamp"]])
+        self.assertEqual(self.brigade("thread", "D9", "--role", "panel member", "--thread", THREAD_C,
+                                      "--seat", "grok/grok-4.7", ok=False), "brigade: no D9 in dishes.tsv")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--member", "--note", "nit"),
+                         "D1: member send-back on record; D1 stays sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "panel member", THREAD_A, "grok/grok-4.7", "", "stamp"],
+                          ["D1", "1", "architect runner", THREAD_B,
+                           "opencode-go/muse-spark-1.3-contributor", "", "stamp"]])
+
+    def test_a_member_row_takes_no_reviewer_thread(self):
+        self.fired_bug_fix()
+        before = self.store_files()
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        self.assertEqual(self.brigade(*member, "--verifier", CODEX, "--reviewer-thread", THREAD_A, ok=False),
+                         "brigade: --member takes no --reviewer-thread; record a panel member's row with "
+                         f"thread D1 --role \"panel member\" --thread <id> --seat <provider/model>")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade(*member, "--verifier", CODEX),
+                         "D1: member send-back on record; D1 stays in-progress")
+        self.assertEqual(self.thread_rows(), [])
 
     def close_run(self, *flags):
         result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),

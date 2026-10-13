@@ -41,6 +41,17 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
+# The roles a row of threads.tsv may hold. A report item or --role naming anything else is refused.
+THREAD_ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
+# The worker roles. dish --thread writes these, and a report may not name them.
+WORKER_ROLES = ("worker", "fix worker")
+# The roles a worker report lists, which its worker delegated. The report writes these and nothing else.
+CHILD_ROLES = ("code delegate", "claims check", "architect runner")
+# The roles the thread command writes. No other command takes a role as a flag.
+THREAD_COMMAND_ROLES = ("panel member",)
+# The command that writes each role the report may not name, by role.
+THREADS_WRITERS = {"worker": "dish <item> --thread <id>", "fix worker": "dish <item> --thread <id>",
+                   "reviewer": "pass record --reviewer-thread <id>", "panel member": "thread <dish> --role \"panel member\""}
 EDITS_VERDICT = "pass-with-edits"
 MODES = ("full", "light")
 ROUND_BUDGET = 3
@@ -91,6 +102,7 @@ TABLES = {
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported",
                    "kind", "goal"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
+    "threads.tsv": ("at", "dish", "attempt", "role", "thread", "seat", "start", "end"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
     "edits.tsv": ("at", "dish", "from", "to", "report"),
@@ -103,7 +115,7 @@ ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"
-WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable", "next")
+WORK_COMMANDS = ("fire", "brief", "contract", "dish", "pass", "edits", "watch", "startable", "next", "thread")
 # next sets this. A write or a land.py call then raises instead of changing a store.
 READ_ONLY = False
 # Kind, the store row, and whether the line leaves no store row. The Events table in the skill is the source.
@@ -1317,7 +1329,43 @@ NOT_A_REPORT = {
 EDITS_SECTION = (2, "Edits")
 EDIT_TITLE = re.compile(r"Edit (\S.*)")
 HEADING = re.compile(r"(#{1,6}) (?!(?:.*[ \t])?#+$)(\S(?:.*\S)?)")
+# The heading a worker report puts its child threads under, and the form of one item under it.
+THREADS_SECTION = (2, "Threads")
+THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
 FENCE_OPEN = re.compile(r"(`{3,})[^`]*|(~{3,}).*")
+FENCE_OPEN_INDENTED = re.compile(r" {0,3}(?:(`{3,})[^`]*|(~{3,}).*)")
+
+
+def fence_open(line):
+    """The (character, length) of the fence a line opens, or None when it opens none.
+
+    A fence opens at a line that starts at the first column with three or more backticks and holds no other
+    backtick, or that starts there with three or more tildes.
+    """
+    opened = FENCE_OPEN.fullmatch(line)
+    run = opened.group(1) or opened.group(2) if opened else None
+    return (run[0], len(run)) if run else None
+
+
+def threads_fence_open(line):
+    """The (character, length) of the fence a line of a worker report opens, or None when it opens none.
+
+    A fence opens at a line that starts, after up to three spaces, with three or more backticks and holds no
+    other backtick, or that starts there with three or more tildes.
+    """
+    opened = FENCE_OPEN_INDENTED.fullmatch(line)
+    run = opened.group(1) or opened.group(2) if opened else None
+    return (run[0], len(run)) if run else None
+
+
+def fence_close(line, run):
+    """Whether a line closes a fence that opened with that (character, length).
+
+    A fence closes at a line that is at most three spaces, at least as many of the same character, and then
+    only spaces and tabs.
+    """
+    return re.compile(f" {{0,3}}{run[0]}{{{run[1]},}}[ \t]*").fullmatch(line) is not None
+
 FILE_LINE = re.compile(r"File: `([^` ][^`]*)`(?!`)")
 LABELS = {"Old text:": "old", "New text:": "new"}
 # The marks edit_mark gives the five parts of one edit that one_edit reads, in the only order it reads them.
@@ -1387,6 +1435,17 @@ REPAIR = {
     "other": "move it out of reports/",
     "elsewhere": "replace the symbolic link at reports/ with a directory and leave the link's target as it is",
 }
+# Why report_threads cannot read one line of a report's ## Threads section. Each value finishes `line <n> `.
+THREADS_REFUSED = {
+    "item": "is not one list item of the form - <role> `<thread id>` <seat>",
+    "id": "holds a thread id that the table would change",
+    "deeper": "is a heading deeper than the ## Threads heading",
+    "again": "is a second ## Threads heading",
+    "role": "holds role {role!r}, which is not {roles}",
+    "writer": "holds role {role!r}, which {writer} writes",
+}
+# One refusal for every line report_threads could not read. `lines` is the joined per-line reasons.
+THREADS_REFUSED_LINE = "{dish}: reports/{name} cannot be read; {lines}; nothing recorded"
 
 
 def report_stat(restaurant, name):
@@ -1466,11 +1525,9 @@ def report_parts(lines):
     parts, index = [], 0
     while index < len(lines):
         line, number = lines[index], index + 1
-        opened = FENCE_OPEN.fullmatch(line)
+        opened = fence_open(line)
         if opened:
-            run = opened.group(1) or opened.group(2)
-            closing = re.compile(f" {{0,3}}{run[0]}{{{len(run)},}}[ \t]*")
-            close = next((at for at in range(index + 1, len(lines)) if closing.fullmatch(lines[at])), None)
+            close = next((at for at in range(index + 1, len(lines)) if fence_close(lines[at], opened)), None)
             if close is None:
                 raise EditsRefused(EDITS_REFUSED["open"].format(line=number))
             parts.append(("fence", "\n".join(lines[index + 1:close]), number))
@@ -2116,11 +2173,142 @@ def review_report(restaurant, dish_id, report):
     return name
 
 
+THREADS_REFUSED_LINE = "{dish}: reports/{name} cannot be read; {lines}; nothing recorded"
+
+
+def report_threads(text):
+    """The children a report's ## Threads section lists, and every line that could not be read.
+
+    The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
+    tuple of `(line number, reason)` pairs. A fenced block that opens after up to three spaces is
+    skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line of
+    the section that holds text but is not one item is reported by its number, and a line with no text is
+    skipped. A heading deeper than the
+    section's own or a second ## Threads heading while the first is still open is reported by its number
+    and ends the scan. An item whose thread id the table would change is reported by its number too. A
+    role that is well formed but is not one of CHILD_ROLES is reported by its number, and named with the
+    command that writes it when a role of THREADS_WRITERS names it.
+    """
+    children, unreadable = [], []
+    level, fence = 0, None
+    for number, line in enumerate(text.splitlines(), 1):
+        if fence:
+            if fence_close(line, fence):
+                fence = None
+            continue
+        opened = threads_fence_open(line)
+        if opened:
+            fence = opened
+            continue
+        heading = HEADING.match(line)
+        if heading:
+            depth, name = len(heading.group(1)), heading.group(2)
+            if (depth, name) == THREADS_SECTION:
+                if level:
+                    unreadable.append((number, THREADS_REFUSED["again"]))
+                    break
+                level = depth
+            elif depth <= level:
+                level = 0
+            elif level:
+                unreadable.append((number, THREADS_REFUSED["deeper"]))
+                break
+            continue
+        if not level or not line.strip():
+            continue
+        item = THREADS_ITEM.match(line)
+        if not item:
+            unreadable.append((number, THREADS_REFUSED["item"]))
+            continue
+        role, thread, seat = item.groups()
+        if clean(thread) != thread:
+            unreadable.append((number, THREADS_REFUSED["id"]))
+            continue
+        if role in THREADS_WRITERS:
+            unreadable.append((number, THREADS_REFUSED["writer"].format(role=role, writer=THREADS_WRITERS[role])))
+            continue
+        if role not in CHILD_ROLES:
+            unreadable.append((number, THREADS_REFUSED["role"].format(role=role, roles=one_of(CHILD_ROLES))))
+            continue
+        children.append({"role": role, "thread": thread, "seat": seat})
+    return tuple(children), tuple(unreadable)
+
+
+def report_threads_refusal(restaurant, dish_id, unreadable):
+    """One BrigadeError text naming the item, its report, and every line report_threads could not read."""
+    lines = "; ".join(f"line {number} {reason}" for number, reason in unreadable)
+    return THREADS_REFUSED_LINE.format(dish=dish_id, name=f"{dish_id}.md", lines=lines)
+
+
+def worker_report(restaurant, dish_id):
+    """The text of reports/<dish>.md, or None when the item has no report.
+
+    A report that is a symbolic link, is not a regular file, or resolves outside this store's reports/ is
+    refused with the words the store already uses for that kind. So is one that is not UTF-8.
+    """
+    name = f"{dish_id}.md"
+    kind = report_entry(restaurant, name)
+    if kind == "missing":
+        return None
+    if kind != "file":
+        raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing recorded")
+    try:
+        return (restaurant.dir / "reports" / name).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise BrigadeError(f"reports/{name} is not UTF-8; nothing recorded") from None
+
+
+def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
+    """The one writer of threads.tsv. Returns True when it wrote a row or closed one.
+
+    `threads` is a sequence of `(role, thread, seat)`. A worker role's attempt is one more than the worker
+    rows the item already holds for another thread, and every other role's is that count, or 1 when the
+    item holds none. A worker role's row is written open, with its start at this write, and its role is
+    worker at attempt 1 and fix worker at every later one. Every other role's row is written closed, with
+    its end at this write. A thread id is compared and written as the table stores it, because save_rows
+    writes the cell through clean. `closing` writes this stamp into the end of every open worker row of
+    the item but one whose stored thread is the stored `keep_thread`. A row whose item, attempt, role,
+    and stored thread a row already holds is dropped, so a rerun that finds the same item, attempt, role,
+    and thread writes no row. When every row is dropped and nothing closes, no file changes.
+    """
+    rows = restaurant.rows("threads.tsv")
+    mine = [row for row in rows if row["dish"] == dish_id]
+    stamp = now()
+    keep = stored("threads.tsv", "thread", keep_thread) if keep_thread else ""
+    held = {(row["attempt"], row["role"], row["thread"]) for row in mine}
+    written = []
+    for role, thread, seat in threads:
+        thread = stored("threads.tsv", "thread", thread)
+        worker = role in WORKER_ROLES
+        used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
+        number = used + 1 if worker else max(used, 1)
+        if worker:
+            role = "worker" if number == 1 else "fix worker"
+        if (str(number), role, thread) in held:
+            continue
+        held.add((str(number), role, thread))
+        written.append({"at": stamp, "dish": dish_id, "attempt": number, "role": role, "thread": thread,
+                        "seat": seat, "start": stamp if worker else "", "end": "" if worker else stamp})
+    closed = False
+    if closing:
+        for row in mine:
+            if row["role"] in WORKER_ROLES and not row["end"] and row["thread"] != keep:
+                row["end"] = stamp
+                closed = True
+    if not written and not closed:
+        return False
+    restaurant.save_rows("threads.tsv", rows + written)
+    return True
+
+
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
-                member=False, late=False, edits=""):
+                member=False, late=False, edits="", reviewer_thread=""):
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
+    if reviewer_thread and member:
+        raise BrigadeError("--member takes no --reviewer-thread; record a panel member's row with "
+                           f"thread {dish_id} --role \"panel member\" --thread <id> --seat <provider/model>")
     if roles_family()(author) == roles_family()(verifier) and not same_family:
         raise BrigadeError(f"verifier {verifier} is the same model family as author {author}; "
                            "pick a verifier from another family, or pass --same-family when no other family is runnable")
@@ -2140,9 +2328,17 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
         report_edits(restaurant, report)
     if verdict == "pass" and not member:
         edits_gate(restaurant, dish_id, sha, report)
+    # Read the report before the append, so a line the parser refuses leaves no pass row and no thread row.
+    body = worker_report(restaurant, dish_id)
+    children, unreadable = report_threads(body) if body else ((), ())
+    if unreadable:
+        raise BrigadeError(report_threads_refusal(restaurant, dish_id, unreadable))
     restaurant.append("pass.tsv", {"at": now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
                                    "author": author, "verifier": verifier, "note": note, "report": report,
                                    "member": "yes" if member else ""})
+    rows = [("reviewer", reviewer_thread, verifier)] if reviewer_thread else []
+    rows += [(child["role"], child["thread"], child["seat"]) for child in children]
+    write_threads(restaurant, dish_id, rows)
     if member:
         return f"{dish_id}: member {verdict} on record; {dish_id} stays {dish['state']}"
     if late:
@@ -3578,6 +3774,7 @@ def drop(restaurant, ident, stopped):
         evidence += [f"released {lease}"] if lease else []
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
+        write_threads(restaurant, ident, (), closing=True)
         rows = restaurant.rows("rail.tsv")
         back = [row for row in rows if row["state"] == "assigned" and row["dish"] == ident]
         for row in back:
@@ -4926,6 +5123,14 @@ def parser():
     p.add_argument("--provider", required=True)
     p.add_argument("--minutes", type=int, required=True)
 
+    p = sub.add_parser("thread", help="record one thread an item used, for a role no other command writes")
+    p.add_argument("dish")
+    p.add_argument("--role", required=True, choices=THREAD_COMMAND_ROLES,
+                   help="the row's role; the other six roles are written by dish --thread, --reviewer-thread, "
+                        "or a report")
+    p.add_argument("--thread", required=True, help="the thread id")
+    p.add_argument("--seat", required=True, help="the thread's seat as provider/model")
+
     p = sub.add_parser("dish", help="update a dish")
     p.add_argument("id")
     p.add_argument("--state", choices=DISH_STATES)
@@ -4941,7 +5146,33 @@ def parser():
 
     p = sub.add_parser("pass", help="record or check a review verdict for a dish at a head SHA")
     t = p.add_subparsers(dest="action", required=True)
-    a = t.add_parser("record")
+    threads_help = (
+        "Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's "
+        "report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The "
+        "child rows come from a ## Threads section of reports/<dish>.md, which this command reads and takes no "
+        "flag for.\n"
+        "\n"
+        "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
+        "is not blank, is not a heading, and is not inside a fenced block that opens after up to three spaces is "
+        "one list item of the form - <role> `<thread id>` <seat>.\n"
+        "\n"
+        "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
+        "then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and "
+        "whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is "
+        "`mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.\n"
+        "\n"
+        "The three roles a child may take are code delegate, claims check, and architect runner. A child whose "
+        "role is any of the other four is refused, because dish --thread writes the worker rows, "
+        "--reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A "
+        "report with no ## Threads section adds no row and is not an error. A line that is not one such item is "
+        "refused by its number. An item whose thread id the table would change is refused by its number too. "
+        "So is a heading deeper than the section's own, and so is a second ## Threads "
+        "heading while the first is still open, and those two end the scan. A role that is well formed but is not "
+        "one of the three is refused by its number and named.\n"
+        "\n"
+        "Any refusal happens before the pass row is written, so nothing is recorded and no partial row is written."
+    )
+    a = t.add_parser("record", help=threads_help)
     a.add_argument("dish")
     a.add_argument("--pr", default="", help="PR URL; omit for local-only work")
     a.add_argument("--sha", required=True)
@@ -4954,6 +5185,8 @@ def parser():
     a.add_argument("--edits", default="",
                    help=f"the round's review report under reports/, such as D2-review-1.md; --verdict {EDITS_VERDICT} needs it, "
                         "and no other verdict takes it; refused with one line that says why when its edits cannot be read")
+    a.add_argument("--reviewer-thread", default="",
+                   help="the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -5411,6 +5644,11 @@ def command(restaurant, args, contract=None, rails=None):
         restaurant.update("rail.tsv", args.id, "ticket", **changes)
         return f"{args.id} {'; '.join(said)}"
 
+    if args.command == "thread":
+        restaurant.find("dishes.tsv", args.dish)
+        added = write_threads(restaurant, args.dish, [(args.role, args.thread, args.seat)])
+        return f"{args.dish}: {args.role} {'on record' if added else 'already on record'}"
+
     if args.command == "dish":
         _, current = restaurant.find("dishes.tsv", args.id)
         worker = any(value and value != current.get(field, "") for field, value in (("thread", args.thread), ("task", args.task)))
@@ -5447,11 +5685,19 @@ def command(restaurant, args, contract=None, rails=None):
             if current["thread"] not in recorded:
                 restaurant.log("worker", args.id, "retired", current["thread"])
         reported = "" if entering or replacing else ("yes" if args.reported else None)
+        transition = bool(args.state) and args.state != current["state"]
+        ends = transition and args.state != "in-progress"
+        closing = args.reported or ends or (thread and thread != current.get("thread", ""))
+        keep = args.thread if args.thread and args.thread != current.get("thread", "") else ""
         row = restaurant.update("dishes.tsv", args.id, "dish", state=args.state, task=args.task, thread=thread,
                                 branch=args.branch, pr=args.pr, sha=args.sha, timebox=args.timebox, reported=reported,
                                 lease=args.lease, paths=args.paths)
         if replacing:
             restaurant.log("dish", args.id, "in-progress", row.get("summary", ""))
+        if args.thread:
+            write_threads(restaurant, args.id, [("worker", args.thread, "")], closing=closing, keep_thread=keep)
+        elif closing:
+            write_threads(restaurant, args.id, (), closing=True)
         if args.state == "merged":
             for ticket in filter(None, row["tickets"].split(",")):
                 restaurant.update("rail.tsv", ticket, "ticket", state="done")
@@ -5462,7 +5708,8 @@ def command(restaurant, args, contract=None, rails=None):
     if args.command == "pass":
         if args.action == "record":
             return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                               args.note, args.same_family, args.report, args.member, args.late, args.edits)
+                               args.note, args.same_family, args.report, args.member, args.late, args.edits,
+                               args.reviewer_thread)
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:
