@@ -564,7 +564,11 @@ def _admit(kind, repo=None, command=None):
                 return list(handles.values()), records
             waited = time.time() - started
             if _report_due(waited, reported):
-                print(_format_wait(waited, _live_holders(busy)), file=sys.stderr, flush=True)
+                line = _format_wait(waited, _live_holders(busy))
+                try:
+                    print(line, file=sys.stderr, flush=True)
+                except (OSError, ValueError):
+                    pass
                 reported = waited
             time.sleep(0.5)
     except BaseException:

@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -4095,6 +4096,46 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(stdout, "ran\n")
         self.assertIn(f"exclusive {self.work} for ", line)
         self.assertIn(": bench --all", line)
+
+    def test_a_stderr_error_on_the_slot_wait_line_does_not_cancel_the_waiter(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="make test")
+        release = self.base / "holder-worker" / "release"
+        attempted = threading.Event()
+        body = []
+
+        class DeadStderr:
+            def write(self, data):
+                attempted.set()
+                raise OSError(errno.EIO, "Input/output error")
+
+            def flush(self):
+                return None
+
+        def release_holder():
+            attempted.wait(timeout=5)
+            with open(release, "w") as handle:
+                handle.write("x")
+
+        releaser = threading.Thread(target=release_holder)
+        saved_after = land.REPORT_AFTER
+        land.REPORT_AFTER = 0.05
+        saved_stderr = sys.stderr
+        releaser.start()
+        try:
+            sys.stderr = DeadStderr()
+            with self.no_slot():
+                with land.slot("worker", repo=str(self.work), command="npm test"):
+                    body.append("ran")
+        finally:
+            sys.stderr = saved_stderr
+            land.REPORT_AFTER = saved_after
+            releaser.join(timeout=10)
+            if holder.poll() is None:
+                holder.wait(timeout=20)
+        self.assertFalse(releaser.is_alive())
+        self.assertTrue(attempted.is_set(), "the waiter never printed a wait line")
+        self.assertEqual(body, ["ran"])
 
     def test_a_record_whose_holder_is_gone_is_not_shown_as_holding(self):
         self.governor(1)
