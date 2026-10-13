@@ -1,1 +1,2 @@
 - `dish --thread` compares a non-empty id after `stored` cleans it. A padded id of the current worker writes no retirement, and the next unpadded command is accepted. A whitespace-only id stays raw, so it still clears that worker.
+- The entry load drops its unique package and that package's children in a `finally` that covers the imports and `seam.bind`, then puts back any `brigade_lib` cache entries that were already there.

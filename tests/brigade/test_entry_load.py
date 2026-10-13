@@ -1,3 +1,6 @@
+import sys
+import types
+
 from .support import (
     setUpModule,
     Path,
@@ -100,3 +103,32 @@ class EntryLoadTest(unittest.TestCase):
         self.assertEqual([row["at"] for row in self.rail()], ["2001-01-01T00:00:00Z"])
         self.assertIsNot(first["Restaurant"], second["Restaurant"])
         self.assertIsNot(first["seam"], second["seam"])
+
+    def forget_planted_modules(self, unrelated):
+        if sys.modules.get("brigade_lib.unrelated") is unrelated:
+            sys.modules.pop("brigade_lib.unrelated", None)
+        for name in [name for name in sys.modules if name.startswith("_brigade_ns_")]:
+            del sys.modules[name]
+
+    def test_a_load_puts_back_a_brigade_lib_entry_it_did_not_import(self):
+        unrelated = types.ModuleType("brigade_lib.unrelated")
+        unrelated.marker = "kept"
+        sys.modules["brigade_lib.unrelated"] = unrelated
+        self.addCleanup(self.forget_planted_modules, unrelated)
+        runpy.run_path(str(SCRIPT))
+        self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
+        self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
+
+    def test_a_failed_seam_bind_drops_the_unique_package_and_restores_the_prior_entry(self):
+        case = Path(self.temporary.name) / "load"
+        case.mkdir()
+        source = case / "brigade.py"
+        source.write_text(Path(SCRIPT).read_text().replace("seam.bind(globals())", "raise RuntimeError('bind failed')", 1))
+        (case / "brigade_lib").symlink_to(Path(SCRIPT).parent / "brigade_lib")
+        unrelated = types.ModuleType("brigade_lib.unrelated")
+        sys.modules["brigade_lib.unrelated"] = unrelated
+        self.addCleanup(self.forget_planted_modules, unrelated)
+        with self.assertRaises(RuntimeError):
+            runpy.run_path(str(source))
+        self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
+        self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
