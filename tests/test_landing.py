@@ -4,6 +4,7 @@ import errno
 import fcntl
 import hashlib
 import inspect
+import io
 import json
 import os
 import re
@@ -11,7 +12,6 @@ import shlex
 import shutil
 import signal
 import sqlite3
-import struct
 import subprocess
 import sys
 import tempfile
@@ -89,42 +89,60 @@ def paused_child(case, args):
 
 
 SLOT_HOLD = (
-    "import os, sys\n"
+    "import os, sys, time\n"
     "from pathlib import Path\n"
-    "log, name, fifo = sys.argv[1:4]\n"
+    "log, name, fifo, *hold = sys.argv[1:]\n"
     "def mark(word):\n"
+    "    files = os.environ.get('LAND_SLOT_FILES', '')\n"
+    "    line = f'{word} {name}' + (f' {files}' if files else '')\n"
     "    out = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)\n"
-    "    os.write(out, f'{word} {name}\\n'.encode())\n"
+    "    os.write(out, (line + '\\n').encode())\n"
     "    os.close(out)\n"
     "release = os.open(fifo, os.O_RDONLY)\n"
     "mark('enter')\n"
     "Path('started').touch()\n"
-    "assert os.read(release, 1) == b'x'\n"
+    "if hold:\n"
+    "    time.sleep(float(hold[0]))\n"
+    "else:\n"
+    "    assert os.read(release, 1) == b'x'\n"
     "mark('exit')\n"
     "Path('finished').touch()\n"
 )
+# A stepped caller waits for the test between attempts. A marked caller sleeps for real. Both mark each failed attempt,
+# and touch blocking before a lock call that has to wait.
 SLOT_WRAPPED = (
-    "import os, subprocess, sys\n"
+    "import fcntl, os, subprocess, sys, time\n"
     "from pathlib import Path\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import land\n"
+    "flock = fcntl.flock\n"
+    "def announced(handle, operation):\n"
+    "    if operation == fcntl.LOCK_EX:\n"
+    "        try:\n"
+    "            return flock(handle, operation | fcntl.LOCK_NB)\n"
+    "        except BlockingIOError:\n"
+    "            Path('blocking').touch()\n"
+    "    return flock(handle, operation)\n"
+    "land.fcntl.flock = announced\n"
     "count = 0\n"
-    "def blocked(seconds):\n"
+    "sleep = time.sleep\n"
+    "def waiting(seconds):\n"
     "    global count\n"
     "    count += 1\n"
-    "    gate = os.open(sys.argv[2], os.O_RDONLY)\n"
     "    Path(f'waiting-{count}').touch()\n"
+    "    if sys.argv[2] == 'marked':\n"
+    "        sleep(seconds)\n"
+    "        return\n"
+    "    gate = os.open(sys.argv[2], os.O_RDONLY)\n"
     "    assert os.read(gate, 1) == b'x'\n"
     "    os.close(gate)\n"
     "if sys.argv[2]:\n"
-    "    land.time.sleep = blocked\n"
+    "    land.time.sleep = waiting\n"
     "if sys.argv[3] == 'landing':\n"
     "    with land.slot('landing'):\n"
     "        sys.exit(subprocess.run(sys.argv[4:]).returncode)\n"
     "sys.exit(land.main(['slot', *sys.argv[4:]]))\n"
 )
-TURN_MUTEX = 4096
-TURN_PLACE = 2097152
 
 # A holder that keeps its slot until the release fifo is written, so a test can read a waiter's report.
 HOLD_SCRIPT = (
@@ -153,6 +171,9 @@ EXCLUSIVE_MAIN = (
     "    land.EXCLUSIVE_CAP_MAX = float(cap_max)\n"
     "sys.exit(land.main(sys.argv[5:]))\n"
 )
+
+# EXCLUSIVE_MAIN after os.waitid is removed, so the grace uses the fallback.
+EXCLUSIVE_MAIN_WITHOUT_WAITID = "import os\nvars(os).pop('waitid', None)\n" + EXCLUSIVE_MAIN
 
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
@@ -376,8 +397,529 @@ if __name__ == "__main__":
 '''
 
 
-def ofd_lock(descriptor, byte, kind, blocking=False):
-    fcntl.fcntl(descriptor, 38 if blocking else 37, struct.pack("hhqqi4x", kind, os.SEEK_SET, byte, 1, 0))
+# The fixture is the slot code of the last version that took turns with OFD byte locks on governor/turn
+# and must not be updated to match the script. main is the slot command of PREVIOUS_SLOT_SCRIPT.
+OFD_SLOT_SCRIPT = r'''
+import argparse
+import contextlib
+import errno
+import fcntl
+import json
+import math
+import os
+import signal
+import struct
+import subprocess
+import sys
+import time
+from collections import namedtuple
+from pathlib import Path
+
+
+class LandError(Exception):
+    pass
+
+
+def state_home():
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pstack-t3"
+
+
+def governor_dir():
+    return state_home() / "governor"
+
+
+def governor_slots():
+    config = governor_dir() / "governor.json"
+    if config.exists():
+        return max(1, int(json.loads(config.read_text()).get("slots", 1)))
+    return max(1, min(4, (os.cpu_count() or 4) // 4))
+
+
+TURN_MUTEX = 4096
+TURN_KIND = 1048576
+TURN_PLACE = 2097152
+TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
+REPORT_AFTER = 15
+REPORT_EVERY = 60
+EXCLUSIVE_REASON_MAX = 80
+_Holder = namedtuple("_Holder", "kind pid repo started command cap reason")
+_UNKNOWN = _Holder(None, None, None, None, None, None, None)
+
+
+def _slot_names(kind, slots):
+    """Return the slot filenames for kind, in lock order."""
+    workers = [f"worker-{index}" for index in range(slots)]
+    return {"worker": workers, "landing": ["landing-0"], "exclusive": ["landing-0"] + workers}[kind]
+
+
+def _conflicts(earlier, later):
+    """True when both can need the same slot file. Worker and landing never do."""
+    return earlier == later or "exclusive" in (earlier, later)
+
+
+def _ofd_excl(fd, byte, blocking):
+    """Take an exclusive OFD lock on one byte of fd. Nonblocking returns False when the byte is already held."""
+    try:
+        # F_OFD_SETLK is 37 and F_OFD_SETLKW is 38 on Linux. This fcntl module does not name them.
+        fcntl.fcntl(fd, 38 if blocking else 37, struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, byte, 1, 0))
+    except OSError as error:
+        if error.errno in (errno.EAGAIN, errno.EACCES):
+            return False
+        if error.errno in (errno.EINVAL, errno.ENOTSUP):
+            raise LandError("this filesystem does not support the slot governor's ordering lock") from None
+        raise
+    return True
+
+
+def _ofd_unlock(fd, byte):
+    fcntl.fcntl(fd, 37, struct.pack("hhqqi4x", fcntl.F_UNLCK, os.SEEK_SET, byte, 1, 0))
+
+
+def _try_take(kind, handles, slots):
+    """Flock the slot files kind needs, without blocking. Returns the locked files, or None with none locked.
+    Worker and landing need one file. Exclusive needs every file."""
+    names = _slot_names(kind, slots)
+    wanted = len(names) if kind == "exclusive" else 1
+    taken = []
+    for name in names:
+        try:
+            fcntl.flock(handles[name], fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if kind == "exclusive":
+                break
+            continue
+        taken.append(handles[name])
+        if len(taken) == wanted:
+            return taken
+    for handle in taken:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return None
+
+
+def _can_satisfy(kind, handles, slots):
+    """True when a waiter of kind could take its slots now. Holds nothing on return."""
+    taken = _try_take(kind, handles, slots)
+    for handle in taken or []:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return taken is not None
+
+
+def _earlier_waiters(gate, ticket, kind):
+    """Return the kinds of the live tickets that conflict with kind and came before this caller.
+    A ticket is live while its byte is locked. Runs under the turn mutex."""
+    low, upcoming = struct.unpack("<QQ", os.pread(gate, 16, 0).ljust(16, b"\0"))
+    first = low = low or 1
+    kinds = set()
+    live = False
+    for number in range(low, upcoming):
+        if number == ticket:
+            break
+        if _ofd_excl(gate, TURN_PLACE + number, False):
+            _ofd_unlock(gate, TURN_PLACE + number)
+            if not live:
+                low = number + 1
+            continue
+        live = True
+        earlier = TICKET_KINDS[os.pread(gate, 1, TURN_KIND + number)]
+        if _conflicts(earlier, kind):
+            kinds.add(earlier)
+    if low != first or not upcoming:
+        os.pwrite(gate, struct.pack("<QQ", low, max(upcoming, 1)), 0)
+    return kinds
+
+
+def _take_ticket(gate, place, kind):
+    """Issue the next ticket to this caller and lock its byte on place. Runs under the turn mutex."""
+    low, ticket = struct.unpack("<QQ", os.pread(gate, 16, 0))
+    os.pwrite(gate, struct.pack("<QQ", low, ticket + 1), 0)
+    os.pwrite(gate, kind[:1].encode(), TURN_KIND + ticket)
+    _ofd_excl(place, TURN_PLACE + ticket, False)
+    return ticket
+
+
+def _short_command(command):
+    """The wrapped command's first 80 characters, with CR and LF flattened to spaces."""
+    if not command:
+        return None
+    return command[:80].replace("\r\n", " ").replace("\r", " ").replace("\n", " ") or None
+
+
+def _repo_text(repo):
+    """The repository as an absolute path string, or None when the path cannot be resolved.
+
+    A repo of None selects the working directory.
+    """
+    try:
+        return os.path.abspath(repo or os.getcwd())
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _hold_path(name):
+    return governor_dir() / "holds" / name
+
+
+def _dump_holder(path, holder):
+    """Write one holder record atomically, replacing whatever the previous holder left.
+
+    The record is written to a temporary file whose descriptor is already locked, and that inode
+    is renamed into place, so the record lock travels with the record.
+    Returns the descriptor, still locked, for the caller to release when it lets the slot go.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.pwrite(descriptor, json.dumps(dict(zip(_Holder._fields, holder))).encode(), 0)
+        os.replace(temporary, path)
+    except BaseException:
+        os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
+    return descriptor
+
+
+def _release_records(records):
+    """Unlock and close the record descriptors this process published."""
+    for descriptor in records:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _finite(value):
+    """True for a start time a record may hold and formatting can use."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
+
+
+def _short_reason(text):
+    """One line of reason text, or None.
+
+    Keeps characters for which str.isprintable() is true, strips the ends,
+    and cuts to EXCLUSIVE_REASON_MAX. Reads that limit at call time.
+    Tabs, newlines, and other non-printable characters are deleted.
+    """
+    if not isinstance(text, str):
+        return None
+    kept = "".join(character for character in text if character.isprintable()).strip()
+    return kept[:EXCLUSIVE_REASON_MAX] or None
+
+
+def _cap_seconds(value):
+    """A positive finite cap in seconds, or None. A bool is not a cap."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+def _read_holder(path):
+    """The holder a record names, with each unreadable field as unknown. A missing, empty, or malformed record is unknown."""
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return _UNKNOWN
+    if not isinstance(record, dict):
+        return _UNKNOWN
+    kind, pid, repo, started, command, cap, reason = (record.get(field) for field in _Holder._fields)
+    if not (isinstance(command, str) and command and len(command) <= 80
+            and "\n" not in command and "\r" not in command):
+        command = None
+    return _Holder(
+        kind if kind in ("worker", "landing", "exclusive") else None,
+        pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+        repo if isinstance(repo, str) and repo else None,
+        started if _finite(started) else None,
+        command,
+        _cap_seconds(cap),
+        _short_reason(reason),
+    )
+
+
+def _record_holder(path):
+    """The holder a record names when a conflicting lock proves a writer, or unknown.
+
+    The record is read only when the nonblocking shared lock fails with errno EAGAIN or
+    EWOULDBLOCK. A successful lock, a failed open, or any other lock error returns unknown.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return _UNKNOWN
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError as error:
+        if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+            return _read_holder(path)
+        return _UNKNOWN
+    finally:
+        os.close(descriptor)
+    return _UNKNOWN
+
+
+def _slot_busy(handles, name):
+    """True when the slot file is held by someone else. Probes the waiter's own unlocked handle and releases it at once."""
+    try:
+        fcntl.flock(handles[name], fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    fcntl.flock(handles[name], fcntl.LOCK_UN)
+    return False
+
+
+def _busy_names(handles, names):
+    """The slot names held by someone else. Runs under the turn mutex."""
+    return [name for name in names if _slot_busy(handles, name)]
+
+
+def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
+    """Write one holder record for each slot just taken, before the turn mutex unlocks.
+
+    Returns the locked record descriptors, one per slot whose write succeeded.
+    Stores cap and reason only when kind is exclusive.
+    """
+    if kind != "exclusive":
+        cap = None
+        reason = None
+    holder = _Holder(kind, os.getpid(), _repo_text(repo), time.time(), _short_command(command), cap, reason)
+    records = []
+    for name, handle in handles.items():
+        if handle not in taken:
+            continue
+        try:
+            records.append(_dump_holder(_hold_path(name), holder))
+        except OSError:
+            pass
+    return records
+
+
+def _clear():
+    """Remove this process's records while its slot flocks are still held."""
+    for path in (governor_dir() / "holds").glob("*"):
+        if _read_holder(path).pid == os.getpid():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _live_holders(names):
+    """The holders of the named busy slots, distinct by pid when pid is set, otherwise by the whole holder.
+
+    Each named slot checks its own record. The record is read only when the nonblocking
+    shared lock fails with errno EAGAIN or EWOULDBLOCK. A successful lock, a failed open,
+    or any other lock error returns unknown for that slot.
+    """
+    holders, seen = [], set()
+    for name in names:
+        holder = _record_holder(_hold_path(name))
+        key = holder.pid if holder.pid is not None else holder
+        if key in seen:
+            continue
+        seen.add(key)
+        holders.append(holder)
+    return holders
+
+
+def _held_for(holder):
+    if holder.started is None:
+        return "unknown"
+    return f"{int(max(0, time.time() - holder.started))}s"
+
+
+def _span(seconds):
+    """A duration for a wait line. Whole minutes when seconds is a positive multiple of 60."""
+    if seconds > 0 and seconds % 60 == 0:
+        return f"{seconds / 60:g}m"
+    if float(seconds).is_integer():
+        return f"{int(seconds)}s"
+    return f"{seconds:g}s"
+
+
+def _cap_clause(holder):
+    """The wait-line cap phrase for an exclusive holder, or None."""
+    if holder.kind != "exclusive":
+        return None
+    cap = _cap_seconds(holder.cap)
+    if cap is None:
+        return None
+    cap_text = _span(cap)
+    if not _finite(holder.started):
+        return f"cap {cap_text}"
+    left = max(0.0, cap - (time.time() - holder.started))
+    return f"{_span(left)} left of {cap_text}"
+
+
+def _format_wait(elapsed, holders):
+    """One line naming each proven holder by kind, repository, hold duration, and short command.
+
+    A holder with no proven record reads as unknown, and so does each field its record
+    does not carry. Zero holders produce no holder text. An exclusive holder with a
+    usable cap names the time left when its start time is usable. It names the cap
+    alone when the start time is not. The line includes the reason when the record
+    has one.
+    """
+    named = []
+    for holder in holders:
+        if holder == _UNKNOWN:
+            named.append("unknown")
+            continue
+        clause = _cap_clause(holder)
+        extra = ""
+        if clause:
+            extra = f", {clause}"
+            if holder.reason:
+                extra += f", {holder.reason}"
+        named.append(f"{holder.kind or 'unknown'} {holder.repo or 'unknown'} for {_held_for(holder)}{extra}: "
+                     f"{holder.command or 'unknown'}")
+    if not named:
+        return f"land: waited {int(elapsed)}s for a slot"
+    return f"land: waited {int(elapsed)}s for a slot; " + "; ".join(named)
+
+
+def _report_due(elapsed, last):
+    if elapsed < REPORT_AFTER:
+        return False
+    return last is None or elapsed - last >= REPORT_EVERY
+
+
+def _raise_exit(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def _held(kind, repo, command, cap=None, reason=None):
+    """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
+    held, records, acquired = _admit(kind, repo, command, cap, reason)
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
+    for signum in previous:
+        signal.signal(signum, _raise_exit)
+    try:
+        yield acquired
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        _clear()
+        for handle in held:
+            handle.close()
+        _release_records(records)
+
+
+def _admit(kind, repo=None, command=None, cap=None, reason=None):
+    directory = governor_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    slots = governor_slots()
+    handles = {name: open(directory / name, "a") for name in _slot_names("exclusive", slots)}
+    turns = []
+    records = []
+    try:
+        # Two opens, so that unlocking the mutex byte on gate keeps the ticket byte locked on place.
+        for _ in range(2):
+            turns.append(os.open(directory / "turn", os.O_RDWR | os.O_CREAT, 0o666))
+        gate, place = turns
+        ticket = None
+        started, reported = time.time(), None
+        while True:
+            _ofd_excl(gate, TURN_MUTEX, True)
+            earlier = _earlier_waiters(gate, ticket, kind)
+            taken = None
+            if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
+                taken = _try_take(kind, handles, slots)
+            if taken is not None:
+                acquired = time.monotonic()
+            if taken is None and ticket is None:
+                ticket = _take_ticket(gate, place, kind)
+            if taken is None:
+                busy = _busy_names(handles, _slot_names(kind, slots))
+            else:
+                records = _publish(kind, handles, taken, repo, command, cap, reason)
+            if taken is not None and ticket is not None:
+                _ofd_unlock(place, TURN_PLACE + ticket)
+            _ofd_unlock(gate, TURN_MUTEX)
+            if taken is not None:
+                return list(handles.values()), records, acquired
+            waited = time.time() - started
+            if _report_due(waited, reported):
+                line = _format_wait(waited, _live_holders(busy))
+                try:
+                    print(line, file=sys.stderr, flush=True)
+                except (OSError, ValueError):
+                    pass
+                reported = waited
+            time.sleep(0.5)
+    except BaseException:
+        _release_records(records)
+        for handle in handles.values():
+            handle.close()
+        raise
+    finally:
+        for descriptor in turns:
+            os.close(descriptor)
+
+
+@contextlib.contextmanager
+def exclusive_slot(repo=None, command=None, cap=None, reason=None):
+    """Hold every slot, landing included, so a benchmark runs on a quiet machine.
+    It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
+    A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
+    if os.environ.get("LAND_SLOT"):
+        raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
+    with _held("exclusive", repo, command, cap, reason) as acquired:
+        os.environ["LAND_SLOT"] = "exclusive"
+        try:
+            yield acquired
+        finally:
+            os.environ.pop("LAND_SLOT", None)
+
+
+@contextlib.contextmanager
+def slot(pool="worker", repo=None, command=None):
+    """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
+    A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
+    A caller that shares this turn file leaves a free slot for an earlier conflicting ticket that can take it."""
+    if os.environ.get("LAND_SLOT"):
+        yield
+        return
+    with _held(pool, repo, command):
+        os.environ["LAND_SLOT"] = pool
+        try:
+            yield
+        finally:
+            os.environ.pop("LAND_SLOT", None)
+
+
+def main(argv=None):
+    try:
+        argv = sys.argv[1:] if argv is None else argv
+        parser = argparse.ArgumentParser(prog="land.py")
+        sub = parser.add_subparsers(dest="command", required=True)
+        slot_parser = sub.add_parser("slot")
+        slot_parser.add_argument("--exclusive", action="store_true")
+        slot_parser.add_argument("cmd", nargs=argparse.REMAINDER)
+        args = parser.parse_args(argv)
+        command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+        if not command:
+            raise LandError("slot needs a command after --")
+        with (exclusive_slot() if args.exclusive else slot()):
+            return subprocess.run(command).returncode
+    except LandError as error:
+        print(f"land: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
 
 
 class SlotCaller:
@@ -395,16 +937,23 @@ class SlotCallers:
 
     A stepped caller runs land.py with time.sleep replaced. It marks each failed attempt with a waiting-N file and
     makes its next attempt when the test writes to its retry fifo, so the test decides which waiter tries next.
+    A marked caller writes the same waiting-N files and retries on its own.
+    Each instance on one fixture writes its own log and its own caller directories.
     """
 
     def __init__(self, test, slots):
         self.test = test
         self.governor = test.base / "state/pstack-t3/governor"
-        self.governor.mkdir(parents=True)
+        self.governor.mkdir(parents=True, exist_ok=True)
         (self.governor / "governor.json").write_text(json.dumps({"slots": slots}))
-        # The suite may itself run inside a slot. A child that inherits LAND_SLOT takes no lock.
-        self.env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
-        self.log = test.base / "slot-log"
+        # The suite may itself run inside a slot. A child that inherits LAND_SLOT takes no lock,
+        # and an inherited LAND_SLOT_FILES would name the suite's slot files.
+        self.env = {key: value for key, value in os.environ.items() if key not in {"LAND_SLOT", "LAND_SLOT_FILES"}}
+        self.stamp = 0
+        while (test.base / f"slot-log-{self.stamp}").exists():
+            self.stamp += 1
+        self.log = test.base / f"slot-log-{self.stamp}"
+        self.log.touch()
         self.callers = []
         self.descriptors = []
         test.addCleanup(self.close)
@@ -423,14 +972,17 @@ class SlotCallers:
         self.descriptors.append(os.open(path, os.O_RDWR | os.O_NONBLOCK))
         return self.descriptors[-1]
 
-    def start(self, name, *flags, script=SCRIPT, stepped=False, pool="worker"):
-        directory = self.test.base / f"caller-{name}"
+    def start(self, name, *flags, script=SCRIPT, stepped=False, marked=False, pool="worker", hold=None):
+        """Start a slot caller. With hold, its command leaves the slot after hold seconds and not on release."""
+        directory = self.test.base / f"caller-{self.stamp}-{name}"
         directory.mkdir()
         release, retry = self.fifo(directory / "release"), self.fifo(directory / "retry")
-        command = [*flags, "--", sys.executable, "-c", SLOT_HOLD, str(self.log), name, str(directory / "release")]
-        if stepped or pool == "landing":
+        command = [*flags, "--", sys.executable, "-c", SLOT_HOLD, str(self.log), name, str(directory / "release"),
+                   *([] if hold is None else [str(hold)])]
+        if stepped or marked or pool == "landing":
+            mode = str(directory / "retry") if stepped else "marked" if marked else ""
             argv = [sys.executable, "-c", SLOT_WRAPPED, str(Path(script).parent),
-                    str(directory / "retry") if stepped else "", pool, *(command if pool == "worker" else command[1:])]
+                    mode, pool, *(command if pool == "worker" else command[1:])]
         else:
             argv = [sys.executable, str(script), "slot", *command]
         process = subprocess.Popen(argv, cwd=directory, env=self.env, start_new_session=True,
@@ -462,40 +1014,38 @@ class SlotCallers:
         os.write(caller.retry, b"x")
         return self.settle(caller)
 
+    def queued(self, caller):
+        """Wait until a marked caller has failed its first attempt, which it does only after it takes a ticket."""
+        self.wait(lambda: (caller.directory / "waiting-1").exists(), f"{caller.name} waits with a ticket")
+        return caller
+
     def release(self, caller):
         os.write(caller.release, b"x")
         self.test.assertEqual(caller.process.wait(timeout=20), 0)
-
-    def turn_locks(self):
-        """Return the bytes of governor/turn that /proc/locks shows as held, and the bytes callers block on."""
-        held, blocked = set(), set()
-        try:
-            stat = (self.governor / "turn").stat()
-        except FileNotFoundError:
-            return held, blocked
-        # /proc/locks prints the device as lowercase hex major and minor, then the inode.
-        identity = f"{os.major(stat.st_dev):02x}:{os.minor(stat.st_dev):02x}:{stat.st_ino}"
-        for line in Path("/proc/locks").read_text().splitlines():
-            fields = line.split()[1:]
-            waits = fields[0] == "->"
-            fields = fields[waits:]
-            if fields[0] == "OFDLCK" and fields[4] == identity:
-                (blocked if waits else held).add(int(fields[5]))
-        return held, blocked
-
-    def tickets(self):
-        return {byte - TURN_PLACE for byte in self.turn_locks()[0] if byte >= TURN_PLACE}
 
     def events(self):
         return [tuple(line.split()) for line in self.log.read_text().splitlines()]
 
     def entries(self):
-        return [name for word, name in self.events() if word == "enter"]
+        return [fields[1] for fields in self.events() if fields[0] == "enter"]
+
+    def peak(self, counted=lambda name: True):
+        """Return the most counted callers inside a slot at once."""
+        running, peak = set(), 0
+        for word, name, *_ in self.events():
+            if word == "exit":
+                running.remove(name)
+                continue
+            running.add(name)
+            peak = max(peak, sum(counted(caller) for caller in running))
+        return peak
 
 
 class LandingTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        # Cleanups run after tearDown, last registered first, so this one runs after every holder a test leaves running is stopped.
+        self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.env = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.base / "state")})
         self.env.start()
@@ -542,7 +1092,6 @@ class LandingTest(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
-        self.temporary.cleanup()
 
     def commit(self, message, cwd=None):
         sh("git", "add", "-A", cwd=cwd or self.work)
@@ -3916,6 +4465,267 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(slot("--exclusive", "--", "true"), (0, "", ""))
         self.assertEqual(slot(), (1, "", "land: slot needs a command after --\n"))
 
+    def test_a_file_finder_leaves_among_the_tickets_does_not_stop_a_slot(self):
+        tickets = self.base / "state/pstack-t3/governor/tickets"
+        tickets.mkdir(parents=True)
+        (tickets / ".DS_Store").write_bytes(b"\0Bud1")
+        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "true"],
+                                capture_output=True, text=True, timeout=20, env=self.slot_env())
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), [".DS_Store"])
+
+    def test_a_ticket_shaped_fifo_directory_or_symlink_does_not_stop_a_slot(self):
+        outside = self.base / "outside.pipe"
+        os.mkfifo(outside)
+        failures = []
+
+        def admit(name, setup):
+            home = self.base / "homes" / name
+            tickets = home / "pstack-t3/governor/tickets"
+            tickets.mkdir(parents=True)
+            setup(tickets)
+            env = {**self.slot_env(), "XDG_STATE_HOME": str(home)}
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "slot", "--", "true"],
+                    capture_output=True, text=True, timeout=20, env=env)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{name} timed out")
+                return
+            if (result.returncode, result.stderr) != (0, ""):
+                tail = result.stderr.strip().splitlines()[-1] if result.stderr else ""
+                failures.append(f"{name} rc={result.returncode} {tail}")
+
+        admit("fifo", lambda tickets: os.mkfifo(tickets / "1-worker"))
+        admit("directory", lambda tickets: (tickets / "1-worker").mkdir())
+        admit("symlink", lambda tickets: (tickets / "1-worker").symlink_to(outside))
+        self.assertEqual(failures, [])
+        for name in ("fifo", "directory", "symlink"):
+            left = self.base / "homes" / name / "pstack-t3/governor/tickets"
+            self.assertEqual([path.name for path in left.iterdir()], [], name)
+        self.assertTrue(outside.is_fifo())
+
+        slots = SlotCallers(self, 1)
+        tickets = slots.governor / "tickets"
+        tickets.mkdir()
+        directory = tickets / "1-worker"
+        directory.mkdir()
+        (directory / "child").write_text("stay")
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.queued(slots.start("waiter", marked=True))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["1-worker", "2-worker"])
+        self.assertTrue((tickets / "2-worker").is_file())
+        slots.release(holder)
+        slots.release(slots.enter(waiter))
+        self.assertEqual([path.name for path in tickets.iterdir()], ["1-worker"])
+        self.assertEqual((directory / "child").read_text(), "stay")
+
+    def test_a_slot_probe_on_a_read_only_ticket_keeps_a_held_ticket_and_removes_a_free_one(self):
+        tickets = self.base / "probe-tickets"
+        tickets.mkdir()
+        held_path = tickets / "1-worker"
+        free_path = tickets / "2-worker"
+        held_path.write_bytes(b"")
+        free_path.write_bytes(b"")
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import fcntl, os, sys, time\n"
+             "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+             "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+             "sys.stdout.write('held\\n')\n"
+             "sys.stdout.flush()\n"
+             "time.sleep(60)\n",
+             str(held_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+
+        def stop():
+            if holder.poll() is None:
+                os.killpg(holder.pid, signal.SIGKILL)
+            holder.wait(timeout=20)
+            holder.stdout.close()
+            holder.stderr.close()
+
+        self.addCleanup(stop)
+        self.assertEqual(holder.stdout.readline(), "held\n")
+        recorded = []
+        real = land.fcntl.flock
+
+        def nfs_flock(handle, operation):
+            descriptor = handle.fileno()
+            read_only = (fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE) == os.O_RDONLY
+            exclusive = (operation & (fcntl.LOCK_SH | fcntl.LOCK_EX | fcntl.LOCK_UN)) == fcntl.LOCK_EX
+            if read_only and exclusive:
+                raise OSError(errno.EBADF, "Bad file descriptor")
+            recorded.append((read_only, operation))
+            return real(handle, operation)
+
+        with mock.patch.object(land.fcntl, "flock", nfs_flock):
+            found = land._waiting(tickets, None)
+        self.assertEqual(found, [(1, "worker")])
+        self.assertEqual([path.name for path in tickets.iterdir()], ["1-worker"])
+        shared = fcntl.LOCK_SH | fcntl.LOCK_NB
+        self.assertEqual(recorded, [(True, shared), (True, shared)])
+
+    def test_a_ticket_hard_linked_to_the_turn_mutex_does_not_stop_a_slot(self):
+        governor = self.base / "state/pstack-t3/governor"
+        tickets = governor / "tickets"
+        tickets.mkdir(parents=True)
+        lock = governor / "tickets.lock"
+        lock.write_bytes(b"")
+        os.link(lock, tickets / "1-worker")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "slot", "--", "true"],
+            capture_output=True, text=True, timeout=20, env=self.slot_env())
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual([path.name for path in tickets.iterdir()], [])
+        self.assertEqual(lock.stat().st_nlink, 1)
+
+    def test_a_sigkill_waiter_under_umask_0o444_does_not_stop_later_callers(self):
+        """The waiter is its own process so the test can set that process's umask and kill it with SIGKILL."""
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os, sys\n"
+             "sys.path.insert(0, sys.argv[1])\n"
+             "import land\n"
+             "os.umask(0o444)\n"
+             "sys.exit(land.main(['slot', '--', 'true']))\n",
+             str(SCRIPT.parent)],
+            env=slots.env, stderr=subprocess.PIPE, start_new_session=True)
+
+        def stop():
+            if waiter.poll() is None:
+                os.kill(waiter.pid, signal.SIGKILL)
+                waiter.wait(timeout=20)
+            waiter.stderr.close()
+
+        self.addCleanup(stop)
+        ticket = slots.governor / "tickets" / "1-worker"
+        slots.wait(lambda: ticket.exists(), "the restricted-umask waiter created its ticket")
+        mode = ticket.stat().st_mode & 0o777
+        os.kill(waiter.pid, signal.SIGKILL)
+        waiter.wait(timeout=20)
+        slots.release(holder)
+        statuses = []
+        for _ in range(2):
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "slot", "--", "true"],
+                env=slots.env, capture_output=True, text=True, timeout=20)
+            statuses.append(result.returncode)
+        self.assertEqual((bool(mode & 0o400), statuses), (True, [0, 0]), oct(mode))
+
+    def test_a_ticket_name_hard_linked_to_an_unreadable_file_does_not_stop_a_slot(self):
+        """The slot command is a process because the test asserts its exit status."""
+        tickets = self.base / "state/pstack-t3/governor/tickets"
+        tickets.mkdir(parents=True)
+        outside = self.base / "outside-unreadable"
+        outside.write_bytes(b"keep")
+        outside.chmod(0)
+        os.link(outside, tickets / "1-worker")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "slot", "--", "true"],
+            capture_output=True, text=True, timeout=20, env=self.slot_env())
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual([path.name for path in tickets.iterdir()], [])
+        self.assertEqual(outside.stat().st_nlink, 1)
+        outside.chmod(0o600)
+        self.assertEqual(outside.read_bytes(), b"keep")
+
+    def test_two_names_of_one_live_ticket_do_not_keep_a_free_landing_caller_waiting(self):
+        """The waiter and the landing caller are processes so the test can order their attempts."""
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.start("waiter", stepped=True)
+        self.assertEqual(slots.settle(waiter), "waiting")
+        tickets = slots.governor / "tickets"
+        os.link(tickets / "1-worker", tickets / "2-exclusive")
+        mutex = open(slots.governor / "tickets.lock", "a")
+        self.addCleanup(mutex.close)
+        fcntl.flock(mutex, fcntl.LOCK_EX)
+        try:
+            found = land._waiting(tickets, None)
+        finally:
+            fcntl.flock(mutex, fcntl.LOCK_UN)
+        slots.release(holder)
+        landing = slots.start("landing", pool="landing", stepped=True)
+        landing_state = slots.settle(landing)
+        self.assertEqual((found, landing_state), ([], "started"))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), [])
+        self.assertEqual(slots.step(waiter), "started")
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
+        slots.release(landing)
+        slots.release(waiter)
+
+    def test_a_slot_runs_when_its_ticket_is_removed_while_it_waits(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.start("waiter", stepped=True)
+        self.assertEqual(slots.settle(waiter), "waiting")
+        names = sorted(path.name for path in (slots.governor / "tickets").iterdir())
+        self.assertEqual(names, ["1-worker"])
+        (slots.governor / "tickets" / names[0]).unlink()
+        slots.release(holder)
+        self.assertEqual(slots.step(waiter), "started")
+        slots.release(waiter)
+        self.assertEqual(slots.entries(), ["holder", "waiter"])
+
+    def test_a_filesystem_that_refuses_the_turn_mutex_flock_does_not_run_the_command(self):
+        self.governor(1)
+        marker = self.base / "ran"
+        real = fcntl.flock
+
+        def slot_status(refused, code):
+            def flock(handle, operation):
+                if operation == refused:
+                    raise OSError(code, os.strerror(code))
+                return real(handle, operation)
+
+            stderr = io.StringIO()
+            with mock.patch.dict(os.environ), mock.patch.object(land.fcntl, "flock", flock), \
+                    contextlib.redirect_stderr(stderr):
+                os.environ.pop("LAND_SLOT", None)
+                return land.main(["slot", "--", "touch", str(marker)]), stderr.getvalue()
+
+        for code in (errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOLCK):
+            self.assertEqual(
+                slot_status(fcntl.LOCK_EX, code),
+                (1, "land: this filesystem does not support the slot governor's ordering lock\n"))
+        with self.assertRaises(OSError) as raised:
+            slot_status(fcntl.LOCK_EX | fcntl.LOCK_NB, errno.ENOLCK)
+        self.assertEqual(raised.exception.errno, errno.ENOLCK)
+        self.assertFalse(marker.exists())
+        self.assert_slots_free()
+
+    def test_a_hold_names_its_slot_files_and_a_nested_slot_changes_neither_variable(self):
+        self.governor(2)
+
+        def seen():
+            return os.environ.get("LAND_SLOT"), os.environ.get("LAND_SLOT_FILES")
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("LAND_SLOT", None)
+            os.environ.pop("LAND_SLOT_FILES", None)
+            with land.slot("worker"):
+                self.assertEqual(seen(), ("worker", "worker-0"))
+                with land.slot("landing"):
+                    self.assertEqual(seen(), ("worker", "worker-0"))
+                self.assertEqual(seen(), ("worker", "worker-0"))
+            self.assertEqual(seen(), (None, None))
+            with land.slot("landing"):
+                self.assertEqual(seen(), ("landing", "landing-0"))
+            with land.exclusive_slot():
+                self.assertEqual(seen(), ("exclusive", "landing-0 worker-0 worker-1"))
+            self.assertEqual(seen(), (None, None))
+
     def test_an_earlier_ordinary_waiter_runs_before_a_later_exclusive(self):
         slots = SlotCallers(self, 2)
         holders = [slots.enter(slots.start(f"holder-{index}")) for index in range(2)]
@@ -3992,41 +4802,35 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(caller.process.wait(timeout=20), -signal.SIGKILL)
 
         holder = slots.enter(slots.start("holder"))
-        ticketed = slots.start("ticketed")
-        slots.wait(lambda: slots.tickets() == {1}, "the waiter holds ticket 1")
-        kill(ticketed)
-        slots.wait(lambda: slots.tickets() == set(), "the killed waiter's ticket lock is gone")
+        kill(slots.queued(slots.start("ticketed", marked=True)))
         slots.release(holder)
         slots.release(slots.enter(slots.start("after-ticketed")))
+        self.assertEqual(list((slots.governor / "tickets").iterdir()), [])
 
-        turn = os.open(slots.governor / "turn", os.O_RDWR)
-        try:
-            ofd_lock(turn, TURN_MUTEX, fcntl.F_WRLCK, blocking=True)
-            blocked = slots.start("blocked")
-            slots.wait(lambda: slots.turn_locks()[1] == {TURN_MUTEX}, "the waiter blocks on the turn mutex")
+        with open(slots.governor / "tickets.lock", "a") as mutex:
+            fcntl.flock(mutex, fcntl.LOCK_EX)
+            blocked = slots.start("blocked", marked=True)
+            slots.wait(lambda: (blocked.directory / "blocking").exists(), "the waiter blocks on the turn mutex")
             kill(blocked)
-            slots.wait(lambda: slots.turn_locks()[1] == set(), "the killed waiter left the turn mutex")
-            ofd_lock(turn, TURN_MUTEX, fcntl.F_UNLCK)
-        finally:
-            os.close(turn)
         slots.release(slots.enter(slots.start("after-blocked")))
         self.assertEqual(slots.entries(), ["holder", "after-ticketed", "after-blocked"])
 
     def test_many_callers_never_exceed_the_slot_count(self):
         slots = SlotCallers(self, 2)
-        waiting = [slots.start(f"worker-{index}") for index in range(5)]
+        waiting = [slots.start(f"worker-{index}", marked=True) for index in range(5)]
         while waiting:
             expected = min(2, len(waiting))
             slots.wait(lambda: sum(caller.started for caller in waiting) >= expected
-                       and len(slots.tickets()) == len(waiting) - expected, "the slots are full and the rest wait")
+                       and all(caller.started or (caller.directory / "waiting-1").exists() for caller in waiting),
+                       "the slots are full and the rest wait")
             running = [caller for caller in waiting if caller.started]
             self.assertEqual(len(running), expected)
             slots.release(running[0])
             waiting.remove(running[0])
 
         exclusive = slots.enter(slots.start("exclusive", "--exclusive"))
-        waiting = [slots.start(f"later-{index}") for index in range(3)] + [slots.start("landing", pool="landing")]
-        slots.wait(lambda: len(slots.tickets()) == 4, "every later caller waits behind the exclusive command")
+        waiting = [slots.queued(slots.start(f"later-{index}", marked=True)) for index in range(3)]
+        waiting.append(slots.queued(slots.start("landing", pool="landing", marked=True)))
         self.assertEqual([caller.name for caller in waiting if caller.started], [])
         slots.release(exclusive)
         while waiting:
@@ -4036,7 +4840,7 @@ os.execv({real!r}, [{real!r}, *args])
             waiting.remove(running)
 
         running, peak = set(), 0
-        for word, name in slots.events():
+        for word, name, *_ in slots.events():
             if word == "exit":
                 running.remove(name)
                 continue
@@ -4046,6 +4850,204 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assertEqual(running, {"exclusive"})
         self.assertEqual(peak, 2)
         self.assertEqual(len(slots.entries()), 10)
+
+    def assert_slot_log(self, callers, kind_of):
+        """Return the most workers running at once.
+
+        No two intervals on one slot file overlap, and an exclusive interval overlaps no other caller.
+        """
+        running, spans, slot_of, peak = set(), {}, {}, 0
+        for position, fields in enumerate(callers.events()):
+            word, name, *files = fields
+            self.assertTrue(files, f"{name} recorded no slot file")
+            if word == "enter":
+                running.add(name)
+                spans[name] = [position, None]
+                slot_of[name] = tuple(files)
+            else:
+                running.remove(name)
+                spans[name][1] = position
+                self.assertEqual(tuple(files), slot_of[name], name)
+            peak = max(peak, sum(kind_of[caller] == "worker" for caller in running))
+        self.assertEqual(sorted(spans), sorted(kind_of))
+
+        def overlaps(left, right):
+            return left[0] < right[1] and right[0] < left[1]
+
+        by_slot = {}
+        for name, files in slot_of.items():
+            for slot_file in files:
+                by_slot.setdefault(slot_file, []).append(name)
+        for slot_file, names in by_slot.items():
+            for index, name in enumerate(names):
+                for other in names[index + 1:]:
+                    self.assertFalse(overlaps(spans[name], spans[other]), f"{name} and {other} overlapped on {slot_file}")
+        for name, span in spans.items():
+            if kind_of[name] != "exclusive":
+                continue
+            for other, other_span in spans.items():
+                if other != name:
+                    self.assertFalse(overlaps(span, other_span), f"{name} overlapped {other}")
+        return peak
+
+    def full_slots(self, slots):
+        """Start callers that hold every worker slot and the landing slot. Returns the callers, the holders, and each kind."""
+        callers = SlotCallers(self, slots)
+        kind_of = {f"holder-{index}": "worker" for index in range(slots)}
+        holders = [callers.enter(callers.start(name)) for name in kind_of]
+        kind_of["holder-landing"] = "landing"
+        holders.append(callers.enter(callers.start("holder-landing", pool="landing")))
+        return callers, holders, kind_of
+
+    def contend(self, slots, kinds, hold):
+        """Queue one free-running caller per kind, in order, behind full slots, then free the slots.
+
+        Each caller holds its slot for hold seconds. The slot log names the slot file each caller holds.
+        Returns the most worker slots in use at once.
+        """
+        callers, holders, kind_of = self.full_slots(slots)
+        for index, kind in enumerate(kinds):
+            name = f"{index}-{kind}"
+            kind_of[name] = kind
+            flags = ["--exclusive"] if kind == "exclusive" else []
+            pool = "landing" if kind == "landing" else "worker"
+            callers.queued(callers.start(name, *flags, marked=True, pool=pool, hold=hold))
+        for holder in holders:
+            callers.release(holder)
+        for caller in callers.callers:
+            self.assertEqual(caller.process.wait(timeout=120), 0, caller.name)
+        return self.assert_slot_log(callers, kind_of)
+
+    def admit_latest_first(self, slots, kinds):
+        """Park one stepped caller per kind behind full slots, free the slots, then let the latest parked caller try first.
+
+        A caller may start before an earlier parked caller only when that earlier caller could not take a slot.
+        Waiters sit on their retry fifo while a slot is released, so a release cannot land between the admission
+        check and the take.
+        """
+        def can_take(kind, busy):
+            if kind == "exclusive":
+                return not busy
+            if kind == "landing":
+                return "landing" not in busy and "exclusive" not in busy
+            return "exclusive" not in busy and busy.count("worker") < slots
+
+        callers, holders, kind_of = self.full_slots(slots)
+        queue = []
+        for index, kind in enumerate(kinds):
+            name = f"{index}-{kind}"
+            kind_of[name] = kind
+            flags = ["--exclusive"] if kind == "exclusive" else []
+            pool = "landing" if kind == "landing" else "worker"
+            caller = callers.start(name, *flags, stepped=True, pool=pool)
+            self.assertEqual(callers.settle(caller), "waiting", name)
+            queue.append(caller)
+        for holder in holders:
+            callers.release(holder)
+
+        pending = list(queue)
+        running = []
+        while pending:
+            started = None
+            for caller in reversed(pending):
+                if callers.step(caller) == "started":
+                    started = caller
+                    break
+            if started is None:
+                self.assertTrue(running, "nobody holds a slot and nobody could take one")
+                callers.release(running.pop(0))
+                continue
+            busy = [kind_of[caller.name] for caller in running]
+            for other in pending:
+                if queue.index(other) >= queue.index(started):
+                    continue
+                if not land._conflicts(kind_of[other.name], kind_of[started.name]):
+                    continue
+                self.assertFalse(can_take(kind_of[other.name], busy),
+                                 f"{started.name} entered before {other.name} while {other.name} could take a slot, running {busy}")
+            pending.remove(started)
+            running.append(started)
+        for caller in running:
+            callers.release(caller)
+        self.assert_slot_log(callers, kind_of)
+
+    def test_contending_callers_never_share_a_slot_and_never_pass_an_earlier_ticket(self):
+        kinds = ["worker", "exclusive", "landing", "worker", "landing", "exclusive", "worker", "worker", "landing", "exclusive"]
+        self.assertEqual(self.contend(1, kinds, hold=0.1), 1)
+        self.admit_latest_first(1, kinds)
+
+    def test_contending_callers_fill_two_worker_slots_and_never_pass_an_earlier_ticket(self):
+        kinds = ["worker", "worker", "landing", "exclusive", "worker", "landing", "worker", "worker", "exclusive", "worker"]
+        self.assertEqual(self.contend(2, kinds, hold=1.5), 2)
+        self.admit_latest_first(2, kinds)
+
+    def ofd_locks_exist(self):
+        """True when this platform accepts an OFD byte lock."""
+        import struct
+        path = self.base / "ofd-probe"
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.fcntl(descriptor, 37, struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 0, 1, 0))
+        except OSError:
+            return False
+        else:
+            return True
+        finally:
+            os.close(descriptor)
+            os.unlink(path)
+
+    def test_an_ofd_caller_and_a_flock_caller_reorder_without_sharing_a_slot(self):
+        if not self.ofd_locks_exist():
+            self.skipTest("this platform does not provide OFD locks")
+        ofd = self.base / "ofd/land.py"
+        ofd.parent.mkdir()
+        ofd.write_text(OFD_SLOT_SCRIPT)
+        slots = SlotCallers(self, 1)
+
+        def parked(name, *flags, script=SCRIPT):
+            caller = slots.start(name, *flags, script=script, stepped=True)
+            self.assertEqual(slots.settle(caller), "waiting", name)
+            return caller
+
+        def later_waiter_first(holder, earlier, later):
+            slots.release(holder)
+            self.assertEqual(slots.step(later), "started", later.name)
+            self.assertEqual(slots.step(earlier), "waiting", earlier.name)
+            slots.release(later)
+            self.assertEqual(slots.step(earlier), "started", earlier.name)
+            slots.release(earlier)
+
+        def worker_behind_exclusive(exclusive, worker):
+            self.assertEqual(slots.step(worker), "waiting", worker.name)
+            slots.release(exclusive)
+            self.assertEqual(slots.step(worker), "started", worker.name)
+            slots.release(worker)
+
+        later_waiter_first(slots.enter(slots.start("ofd-holder", script=ofd)),
+                           parked("ofd-earlier", script=ofd), parked("flock-later"))
+        later_waiter_first(slots.enter(slots.start("flock-holder")),
+                           parked("flock-earlier"), parked("ofd-later", script=ofd))
+        worker_behind_exclusive(slots.enter(slots.start("flock-exclusive", "--exclusive")),
+                                parked("ofd-worker", script=ofd))
+        worker_behind_exclusive(slots.enter(slots.start("ofd-exclusive", "--exclusive", script=ofd)),
+                                parked("flock-worker"))
+        self.assertEqual(slots.entries(), [
+            "ofd-holder", "flock-later", "ofd-earlier", "flock-holder", "ofd-later", "flock-earlier",
+            "flock-exclusive", "ofd-worker", "ofd-exclusive", "flock-worker"])
+        self.assertEqual(slots.peak(), 1)
+
+        slots = SlotCallers(self, 2)
+        holders = [slots.enter(slots.start("ofd-holder", script=ofd)), slots.enter(slots.start("flock-holder"))]
+        workers = []
+        for index in range(3):
+            workers.append(slots.queued(slots.start(f"ofd-{index}", script=ofd, marked=True, hold=0.2)))
+            workers.append(slots.queued(slots.start(f"flock-{index}", marked=True, hold=0.2)))
+        for holder in holders:
+            slots.release(holder)
+        for worker in workers:
+            self.assertEqual(worker.process.wait(timeout=120), 0, worker.name)
+        self.assertEqual(len(slots.entries()), 8)
+        self.assertEqual(slots.peak(), 2)
 
     def test_an_old_slot_holder_blocks_a_new_caller_and_the_reverse(self):
         slots = SlotCallers(self, 1)
@@ -4116,21 +5118,33 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertTrue(ready.exists(), f"{kind} holder did not take its slot")
         return process
 
-    def exclusive_args(self, argv, cap=None, grace=None, cap_max=None):
-        return [sys.executable, "-c", EXCLUSIVE_MAIN, str(SCRIPT.parent),
+    def test_a_running_holder_is_released_before_the_fixture_directory_goes(self):
+        self.governor(1)
+        holders = []
+
+        def check():
+            self.assertEqual(holders[0].returncode, 0)
+            self.assertTrue((self.base / "holder-worker" / "release").exists())
+
+        self.addCleanup(check)
+        holders.append(self.start_holder())
+        self.assertIsNone(holders[0].poll())
+
+    def exclusive_args(self, argv, cap=None, grace=None, cap_max=None, main=EXCLUSIVE_MAIN):
+        return [sys.executable, "-c", main, str(SCRIPT.parent),
                 "" if cap is None else str(cap),
                 "" if grace is None else str(grace),
                 "" if cap_max is None else str(cap_max),
                 *argv]
 
-    def run_exclusive(self, argv, cap=None, grace=None, cap_max=None, timeout=20):
+    def run_exclusive(self, argv, cap=None, grace=None, cap_max=None, timeout=20, main=EXCLUSIVE_MAIN):
         return subprocess.run(
-            self.exclusive_args(argv, cap, grace, cap_max),
+            self.exclusive_args(argv, cap, grace, cap_max, main),
             cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=timeout)
 
-    def popen_exclusive(self, argv, cap=None, grace=None, cap_max=None):
+    def popen_exclusive(self, argv, cap=None, grace=None, cap_max=None, main=EXCLUSIVE_MAIN):
         return subprocess.Popen(
-            self.exclusive_args(argv, cap, grace, cap_max),
+            self.exclusive_args(argv, cap, grace, cap_max, main),
             cwd=self.base, env=self.slot_env(), start_new_session=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -4452,6 +5466,91 @@ os.execv({real!r}, [{real!r}, *args])
             process.stdout.close()
             process.stderr.close()
             self.release_recorded_group(parent_path, child_path)
+
+    def test_cap_cases_without_os_waitid(self):
+        self.governor(1)
+
+        def cap_line(cap):
+            return (f"land: stopped the command at the {cap}s exclusive cap. "
+                    f"--for sets a longer cap and needs --reason past {cap}s.\n")
+
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.05, timeout=10, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (124, "", cap_line("0.4")))
+        self.assert_slots_free()
+
+        parent_path, child_path = self.base / "group-parent.pid", self.base / "group-child.pid"
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", GROUP_SLEEP, str(parent_path), str(child_path)],
+            cap=1, grace=0.05, timeout=10, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
+        self.assertEqual((result.returncode, result.stderr), (124, cap_line("1")))
+        self.assert_dead(int(parent_path.read_text()))
+        self.assert_dead(int(child_path.read_text()))
+        self.assert_slots_free()
+
+        parent_path, child_path = self.base / "ignoring-parent.pid", self.base / "ignoring-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP, str(parent_path), str(child_path)],
+            cap=1, grace=0.15, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
+        try:
+            child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+            code = process.wait(timeout=10)
+            parent_pid = int(parent_path.read_text())
+            self.assertEqual(child_group, parent_pid)
+            self.assert_dead(parent_pid)
+            self.assert_dead(child_pid)
+            self.assertEqual((code, process.stderr.read()), (124, cap_line("1")))
+            self.assert_slots_free()
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test reads a zombie state from /proc")
+    def test_a_signal_during_grace_after_the_leader_exits_kills_the_group(self):
+        self.governor(1)
+
+        def zombie(pid):
+            try:
+                return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
+            except FileNotFoundError:
+                return False
+
+        statuses = {signal.SIGTERM: 143, signal.SIGHUP: 129, signal.SIGINT: -2}
+        for label, main in (("waitid", EXCLUSIVE_MAIN), ("no-waitid", EXCLUSIVE_MAIN_WITHOUT_WAITID)):
+            for signum, status in statuses.items():
+                with self.subTest(signal=signum.name, os=label):
+                    parent_path = self.base / f"grace-{label}-{signum.name}-parent.pid"
+                    child_path = self.base / f"grace-{label}-{signum.name}-child.pid"
+                    process = self.popen_exclusive(
+                        ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
+                         str(parent_path), str(child_path)],
+                        cap=1, grace=30, main=main)
+                    try:
+                        child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+                        parent_pid = int(parent_path.read_text())
+                        self.assertEqual(child_group, parent_pid)
+                        deadline = time.monotonic() + 10
+                        while not zombie(parent_pid) and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(zombie(parent_pid), "the leader did not exit at the cap")
+                        os.kill(process.pid, signum)
+                        code = process.wait(timeout=10)
+                        self.assert_dead(child_pid)
+                        self.assert_slots_free()
+                        self.assertEqual(code, status)
+                        self.assertNotIn("exclusive cap", process.stderr.read())
+                    finally:
+                        if process.poll() is None:
+                            os.kill(process.pid, signal.SIGKILL)
+                            process.wait(timeout=10)
+                        process.stdout.close()
+                        process.stderr.close()
+                        self.release_recorded_group(parent_path, child_path)
 
     def test_an_exclusive_command_that_finishes_leaves_a_background_child(self):
         self.governor(1)
@@ -4938,9 +6037,9 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertTrue(marker.exists(), "the reporting probe did not pause holding the free slot")
 
         landing = slots.start("landing", pool="landing")
-        slots.wait(lambda: TURN_MUTEX in slots.turn_locks()[1] or landing.started,
+        slots.wait(lambda: (landing.directory / "blocking").exists() or landing.started,
                    "the landing caller blocks on the turn mutex the paused probe holds")
-        self.assertIn(TURN_MUTEX, slots.turn_locks()[1])
+        self.assertTrue((landing.directory / "blocking").exists())
         self.assertFalse(landing.started)
 
         os.write(gate, b"x")

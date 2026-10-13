@@ -21,7 +21,7 @@ import re
 import shlex
 import signal
 import sqlite3
-import struct
+import stat
 import subprocess
 import sys
 import time
@@ -210,11 +210,6 @@ def governor_slots():
     return max(1, min(4, (os.cpu_count() or 4) // 4))
 
 
-TURN_MUTEX = 4096
-TURN_KIND = 1048576
-TURN_PLACE = 2097152
-TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
-
 # A waiter reports why it waits after REPORT_AFTER seconds, then again every REPORT_EVERY seconds.
 REPORT_AFTER = 15
 REPORT_EVERY = 60
@@ -229,12 +224,22 @@ EXCLUSIVE_REASON_MAX = 80
 # the wrapped command with at most 80 characters.
 _Holder = namedtuple("_Holder", "kind pid repo started command cap reason")
 _UNKNOWN = _Holder(None, None, None, None, None, None, None)
+_Admission = namedtuple("_Admission", "handles records acquired names")
+_Hold = namedtuple("_Hold", "acquired names")
+
+
+def _slot_table(slots):
+    workers = [f"worker-{index}" for index in range(slots)]
+    return {"worker": workers, "landing": ["landing-0"], "exclusive": ["landing-0"] + workers}
 
 
 def _slot_names(kind, slots):
     """Return the slot filenames for kind, in lock order."""
-    workers = [f"worker-{index}" for index in range(slots)]
-    return {"worker": workers, "landing": ["landing-0"], "exclusive": ["landing-0"] + workers}[kind]
+    return _slot_table(slots)[kind]
+
+
+# A waiter's ticket is governor/tickets/<number>-<kind>. A lower number is earlier.
+TICKET = re.compile("([1-9][0-9]*)-(" + "|".join(_slot_table(0)) + ")")
 
 
 def _conflicts(earlier, later):
@@ -242,22 +247,13 @@ def _conflicts(earlier, later):
     return earlier == later or "exclusive" in (earlier, later)
 
 
-def _ofd_excl(fd, byte, blocking):
-    """Take an exclusive OFD lock on one byte of fd. Nonblocking returns False when the byte is already held."""
+def _turn(mutex):
     try:
-        # F_OFD_SETLK is 37 and F_OFD_SETLKW is 38 on Linux. This fcntl module does not name them.
-        fcntl.fcntl(fd, 38 if blocking else 37, struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, byte, 1, 0))
+        fcntl.flock(mutex, fcntl.LOCK_EX)
     except OSError as error:
-        if error.errno in (errno.EAGAIN, errno.EACCES):
-            return False
-        if error.errno in (errno.EINVAL, errno.ENOTSUP):
+        if error.errno in (errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOLCK):
             raise LandError("this filesystem does not support the slot governor's ordering lock") from None
         raise
-    return True
-
-
-def _ofd_unlock(fd, byte):
-    fcntl.fcntl(fd, 37, struct.pack("hhqqi4x", fcntl.F_UNLCK, os.SEEK_SET, byte, 1, 0))
 
 
 def _try_take(kind, handles, slots):
@@ -289,37 +285,102 @@ def _can_satisfy(kind, handles, slots):
     return taken is not None
 
 
-def _earlier_waiters(gate, ticket, kind):
-    """Return the kinds of the live tickets that conflict with kind and came before this caller.
-    A ticket is live while its byte is locked. Runs under the turn mutex."""
-    low, upcoming = struct.unpack("<QQ", os.pread(gate, 16, 0).ljust(16, b"\0"))
-    first = low = low or 1
-    kinds = set()
-    live = False
-    for number in range(low, upcoming):
-        if number == ticket:
-            break
-        if _ofd_excl(gate, TURN_PLACE + number, False):
-            _ofd_unlock(gate, TURN_PLACE + number)
-            if not live:
-                low = number + 1
+def _discard_ticket(path):
+    """Remove a directory entry that is not a regular file. A regular file stays.
+
+    An empty directory is removed. A symlink is unlinked and its target stays.
+    A directory that still has children stays.
+    """
+    try:
+        mode = os.lstat(path).st_mode
+        if stat.S_ISDIR(mode):
+            os.rmdir(path)
+        elif not stat.S_ISREG(mode):
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def _unlink_ticket(path):
+    """Remove this directory entry. Leave any other link to the inode."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _open_ticket(path, aliased):
+    """Return a read-only file opened for a shared probe, or None when path is not a ticket.
+
+    O_NONBLOCK keeps a fifo from blocking the open, and O_NOFOLLOW keeps a symlink from being followed.
+    lstat reads the link count before that open. A regular file with another link is unlinked here, and so is
+    a later name of an inode this scan already recorded. Any link outside this directory stays.
+    An entry whose lstat or open fails is not a live waiter and does not stop the scan.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        _discard_ticket(path)
+        return None
+    key = (info.st_dev, info.st_ino)
+    if info.st_nlink != 1:
+        aliased.add(key)
+    if key in aliased:
+        _unlink_ticket(path)
+        return None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            _discard_ticket(path)
+        return None
+    try:
+        info = os.fstat(descriptor)
+    except OSError:
+        os.close(descriptor)
+        return None
+    key = (info.st_dev, info.st_ino)
+    if info.st_nlink != 1:
+        aliased.add(key)
+    if stat.S_ISREG(info.st_mode) and key not in aliased:
+        return os.fdopen(descriptor, "r")
+    os.close(descriptor)
+    if not stat.S_ISREG(info.st_mode):
+        _discard_ticket(path)
+        return None
+    _unlink_ticket(path)
+    return None
+
+
+def _waiting(tickets, before):
+    """Return (number, kind) for each live ticket below before, in ticket order. before None means every ticket.
+
+    A ticket is live while its waiter holds the exclusive flock on its file, so the shared probe fails.
+    Each scanned ticket whose shared probe succeeds is deleted. An unreadable single-link entry is skipped and stays in place. Runs under the turn mutex.
+    The probe is a shared lock because an exclusive flock on a read-only open fails with EBADF where flock is a POSIX lock.
+    The caller passes its own number, because its own ticket would probe free where flock is per process.
+    An inode seen with more than one link in this scan is not a live ticket under any of its names.
+    """
+    found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
+                   if match and (before is None or int(match[1]) < before))
+    live = []
+    aliased = set()
+    for number, kind, name in found:
+        probe = _open_ticket(tickets / name, aliased)
+        if probe is None:
             continue
-        live = True
-        earlier = TICKET_KINDS[os.pread(gate, 1, TURN_KIND + number)]
-        if _conflicts(earlier, kind):
-            kinds.add(earlier)
-    if low != first or not upcoming:
-        os.pwrite(gate, struct.pack("<QQ", low, max(upcoming, 1)), 0)
-    return kinds
-
-
-def _take_ticket(gate, place, kind):
-    """Issue the next ticket to this caller and lock its byte on place. Runs under the turn mutex."""
-    low, ticket = struct.unpack("<QQ", os.pread(gate, 16, 0))
-    os.pwrite(gate, struct.pack("<QQ", low, ticket + 1), 0)
-    os.pwrite(gate, kind[:1].encode(), TURN_KIND + ticket)
-    _ofd_excl(place, TURN_PLACE + ticket, False)
-    return ticket
+        with probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                live.append((number, kind))
+                continue
+        (tickets / name).unlink(missing_ok=True)
+    return live
 
 
 def _short_command(command):
@@ -486,7 +547,7 @@ def _slot_busy(handles, name):
 
 
 def _busy_names(handles, names):
-    """The slot names held by someone else. Runs under the turn mutex. Callers that consult the turn file cannot observe a probe's lock."""
+    """The slot names held by someone else. Runs under the turn mutex."""
     return [name for name in names if _slot_busy(handles, name)]
 
 
@@ -623,54 +684,67 @@ def _raise_exit(signum, frame):
 @contextlib.contextmanager
 def _held(kind, repo, command, cap=None, reason=None):
     """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
-    held, records, acquired = _admit(kind, repo, command, cap, reason)
+    admission = _admit(kind, repo, command, cap, reason)
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
     for signum in previous:
         signal.signal(signum, _raise_exit)
     try:
-        yield acquired
+        yield _Hold(admission.acquired, admission.names)
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
         _clear()
-        for handle in held:
+        for handle in admission.handles:
             handle.close()
-        _release_records(records)
+        _release_records(admission.records)
 
 
 def _admit(kind, repo=None, command=None, cap=None, reason=None):
+    """Take the slots kind needs, or wait for them behind a ticket. Returns an _Admission.
+
+    handles are every opened slot file. names are the locked ones.
+    acquired is time.monotonic() taken after the slot flocks succeed and before the holder records are written.
+    """
     directory = governor_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    tickets = directory / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
     slots = governor_slots()
     handles = {name: open(directory / name, "a") for name in _slot_names("exclusive", slots)}
-    turns = []
+    mutex = ticket = number = None
     records = []
     try:
-        # Two opens, so that unlocking the mutex byte on gate keeps the ticket byte locked on place.
-        for _ in range(2):
-            turns.append(os.open(directory / "turn", os.O_RDWR | os.O_CREAT, 0o666))
-        gate, place = turns
-        ticket = None
+        mutex = open(directory / "tickets.lock", "a")
         started, reported = time.time(), None
         while True:
-            _ofd_excl(gate, TURN_MUTEX, True)
-            earlier = _earlier_waiters(gate, ticket, kind)
+            _turn(mutex)
+            waiting = _waiting(tickets, number)
+            earlier = {waiter for _, waiter in waiting if _conflicts(waiter, kind)}
             taken = None
             if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
                 taken = _try_take(kind, handles, slots)
             if taken is not None:
                 acquired = time.monotonic()
             if taken is None and ticket is None:
-                ticket = _take_ticket(gate, place, kind)
+                number = max((live for live, _ in waiting), default=0) + 1
+                while os.path.lexists(tickets / f"{number}-{kind}"):
+                    number += 1
+                ticket = open(tickets / f"{number}-{kind}", "x")
+                # open creates the file as 0o666 masked by the umask. fchmod sets 0o600 anyway.
+                os.fchmod(ticket.fileno(), 0o600)
+                fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if taken is None:
                 busy = _busy_names(handles, _slot_names(kind, slots))
             else:
                 records = _publish(kind, handles, taken, repo, command, cap, reason)
             if taken is not None and ticket is not None:
-                _ofd_unlock(place, TURN_PLACE + ticket)
-            _ofd_unlock(gate, TURN_MUTEX)
+                try:
+                    os.unlink(ticket.name)
+                except FileNotFoundError:
+                    pass
+            fcntl.flock(mutex, fcntl.LOCK_UN)
             if taken is not None:
-                return list(handles.values()), records, acquired
+                names = [name for name, handle in handles.items() if handle in taken]
+                return _Admission(list(handles.values()), records, acquired, names)
             waited = time.time() - started
             if _report_due(waited, reported):
                 line = _format_wait(waited, _live_holders(busy))
@@ -686,26 +760,55 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
             handle.close()
         raise
     finally:
-        for descriptor in turns:
-            os.close(descriptor)
+        for handle in (mutex, ticket):
+            if handle is not None:
+                handle.close()
+
+
+def _show_hold(pool, names):
+    os.environ["LAND_SLOT"] = pool
+    os.environ["LAND_SLOT_FILES"] = " ".join(sorted(names))
+
+
+def _hide_hold():
+    os.environ.pop("LAND_SLOT", None)
+    os.environ.pop("LAND_SLOT_FILES", None)
 
 
 @contextlib.contextmanager
 def exclusive_slot(repo=None, command=None, cap=None, reason=None):
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
     It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
-    A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
+    A later conflicting caller that waits on this governor leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    with _held("exclusive", repo, command, cap, reason) as acquired:
-        os.environ["LAND_SLOT"] = "exclusive"
+    with _held("exclusive", repo, command, cap, reason) as hold:
+        _show_hold("exclusive", hold.names)
         try:
-            yield acquired
+            yield hold.acquired
         finally:
-            os.environ.pop("LAND_SLOT", None)
+            _hide_hold()
 
 
 _real_sleep = time.sleep
+
+
+def _pid_reserved(pid):
+    """True when pid is still in the process table, including a zombie. Does not reap."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _finish_reaped(process):
+    """The leader is already reaped, so its pid no longer proves the command's group. Do not signal."""
+    if process.returncode is None:
+        try:
+            process.wait()
+        except ChildProcessError:
+            process.returncode = -1
 
 
 def exclusive_command(command, repo, for_text, reason_text):
@@ -738,25 +841,31 @@ def exclusive_command(command, repo, for_text, reason_text):
         # The unreaped leader is how SIGKILL stays on this command's group. Its pid is the process group id, and a zombie holds that pid until it is reaped, so the kernel cannot reuse the id for another process group.
         try:
             grace_ends = time.monotonic() + EXCLUSIVE_CAP_GRACE
-            while True:
-                try:
-                    exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                except ChildProcessError:
-                    # The leader is already reaped, so this pid no longer proves the command's group.
-                    if process.returncode is None:
-                        try:
-                            process.wait()
-                        except ChildProcessError:
-                            process.returncode = -1
-                    return
-                remaining = grace_ends - time.monotonic()
-                if exited is not None:
-                    if remaining > 0:
-                        _real_sleep(remaining)
-                    break
-                if remaining <= 0:
-                    break
-                _real_sleep(min(0.05, remaining))
+            if hasattr(os, "waitid"):
+                while True:
+                    try:
+                        exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                    except ChildProcessError:
+                        _finish_reaped(process)
+                        return
+                    remaining = grace_ends - time.monotonic()
+                    if exited is not None:
+                        if remaining > 0:
+                            _real_sleep(remaining)
+                        break
+                    if remaining <= 0:
+                        break
+                    _real_sleep(min(0.05, remaining))
+            else:
+                # Nothing here reaps, so a leader that exits stays a zombie through the grace.
+                while True:
+                    if not _pid_reserved(process.pid):
+                        _finish_reaped(process)
+                        return
+                    remaining = grace_ends - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    _real_sleep(min(0.05, remaining))
         except BaseException:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -797,16 +906,16 @@ def exclusive_command(command, repo, for_text, reason_text):
 def slot(pool="worker", repo=None, command=None):
     """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
     A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
-    A caller that shares this turn file leaves a free slot for an earlier conflicting ticket that can take it."""
+    A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it."""
     if os.environ.get("LAND_SLOT"):
         yield
         return
-    with _held(pool, repo, command):
-        os.environ["LAND_SLOT"] = pool
+    with _held(pool, repo, command) as hold:
+        _show_hold(pool, hold.names)
         try:
             yield
         finally:
-            os.environ.pop("LAND_SLOT", None)
+            _hide_hold()
 
 
 def supervised(command, cwd, timeout):
