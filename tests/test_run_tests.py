@@ -1406,7 +1406,7 @@ class RunTestsTest(unittest.TestCase):
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
 
-    def test_a_pull_request_sets_real_process_or_a_push_omits_it(self):
+    def test_a_push_exports_the_real_process_switch_as_1_and_a_pull_request_exports_it_empty(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
             with self.subTest(reader=reader):
