@@ -255,7 +255,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
 ## land.py slot
 
 ```text
-land.py [flags] slot [--exclusive] ...
+land.py [flags] slot [--exclusive] [--repo REPO] ...
 ```
 
 run a heavy command under a governor slot
@@ -263,4 +263,5 @@ run a heavy command under a governor slot
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--exclusive` |  |  |  | hold every slot: for benchmarks that need a quiet machine |
+| `--repo REPO` |  |  |  | the repository to name in the holder record (default: current directory) |
 | `cmd` |  |  |  |  |
