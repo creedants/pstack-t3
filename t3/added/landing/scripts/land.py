@@ -587,8 +587,10 @@ def _format_wait(elapsed, holders):
     """One line naming each proven holder by kind, repository, hold duration, and short command.
 
     A holder with no proven record reads as unknown, and so does each field its record
-    does not carry. Zero holders produce no holder text. An exclusive holder with a cap
-    names the time left and, when the record has one, the reason.
+    does not carry. Zero holders produce no holder text. An exclusive holder with a
+    usable cap names the time left when its start time is usable. It names the cap
+    alone when the start time is not. The line includes the reason when the record
+    has one.
     """
     named = []
     for holder in holders:
