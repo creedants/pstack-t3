@@ -422,7 +422,7 @@ class _Counts:
     cache_read: int
     cache_write: int
     outgoing: int
-    reasoning: int
+    reasoning: int | None
 
 
 @dataclass(frozen=True)
@@ -436,10 +436,11 @@ class _Call:
 
 
 def _add(left, right):
+    reasoning = None if left.reasoning is None or right.reasoning is None else left.reasoning + right.reasoning
     return _Counts(
         left.incoming + right.incoming, left.cache_read + right.cache_read,
         left.cache_write + right.cache_write, left.outgoing + right.outgoing,
-        left.reasoning + right.reasoning,
+        reasoning,
     )
 
 
@@ -730,8 +731,7 @@ def _claude_totals(native):
         return None
     totals = {}
     for call in kept.values():
-        # This log has no reasoning counter. Output is not increased to invent one.
-        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing, 0)
+        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing, None)
         totals[call.model] = _add(totals[call.model], counts) if call.model in totals else counts
     return totals
 
@@ -837,9 +837,10 @@ def _dollars(counts, rate):
 
 
 def _model_line(name, counts, dollars):
+    reasoning = NOT_RECORDED if counts.reasoning is None else counts.reasoning
     line = (
         f"  {name}  in {counts.incoming}  cache-read {counts.cache_read}  "
-        f"cache-write {counts.cache_write}  out {counts.outgoing}  reasoning {counts.reasoning}"
+        f"cache-write {counts.cache_write}  out {counts.outgoing}  reasoning {reasoning}"
     )
     if dollars is not None:
         line += f"  ${dollars}"
@@ -857,7 +858,7 @@ def _json_models(models, prices):
             "cache_read": counts.cache_read,
             "cache_write": counts.cache_write,
             "out": counts.outgoing,
-            "reasoning": counts.reasoning,
+            "reasoning": NOT_RECORDED if counts.reasoning is None else counts.reasoning,
         }
         dollars = _dollars(counts, (prices or {}).get(name))
         if dollars is not None:

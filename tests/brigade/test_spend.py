@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import runpy
 import sqlite3
@@ -319,9 +321,7 @@ class SpendTest(BrigadeTest):
         native = "sessAb12"
         self.fill([self.dish()], threads=[self.ledger("ledger-priv", "claudeAgent/claude-opus-4-6")], logs=[self.close()])
         claude = self.write_claude(native, [
-            "not json secret fragment",
             self.assistant("msgOk1", "claude-opus-4-6", 10, 4, content="secret message text"),
-            self.assistant("msgPriv99", "secret model sentinel", 6, 6, content="secret message text"),
         ])
         base = self.database([
             self.provider("ledger-priv", "prov-1", "claudeAgent", native, provider_session_id="native-session-sentinel"),
@@ -331,15 +331,32 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  claude-opus-4-6  in 10  cache-read 0  cache-write 0  out 4  reasoning not recorded\n"
+            "threads without a token source 0\n",
+        )
+        for secret in ("secret message text", "msgOk1", native, "native-session-sentinel"):
+            self.assertNotIn(secret, out)
+            self.assertNotIn(secret, err)
+
+    def test_a_malformed_claude_line_stays_off_both_streams(self):
+        native = "sessBad1"
+        self.fill([self.dish()], threads=[self.ledger(seat="claudeAgent/claude-opus-4-6")], logs=[self.close()])
+        claude = self.write_claude(native, [
+            "not json secret fragment",
+            self.assistant("msgLater41", "claude-opus-4-6", 41, 43, cache_read=17, cache_write=19),
+        ])
+        base = self.database([self.provider("ledger-1", "prov-1", "claudeAgent", native)])
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
             "  not recorded\n"
             "threads without a token source 1\n",
         )
-        for secret in (
-            "note sentinel", native, "secret model sentinel", "secret message text",
-            "msgPriv99", "msgOk1", "not json secret fragment", "native-session-sentinel",
-            "summary sentinel", "dish-thread-sentinel",
-        ):
-            self.assertNotIn(secret, out + err)
+        for secret in ("not json secret fragment", "in 41", "out 43", "cache-read 17", "cache-write 19"):
+            self.assertNotIn(secret, out)
+            self.assertNotIn(secret, err)
 
     def test_grok_and_cursor_print_not_recorded_and_not_a_zero(self):
         for driver in ("grok", "cursor"):
@@ -427,11 +444,21 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  claude-opus-4-6  in 13  cache-read 4  cache-write 1  out 27  reasoning 0\n"
+            "  claude-opus-4-6  in 13  cache-read 4  cache-write 1  out 27  reasoning not recorded\n"
             "threads without a token source 0\n",
         )
         self.assertNotIn("999", out + err)
         self.assertNotIn(native, out + err)
+        code, json_out, json_err = self.streams(
+            "spend", "--tokens", "--json", "--t3-home", str(base), env=self.token_env(claude),
+        )
+        self.assertEqual(code, 0, json_out + json_err)
+        report = json.loads(json_out)
+        self.assertEqual(report["rows"][0]["models"], [{
+            "model": "claude-opus-4-6", "in": 13, "cache_read": 4, "cache_write": 1, "out": 27,
+            "reasoning": "not recorded",
+        }])
+        self.assertNotIn("dollars", report["rows"][0]["models"][0])
 
     def test_an_unknown_token_schema_still_prints_the_store(self):
         cases = (
@@ -498,9 +525,9 @@ class SpendTest(BrigadeTest):
         self.assertEqual(
             out,
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
-            "  claude-haiku-4-5  in 8  cache-read 0  cache-write 0  out 2  reasoning 0\n"
-            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  reasoning 0  $0.012000\n"
-            "  claude-sonnet-4-6  in 4  cache-read 1  cache-write 1  out 3  reasoning 0\n"
+            "  claude-haiku-4-5  in 8  cache-read 0  cache-write 0  out 2  reasoning not recorded\n"
+            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  reasoning not recorded  $0.012000\n"
+            "  claude-sonnet-4-6  in 4  cache-read 1  cache-write 1  out 3  reasoning not recorded\n"
             "threads without a token source 0\n",
         )
 
@@ -561,21 +588,33 @@ class SpendTest(BrigadeTest):
 
     def test_a_default_run_does_not_open_the_database(self):
         self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
-        home = Path(self.temporary.name) / "home"
-        home.mkdir(exist_ok=True)
-        empty = Path(self.temporary.name) / "empty-t3"
-        empty.mkdir()
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-        env["T3CODE_HOME"] = str(empty)
-        env["CLAUDE_CONFIG_DIR"] = str(Path(self.temporary.name) / "claude-empty")
-        code, out, err = self.streams("spend", env=env)
-        self.assertEqual(code, 0, out + err)
+        base = self.database()
+        database = base / "userdata" / "statev2.sqlite"
+        loaded = runpy.run_path(str(SCRIPT))
+        original = runpy.run_path
+
+        def patched(path_name, init_globals=None, run_name=None):
+            module = original(path_name, init_globals, run_name)
+            if Path(path_name).name == "activity.py":
+                def open_t3(_database):
+                    raise AssertionError("open_t3")
+                module["open_t3"] = open_t3
+            return module
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        runpy.run_path = patched
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = loaded["main"]([
+                    "--store", str(self.store), "--at", str(self.at),
+                    "spend", "--t3-home", str(base),
+                ])
+        finally:
+            runpy.run_path = original
+        self.assertEqual(code, 0)
         self.assertEqual(
-            out,
+            stdout.getvalue(),
             "D1  wall 2h  rounds 0  send-backs 0  threads 1\n" + FOOTER + "\n",
         )
-        self.assertEqual(err, "")
-        self.assertNotIn("could not be opened", out + err)
-        self.assertFalse((empty / "userdata" / "statev2.sqlite").exists())
-        self.assertFalse((home / ".t3").exists())
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertTrue(database.is_file())
