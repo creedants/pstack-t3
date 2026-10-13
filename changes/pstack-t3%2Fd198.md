@@ -1,0 +1,1 @@
+- Split `tests/test_brigade.py` into area modules under `tests/brigade/`.
