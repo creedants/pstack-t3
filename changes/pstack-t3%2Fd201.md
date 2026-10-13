@@ -1,1 +1,2 @@
 - A `fire` that names nonempty `--paths` records that string on each of its tickets that records none, on a successful fire and on a refused fire that records a block. A ticket that already records paths keeps them. The recorded string is the one `--paths` gave, and the lease still takes that string plus the changelog fragment.
+- `ticket add --from-report` skips a follow-ups line outside a fence whose text is only `---`, and the same line written as a list item `- ---`. Leading and trailing whitespace do not count. No ticket is filed, and `--dry-run` does not print the line.

@@ -611,6 +611,15 @@ class FollowUps:
 NO_WORK = ("none", "none required", "none needed", "nothing", "nothing needed", "n/a", "not applicable", "no follow-ups")
 
 
+def skipped_follow_up_line(line):
+    """True when the line's text is `---` or the line is the list item `- ---`.
+
+    Leading and trailing whitespace do not count.
+    """
+    stripped = line.strip()
+    return stripped == "---" or re.fullmatch(r"-\s+---", stripped) is not None
+
+
 def says_no_work(text):
     """True when the block is one of NO_WORK and nothing more.
 
@@ -637,6 +646,9 @@ def follow_ups(text):
 
     A list item with no text is an aside with no text. It is not the list item a paragraph is directly above, and it is
     not its section's last list item. A paragraph looks past it as it looks past such a heading.
+
+    A line outside a fence whose text is only `---` is not a block. The same holds for a list item `- ---` outside a
+    fence. Leading and trailing whitespace do not count. Such a line separates blocks the way a blank line does.
     """
     sections, level, fenced, blank, block = [], 0, False, True, None
     for line in text.splitlines():
@@ -659,6 +671,8 @@ def follow_ups(text):
             continue
         elif not line.strip():
             blank = plain
+        elif plain and skipped_follow_up_line(line):
+            blank = True
         else:
             marker = plain and re.match(r"(?:[-*+]|\d+[.)])(?:\s+|$)", line)
             if marker or block is None or plain and blank and not line[0].isspace():
