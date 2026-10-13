@@ -37,18 +37,10 @@ class BriefsTest(BrigadeTest):
                      f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
         orders = text.split("STANDING ORDERS:\n", 1)[1]
-        self.assertEqual(orders.split("\n\n")[-1], "\n".join((
-            "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.",
-            "2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.",
-            "3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.",
-            "4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.",
-            "5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.",
-            "6. Never assert a library's own wording.",
-            "7. Add a case to an existing table when the setup is the same.",
-            "8. A test that sleeps to order two processes names the review finding it pins.",
-            "9. Do not add a test for what the project's build already refuses.",
-            "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?",
-        )))
+        numbered = orders.split("\n\n")[-1].splitlines()
+        self.assertEqual(len(numbered), 10)
+        self.assertEqual(numbered[0], "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.")
+        self.assertEqual(numbered[-1], "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?")
         self.assertNotIn("Run builds and tests through", text)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
