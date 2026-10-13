@@ -148,7 +148,7 @@ def skip_segments(items):
 def select_browser(directory):
     """The first browser of BROWSERS that starts on a small valid document under directory.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except a real path whose last component is snap. That path is keyed by the which path, so each command on that launcher is probed on its own.
+    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by the which path.
     """
     items = []
     by_resolved = {}
@@ -160,7 +160,7 @@ def select_browser(directory):
             items.append(BrowserMiss(name))
             continue
         resolved = os.path.realpath(found)
-        key = found if os.path.basename(resolved) == "snap" else resolved
+        key = found if os.path.basename(resolved) == "snap" or resolved == "/usr/lib/snapd/snapd" else resolved
         binary = by_resolved.get(key)
         if binary is None:
             binary = BrowserBinary(found, [name])
