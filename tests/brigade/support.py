@@ -815,10 +815,13 @@ class BrigadeTest(unittest.TestCase):
     def run_at(self, directory, *args, ok=True, stdin=None, owner=True):
         if owner and "--owner" not in args:
             args = (*_owner_words(directory), *args)
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(directory), *args],
-                                capture_output=True, text=True, input=stdin)
-        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
-        return (result.stdout if ok else result.stderr).strip()
+        outcome = call(
+            self, SCRIPT,
+            ["--store", str(self.store), "--at", str(directory), *(str(arg) for arg in args)],
+            stdin=stdin,
+        )
+        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
 
     def assert_refused_choice(self, output, flag, value, choices):
         refusal = f"argument {flag}: invalid choice: '{value}'"
@@ -848,6 +851,7 @@ class BrigadeTest(unittest.TestCase):
         return note
 
     def bash_unblocked(self, directory, line):
+        # The assertion is the shell round trip.
         command = line.split("run ", 1)[1]
         invocation = " ".join([shlex.quote(sys.executable), shlex.quote(str(SCRIPT)),
                                "--store", shlex.quote(str(self.store)), "--at", shlex.quote(str(directory)),
@@ -861,9 +865,9 @@ class BrigadeTest(unittest.TestCase):
         return f"brigade: same text as {ticket} ({state}); nothing added; pass --again to file a second ticket"
 
     def check_json(self, sha):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 "pass", "check", "D1", "--sha", sha, "--json"], capture_output=True, text=True)
-        return result.returncode, result.stdout, result.stderr.strip()
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                       "pass", "check", "D1", "--sha", sha, "--json"])
+        return outcome.code, outcome.stdout_text(), outcome.stderr_text().strip()
 
     def record(self, sha, verdict, *extra, author=CLAUDE, verifier=CODEX):
         self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", verdict, "--author", author, "--verifier", verifier, *extra)
@@ -921,9 +925,9 @@ class BrigadeTest(unittest.TestCase):
         return self.brigade("ticket", "add", "--from-report", f"reports/{name}", *extra, ok=ok, owner=owner)
 
     def close_run(self, *flags):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 *_owner_words(self.at), "close", *flags], capture_output=True, text=True)
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                       *_owner_words(self.at), "close", *flags])
+        return outcome.code, outcome.stdout_text().strip(), outcome.stderr_text().strip()
 
     def no_row(self, name, dish="D1"):
         return (f"brigade: warning: reports/{name} has no review row; record it with pass record {dish} --report {name}, "
@@ -996,10 +1000,10 @@ class BrigadeTest(unittest.TestCase):
         return ("--fields", str(fields))
 
     def raw_stdout(self, *args):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 *_owner_words(self.at), *args], capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                       *_owner_words(self.at), *(str(arg) for arg in args)])
+        self.assertEqual(outcome.code, 0, outcome.stderr)
+        return outcome.stdout
 
     def log_rows(self):
         lines = (self.at / "log.tsv").read_text().splitlines()
@@ -1389,10 +1393,9 @@ class BrigadeTest(unittest.TestCase):
                                  self.edit_block("2", "src/greeting.txt", "wrold", "world"), **kwargs)
 
     def verify(self, reviewed, head):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 *_owner_words(self.at), "edits", "verify", "D1", "--from", reviewed, "--to", head],
-                                capture_output=True, text=True)
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                       *_owner_words(self.at), "edits", "verify", "D1", "--from", reviewed, "--to", head])
+        return outcome.code, outcome.stdout_text().strip(), outcome.stderr_text().strip()
 
     def verified(self, reviewed, head):
         return f"D1: edits verified, {reviewed} to {head}"
@@ -1470,9 +1473,9 @@ class BrigadeTest(unittest.TestCase):
         return "Verdict: pass with edits\n\n" + self.section()
 
     def run_raw(self, *args):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 *_owner_words(self.at), *args], capture_output=True, text=True)
-        return result.returncode, result.stdout, result.stderr
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                       *_owner_words(self.at), *(str(arg) for arg in args)])
+        return outcome.code, outcome.stdout_text(), outcome.stderr_text()
 
     def assert_edits_verify_and_pass_record_refuse(self, cases):
         """Each case is (body, refusal), and the refusal finishes the words `brigade: reports/D1-review-1.md`.
@@ -1869,8 +1872,9 @@ class StoresTest(unittest.TestCase):
     def run_brigade(self, name, *args):
         if "--owner" not in args:
             args = (*_owner_words(self.dir(name)), *args)
-        return subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(name)), *args],
-                              capture_output=True, text=True)
+        argv = ["--store", str(self.store), "--at", str(self.dir(name)), *(str(arg) for arg in args)]
+        command = [sys.executable, str(SCRIPT), *argv]
+        return call(self, SCRIPT, argv).completed(command)
 
     def brigade(self, name, *args, ok=True):
         result = self.run_brigade(name, *args)
@@ -2124,9 +2128,13 @@ class _TicketsRace:
                                     env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         try:
             _wait_for_path(case / "checking")
-            added = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "ticket", "add", "--kind", "fix", "--summary", "two"],
-                                   capture_output=True, text=True, timeout=10)
+            # race between two processes
+            added = real_process(
+                ProcessReason.RACE, SCRIPT,
+                ["--store", str(self.store), "--at", str(self.at),
+                 "ticket", "add", "--kind", "fix", "--summary", "two"],
+                timeout=10,
+            )
             self.assertEqual(added.stdout.strip(), "T2", added.stderr)
             (case / "check-proceed").touch()
             out, err = watching.communicate(timeout=10)
@@ -2160,9 +2168,13 @@ class _ItemsRace:
                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         try:
             _wait_for_path(case / "claiming")
-            other = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
-                                   capture_output=True, text=True, timeout=10)
+            # race between two processes
+            other = real_process(
+                ProcessReason.RACE, SCRIPT,
+                ["--store", str(self.store), "--at", str(self.at),
+                 "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
+                timeout=10,
+            )
             self.assertEqual(other.stdout.strip(), "D1", other.stderr)
             (case / "claim-proceed").touch()
             _, err = firing.communicate(timeout=10)
@@ -2198,9 +2210,13 @@ class _ReportingRace:
                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         try:
             _wait_for_path(case / "claiming")
-            other = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
-                                   capture_output=True, text=True, timeout=10)
+            # race between two processes
+            other = real_process(
+                ProcessReason.RACE, SCRIPT,
+                ["--store", str(self.store), "--at", str(self.at),
+                 "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
+                timeout=10,
+            )
             self.assertEqual(other.stdout.strip(), "D1", other.stderr)
             (case / "claim-proceed").touch()
             _, err = firing.communicate(timeout=10)
