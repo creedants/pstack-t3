@@ -9,6 +9,7 @@ The helper assigns the saved sys.stdin, sys.stdout, and sys.stderr objects back.
 The helper saves the umask by calling os.umask and restoring it at once, before main. It restores that saved mask after the call.
 For each signal from 1 to signal.NSIG - 1 that signal.getsignal can read, the helper puts the saved handler back when the handler after the call differs. It skips a signal that getsignal or signal refuses.
 The helper assigns the saved sys.dont_write_bytecode back.
+Standard-library imports stay in sys.modules and direct writes to file descriptors 1 and 2 are not captured.
 """
 import enum
 import fcntl
@@ -61,7 +62,7 @@ class ProcessReason(enum.Enum):
     EXIT_STATUS = "process exit status"
     INHERITED_ENV = "inherited environment"
     HELP = "-h output"
-    OTHER_LOCK = "lock held by another running brigade.py"
+    OTHER_LOCK = "lock held by another process"
 
 
 def _pipe_encoding():
@@ -197,7 +198,7 @@ def _drop_entry(test):
 
 
 def _reset_load(loaded):
-    """Reset run's globals when the script defines run."""
+    """Reset READ_ONLY and clear HELD_LOCKS when they occur in run's globals. Clear roles_family's cache when cache_clear is available. Other globals and caches remain until this test's load is discarded."""
     run = loaded.get("run")
     if run is None:
         return
@@ -248,9 +249,9 @@ def _stdin_reader(text):
     return io.TextIOWrapper(raw, encoding=_pipe_encoding(), errors="strict", newline="\n")
 
 
-def _code_from_main(main, argv):
+def _code_from_main(action):
     try:
-        result = main(list(argv))
+        result = action()
     except SystemExit as exit_error:
         status = exit_error.code
         if status is None:
@@ -281,13 +282,14 @@ def _run_interpreter(command, *, stdin, env, cwd, timeout):
 
 
 def _call_in_process(test, script, argv, *, stdin, env, cwd):
-    loaded = _load(test, script)
     saved = _save_process()
-    # The interpreter line-buffers stderr and block-buffers a pipe's stdout.
-    out_raw, out = _capture_stream(False)
-    err_raw, err = _capture_stream(True)
     arguments = [str(arg) for arg in argv]
     try:
+        # The interpreter line-buffers stderr and block-buffers a pipe's stdout.
+        out_raw, out = _capture_stream(False)
+        err_raw, err = _capture_stream(True)
+        sys.stdout = out
+        sys.stderr = err
         if cwd is not None:
             os.chdir(cwd)
         if env is not None:
@@ -297,9 +299,7 @@ def _call_in_process(test, script, argv, *, stdin, env, cwd):
         sys.argv = [str(script), *arguments]
         if stdin is not None:
             sys.stdin = _stdin_reader(stdin)
-        sys.stdout = out
-        sys.stderr = err
-        code = _code_from_main(loaded["main"], arguments)
+        code = _code_from_main(lambda: _load(test, script)["main"](list(arguments)))
         out.flush()
         err.flush()
         return Outcome(code, out_raw.getvalue(), err_raw.getvalue())

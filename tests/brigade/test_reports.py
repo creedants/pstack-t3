@@ -222,7 +222,7 @@ class ReportsTest(BrigadeTest):
         held = os.open(self.at / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
         self.addCleanup(os.close, held)
         fcntl.flock(held, fcntl.LOCK_EX)
-        # lock held by another running brigade.py
+        # lock held by the test process
         dry_run = real_popen(
             ProcessReason.OTHER_LOCK,
             [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),

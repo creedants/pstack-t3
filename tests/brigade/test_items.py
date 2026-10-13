@@ -8,7 +8,8 @@ from .support import (
     ROOT,
     SCRIPT,
     THREAD_A,
-    call,
+    ProcessReason,
+    real_process,
     THREAD_B,
     THREAD_C,
     _ItemsRace,
@@ -51,14 +52,15 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_the_built_brigade_refuses_a_bedrock_claude_author_with_a_claude_verifier(self):
         self.fired_bug_fix()
         built = ROOT / "skills/brigade/scripts/brigade.py"
-        outcome = call(
-            self, built,
+        # process exit status
+        result = real_process(
+            ProcessReason.EXIT_STATUS, built,
             ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
              "pass", "record", "D1", "--sha", "abc", "--verdict", "pass",
              "--author", self.BEDROCK, "--verifier", CLAUDE],
         )
-        self.assertEqual((outcome.code, outcome.stdout_text()), (1, ""))
-        self.assertEqual(outcome.stderr_text().strip(), self.same_family_refusal(self.BEDROCK, CLAUDE))
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr.strip(), self.same_family_refusal(self.BEDROCK, CLAUDE))
         self.assertEqual(self.pass_rows(), [])
 
     def test_pass_record_without_roles_py_refuses_and_records_nothing(self):

@@ -121,6 +121,15 @@ class CallTest(unittest.TestCase):
                 """,
                 [],
             ),
+            (
+                "import_print.py",
+                """
+                print("import-line")
+                def main(argv):
+                    print("main-line")
+                """,
+                [],
+            ),
         )
         for name, source, argv in rows:
             with self.subTest(name=name):
@@ -128,6 +137,33 @@ class CallTest(unittest.TestCase):
                 self.assertEqual(outcome.code, real.returncode)
                 self.assertEqual(outcome.stdout, real.stdout)
                 self.assertEqual(outcome.stderr, real.stderr)
+        inside = directory / "inside"
+        inside.mkdir()
+        marked = dict(os.environ)
+        marked["BRIGADE_IMPORT_MARK"] = "seen"
+        script = self._write(
+            directory,
+            "import_env.py",
+            """
+            import os
+            print("import-line")
+            print(os.environ["BRIGADE_IMPORT_MARK"])
+            print(os.getcwd())
+            def main(argv):
+                print("main-line")
+            """,
+        )
+        outcome = call(self, script, [], env=marked, cwd=inside)
+        real = subprocess.run(
+            [sys.executable, str(script)],
+            capture_output=True,
+            env=marked,
+            cwd=inside,
+        )
+        self.assertEqual(outcome.stdout, real.stdout)
+        self.assertIn(b"import-line\n", outcome.stdout)
+        self.assertIn(b"seen\n", outcome.stdout)
+        self.assertIn(b"main-line\n", outcome.stdout)
         shown = subprocess.run(
             [sys.executable, str(directory / "newlines.py")],
             capture_output=True,
@@ -204,6 +240,7 @@ class CallTest(unittest.TestCase):
         stderr = sys.stderr
         bytecode = sys.dont_write_bytecode
         path = os.environ.get("PATH")
+        incoming_sigusr1 = signal.getsignal(signal.SIGUSR1)
         signal.signal(signal.SIGUSR1, signal.SIG_DFL)
         outer_umask = os.umask(0o022)
         try:
@@ -222,6 +259,32 @@ class CallTest(unittest.TestCase):
             current = os.umask(0o022)
             os.umask(current)
             self.assertEqual(current, 0o022)
+            raised = self._write(
+                directory,
+                "import_raise.py",
+                f"""
+                import io
+                import os
+                import sys
+                os.chdir({str(elsewhere)!r})
+                os.environ["BRIGADE_CALL_PROBE"] = "set"
+                sys.argv.append("imported")
+                sys.stdin = io.StringIO("x")
+                sys.stdout = io.StringIO()
+                sys.stderr = io.StringIO()
+                raise RuntimeError("import-raise")
+                """,
+            )
+            outcome = call(self, raised, [])
+            self.assertEqual(outcome.code, 1)
+            self.assertEqual(os.getcwd(), started)
+            self.assertNotIn("BRIGADE_CALL_PROBE", os.environ)
+            self.assertEqual(os.environ.get("PATH"), path)
+            self.assertIs(sys.argv, argv_object)
+            self.assertEqual(list(sys.argv), argv_contents)
+            self.assertIs(sys.stdin, stdin)
+            self.assertIs(sys.stdout, stdout)
+            self.assertIs(sys.stderr, stderr)
         finally:
             os.chdir(started)
             os.environ.pop("BRIGADE_CALL_PROBE", None)
@@ -229,7 +292,7 @@ class CallTest(unittest.TestCase):
                 os.environ.pop("PATH", None)
             else:
                 os.environ["PATH"] = path
-            signal.signal(signal.SIGUSR1, signal.SIG_DFL)
+            signal.signal(signal.SIGUSR1, incoming_sigusr1)
             sys.dont_write_bytecode = bytecode
             if sys.argv is not argv_object:
                 sys.argv = argv_object
