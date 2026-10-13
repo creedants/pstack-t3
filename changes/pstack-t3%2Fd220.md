@@ -1,0 +1,1 @@
+- The brief test requires its verify section to name affected modules while working, builds and tests through the slot wrapper, and one full run after the last commit. The old separate slot bullet is rejected only in that section.
