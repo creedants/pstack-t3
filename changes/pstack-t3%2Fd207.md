@@ -1,0 +1,1 @@
+- Brigade tests call `brigade.py` `main` in the test process. A test whose result is a second process, a signal, the interpreter exit, the environment a child inherits, help text, or a lock held by another `brigade.py` still starts a process.
