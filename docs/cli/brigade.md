@@ -771,7 +771,7 @@ brigade.py [flags] spend [--by BY] [--item ITEM] [--since SINCE] [--json] [--tok
 
 print wall time, rounds, send-backs, and threads from the store. It writes nothing
 
-A wholly missing measure is the string `not recorded` or `open` when it names one gap, and an object of those words to counts when it names both. Without `--tokens` the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`. Token totals need `--tokens`.
+In text, a wholly missing measure prints its absence words and no counts. In JSON, one absence word is that string, and two are an object of word to count. Without `--tokens` the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`. Token totals need `--tokens`.
 
 A Claude model line prints `reasoning not recorded`. A recorded reasoning count prints as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
 

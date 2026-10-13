@@ -6,5 +6,5 @@
 - A Claude token line prints `reasoning not recorded`. JSON carries the string `not recorded`. A recorded count prints the number, and 0 stays 0.
 - Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
 - `--json` says wall time is whole seconds. A mixed measure is an object with `value` for the counted total and `open` or `not recorded` for how many items have that gap.
-- A wholly missing measure with one absence word is that word. Two absence words are an object of word to count. Without `--tokens`, the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`.
+- In text, a wholly missing measure prints its absence words and no counts. In JSON, one absence word is that string, and two are an object of word to count. Without `--tokens`, the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`.
 - `--by reviewer` groups whole items by the seat that reviewed them. Token lines include the worker and every other ledger role on those items. Several seats use one joined key.
