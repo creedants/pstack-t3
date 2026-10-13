@@ -360,7 +360,7 @@ def _waiting(tickets, before):
     """Return (number, kind) for each live ticket below before, in ticket order. before None means every ticket.
 
     A ticket is live while its waiter holds the exclusive flock on its file, so the shared probe fails.
-    Each unlocked ticket is deleted. Runs under the turn mutex.
+    Each scanned ticket whose shared probe succeeds is deleted. An unreadable single-link entry is skipped and stays in place. Runs under the turn mutex.
     The probe is a shared lock because an exclusive flock on a read-only open fails with EBADF where flock is a POSIX lock.
     The caller passes its own number, because its own ticket would probe free where flock is per process.
     An inode seen with more than one link in this scan is not a live ticket under any of its names.
