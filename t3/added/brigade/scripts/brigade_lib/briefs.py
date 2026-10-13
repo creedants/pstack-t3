@@ -29,6 +29,18 @@ from brigade_lib.store import HELD_LOCKS, MODES, VERDICTS, roles_script
 
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
+TEST_STANDARD = (
+    "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.",
+    "2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.",
+    "3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.",
+    "4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.",
+    "5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.",
+    "6. Never assert a library's own wording.",
+    "7. Add a case to an existing table when the setup is the same.",
+    "8. A test that sleeps to order two processes names the review finding it pins.",
+    "9. Do not add a test for what the project's build already refuses.",
+    "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?",
+)
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -146,6 +158,17 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
+def verify_rule(land):
+    return (
+        "While working, run only the affected test modules. "
+        "Run the claims check before the final verification. "
+        f"Run the full verification chain once, after the last commit, through `python3 {land} slot -- <command>`. "
+        "The chain is the first bullet of this section. "
+        "A later commit that changes only prose does not rerun it. "
+        "A fix round runs the affected modules while working and one full run at the end."
+    )
+
+
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
     ident = dish["id"]
     if not dish["branch"]:
@@ -169,7 +192,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
         "", "CONTRACT:", contract,
         "", "VERIFY:", f"- {verify}",
-        f"- Run builds and tests through `python3 {land} slot -- <command>`.",
+        f"- {verify_rule(land)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
@@ -183,7 +206,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip(),
+        "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip() + "\n\n" + "\n".join(TEST_STANDARD),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")
