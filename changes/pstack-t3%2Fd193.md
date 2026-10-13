@@ -1,1 +1,1 @@
-- Split `brigade.py` into `brigade_lib/` area modules with identical behavior.
+- Split `brigade.py` into `brigade_lib/` area modules.
