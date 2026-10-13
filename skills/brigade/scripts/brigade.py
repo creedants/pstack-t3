@@ -116,7 +116,7 @@ def parser():
     p.add_argument("--autofire", choices=AUTOFIRE,
                    help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
 
-    p = sub.add_parser("ticket", help="add, list, update, move, or take tickets on the rail")
+    p = sub.add_parser("ticket", help="add, list, update, move, take, or record paths on tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
     a = t.add_parser("add")
     how = a.add_mutually_exclusive_group(required=True)

@@ -68,7 +68,7 @@ record the head chef thread, a schedule id, or the reporting level
 brigade.py [flags] ticket <action>
 ```
 
-add, list, update, move, or take tickets on the rail
+add, list, update, move, take, or record paths on tickets on the rail
 
 `<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`.
 

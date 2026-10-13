@@ -1454,3 +1454,8 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         after = {str(path.relative_to(second)): path.read_bytes() for path in sorted(second.rglob("*"))
                  if path.is_file() and path.name != "restaurant.lock"}
         self.assertEqual(after, before)
+
+    def test_ticket_help_names_paths(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("add, list, update, move, take, or record paths on tickets on the rail", " ".join(result.stdout.split()))
