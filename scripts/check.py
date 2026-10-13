@@ -61,6 +61,9 @@ UPSTREAM_PATH = Path(__file__).resolve().parents[1] / "upstream.json"
 FENCE_REFERENCE = "test_landing.py"
 FENCE_FUNCTION = "fence_git_environment"
 FENCE_SETUP = "setUpModule"
+FENCE_BRIGADE_DIR = "brigade"
+FENCE_BRIGADE_SUPPORT = "support.py"
+FENCE_BRIGADE_MODULE = "tests.brigade.support"
 LIGHT_HEADER_CELLS = frozenset({"light", "light mode", "light behavior", "in light mode"})
 LIGHT_MODE_NAME = re.compile(r"(?i:\blight mode\b)|Mode: light")
 TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
@@ -295,13 +298,186 @@ def _calls_name(function, name):
     return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name for node in ast.walk(function))
 
 
-def fence_findings(tests_dir):
-    """Compare each tests/test_*.py with the fence in tests/test_landing.py by syntax tree.
+def _read_module(path):
+    try:
+        return ast.parse(path.read_text(), str(path)), None
+    except (OSError, ValueError, SyntaxError) as error:
+        return None, error
 
-    The comparison is `ast.dump` of the last `def fence_git_environment` directly in the module
-    body, which ignores comments, whitespace, and line numbers and includes the docstring. Each
-    module must also have a `def setUpModule` directly in the module body whose tree contains a
-    call to the bare name `fence_git_environment`, with or without arguments.
+
+def _unreadable_finding(rel, error):
+    return f"{rel}: could not be read or parsed, so its git environment fence was not checked: {type(error).__name__}"
+
+
+def _module_fence_findings(module, rel, reference, sentence, label):
+    findings = []
+    fence = _module_function(module, FENCE_FUNCTION)
+    setup = _module_function(module, FENCE_SETUP)
+    if fence is None:
+        findings.append(f"{rel}: has no def {FENCE_FUNCTION} directly in the module body. {sentence}")
+    elif ast.dump(fence) != reference:
+        findings.append(f"{rel}: {FENCE_FUNCTION} differs from the one in {label}/{FENCE_REFERENCE}. {sentence}")
+    if setup is None:
+        findings.append(f"{rel}: has no def {FENCE_SETUP} directly in the module body. {sentence}")
+    elif not _calls_name(setup, FENCE_FUNCTION):
+        findings.append(f"{rel}: {FENCE_SETUP} contains no call to the bare name {FENCE_FUNCTION}. {sentence}")
+    return findings
+
+
+def _is_support_import(node):
+    relative = node.level == 1 and node.module == "support"
+    absolute = node.level == 0 and node.module == FENCE_BRIGADE_MODULE
+    return relative or absolute
+
+
+def _target_binds(target, name):
+    if isinstance(target, ast.Name):
+        return target.id == name
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return any(_target_binds(element, name) for element in target.elts)
+    if isinstance(target, ast.Starred):
+        return _target_binds(target.value, name)
+    return False
+
+
+def _setup_name_binding(statement):
+    if isinstance(statement, ast.FunctionDef) and statement.name == FENCE_SETUP:
+        return "def"
+    if isinstance(statement, ast.Assign) and any(_target_binds(target, FENCE_SETUP) for target in statement.targets):
+        return "assign"
+    if isinstance(statement, ast.AnnAssign) and _target_binds(statement.target, FENCE_SETUP):
+        return "assign"
+    if isinstance(statement, ast.Import):
+        for alias in statement.names:
+            if (alias.asname or alias.name.split(".", 1)[0]) == FENCE_SETUP:
+                return "wrong"
+        return None
+    if not isinstance(statement, ast.ImportFrom):
+        return None
+    found = None
+    for alias in statement.names:
+        if (alias.asname or alias.name) != FENCE_SETUP:
+            continue
+        if alias.name != FENCE_SETUP:
+            found = "alias"
+        elif _is_support_import(statement):
+            found = "import"
+        else:
+            found = "wrong"
+    return found
+
+
+def _renames_setup_away(statement):
+    if not isinstance(statement, ast.ImportFrom):
+        return False
+    return any(alias.name == FENCE_SETUP and alias.asname not in (None, FENCE_SETUP) for alias in statement.names)
+
+
+def _last_setup_binding(module):
+    binding = None
+    renamed = False
+    for statement in module.body:
+        found = _setup_name_binding(statement)
+        if found is not None:
+            binding = found
+        elif _renames_setup_away(statement):
+            renamed = True
+    if binding is not None:
+        return binding
+    if renamed:
+        return "alias"
+    return None
+
+
+def _imports_only_support_classes(module, class_names):
+    if not module.body:
+        return False
+    for statement in module.body:
+        if not isinstance(statement, ast.ImportFrom) or not _is_support_import(statement):
+            return False
+        if not statement.names or any(alias.name not in class_names for alias in statement.names):
+            return False
+    return True
+
+
+def _area_findings(module, rel, reference, sentence, label, class_names):
+    binding = _last_setup_binding(module)
+    if binding == "import":
+        return []
+    if binding == "alias":
+        return [f"{rel}: imports {FENCE_SETUP} under another name. {sentence}"]
+    if binding == "wrong":
+        return [f"{rel}: binds {FENCE_SETUP} by an import that is not from {FENCE_BRIGADE_MODULE}. {sentence}"]
+    if binding == "assign":
+        return [f"{rel}: binds {FENCE_SETUP} to something other than an import from {FENCE_BRIGADE_MODULE}. {sentence}"]
+    if binding == "def":
+        return _module_fence_findings(module, rel, reference, sentence, label)
+    if _imports_only_support_classes(module, class_names):
+        return []
+    return [f"{rel}: has no {FENCE_SETUP} bound directly in the module body. {sentence}"]
+
+
+def _brigade_findings(tests_dir, label, reference, copy):
+    brigade = tests_dir / FENCE_BRIGADE_DIR
+    if not brigade.is_dir():
+        return []
+    sentence = f"Import {FENCE_SETUP} from {label}/{FENCE_BRIGADE_DIR}/{FENCE_BRIGADE_SUPPORT}"
+    support_rel = f"{label}/{FENCE_BRIGADE_DIR}/{FENCE_BRIGADE_SUPPORT}"
+    findings = []
+    support, error = _read_module(brigade / FENCE_BRIGADE_SUPPORT)
+    if error is not None:
+        findings.append(_unreadable_finding(support_rel, error))
+        class_names = frozenset()
+    else:
+        class_names = frozenset(node.name for node in support.body if isinstance(node, ast.ClassDef))
+        findings.extend(_module_fence_findings(support, support_rel, reference, copy, label))
+    for file in sorted(brigade.glob("test_*.py")):
+        if not file.is_file():
+            continue
+        rel = f"{label}/{FENCE_BRIGADE_DIR}/{file.name}"
+        module, error = _read_module(file)
+        if error is not None:
+            findings.append(_unreadable_finding(rel, error))
+            continue
+        findings.extend(_area_findings(module, rel, reference, sentence, label, class_names))
+    return findings
+
+
+def fence_findings(tests_dir):
+    """Name test modules whose git environment fence does not match tests/test_landing.py.
+
+    The comparison value is ast.dump of the last def fence_git_environment
+    directly in the module body. That dump ignores comments, whitespace, and
+    line numbers and includes the docstring. Each top-level test_*.py module
+    also needs a def setUpModule directly in the module body that calls the
+    bare name fence_git_environment.
+
+    A missing or unreadable test_landing.py, or one with no such function,
+    returns that one finding and checks nothing else.
+
+    An absent brigade directory adds no finding. When that directory is
+    present, support.py uses the same rules and the same copy sentence as a
+    top-level module. A missing or unreadable support.py reports that it could
+    not be read or parsed and includes the exception type name. A missing file
+    is FileNotFoundError. Each test_*.py file directly in that directory is an
+    area module. Files in subdirectories are not checked.
+
+    The last binding of the name setUpModule in an area module body decides.
+    Importing that name from tests.brigade.support at level 0, or from
+    .support at level 1, passes even when the import lists other names and the
+    module defines its own class. An import that mentions setUpModule under
+    another name, or binds that name to a different imported name, is an alias
+    finding. An import that binds the name from any other module is a finding.
+    An assignment or annotated assignment of the name is a finding. A def
+    setUpModule uses the top-level fence rules. Those findings end with
+    Import setUpModule from the brigade support path.
+
+    Only a statement in the module body can bind the name. An area module that
+    does not bind the name still passes when every body statement imports
+    classes defined directly in support.py and there is at least one such
+    import. Anything else that leaves the name unbound is a finding.
+
+    Path labels and both sentences use the tests directory name.
     """
     tests_dir = Path(tests_dir)
     label = tests_dir.name
@@ -321,21 +497,12 @@ def fence_findings(tests_dir):
         if not file.is_file():
             continue
         rel = f"{label}/{file.name}"
-        try:
-            module = ast.parse(file.read_text(), str(file))
-        except (OSError, ValueError, SyntaxError) as error:
-            findings.append(f"{rel}: could not be read or parsed, so its git environment fence was not checked: {type(error).__name__}")
+        module, error = _read_module(file)
+        if error is not None:
+            findings.append(_unreadable_finding(rel, error))
             continue
-        fence = _module_function(module, FENCE_FUNCTION)
-        setup = _module_function(module, FENCE_SETUP)
-        if fence is None:
-            findings.append(f"{rel}: has no def {FENCE_FUNCTION} directly in the module body. {copy}")
-        elif ast.dump(fence) != reference:
-            findings.append(f"{rel}: {FENCE_FUNCTION} differs from the one in {label}/{FENCE_REFERENCE}. {copy}")
-        if setup is None:
-            findings.append(f"{rel}: has no def {FENCE_SETUP} directly in the module body. {copy}")
-        elif not _calls_name(setup, FENCE_FUNCTION):
-            findings.append(f"{rel}: {FENCE_SETUP} contains no call to the bare name {FENCE_FUNCTION}. {copy}")
+        findings.extend(_module_fence_findings(module, rel, reference, copy, label))
+    findings.extend(_brigade_findings(tests_dir, label, reference, copy))
     return findings
 
 
