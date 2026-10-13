@@ -816,6 +816,7 @@ DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}|\[(?:\d{1,3}(?:\.\d{1,3}
 TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
 # The slash that starts a word belongs to its token, so /code-review is not code-review.
 NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
+NAME_RUN = re.compile(r"(?:[^\W_]|-)+")
 SLASH_WORD = re.compile(rf"{OPENS}/[^\s{QUOTES}]*")
 # A form of fewer than 4 characters of a request name that is not one TOKEN is not private text with one of these directly before or after it.
 BESIDE = r"[\w-]"
@@ -983,9 +984,16 @@ class Privacy:
             for form in self.index.get(low[at:at + ANCHOR], ()):
                 if low.startswith(form, at):
                     yield at, at + len(form)
-        for match in NAME.finditer(low) if self.names else ():
-            if match.group() in self.names:
-                yield match.span()
+        if self.names and "-" in low:
+            for token in NAME_RUN.finditer(low):
+                if "-" not in token.group():
+                    continue
+                start = token.start()
+                if start and low[start - 1] == "/":
+                    start -= 1
+                for match in NAME.finditer(low, start, token.end()):
+                    if match.group() in self.names:
+                        yield match.span()
         for match in self.shorts.finditer(low) if self.shorts else ():
             yield match.span(1)
         for match in SLASH_WORD.finditer(low) if self.roots else ():
