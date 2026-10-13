@@ -1,0 +1,1 @@
+- `activity.py` finds a hyphenated request name with one forward pass. When a slash that OPENS accepts stands immediately before a candidate, that candidate is not yielded.

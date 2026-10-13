@@ -813,10 +813,10 @@ SHAPES = re.compile(rf"(?P<path>{PATH})|{UUID}|(?:{'|'.join(T3_KINDS)}):[\w%]|(?
 LOCAL = re.compile(r"(?:[^\s@<>()\[\]\"',;:&]+|\"[^\"]+\"|\"(?:\\.|[^\"\\])+\")\Z", re.DOTALL)
 LOCAL_CHARS = 64
 DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}|\[(?:\d{1,3}(?:\.\d{1,3}){3}|IPv6:[0-9A-Fa-f:.]+)\]", re.IGNORECASE)
-TOKEN = r"[^\W_]+(?:-[^\W_]+)+"
-# The slash that starts a word belongs to its token, so /code-review is not code-review.
-NAME = re.compile(rf"(?:{OPENS}/)?{TOKEN}")
-NAME_RUN = re.compile(r"(?:[^\W_]|-)+")
+TOKEN_ATOM = r"[^\W_]"
+TOKEN = rf"{TOKEN_ATOM}+(?:-{TOKEN_ATOM}+)+"
+OPENS_AT = re.compile(OPENS)
+PIECE = re.compile(rf"{TOKEN_ATOM}+|/")
 SLASH_WORD = re.compile(rf"{OPENS}/[^\s{QUOTES}]*")
 # A form of fewer than 4 characters of a request name that is not one TOKEN is not private text with one of these directly before or after it.
 BESIDE = r"[\w-]"
@@ -979,21 +979,39 @@ class Privacy:
 
     def found(self, text):
         """The spans of text that hold an indexed form, a token that is one of names, a form shorts matches, or a word that is one of roots, each in any case, or text of a private shape."""
+        def name_spans(low):
+            at = 0
+            length = len(low)
+            while at < length:
+                piece = PIECE.match(low, at)
+                if piece is None:
+                    at += 1
+                    continue
+                if piece.group() == "/":
+                    at = piece.end()
+                    continue
+                start, end = piece.span()
+                while end < length and low[end] == "-":
+                    segment = PIECE.match(low, end + 1)
+                    if segment is None or segment.group() == "/":
+                        break
+                    end = segment.end()
+                at = end
+                if end == piece.end():
+                    continue
+                slash = start - 1
+                if slash >= 0 and low[slash] == "/" and OPENS_AT.match(low, slash):
+                    continue
+                if low[start:end] in self.names:
+                    yield start, end
+
         low = lowered(text)
         for at in range(len(low) - ANCHOR + 1 if self.index else 0):
             for form in self.index.get(low[at:at + ANCHOR], ()):
                 if low.startswith(form, at):
                     yield at, at + len(form)
         if self.names and "-" in low:
-            for token in NAME_RUN.finditer(low):
-                if "-" not in token.group():
-                    continue
-                start = token.start()
-                if start and low[start - 1] == "/":
-                    start -= 1
-                for match in NAME.finditer(low, start, token.end()):
-                    if match.group() in self.names:
-                        yield match.span()
+            yield from name_spans(low)
         for match in self.shorts.finditer(low) if self.shorts else ():
             yield match.span(1)
         for match in SLASH_WORD.finditer(low) if self.roots else ():
