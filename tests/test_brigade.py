@@ -659,315 +659,31 @@ class BrigadeTest(unittest.TestCase):
         return self.brigade("ticket", "add", "--from-report", f"reports/{name}", *extra, ok=ok, owner=owner)
 
 
-    def test_from_report_files_a_numbered_list_and_prints_the_paragraph_after_it(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(NUMBERED, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: **Hillclimb.** `t3/overrides/poteto-mode/playbooks/hillclimb.md` has a "
-            "code-delegate line with the same missing step 5 pointer. It was outside the lease.",
-            "would add from perf/reports/D1.md#2: **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only "
-            "the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.",
-            "would add from perf/reports/D1.md#3: No README or `docs/guide.md` edit is needed.",
-            "not filed, prose after the last list item: Scratch is under `~/.cache/d87`.",
-        ])
-
-    def test_from_report_files_prose_that_neither_introduces_a_list_nor_follows_the_last_item(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(PROSE_ABOVE_A_LEAD_IN, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: **`README.md`.** Replace the `**Known limits.**` bullet (line 284), "
-            "which still says \"Nothing deletes it or moves it back\", with these two bullets: ```markdown "
-            "- **Interrupted runs are recovered.** Every later install or uninstall looks in those directories. "
-            "- **Known limits.** Nothing returns or deletes it, so delete it by hand. ```",
-            "would add from perf/reports/D1.md#2: **`docs/guide.md`.** Replace the first bullet under \"Known limits.\" "
-            "(line 359) with this bullet, and keep the two bullets after it: ```markdown - An entry in a "
-            "`.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand. ```",
-            "would add from perf/reports/D1.md#3: **Type the `side` that `holder_parents` yields**, from the comment review.",
-            "would add from perf/reports/D1.md#4: **No test covers a skills directory inside the checkout**, which the "
-            "sweep skips because `layout` refuses it.",
-            "not filed, prose that introduces a list: Other follow-ups:",
-            "not filed, prose after the last list item: Scratch files for this run are under `/tmp/d105-repro/`: "
-            "`repro.py`, `before.txt`, and `full-suite.txt`.",
-        ])
-
-    def test_from_report_files_the_prose_of_a_section_with_no_list_beside_a_section_with_one(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(A_LIST_THEN_A_PROSE_SECTION, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: `docs/light-mode.md`, in its review-file table, still describes one "
-            "`<item>-review.md` file per item.",
-            "would add from perf/reports/D1.md#2: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
-            "would add from perf/reports/D1.md#3: `integration.head()` is still read inside two transactions.",
-        ])
-
-    def test_from_report_does_not_file_a_block_that_is_one_of_eight_no_work_phrases_and_nothing_more(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(NO_WORK, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: **Docs.** `README.md` and `docs/guide.md` do not mention the "
-            "`recovered`, `removed`, and `left` lines.",
-            "not filed, says no work is needed: None.",
-            "not filed, says no work is needed: **None required.**",
-            "not filed, says no work is needed: NONE NEEDED",
-            "not filed, says no work is needed: _Nothing._",
-            "not filed, says no work is needed: `Nothing needed`.",
-            "not filed, says no work is needed: n/a",
-            "not filed, says no work is needed: Not applicable.",
-            "not filed, says no work is needed: **No follow-ups**.",
-        ])
-
-    def test_from_report_files_every_block_longer_than_a_no_work_phrase(self):
-        self.fired_bug_fix()
-        body = "## Follow-ups\n\n" + "".join(f"- {text}\n" for text in LONGER_THAN_A_NO_WORK_PHRASE)
-        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
-            f"would add from perf/reports/D1.md#{number}: {text}"
-            for number, text in enumerate(LONGER_THAN_A_NO_WORK_PHRASE, 1)])
-        for text in LONGER_THAN_A_NO_WORK_PHRASE[-3:]:
-            self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{text}\n", "--dry-run"),
-                             f"would add from perf/reports/D1.md#1: {text}")
-
-    def test_from_report_folds_nested_bullets_and_an_indented_paragraph_into_their_item(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(NESTED, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: **D90-dependent wording.** These sentences hold for main and change if "
-            "D90 lands: - Prompt caps step 1: \"It still applies the Haiku prompt cap.\" - Step 4: the rerun of a "
-            "seat-launching child on `inherit`. If D90 makes the flag skip capped models, step 1 should say the flag never "
-            "returns a capped model.",
-            "would add from perf/reports/D1.md#2: **Docs batch.** - Change 4's Files list in `docs/light-mode.md` should "
-            "add `t3/scripts/roles.py`. - `docs/light-mode.md` is not leased.",
-        ])
-
-    def test_from_report_keeps_a_fenced_block_in_its_item_and_reads_no_heading_inside_it(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(FENCED, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: Run this command to set the user's panel. It must use a fresh catalog. "
-            "```bash # write the panel python3 roles.py write --catalog <file> --keep \\ "
-            "--set \"review backups=opencode/step-5-preview-free?variant=high\" ```",
-            "would add from perf/reports/D1.md#2: `family()` keeps the provider path for namespaced ids such as "
-            "`opencode/...`. The panel compares bare ids locally.",
-        ])
-
-    def test_from_report_files_each_paragraph_of_a_section_with_no_list(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(PROSE, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
-            "would add from perf/reports/D1.md#2: `integration.head()` is still read inside two transactions. "
-            "Both sites predate this change.",
-            "would add from perf/reports/D1.md#3: No test under `tests/` asserts these sentences. "
-            "That directory is outside this lease.",
-        ])
-
-    def test_from_report_adds_nothing_for_a_section_that_says_none_or_a_report_without_one(self):
-        self.fired_bug_fix()
-        before = (self.at / "rail.tsv").read_bytes()
-        for written, text in (("None.", "None."), ("**None.**", "**None.**"), ("  - n/a", "- n/a"),
-                              ("No\nfollow-ups.", "No follow-ups.")):
-            self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{written}\n").splitlines(), [
-                "reports/D1.md lists no follow-ups; nothing added",
-                f"not filed, says no work is needed: {text}",
-            ])
-        self.assertEqual(self.follow_ups_in("# D1 report\n\nStatus: done\n\n## Deviations\n\n- None.\n"),
-                         "reports/D1.md has no follow-ups section; nothing added")
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
-
-    def test_from_report_reads_five_heading_forms(self):
-        self.fired_bug_fix()
-        for heading, rest in (("## Follow-ups (outside lease L91)", ["(outside lease L91)"]), ("### Follow-ups", []),
-                              ("## Follow-up", []), ("## Follow-ups outside my lease", ["outside my lease"]),
-                              ("## follow-ups", [])):
-            self.assertEqual(self.follow_ups_in(f"# D1 report\n\n{heading}\n\n- One thing.\n", "--dry-run").splitlines(),
-                             ["would add from perf/reports/D1.md#1: One thing.",
-                              *(f"not filed, text on the heading line: {text}" for text in rest)], heading)
-
-    def test_from_report_prints_text_on_the_heading_line_and_does_not_file_it(self):
-        self.fired_bug_fix()
-        before = (self.at / "rail.tsv").read_bytes()
-        self.assertEqual(self.follow_ups_in("## Follow-ups: None of the tests cover the retry path.\n").splitlines(), [
-            "reports/D1.md lists no follow-ups; nothing added",
-            "not filed, text on the heading line: None of the tests cover the retry path.",
-        ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\t: none\n").splitlines(), [
-            "reports/D1.md lists no follow-ups; nothing added",
-            "not filed, text on the heading line: none",
-        ])
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
-        self.assertEqual(self.follow_ups_in("## Follow-ups (outside lease L91)\n\n- One thing.\n", "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: One thing.",
-            "not filed, text on the heading line: (outside lease L91)",
-        ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- One thing.\n", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: One thing.")
-
-    def test_from_report_prints_a_deeper_heading_inside_the_section_and_does_not_file_it(self):
-        self.fired_bug_fix()
-        before = (self.at / "rail.tsv").read_bytes()
-        body = "## Follow-ups\n\nLead in.\n\n### Parser\n\n- fix a\n- fix b\n\n### Docs\n\nClosing note.\n"
-        self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: fix a",
-            "would add from perf/reports/D1.md#2: fix b",
-            "not filed, prose that introduces a list: Lead in.",
-            "not filed, heading inside the section: Parser",
-            "not filed, heading inside the section: Docs",
-            "not filed, prose after the last list item: Closing note.",
-        ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n### None of these block the merge\n").splitlines(), [
-            "reports/D1.md lists no follow-ups; nothing added",
-            "not filed, heading inside the section: None of these block the merge",
-        ])
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
-
-    def test_from_report_prints_a_deeper_heading_with_no_text_and_not_the_follow_ups_heading_with_no_text(self):
-        self.fired_bug_fix()
-        before = (self.at / "rail.tsv").read_bytes()
-        for extra in ((), ("--dry-run",)):
-            self.assertEqual(self.follow_ups_in("## Follow-ups\n\n###\n", *extra).splitlines(), [
-                "reports/D1.md lists no follow-ups; nothing added",
-                "not filed, heading inside the section with no text",
-            ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nLead in.\n\n###   \n\n- fix a\n", "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: fix a",
-            "not filed, prose that introduces a list: Lead in.",
-            "not filed, heading inside the section with no text",
-        ])
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
-
-    def test_from_report_prints_a_lead_in_above_a_list_and_does_not_file_it(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(LEAD_IN, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: `pass record` without `--pr` overwrites the item's recorded PR with an "
-            "empty value, because `--pr` defaults to `\"\"`.",
-            "would add from perf/reports/D1.md#2: `--same-family` is not checked. It writes the `same model family;` note "
-            "even when the families differ.",
-            "not filed, prose that introduces a list: The explainer found these in `brigade.py`. All are outside L81, "
-            "so I did not fix them.",
-        ])
-
-    def test_from_report_numbers_the_items_of_two_sections_as_one_list(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in(TWO_SECTIONS, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: `docs/light-mode.md`, in its review-file table, still describes one "
-            "`<item>-review.md` file per item.",
-            "would add from perf/reports/D1.md#2: The panel sentences in step 7 still say \"handle the send-back below\" "
-            "while that bullet sits above them.",
-            "would add from perf/reports/D1.md#3: Decide whether `ticket move` should refuse a ticket of an item that owes "
-            "its decision.",
-        ])
-
-
-    def test_from_report_dry_run_waits_for_a_writer_that_holds_the_store_lock(self):
-        self.fired_bug_fix()
-        self.review_file("D1.md", BULLETS)
-        held = os.open(self.at / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
-        self.addCleanup(os.close, held)
-        fcntl.flock(held, fcntl.LOCK_EX)
-        dry_run = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "ticket", "add", "--from-report", "reports/D1.md", "--dry-run"],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            time.sleep(0.3)
-            self.assertIsNone(dry_run.poll())
-            fcntl.flock(held, fcntl.LOCK_UN)
-            out, err = dry_run.communicate(timeout=10)
-        finally:
-            dry_run.kill()
-        self.assertEqual([line.split(":")[0] for line in out.splitlines()],
-                         [f"would add from perf/reports/D1.md#{number}" for number in (1, 2, 3)], err)
 
 
 
-    def test_from_report_skips_the_second_of_two_items_with_the_same_text(self):
-        self.fired_bug_fix()
-        twice = "## Follow-ups\n\n- Same thing.\n- same  THING.\n- Other thing.\n"
-        self.assertEqual(self.follow_ups_in(twice, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: Same thing.",
-            "skipped perf/reports/D1.md#2, same text as #1 above: same  THING.",
-            "would add from perf/reports/D1.md#3: Other thing.",
-        ])
-        self.assertEqual(self.follow_ups_in(twice).splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Same thing.",
-            "skipped perf/reports/D1.md#2, same text as T2 (waiting): same  THING.",
-            "T3 added from perf/reports/D1.md#3: Other thing.",
-        ])
 
-    def test_from_report_dry_run_prints_a_list_item_with_no_text_as_not_filed(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- One thing.\n", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: One thing.\nnot filed, list item with no text")
 
-    def test_from_report_takes_the_report_by_name_or_by_a_path_into_this_store(self):
-        self.fired_bug_fix()
-        path = self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
-        for spelling in ("D1.md", "reports/D1.md", str(path)):
-            self.assertEqual(self.brigade("ticket", "add", "--from-report", spelling, "--dry-run"),
-                             "would add from perf/reports/D1.md#1: One thing.", spelling)
 
-    def test_from_report_refuses_what_is_not_an_item_report_of_this_store(self):
-        self.fired_bug_fix()
-        body = "## Follow-ups\n\n- One thing.\n"
-        self.review_file("D1.md", body)
-        before = (self.at / "rail.tsv").read_bytes()
-        add = ("ticket", "add", "--from-report")
-        for name in ("D1-review-1.md", "notes.md", "D1-attempt1.md"):
-            self.review_file(name, body)
-            self.assertEqual(self.brigade(*add, f"reports/{name}", ok=False),
-                             f"brigade: {name} is not an item report; name a file like reports/D2.md")
-        elsewhere = Path(self.temporary.name) / "elsewhere" / "D1.md"
-        elsewhere.parent.mkdir()
-        elsewhere.write_text(body)
-        self.assertEqual(self.brigade(*add, str(elsewhere), ok=False),
-                         f"brigade: {elsewhere} is outside this store's reports/; name reports/D1.md")
-        self.assertEqual(self.brigade(*add, "reports/D7.md", ok=False),
-                         "brigade: reports/D7.md does not exist; nothing added")
-        self.review_file("D9.md", body)
-        self.assertEqual(self.brigade(*add, "reports/D9.md", ok=False), "brigade: no D9 in dishes.tsv")
-        (self.at / "reports" / "D1.md").write_bytes(b"## Follow-ups\n\n- caf\xe9\n")
-        self.assertEqual(self.brigade(*add, "reports/D1.md", ok=False),
-                         "brigade: reports/D1.md is not UTF-8 text; nothing added")
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
-    def test_from_report_refuses_a_directory_named_like_an_item_report(self):
-        self.fired_bug_fix()
-        (self.at / "reports" / "D1.md").mkdir(parents=True)
-        before = (self.at / "rail.tsv").read_bytes()
-        for extra in ((), ("--dry-run",)):
-            self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", *extra, ok=False),
-                             "brigade: reports/D1.md is not a regular file; nothing added")
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
-    def test_from_report_refuses_a_symbolic_link_and_a_file_that_resolves_outside_reports(self):
-        self.fired_bug_fix()
-        body = "## Follow-ups\n\n- Outside file was read.\n"
-        report = self.at / "reports" / "D1.md"
-        outside = Path(self.temporary.name) / "outside"
-        (outside / "reports").mkdir(parents=True)
-        (outside / "D1.md").write_text(body)
-        (outside / "reports" / "D1.md").write_text(body)
-        notes = self.review_file("notes.md", body)
-        before = (self.at / "rail.tsv").read_bytes()
-        add = ("ticket", "add", "--from-report")
-        for target in (outside / "D1.md", notes):
-            report.symlink_to(target)
-            for spelling in ("D1.md", "reports/D1.md", str(report)):
-                for extra in ((), ("--dry-run",)):
-                    self.assertEqual(self.brigade(*add, spelling, *extra, ok=False),
-                                     "brigade: reports/D1.md is a symbolic link; nothing added")
-            self.assertEqual(self.brigade(*add, str(outside / "D1.md"), "--dry-run", ok=False),
-                             f"brigade: {outside / 'D1.md'} is outside this store's reports/; name reports/D1.md")
-            report.unlink()
-        notes.unlink()
-        (self.at / "reports").rmdir()
-        (self.at / "reports").symlink_to(outside / "reports")
-        for extra in ((), ("--dry-run",)):
-            self.assertEqual(self.brigade(*add, "reports/D1.md", *extra, ok=False),
-                             "brigade: reports/D1.md resolves outside this store's reports/; nothing added")
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
 
-    def test_from_report_refuses_a_path_with_a_dot_dot_component_wherever_it_resolves(self):
-        self.fired_bug_fix()
-        reports = self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n").parent
-        before = (self.at / "rail.tsv").read_bytes()
-        for spelling in ("reports/../reports/D1.md", "../D1.md", f"{reports}/../reports/D1.md",
-                         f"{reports}/../../../../outside/D1.md", "reports/.."):
-            for extra in ((), ("--dry-run",)):
-                self.assertEqual(self.brigade("ticket", "add", "--from-report", spelling, *extra, ok=False),
-                                 f"brigade: {spelling} has a .. component; name a file like reports/D2.md")
-        self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1011,62 +727,19 @@ class BrigadeTest(unittest.TestCase):
         os.utime(path, (stamp, stamp))
         return path
 
-    def test_close_warns_about_a_review_report_with_no_row_and_still_exits_0(self):
-        self.fired_bug_fix()
-        code, before, err = self.close_run("--dry-run")
-        self.assertEqual((code, err), (0, ""))
-        self.review_file("D1-review-2.md")
-        self.assertEqual(self.close_run("--dry-run"), (0, before, self.no_row("D1-review-2.md")))
-        code, out, err = self.close_run("--to-file")
-        self.assertEqual((code, err), (0, self.no_row("D1-review-2.md")))
-        self.assertEqual(Path(out).read_text().strip(), before)
-        code, out, err = self.close_run()
-        self.assertEqual((code, err), (0, self.no_row("D1-review-2.md")))
-        self.assertEqual(out.splitlines()[0], "# Perf report")
-        self.assertNotIn("warning", out)
 
     def no_claims(self, state, dish="D1"):
         return f"brigade: warning: reports/{dish}.md has no Claims check line; {dish} is {state}"
 
 
-    def test_close_warns_about_the_report_of_a_passed_item_that_has_no_claims_check_line(self):
-        self.fired_bug_fix()
-        self.review_file("D1.md", "# D1\n\nStatus: done\n")
-        self.record("abc", "pass")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_claims("passed")))
 
 
 
 
 
 
-    def test_close_does_not_warn_about_a_report_a_row_names(self):
-        self.fired_bug_fix()
-        self.aged("D1-review-1.md", 2099)
-        self.aged("D1-review-1-panel-2.md", 2099)
-        self.record("abc", "send-back", "--report", "D1-review-1.md")
-        self.record("abc", "pass", "--member", "--report", "D1-review-1-panel-2.md", verifier="grok/grok-4.7")
-        self.assertEqual(self.close_run("--dry-run")[2], "")
 
-    def test_close_matches_a_row_that_names_no_report_to_the_reports_written_before_it(self):
-        self.fired_bug_fix()
-        self.aged("D1-review.md", 2020)
-        self.aged("D1-review-bunny.md", 2020)
-        self.assertEqual(self.close_run("--dry-run")[2],
-                         "\n".join([self.no_row("D1-review-bunny.md"), self.no_row("D1-review.md")]))
-        self.record("abc", "send-back")
-        self.assertEqual(self.close_run("--dry-run")[2], "")
-        self.aged("D1-review-2.md", 2099)
-        self.assertEqual(self.close_run("--dry-run")[2], self.no_row("D1-review-2.md"))
 
-    def test_a_row_that_names_a_report_matches_no_other_report(self):
-        self.fired_bug_fix()
-        self.aged("D1-review-1.md", 2020)
-        self.aged("D1-review-2.md", 2020)
-        self.aged("D7-review.md", 2020)
-        self.record("abc", "send-back", "--report", "D1-review-2.md")
-        self.assertEqual(self.close_run("--dry-run")[2],
-                         "\n".join([self.no_row("D1-review-1.md"), self.no_row("D7-review.md", "D7")]))
 
     def not_a_file(self, name, words, advice):
         return f"brigade: warning: reports/{name} {words} and no review row of D1 names it; {advice}"
@@ -1084,282 +757,25 @@ class BrigadeTest(unittest.TestCase):
         link.symlink_to(Path(self.temporary.name) / target)
         return link
 
-    def test_close_warns_about_a_dangling_link_named_like_a_review_report_and_still_exits_0(self):
-        self.fired_bug_fix()
-        code, before, err = self.close_run("--dry-run")
-        self.assertEqual((code, err), (0, ""))
-        self.linked("D1-review-7.md", "gone.md")
-        warning = ("brigade: warning: reports/D1-review-7.md is a symbolic link and no review row of D1 names it; "
-                   "remove the link and leave its target as it is")
-        self.assertEqual(self.close_run("--dry-run"), (0, before, warning))
-        self.assertEqual(self.close_run(), (0, before, warning))
-
-    def test_close_warns_about_a_review_report_replaced_by_a_dangling_link_while_close_classifies_it(self):
-        self.fired_bug_fix()
-        entry = self.review_file("D1-review-7.md")
-        pending = self.linked("pending.md", "gone.md")
-        glob = runpy.run_path(str(SCRIPT))["run"].__globals__
-        replaced = []
-
-        def replacing(real):
-            def hooked(path):
-                result = real(path)
-                if not replaced and path.name == entry.name and path.parent.name == "reports":
-                    replaced.append(path)
-                    os.replace(pending, entry)
-                return result
-            return hooked
-
-        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "close", "--dry-run"]
-        with mock.patch.object(Path, "lstat", replacing(Path.lstat)), \
-                mock.patch.object(Path, "is_symlink", replacing(Path.is_symlink)), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
-            glob["run"](argv)
-        self.assertEqual(len(replaced), 1)
-        self.assertTrue(entry.is_symlink())
-        self.assertFalse(entry.exists())
-        self.assertEqual(stderr.getvalue().strip(), self.no_row("D1-review-7.md"))
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-7.md")))
 
 
-    def test_close_warns_about_a_live_link_and_a_directory_named_like_review_reports_and_following_its_advice_ends_each_warning(self):
-        self.fired_bug_fix()
-        target = Path(self.temporary.name) / "findings.md"
-        target.write_text("findings\n")
-        link = self.linked("D1-review-7.md", "findings.md")
-        directory = self.at / "reports" / "D1-review-8.md"
-        directory.mkdir()
-        (directory / "notes.md").write_text("notes\n")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join([
-            self.a_link("D1-review-7.md"),
-            self.not_a_file("D1-review-8.md", "is not a regular file", "move it out of reports/"),
-        ])))
-        link.unlink()
-        directory.rename(self.at / "D1-review-8.md")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
-        self.assertEqual(target.read_text(), "findings\n")
-        self.assertEqual((self.at / "D1-review-8.md" / "notes.md").read_text(), "notes\n")
 
 
-    def test_close_does_not_warn_about_a_dangling_link_a_row_names(self):
-        self.fired_bug_fix()
-        self.review_file("D1-review-1.md")
-        self.record("abc", "send-back", "--report", "D1-review-1.md")
-        (self.at / "reports" / "D1-review-1.md").unlink()
-        self.linked("D1-review-1.md", "gone.md")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
-
-    def test_a_row_that_names_no_report_accounts_for_no_link_to_a_file_written_before_it(self):
-        self.fired_bug_fix()
-        target = Path(self.temporary.name) / "findings.md"
-        target.write_text("findings\n")
-        stamp = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
-        os.utime(target, (stamp, stamp))
-        self.linked("D1-review-1.md", "findings.md")
-        self.record("abc", "send-back")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.a_link("D1-review-1.md")))
-
-    def test_close_advice_for_every_entry_under_a_linked_reports_leaves_the_files_outside_the_store_in_place(self):
-        self.fired_bug_fix()
-        outside = Path(self.temporary.name) / "outside" / "reports"
-        outside.mkdir(parents=True)
-        (outside / "D1-review-5.md").write_text("findings\n")
-        (outside / "D1-review-6.md").symlink_to(outside / "D1-review-5.md")
-        (outside / "D1-review-7.md").mkdir()
-        before = sorted(path.name for path in outside.iterdir())
-        reports = self.at / "reports"
-        reports.symlink_to(outside)
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, "\n".join(
-            self.under_a_linked_reports(f"D1-review-{number}.md") for number in (5, 6, 7))))
-        reports.unlink()
-        reports.mkdir()
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
-        self.assertEqual(sorted(path.name for path in outside.iterdir()), before)
-        self.assertEqual((outside / "D1-review-5.md").read_text(), "findings\n")
-
-    def test_close_ignores_a_file_that_is_not_a_review_report(self):
-        self.fired_bug_fix()
-        for name in ("D1.md", "notes.md", "D1-review.txt", "D1-reviewed.md", "xD1-review.md"):
-            self.aged(name, 2099)
-        self.assertEqual(self.close_run("--dry-run")[2], "")
-
-    def test_report_lists_only_what_changed_since_the_last_report(self):
-        self.open()
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Startup is slow")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Splash hangs")
-        self.brigade("fire", "--tickets", "T1", "--station", "perf-issue", "--summary", "Cut cold start time")
-        self.brigade("86", "add", "--question", "Drop Windows 7 support?", "--options", "yes, no", "--default", "no")
-        first = self.brigade("close")
-        self.assertIn("## In progress\n\n- fix D1 (T1): Cut cold start time\n", first)
-        self.assertIn("## New tickets, not started\n\n- fix T2: Splash hangs\n", first)
-        self.assertIn("- Q1: Drop Windows 7 support? Options: yes, no. Default if no answer: no.", first)
-        self.brigade("pass", "record", "D1", "--pr", "https://github.com/o/r/pull/7", "--sha", "abc", "--verdict", "pass",
-                     "--author", CLAUDE, "--verifier", CODEX)
-        self.brigade("dish", "D1", "--state", "merged")
-        self.brigade("86", "answer", "Q1", "--answer", "no")
-        second = self.brigade("close")
-        self.assertIn("## Merged\n\n- fix D1 (T1): Cut cold start time https://github.com/o/r/pull/7", second)
-        self.assertNotIn("In progress", second)
-        self.assertNotIn("Passed review", second)
-        self.assertNotIn("Decisions for you", second)
-        self.assertIn("Nothing new.", self.brigade("close"))
-        self.assertEqual(len(list((self.at / "closeouts").glob("*.md"))), 3)
-
-    def test_a_dish_that_moves_through_every_state_in_one_report_appears_once(self):
-        self.open()
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "UI", "--source", "user")
-        self.brigade("ticket", "set", "T2", "--state", "dropped")
-        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
-        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", "grok/grok-4.7", "--verifier", CODEX)
-        self.brigade("dish", "D1", "--state", "merged")
-        self.assertEqual(self.brigade("close"), "\n".join([
-            "# Perf report", "",
-            f"Since opening. merged: 1.", "",
-            "## Merged", "", "- fix D1 (T1): Fix s", "",
-            "## Dropped", "", "- T2: UI",
-        ]))
-
-    def test_close_to_file_prints_the_written_path_and_advances_the_report(self):
-        self.open()
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "UI", "--source", "user")
-        self.brigade("ticket", "set", "T2", "--state", "dropped")
-        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
-        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", "grok/grok-4.7", "--verifier", CODEX)
-        self.brigade("dish", "D1", "--state", "merged")
-        written = self.brigade("close", "--to-file")
-        files = list((self.at / "closeouts").glob("*.md"))
-        self.assertEqual(len(files), 1)
-        self.assertEqual(written, str(files[0].resolve()))
-        self.assertIn("## Merged\n\n- fix D1 (T1): Fix s", files[0].read_text())
-        self.assertIn("Nothing new.", self.brigade("close"))
-
-    def test_close_to_file_with_dry_run_writes_no_closeout(self):
-        self.open()
-        self.brigade("close", "--to-file", "--dry-run", ok=False)
-        self.assertEqual(list((self.at / "closeouts").glob("*.md")), [])
-
-    def test_status_help_names_the_thread_line_then_counts(self):
-        env = os.environ | {"COLUMNS": "300"}
-        result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("status              the thread line first, then counts, then workers outside the executive admin's store, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to, mode, and owner when present", result.stdout)
-        self.assertNotIn("one line of counts", result.stdout)
-
-    def test_status_and_walk_speak_plain_engineering_prose(self):
-        self.open()
-        self.brigade("set", "--thread", "thread-1", "--schedule", "report=s-1")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
-        self.assertEqual(self.brigade("status"),
-                         "thread thread-1\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nkinds: fix 1 waiting\nowner thread-1@1")
-        self.assertEqual(self.brigade("walk"), "\n".join([
-            f"{_shown_root(self.project)}: no landing contract",
-            "  Perf (reports milestones): waiting tickets: 1, decisions for you: 1",
-            "    thread thread-1",
-            "    Q1: Ship it?",
-        ]))
-        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["schedules"], {"report": "s-1"})
-        for word in ("86", "plate", "heard", "chef", "fire", "pass "):
-            self.assertNotIn(word, self.brigade("status").lower())
-
-    def test_status_without_a_contract_ignores_a_stored_landing_field(self):
-        self.open()
-        self.assertNotIn("landing", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
-        meta = json.loads((self.at / "restaurant.json").read_text())
-        meta["landing"] = "merge"
-        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
-        walked = self.brigade("walk")
-        self.assertEqual(walked.splitlines()[0], f"{_shown_root(self.project)}: no landing contract")
-        self.assertNotIn("lands by", walked)
 
 
-    def test_walk_prints_a_home_directory_as_a_tilde(self):
-        from unittest import mock
-        project = Path.home() / "brigade-no-such-contract-d57"
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
-            directory = self.store / "brigade-no-such-contract-d57" / "docs"
-            self.assertEqual(self.brigade("open", "--project-root", str(project), "--name", "Docs"), f"opened {directory}")
-            self.assertEqual(self.brigade("walk"), "\n".join([
-                "~/brigade-no-such-contract-d57: no landing contract",
-                "  Docs (reports milestones): nothing on record",
-                "    thread not recorded",
-            ]))
 
-    def test_status_and_walk_follow_a_landing_mode_change(self):
-        from unittest import mock
-        self.git_project()
-        remote = Path(self.temporary.name) / "origin.git"
-        subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
-        subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=self.project, check=True)
-        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=self.project, check=True)
-        self.land("init", "--trunk", "main", "--mode", "human")
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
-            self.open()
-            self.land("mode", "merge")
-            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
-            header = self.brigade("walk").splitlines()[0]
-            self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
-            self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
 
-    def test_walk_groups_repositories_and_repo_selects_one(self):
-        from unittest import mock
-        other = Path(self.temporary.name) / "other-app"
-        other.mkdir()
-        self.init_landing("--cap", "4")
-        run = lambda *command: subprocess.run(command, cwd=other, capture_output=True, text=True, check=True)
-        run("git", "init", "-q", "-b", "main")
-        (other / "a.txt").write_text("a\n")
-        run("git", "add", "-A")
-        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-        self.land_repo(other, "init", "--trunk", "lane", "--mode", "local", "--base", "main", "--cap", "4")
-        docs = self.store / "bridge-kit" / "docs"
-        engine = self.store / "bridge-kit" / "engine"
-        core = self.store / "other-app" / "core"
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
-            self.assertEqual(self.brigade("walk"), f"no restaurants under {self.store}")
-            self.run_at(docs, "open", "--project-root", str(self.project), "--name", "Docs")
-            self.run_at(engine, "open", "--project-root", str(self.project), "--name", "Engine")
-            self.run_at(core, "open", "--project-root", str(other), "--name", "Core")
-            self.run_at(docs, "set", "--thread", "thread-docs")
-            self.run_at(engine, "set", "--thread", "thread-engine")
-            self.run_at(core, "set", "--thread", "thread-core")
-            self.run_at(docs, "ticket", "add", "--kind", "fix", "--summary", "Write the guide")
-            self.assertEqual(self.run_at(docs, "fire", "--tickets", "T1", "--station", "bug-fix",
-                                         "--summary", "Write the guide", "--paths", "a.txt"),
-                             "D1 (lease L1 held by docs/D1)")
-            self.run_at(engine, "ticket", "add", "--kind", "fix", "--summary", "Blocked edit")
-            refused = self.run_at(engine, "fire", "--tickets", "T1", "--station", "bug-fix",
-                                  "--summary", "Blocked edit", "--paths", "a.txt", ok=False)
-            self.assertIn("nothing fired: paths overlap L1 held by docs/D1", refused)
-            self.assertEqual(self.land("lease", "claim", "--holder", "engine/D12", "--paths", "src"), "L2")
-            self.assertEqual(self.land("lease", "claim", "--holder", "engine/D13", "--paths", "lib"), "L3")
-            self.assertEqual(self.run_at(docs, "86", "add", "--question", "Ship the guide?",
-                                         "--options", "yes, no", "--default", "no"), "Q1")
-            app = _shown_root(self.project)
-            other_root = _shown_root(other)
-            expected = "\n".join([
-                f"{app}: local mode onto refs/landing/lane. leases held: 3, changes in flight: 3 of 4.",
-                "  Docs (reports milestones): in progress: 1, decisions for you: 1",
-                "    thread thread-docs, leases L1 (D1)",
-                "    Q1: Ship the guide?",
-                "  Engine (reports milestones): waiting tickets: 1 (1 blocked)",
-                "    thread thread-engine, leases L2 (D12), L3 (D13)",
-                f"{other_root}: local mode onto refs/landing/lane. changes in flight: 0 of 4.",
-                "  Core (reports milestones): nothing on record",
-                "    thread thread-core",
-            ])
-            self.assertEqual(self.brigade("walk"), expected)
-            self.assertEqual(self.brigade("walk", "--repo", str(self.project)), "\n".join(expected.splitlines()[:6]))
-            self.assertEqual(self.brigade("walk", "--repo", str(other)), "\n".join(expected.splitlines()[6:]))
-            missing = Path(self.temporary.name) / "empty-repo"
-            missing.mkdir()
-            self.assertEqual(self.brigade("walk", "--repo", str(missing)), f"no restaurants for {missing.resolve()}")
+
+
+
+
+
+
+
+
+
+
+
 
     def fire_one(self, station="perf-issue", timebox="60"):
         (self.at / "menu.md").write_text("# Menu: Perf\n\n## Purpose\n\nMake startup fast.\n\n## Budget\n\nsmall\n")
@@ -1369,22 +785,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_a_report_that_follows_the_brief_is_read_by_ticket_add_from_report(self):
-        self.open()
-        self.fire_one()
-        self.brigade("set", "--thread", "thread-coord")
-        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--paths", "src/boot.ts",
-                            "--lease", "L4", "--base", "origin/main")
-        line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
-        asked = "List each follow-up as one top-level list item under a `"
-        heading = line.split(asked, 1)[1].split("`", 1)[0]
-        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there."), line)
-        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
-        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
-                         "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
-        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\nNone.\n")
-        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
-                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, says no work is needed: None.")
 
 
 
@@ -1456,69 +856,10 @@ class BrigadeTest(unittest.TestCase):
         self.assertNotIn("no report file exists", step)
 
 
-    def test_fire_claims_outside_the_store_lock_and_rechecks_before_it_writes(self):
-        case = Path(self.temporary.name)
-        calls = case / "land-calls"
-        (case / "land.py").write_text(
-            "import sys, time\nfrom pathlib import Path\n"
-            f"case = Path({str(case)!r})\n"
-            "with open(case / 'land-calls', 'a') as f:\n    f.write(' '.join(sys.argv[3:]) + '\\n')\n"
-            "if sys.argv[4] == 'claim':\n"
-            "    (case / 'claiming').touch()\n"
-            "    end = time.monotonic() + 30\n"
-            "    while not (case / 'claim-proceed').exists() and time.monotonic() < end:\n        time.sleep(0.01)\n"
-            "    print('L7')\n"
-            "else:\n    print('L7 released')\n")
-        self.open()
-        (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
-        firing = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                   "--store", str(self.store), "--at", str(self.at),
-                                   "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
-        try:
-            _wait_for_path(case / "claiming")
-            other = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "other"],
-                                   capture_output=True, text=True, timeout=10)
-            self.assertEqual(other.stdout.strip(), "D1", other.stderr)
-            (case / "claim-proceed").touch()
-            _, err = firing.communicate(timeout=10)
-        finally:
-            firing.kill()
-        self.assertEqual(firing.returncode, 1)
-        self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
-        self.assertEqual(calls.read_text().splitlines(),
-                         ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, in progress: 1\nworkers: 1 of 2 running, 1 idle, auto-start: normal\nkinds: fix 1 in flight")
 
 
-    def test_commands_outside_a_restaurant_fail_with_the_fix(self):
-        self.assertIn("run brigade.py open", self.brigade("status", ok=False))
 
 
-    def test_open_records_reporting_and_defaults_to_milestones(self):
-        self.open()
-        meta = json.loads((self.at / "restaurant.json").read_text())
-        self.assertEqual(meta["reporting"], "milestones")
-        self.assertNotIn("landing", meta)
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
-        self.assertIn("reports milestones", self.brigade("walk"))
-        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
-                                      "--reporting", "every-turn"), f"exists {self.at}")
-        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "milestones")
-        other = self.brigade("open", "--project-root", str(self.project), "--name", "Quiet",
-                             "--reporting", "digest")
-        quiet = self.store / "bridge-kit" / "quiet"
-        self.assertEqual(other, "\n".join([
-            f"opened {quiet}",
-            f"sibling Perf ({self.at}), thread not recorded",
-            "  purpose: not written yet",
-            "  off the menu: not written yet",
-        ]))
-        self.assertEqual(json.loads((quiet / "restaurant.json").read_text())["reporting"], "digest")
-        self.assertIn("reports digest", self.brigade("walk"))
 
 
     def literal_brief_fields(self):
@@ -1575,15 +916,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_a_restaurant_file_without_reporting_reads_as_milestones(self):
-        self.open()
-        meta = json.loads((self.at / "restaurant.json").read_text())
-        del meta["reporting"]
-        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
-        self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
-        self.assertIn("reports milestones", self.brigade("walk"))
-        self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
 
     def log_rows(self):
         lines = (self.at / "log.tsv").read_text().splitlines()
@@ -2472,12 +1804,6 @@ class BrigadeTest(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout.strip()), (0, "D2"), result.stderr)
         self.assertEqual([row[:4] for row in self.mode_rows()], [["mode", "D2", "full", "tickets name a lock"]])
 
-    def test_close_lists_an_escalation_with_its_tickets(self):
-        self.fired_bug_fix()
-        self.brigade("close")
-        self.brigade("dish", "D1", "--mode", "full", "--reason", "contested: two owners")
-        text = self.brigade("close", "--dry-run")
-        self.assertEqual(text.split("\n\n", 2)[2], "## Moved to full mode\n\n- D1 (T1): contested: two owners")
 
 
     SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you "
@@ -2537,23 +1863,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_the_second_send_back_moves_the_item_to_full_once(self):
-        self.coordinator()
-        self.record("a1", "send-back")
-        self.brigade("dish", "D1", "--state", "in-progress")
-        self.record("a2", "send-back")
-        escalated = self.head("Playbook: playbooks/feature.md", "Mode: full", "Mode source: escalated: second send-back",
-                              "Attempt: fix")
-        text = self.brigade(*self.BRIEF)
-        self.assertEqual(text.split("\n\n", 1)[0], escalated)
-        self.assertNotIn("Contested:", text)
-        self.assertEqual([row[:4] for row in self.mode_rows()], [["mode", "D1", "full", "second send-back"]])
-        self.brigade(*self.BRIEF)
-        self.assertEqual(len(self.mode_rows()), 1)
-        self.brigade("set", "--mode", "light")
-        self.assertEqual(self.brigade(*self.BRIEF).split("\n\n", 1)[0], escalated)
-        self.assertEqual(self.brigade("close", "--dry-run").split("## Moved to full mode\n\n", 1)[1].split("\n")[0],
-                         "- D1 (T1): second send-back")
 
 
 
@@ -2620,40 +1929,9 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_status_prints_the_workers_line_third_before_reports_to_mode_and_owner(self):
-        self.open()
-        self.assertEqual(self.brigade("status"),
-                         "thread not recorded\nreporting: milestones, no landing contract\n"
-                         "workers: 0 of 2 running, 2 idle, auto-start: normal")
-        self.brigade("set", "--thread", "t1", "--reports-to", "admin-thread", "--mode", "light")
-        self.brigade("ticket", "add", "--kind", "fix", "--summary", "a")
-        self.assertEqual(self.brigade("status").splitlines(), [
-            "thread t1",
-            "reporting: milestones, no landing contract, waiting tickets: 1",
-            "workers: 0 of 2 running, 2 idle, auto-start: normal",
-            "kinds: fix 1 waiting",
-            "reports to admin-thread",
-            "mode light",
-            "owner t1@1",
-        ])
-
-    def test_set_autofire_records_each_level_and_status_prints_it_as_auto_start(self):
-        self.open()
-        for level in ("off", "urgent", "normal", "low"):
-            self.assertEqual(json.loads(self.brigade("set", "--autofire", level))["autofire"], level)
-            status = self.brigade("status")
-            self.assertEqual(status.splitlines()[2], f"workers: 0 of 2 running, 2 idle, auto-start: {level}")
-            self.assertNotIn("autofire", status)
 
 
-    def test_a_missing_or_empty_autofire_key_reads_as_normal(self):
-        self.open()
-        meta = json.loads((self.at / "restaurant.json").read_text())
-        self.assertNotIn("autofire", meta)
-        line = "workers: 0 of 2 running, 2 idle, auto-start: normal"
-        self.assertEqual(self.brigade("status").splitlines()[2], line)
-        (self.at / "restaurant.json").write_text(json.dumps(meta | {"autofire": ""}, indent=2) + "\n")
-        self.assertEqual(self.brigade("status").splitlines()[2], line)
+
 
 
     def test_status_and_watch_count_items_in_progress_and_in_review_as_running_workers(self):
@@ -2697,66 +1975,12 @@ class BrigadeTest(unittest.TestCase):
     def paths_cells(self):
         return {row[0]: row[8] for row in (line.split("\t") for line in (self.at / "rail.tsv").read_text().splitlines()[1:])}
 
-    def test_from_report_records_the_tracked_paths_each_real_follow_up_quotes(self):
-        self.tracked_project(*TRACKED)
-        self.fired_bug_fix()
-        printed = self.follow_ups_in("## Follow-ups\n\n" + "".join(f"- {text}\n" for text, _ in REAL_FOLLOW_UPS))
-        self.assertEqual(printed.splitlines(), [f"T{number} added from perf/reports/D1.md#{number - 1}: {text}"
-                                                for number, (text, _) in enumerate(REAL_FOLLOW_UPS, 2)])
-        self.assertEqual(self.paths_cells(), {"T1": "", **{f"T{number}": paths
-                                                           for number, (_, paths) in enumerate(REAL_FOLLOW_UPS, 2)}})
 
-    def test_from_report_records_the_directory_before_the_first_marked_component_of_a_pattern_that_matches(self):
-        self.tracked_project(*TRACKED)
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n"
-                           "- Reword `t3/**/*.md` and `tests/test_*.py`.\n"
-                           "- Nothing matches `docs/*.rst`, `**` or `*.md` has no directory, and `src/*.py` is not tracked.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "t3,tests", "T3": ""})
 
-    def test_from_report_records_the_paths_quoted_beside_a_double_backtick_code_span(self):
-        self.tracked_project("src/a/one.py", "src/b/two.py")
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n"
-                           "- Replace ``with `x` `` in `src/a/one.py` and `src/b/two.py`\n"
-                           "- Change ``rows[0]`` in `src/a/one.py`\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/a/one.py,src/b/two.py", "T3": "src/a/one.py"})
 
-    def test_from_report_skips_absolute_dot_dot_repository_and_non_numeric_suffix_quotes_and_records_the_normalized_path_of_a_line_suffixed_or_directory_quote(self):
-        self.tracked_project(*TRACKED)
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n- See `../README.md`, `/README.md`, `.`, `docs/../README.md`, "
-                           "and `docs/guide.md:x`.\n- Fix `./docs//guide.md:7` and `docs/`.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "docs,docs/guide.md"})
 
-    def test_from_report_records_no_paths_when_the_project_is_not_a_git_repository(self):
-        (self.project / "docs").mkdir()
-        (self.project / "docs/guide.md").write_text("x\n")
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `docs/guide.md`.\n"),
-                         "T2 added from perf/reports/D1.md#1: Fix `docs/guide.md`.")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
 
-    def test_from_report_records_a_quoted_path_in_a_repository_that_tracks_a_file_name_that_is_not_utf_8(self):
-        try:
-            with open(os.fsencode(self.project) + b"/\xff.md", "wb") as handle:
-                handle.write(b"x\n")
-        except OSError:
-            self.skipTest("the file system refuses a file name that is not UTF-8")
-        self.tracked_project("guide.md")
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix `guide.md`.\n"),
-                         "T2 added from perf/reports/D1.md#1: Fix `guide.md`.")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "guide.md"})
 
-    def test_from_report_dry_run_in_a_git_project_changes_no_store_file(self):
-        self.tracked_project(*TRACKED)
-        self.fired_bug_fix()
-        self.review_file("D1.md", "## Follow-ups\n\n- Fix `docs/guide.md`.\n")
-        before = self.store_files()
-        self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: Fix `docs/guide.md`.")
-        self.assertEqual(self.store_files(), before)
 
     def unrecorded_tickets(self):
         self.tracked_project(*TRACKED)
@@ -2782,40 +2006,12 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_from_report_records_the_tracked_file_for_each_quoted_file_name_with_no_directory_that_resolves_to_one_and_none_for_names_with_none_or_several(self):
-        self.tracked_project("t3/added/x/scripts/tool.py", "skills/x/scripts/tool.py", "src/app/one.py", "lib/two.py",
-                             "src/two.py")
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n"
-                           "- Fix `tool.py:7` and `one.py`.\n"
-                           "- Fix `two.py` and `nope.py`.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "src/app/one.py,t3/added/x/scripts/tool.py", "T3": ""})
 
 
-    def test_from_report_records_nothing_for_a_file_name_only_one_nested_file_has_quoted_with_a_dot_slash_before_it_a_slash_after_it_or_spaces_or_tabs_around_it(self):
-        self.tracked_project("src/app/tool.py", "tool.py:12")
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n"
-                           "- One `./tool.py`.\n"
-                           "- Two `tool.py/`.\n"
-                           "- Three `./tool.py:12`.\n"
-                           "- Four ` tool.py `.\n"
-                           "- Five `\ttool.py\t`.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": "", "T3": "", "T4": "", "T5": "", "T6": ""})
 
 
-    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_file_named_as_one_nested_file_with_a_line_number_added(self):
-        self.tracked_project("tool.py:12", "src/app/tool.py")
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
 
 
-    def test_from_report_records_nothing_for_a_quote_that_is_a_tracked_directory_named_as_one_nested_file_with_a_line_number_added(self):
-        self.tracked_project("tool.py:12/notes.md", "src/app/tool.py")
-        self.fired_bug_fix()
-        self.follow_ups_in("## Follow-ups\n\n- Fix `tool.py:12`.\n")
-        self.assertEqual(self.paths_cells(), {"T1": "", "T2": ""})
 
     NONE_RUNNING ="workers: 0 of 2 running, 2 idle, auto-start: normal"
 
@@ -3180,57 +2376,12 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_from_report_on_a_report_whose_only_follow_up_is_a_list_item_with_no_text_adds_nothing(self):
-        self.fired_bug_fix()
-        before = self.tables()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n"),
-                         "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
-        self.assertEqual(self.tables(), before)
 
-    def test_from_report_prints_a_line_that_is_only_a_list_marker_as_a_list_item_with_no_text_and_adds_nothing(self):
-        self.fired_bug_fix()
-        before = self.tables()
-        for marker in ("-", "*", "1."):
-            with self.subTest(marker=marker):
-                self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{marker}\n"),
-                                 "reports/D1.md lists no follow-ups; nothing added\nnot filed, list item with no text")
-                self.assertEqual(self.tables(), before)
 
-    def test_from_report_files_a_line_that_is_only_three_hyphens_as_a_follow_up(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n---\n"), "T2 added from perf/reports/D1.md#1: ---")
 
-    def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Reword the guide.",
-            "not filed, list item with no text",
-        ])
 
-    def test_a_paragraph_above_a_list_item_with_no_text_and_then_a_list_item_introduces_the_list(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nTwo things remain.\n\n- \n- Fix a.\n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Fix a.",
-            "not filed, prose that introduces a list: Two things remain.",
-            "not filed, list item with no text",
-        ])
 
-    def test_a_paragraph_below_a_list_item_with_no_text_that_follows_the_last_list_item_with_text_closes_the_section(self):
-        self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n\n- \n\nThat is all.\n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Fix a.",
-            "not filed, list item with no text",
-            "not filed, prose after the last list item: That is all.",
-        ])
 
-    def test_from_report_refuses_priority_nonempty_paths_and_decision(self):
-        self.fired_bug_fix()
-        before = self.store_files()
-        for extra in (("--priority", "low"), ("--paths", "a.txt"), ("--decision",)):
-            self.assertEqual(self.follow_ups_in(BULLETS, *extra, ok=False),
-                             "brigade: --from-report takes no --priority, nonempty --paths, or --decision", extra)
-        self.review_file("D1.md", BULLETS)
-        self.assertEqual({name: data for name, data in self.store_files().items() if name != "reports/D1.md"}, before)
 
     @staticmethod
     def edit_block(number, path, old, new, fence="```"):
@@ -3247,12 +2398,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_close_prints_no_unrecorded_review_warning_for_the_report_a_pass_with_edits_row_names(self):
-        self.fired_bug_fix()
-        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, self.no_row("D1-review-1.md")))
-        self.record_edits("abc", "--edits", "D1-review-1.md")
-        self.assertEqual(self.close_run("--dry-run")[::2], (0, ""))
 
 
 
@@ -3528,20 +2673,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_ticket_add_from_report_refuses_kind_and_goal_and_files_no_ticket(self):
-        self.open()
-        self.goal()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
-        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
-        (self.at / "reports").mkdir(exist_ok=True)
-        (self.at / "reports" / "D1.md").write_text(BULLETS)
-        before = self.store_files()
-        refusal = "brigade: --from-report takes no --kind or --goal; each ticket's kind and goal follow from the report's item"
-        for flags in (("--kind", "fix"), ("--goal", "G1"), ("--goal", ""), ("--kind", "polish", "--goal", "G1")):
-            with self.subTest(flags=flags):
-                self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", *flags, ok=False), refusal)
-                self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md", "--dry-run", *flags, ok=False), refusal)
-        self.assertEqual(self.store_files(), before)
 
 
 
@@ -3680,18 +2811,6 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_from_report_files_a_ticket_under_the_goal_of_its_item_when_that_goal_is_done_and_goal_list_prints_that_goal(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G1")
-        self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
-        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
-        self.brigade("dish", "D1", "--state", "merged")
-        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
-        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
-        self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G1"))
-        self.assertEqual(self.brigade("goal", "list").splitlines()[0],
-                         "G1 done activity view: 1 waiting, 0 in flight, 1 merged, 0 send-backs")
 
 
 
@@ -3712,79 +2831,13 @@ class BrigadeTest(unittest.TestCase):
 
 
 
-    def test_goal_list_in_a_store_with_no_goal_prints_that_and_the_unassigned_line(self):
-        self.open()
-        before = self.store_files()
-        self.assertEqual(self.run_raw("goal", "list"), (0, f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}\n", ""))
-        self.assertEqual(self.run_raw("goal", "list", "--all"), (0, f"no goals\n{self.NO_UNASSIGNED_WORK}\n", ""))
-        self.assertEqual(self.store_files(), before)
-
-    def test_goal_list_prints_each_open_and_paused_goal_in_file_order_with_its_share_and_all_adds_each_done_and_dropped_goal_with_its_closed_cell(self):
-        self.open()
-        self.goal("activity view", "--share", "2")
-        self.goal("old lint")
-        self.goal("current with upstream")
-        self.goal("windows port")
-        self.brigade("goal", "set", "G2", "--state", "done", "--evidence", "shipped in #12")
-        self.brigade("goal", "set", "G3", "--state", "paused")
-        self.brigade("goal", "set", "G4", "--state", "dropped", "--evidence", "no users")
-        closed = {ident: self.table_row(self.at, "goals.tsv", ident)["closed"] for ident in ("G2", "G4")}
-        self.assertEqual(closed["G2"].split(" ", 1)[1], "shipped in #12")
-        counts = "0 waiting, 0 in flight, 0 merged, 0 send-backs"
-        detail = ["  purpose: One page of activity", "  done when: The page ships"]
-        self.assertEqual(self.brigade("goal", "list").splitlines(),
-                         [f"G1 open activity view: {counts}, share 2", *detail,
-                          f"G3 paused current with upstream: {counts}", *detail,
-                          self.NO_UNASSIGNED_WORK])
-        self.assertEqual(self.brigade("goal", "list", "--all").splitlines(),
-                         [f"G1 open activity view: {counts}, share 2", *detail,
-                          f"G2 done old lint: {counts}", *detail, f"  closed: {closed['G2']}",
-                          f"G3 paused current with upstream: {counts}", *detail,
-                          f"G4 dropped windows port: {counts}", *detail, f"  closed: {closed['G4']}",
-                          self.NO_UNASSIGNED_WORK])
-
-    def test_goal_list_with_only_done_and_dropped_goals_prints_no_open_or_paused_goals(self):
-        self.open()
-        self.goal()
-        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "shipped")
-        self.assertEqual(self.brigade("goal", "list"), f"no open or paused goals\n{self.NO_UNASSIGNED_WORK}")
 
 
-    def test_a_goal_share_that_is_not_a_whole_number_of_1_or_more_reads_as_no_limit_with_a_warning_and_goal_set_share_rewrites_the_cell(self):
-        self.open()
-        self.goal()
-        for share in ("lots", "0", "-3"):
-            with self.subTest(share=share):
-                self.hand_edit("goals.tsv", "G1", share=share)
-                code, out, err = self.run_raw("goal", "list")
-                self.assertEqual((code, err), (0, f"brigade: warning: G1 has share {share!r}, which is not a whole number of 1 or more; "
-                                                  "it reads as no limit; run goal set G1 --share <n>\n"))
-                self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
-        self.assertEqual(self.brigade("goal", "set", "G1", "--share", "2"), "G1 share 2")
-        code, out, err = self.run_raw("goal", "list")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out.splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs, share 2")
-
-    def test_a_goal_share_of_five_thousand_digits_is_read_and_printed(self):
-        self.open()
-        self.goal()
-        self.hand_edit("goals.tsv", "G1", share="7" * 5000)
-        code, out, err = self.run_raw("goal", "list")
-        self.assertEqual((code, err), (0, ""))
-        self.assertTrue(out.splitlines()[0].endswith(", share " + "7" * 5000))
 
 
-    def test_goal_add_and_goal_set_in_a_store_with_a_generation_need_the_owner_and_goal_list_does_not(self):
-        self.open()
-        self.brigade("set", "--thread", "t1")
-        refusal = "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status"
-        self.assertEqual(self.goal(owner=False, ok=False), refusal)
-        self.assertEqual(self.goal(), "G1")
-        before = self.store_files()
-        self.assertEqual(self.brigade("goal", "set", "G1", "--state", "paused", ok=False, owner=False), refusal)
-        self.assertEqual(self.store_files(), before)
-        self.assertEqual(self.brigade("goal", "list", owner=False).splitlines()[0],
-                         "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
+
+
+
 
 
 
@@ -3822,61 +2875,11 @@ class BrigadeTest(unittest.TestCase):
                 passes.write(f"2026-10-01T00:00:00+00:00\t{item}\t\tabc\t{verdict}\t{CLAUDE}\t{CODEX}\t\t\t{member}\n")
 
 
-    def test_goal_list_prints_for_each_goal_the_counts_a_hand_join_of_the_three_tables_gives(self):
-        self.worked_store()
-        self.assertEqual(self.brigade("goal", "list").splitlines(), [
-            # 2 waiting. T4 and T9 wait under G1. 1 in flight. D2 is in review under G1. 1 merged. D1.
-            # 3 send-backs. Two on D1 and one on D2. The D2 row with member yes does not count.
-            "G1 open activity view: 2 waiting, 1 in flight, 1 merged, 3 send-backs, share 2",
-            "  purpose: One page of activity",
-            "  done when: The page ships",
-            # 0 waiting. T3 and T6 are under G2 and assigned. 1 in flight. D3 is sent back under G2. 0 merged.
-            # 1 send-back. One on D3. Its pass-with-edits row does not count. 1 riding along. T3, assigned to D2, a G1 item.
-            "G2 paused current with upstream: 0 waiting, 1 in flight, 0 merged, 1 send-back, 1 riding along",
-            "  purpose: One page of activity",
-            "  done when: The page ships",
-            # 2 waiting. T5 and T8. 1 in flight. D4. 1 merged. D5. 1 send-back. One on D5.
-            "unassigned: 2 waiting, 1 in flight, 1 merged, 1 send-back",
-        ])
-
-    def test_status_prints_the_waiting_and_in_flight_counts_by_kind_and_by_goal_a_hand_join_gives_after_its_workers_line(self):
-        self.worked_store()
-        self.assertEqual(self.brigade("status").splitlines(), [
-            "thread not recorded",
-            "reporting: milestones, no landing contract, waiting tickets: 4, in progress: 1, in review: 1, sent back: 1, merged: 2",
-            "workers: 2 of 9 running, 7 idle, auto-start: normal",
-            # feature. T9 waits. fix. T4 waits and D2 is in flight. polish. T5 waits, and T3 is assigned so it is in no entry.
-            # upkeep. D3 is in flight. study. D4 is in flight.
-            "kinds: feature 1 waiting; fix 1 waiting, 1 in flight; polish 1 waiting; upkeep 1 in flight; study 1 in flight",
-            # G1. T4 and T9 wait and D2 is in flight. G2. D3 is in flight. unassigned. T5 and T8 wait and D4 is in flight.
-            "goals: G1 2 waiting, 1 in flight; G2 paused, 1 in flight; unassigned 2 waiting, 1 in flight",
-            # T8 waits with no kind. The waiting counts by kind and this one sum to the 4 waiting tickets.
-            "untagged: 1",
-        ])
 
 
-    def test_status_prints_no_kinds_line_no_goals_line_and_no_untagged_line_when_no_ticket_waits_and_no_item_is_in_flight(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
-        self.brigade("ticket", "set", "T1", "--state", "dropped")
-        self.assertEqual(self.brigade("status").splitlines(), [
-            "thread not recorded", "reporting: milestones, no landing contract",
-            "workers: 0 of 9 running, 9 idle, auto-start: normal"])
 
-    def test_status_prints_the_state_of_a_done_goal_that_has_a_waiting_ticket(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G1")
-        self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
-        self.hand_edit("dishes.tsv", "D1", state="merged")
-        self.hand_edit("rail.tsv", "T1", state="done")
-        self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
-        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
-        self.assertEqual(self.brigade("status").splitlines()[3:], ["kinds: polish 1 waiting", "goals: G1 done, 1 waiting"])
 
-    def test_status_prints_the_unassigned_entry_alone_when_the_store_has_a_goal_and_no_work_under_it(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
-        self.assertEqual(self.brigade("status").splitlines()[3:], ["kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
+
 
     def test_startable_gives_the_same_standings_in_the_same_order_with_kinds_and_goals_as_without_them(self):
         self.queue("--workers", "3")
@@ -3960,69 +2963,9 @@ class BrigadeTest(unittest.TestCase):
                        "it is not a goal; correct the id in goals.tsv by hand to an id no other row has, or remove the row")
 
 
-    def test_fire_of_a_ticket_whose_goal_cell_is_a_padded_id_warns_starts_an_unassigned_item_and_leaves_the_cell_as_it_was(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
-        self.hand_edit("rail.tsv", "T1", goal=" G1 ")
-        names = f"brigade: warning: T1 names goal ' G1 ', {self.NO_GOAL_ROW}; "
-        self.assertEqual(self.run_raw("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a"),
-                         (0, "D1\n", names + "run ticket set T1 --goal G<n> or --no-goal\n"))
-        self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"fix", b""))
-        self.assertEqual(self.raw_cells("rail.tsv", "T1", "state", "kind", "goal"), (b"assigned", b"fix", b" G1 "))
-        code, out, err = self.run_raw("status")
-        self.assertEqual((code, err), (0, names + f"{self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand\n"))
-        self.assertEqual(out.splitlines()[3:], ["kinds: fix 1 in flight", "goals: unassigned 1 in flight"])
 
 
-    def test_a_rewrite_of_its_table_leaves_each_kept_cell_byte_for_byte_and_the_warning_for_it_still_prints(self):
-        self.two_goals()
-        for summary in ("a", "b", "c", "d"):
-            self.brigade("ticket", "add", "--summary", summary, "--kind", "fix", "--goal", "G1")
-        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Do c")
-        self.brigade("fire", "--tickets", "T4", "--station", "bug-fix", "--summary", "Do d")
-        # Per table, the row whose cell is padded, and a command that rewrites the table to change another row.
-        rewrites = {"rail.tsv": ("T1", lambda cell: ("ticket", "set", "T2", "--paths", f"docs/{cell}")),
-                    "dishes.tsv": ("D1", lambda cell: ("dish", "D2", "--thread", f"thread-{cell}")),
-                    "goals.tsv": ("G1", lambda cell: ("goal", "set", "G2", "--name", f"renamed {cell}"))}
-        kept = runpy.run_path(str(SCRIPT))["KEPT_CELLS"]
-        self.assertEqual(sorted(kept), sorted(rewrites))
-        for table, cells in kept.items():
-            ident, rewrite = rewrites[table]
-            for cell in cells:
-                with self.subTest(table=table, cell=cell):
-                    legal, = self.raw_cells(table, ident, cell)
-                    self.assertTrue(legal)
-                    padded = b" " + legal + b" "
-                    self.hand_edit(table, ident, **{cell: padded.decode()})
-                    held = padded.decode() if cell == "id" else ident
-                    warned = self.run_raw("status")
-                    self.assertEqual(warned[0], 0)
-                    self.assertIn(repr(padded.decode()), warned[2])
-                    before = (self.at / table).read_bytes()
-                    self.assertEqual(self.run_raw(*rewrite(cell))[0], 0)
-                    self.assertNotEqual((self.at / table).read_bytes(), before)
-                    self.assertEqual(self.raw_cells(table, held, cell), (padded,))
-                    self.assertEqual(self.run_raw("status"), warned)
-                    self.hand_edit(table, held, **{cell: legal.decode()})
-                    self.assertEqual(self.run_raw("status")[2], "")
 
-    def test_a_goal_cell_that_ends_in_a_carriage_return_still_reads_as_unassigned_after_another_ticket_is_rewritten(self):
-        self.two_goals()
-        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
-        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
-        rail = self.at / "rail.tsv"
-        self.assertEqual(rail.read_bytes().count(b"\tG1\n"), 1)
-        rail.write_bytes(rail.read_bytes().replace(b"\tG1\n", b"\tG1\r\n"))
-        warning = (f"brigade: warning: T1 names goal 'G1\\r', {self.NO_GOAL_ROW}; "
-                   "run ticket set T1 --goal G<n> or --no-goal\n")
-        unassigned = ["kinds: fix 2 waiting", "goals: unassigned 2 waiting"]
-        code, out, err = self.run_raw("status")
-        self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
-        self.assertEqual(self.run_raw("ticket", "set", "T2", "--priority", "low"), (0, "T2 priority low\n", ""))
-        self.assertEqual(self.raw_cells("rail.tsv", "T2", "priority"), (b"low",))
-        self.assertEqual(self.raw_cells("rail.tsv", "T1", "kind", "goal"), (b"fix", b"G1\r"))
-        code, out, err = self.run_raw("status")
-        self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
 
 
 
@@ -4036,21 +2979,7 @@ class BrigadeTest(unittest.TestCase):
         return (f"brigade: warning: D1 has kind 'chore', {self.NOT_A_KIND}; {by_hand}\n"
                 f"brigade: warning: D1 names goal 'G9', {self.NO_GOAL_ROW}; {by_hand}\n")
 
-    def test_ticket_add_from_report_of_an_item_with_a_bad_kind_cell_and_a_bad_goal_cell_warns_of_both_and_files_a_ticket_with_no_kind_and_no_goal(self):
-        warnings = self.item_with_two_bad_cells()
-        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
-        self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md"),
-                         (0, "T2 added from perf/reports/D1.md#1: Tidy guide.\n", warnings))
-        self.assertEqual(self.raw_cells("rail.tsv", "T2", "state", "kind", "goal"), (b"waiting", b"", b""))
-        self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"chore", b"G9"))
 
-    def test_ticket_add_from_report_dry_run_prints_the_same_warnings_and_changes_no_file(self):
-        warnings = self.item_with_two_bad_cells()
-        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
-        before = self.store_files()
-        self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
-                         (0, "would add from perf/reports/D1.md#1: Tidy guide.\n", warnings))
-        self.assertEqual(self.store_files(), before)
 
 
 
@@ -4116,37 +3045,8 @@ class BrigadeTest(unittest.TestCase):
     OLD_WORKERS = "workers: 2 of 2 running, 0 idle, auto-start: normal"
 
 
-    def test_status_on_a_store_from_before_kinds_prints_its_three_lines_and_then_the_count_of_waiting_tickets_as_untagged(self):
-        self.store_from_before_kinds()
-        before = self.store_files()
-        self.assertEqual(self.run_raw("status"), (0, "\n".join([
-            "thread not recorded", f"reporting: milestones, lands by local, {self.OLD_COUNTS}", self.OLD_WORKERS,
-            "untagged: 5"]) + "\n", ""))
-        self.assertEqual(self.store_files(), before)
 
-    def test_goal_list_on_a_store_from_before_kinds_counts_each_ticket_and_item_as_unassigned_and_writes_nothing(self):
-        self.store_from_before_kinds()
-        before = self.store_files()
-        # Waiting. T8 to T12. In flight. D1 to D6. Merged. D7. Send-backs. The one row on D4.
-        self.assertEqual(self.brigade("goal", "list"),
-                         "no open or paused goals\nunassigned: 5 waiting, 6 in flight, 1 merged, 1 send-back")
-        self.assertEqual(self.store_files(), before)
 
-    def test_status_ticket_list_startable_watch_86_list_close_and_walk_print_for_an_empty_store_from_before_kinds_what_the_tool_printed_before_kinds_and_change_no_table(self):
-        self.store_from_before_kinds(rows=False)
-        before = self.tables()
-        idle = "workers: 0 of 2 running, 2 idle, auto-start: normal"
-        self.assertEqual(self.run_raw("status"), (0, f"thread not recorded\nreporting: milestones, lands by local\n{idle}\n", ""))
-        self.assertEqual(self.brigade("ticket", "list"), "")
-        self.assertEqual(self.brigade("startable"), f"{idle}\nno waiting tickets")
-        self.assertEqual(self.brigade("watch"), f"{idle}\nno work in progress")
-        self.assertEqual(self.brigade("86", "list"), "no open decisions")
-        self.assertEqual(self.close_run("--dry-run"), (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.", ""))
-        self.assertEqual(self.brigade("walk").splitlines(), [
-            f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty.",
-            "  Perf (reports milestones): nothing on record",
-            "    thread not recorded"])
-        self.assertEqual(self.tables(), before)
 
 
     def directory_files(self, directory):
@@ -4501,29 +3401,6 @@ class BrigadeTest(unittest.TestCase):
         return stamp
 
 
-    def test_next_old_store(self):
-        self.store_from_before_kinds()
-        self.assertFalse((self.at / "goals.tsv").exists())
-        code, out, err = self.run_raw("next")
-        self.assertEqual((code, err), (0, ""))
-        self.assertTrue(out.startswith("wake: unspecified\n"))
-        lines = out.splitlines()
-        self.assertEqual([line for line in lines if line.startswith("reply:")], [lines[-1]])
-        self.assertFalse((self.at / "goals.tsv").exists())
-        path = self.at / "dishes.tsv"
-        rows = path.read_text().splitlines()
-        fields = rows[1].split("\t")
-        self.assertEqual((fields[0], len(fields)), ("D1", 15))
-        rows[1] = "\t".join(fields + ["nope"])
-        path.write_text("\n".join(rows) + "\n")
-        code, out, err = self.run_raw("next")
-        status = self.run_raw("status")
-        self.assertEqual(code, 0)
-        self.assertEqual(err, status[2])
-        self.assertIn("D1 has kind 'nope'", err)
-        self.assertNotIn("Traceback", err)
-        self.assertEqual([line for line in out.splitlines() if line.startswith("reply:")], [out.splitlines()[-1]])
-        self.assertFalse((self.at / "goals.tsv").exists())
 
     def test_next_malformed(self):
         self.fired_bug_fix()
