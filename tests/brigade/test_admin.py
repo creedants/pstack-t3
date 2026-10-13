@@ -434,7 +434,7 @@ class AdminTest(StoresTest, _AdminRace):
         case.mkdir()
         support = Path(__file__).resolve().parent / "support.py"
         proc = real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.STOPPED,
             [sys.executable, str(support), *_race_args(
                 "pause-after-finished", case,
                 ["--store", str(self.store), "--at", str(self.dir(".admin")), "request", "--republish"])],
@@ -511,7 +511,7 @@ class AdminTest(StoresTest, _AdminRace):
         case.mkdir()
         support = Path(__file__).resolve().parent / "support.py"
         outer = real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.STOPPED,
             [sys.executable, str(support), *_race_args(
                 "pause", case, ["--store", str(self.store), "--at", str(self.dir(".admin")), "sync"])],
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
@@ -788,7 +788,7 @@ class AdminTest(StoresTest, _AdminRace):
         case.mkdir()
         support = Path(__file__).resolve().parent / "support.py"
         proc = real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.STOPPED,
             [sys.executable, str(support), *_race_args(
                 "pause", case,
                 ["--store", str(self.store), "--at", str(self.dir(".admin")),

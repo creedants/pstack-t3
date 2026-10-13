@@ -63,6 +63,8 @@ class ProcessReason(enum.Enum):
     INHERITED_ENV = "inherited environment"
     HELP = "-h output"
     OTHER_LOCK = "lock held by another process"
+    STOPPED = "child stopped while the test runs in-process"
+    PRE_MAIN = "patch installed before main"
 
 
 def _pipe_encoding():
@@ -1286,7 +1288,7 @@ class BrigadeTest(unittest.TestCase):
         tail = _race_args("brief-pause", case, ["--store", str(self.store), "--at", str(self.at),
                                                 *_owner_words(self.at), *self.BRIEF])
         return real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.STOPPED,
             [sys.executable, str(support), *tail],
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
             text=True)
@@ -1605,7 +1607,7 @@ class BrigadeTest(unittest.TestCase):
         support = Path(__file__).resolve()
         tail = _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at), "fire", *words])
         proc = real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.PRE_MAIN,
             [sys.executable, str(support), *tail],
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
             text=True)

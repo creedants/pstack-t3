@@ -631,7 +631,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         case.mkdir()
         support = Path(__file__).resolve().parent / "support.py"
         churning = real_popen(
-            ProcessReason.EXIT_STATUS,
+            ProcessReason.PRE_MAIN,
             [sys.executable, str(support), *_race_args(
                 "brief-churn", case,
                 ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *self.BRIEF])],
