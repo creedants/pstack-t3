@@ -1405,6 +1405,40 @@ class RunTestsTest(unittest.TestCase):
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
 
+    def test_a_gate_exits_nonzero_when_a_part_result_is_not_success(self):
+        # This starts a process because the check is an exit status.
+        import yaml
+        jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
+        cases = (
+            (("success", "success", "success", "success"), True),
+            (("failure", "success", "success", "success"), False),
+            (("success", "cancelled", "success", "success"), False),
+            (("success", "success", "skipped", "success"), False),
+            (("success", "success", "success", ""), False),
+        )
+        for gate, prefix in (("test_310", "part_310"), ("test_312", "part_312")):
+            script = next(step["run"] for step in jobs[gate]["steps"] if "needs." in step.get("run", ""))
+            for results, ok in cases:
+                with self.subTest(gate=gate, results=results):
+                    status = gate_script_status(script, prefix, results)
+                    if ok:
+                        self.assertEqual(status, 0)
+                    else:
+                        self.assertNotEqual(status, 0)
+
+
+def gate_script_status(script: str, prefix: str, results: tuple[str, ...]) -> int:
+    body = script
+    for index, result in enumerate(results, start=1):
+        token = "${{ needs." + prefix + "_" + str(index) + ".result }}"
+        if token not in body:
+            raise AssertionError(token)
+        body = body.replace(token, result, 1)
+    if "${{" in body:
+        raise AssertionError(body)
+    completed = subprocess.run(["bash", "-e", "-c", body], capture_output=True, text=True)
+    return completed.returncode
+
 
 class BuildShardsTest(unittest.TestCase):
     def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):

@@ -1,0 +1,1 @@
+- The CI gate test runs each gate script under `bash -e` after substituting the four part results. Exit 0 means every result is success. A result of failure, cancelled, skipped, or empty exits nonzero.
