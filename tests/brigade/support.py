@@ -64,9 +64,16 @@ class ProcessReason(enum.Enum):
     OTHER_LOCK = "lock held by another running brigade.py"
 
 
+def _pipe_encoding():
+    getencoding = getattr(locale, "getencoding", None)
+    if getencoding is None:
+        return locale.getpreferredencoding(False)
+    return getencoding()
+
+
 def _text_from_pipe(data):
     """Decode the way subprocess text mode decodes a pipe."""
-    return data.decode(locale.getencoding(), "strict").replace("\r\n", "\n").replace("\r", "\n")
+    return data.decode(_pipe_encoding(), "strict").replace("\r\n", "\n").replace("\r", "\n")
 
 
 @dataclass(frozen=True)
@@ -226,7 +233,7 @@ def _capture_stream(line_buffering):
     raw = io.BytesIO()
     wrapper = io.TextIOWrapper(
         raw,
-        encoding=locale.getencoding(),
+        encoding=_pipe_encoding(),
         errors="strict",
         newline=None,
         line_buffering=line_buffering,
@@ -236,9 +243,9 @@ def _capture_stream(line_buffering):
 
 def _stdin_reader(text):
     """The interpreter reads stdin with newline set to \\n, so a carriage return stays a character."""
-    raw = io.BytesIO(text.encode(locale.getencoding(), "strict"))
+    raw = io.BytesIO(text.encode(_pipe_encoding(), "strict"))
     raw.seek(0)
-    return io.TextIOWrapper(raw, encoding=locale.getencoding(), errors="strict", newline="\n")
+    return io.TextIOWrapper(raw, encoding=_pipe_encoding(), errors="strict", newline="\n")
 
 
 def _code_from_main(main, argv):
@@ -252,8 +259,8 @@ def _code_from_main(main, argv):
             return status
         print(status, file=sys.stderr)
         return 1
-    except Exception:
-        traceback.print_exception(sys.exception())
+    except Exception as error:
+        traceback.print_exception(error)
         return 1
     if result is None:
         return 0
@@ -261,7 +268,7 @@ def _code_from_main(main, argv):
 
 
 def _run_interpreter(command, *, stdin, env, cwd, timeout):
-    encoded = None if stdin is None else stdin.encode(locale.getencoding(), "strict")
+    encoded = None if stdin is None else stdin.encode(_pipe_encoding(), "strict")
     result = subprocess.run(
         list(command),
         input=encoded,
