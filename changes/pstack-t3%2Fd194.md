@@ -1,0 +1,1 @@
+- The archiver counts pending, running, or waiting execution-node and provider-native subagent rows, including null run ids, as live for candidates and ancestors, and `--selection-only` prints candidates without the credential.

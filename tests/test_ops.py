@@ -592,7 +592,7 @@ ARCHIVE_CASES = (
 )
 
 
-def build_database(path, projects, threads, now=None):
+def build_database(path, projects, threads, now=None, nodes=(), subagents=()):
     now = now or datetime.now(timezone.utc)
 
     def stamp(hours):
@@ -607,6 +607,9 @@ def build_database(path, projects, threads, now=None):
     database.execute("create table orchestration_v2_projection_threads "
                      "(thread_id, project_id, updated_at, archived_at, deleted_at, payload_json)")
     database.execute("create table orchestration_v2_projection_runs (run_id, thread_id, status)")
+    database.execute("create table orchestration_v2_projection_nodes (thread_id, run_id, status)")
+    database.execute("create table orchestration_v2_projection_subagents "
+                     "(thread_id, run_id, child_thread_id, origin, status)")
     database.executemany("insert into projection_projects values (?, ?)", projects)
     for thread in (Thread(*row) for row in threads):
         when = stamp(thread.hours_since_update)
@@ -617,6 +620,8 @@ def build_database(path, projects, threads, now=None):
                           when if DELETED in thread.marks else None, json.dumps(payload)))
         database.executemany("insert into orchestration_v2_projection_runs values (?, ?, ?)",
                              [(f"{thread.id}-run-{n}", thread.id, status) for n, status in enumerate(thread.run_statuses)])
+    database.executemany("insert into orchestration_v2_projection_nodes values (?, ?, ?)", list(nodes))
+    database.executemany("insert into orchestration_v2_projection_subagents values (?, ?, ?, ?, ?)", list(subagents))
     database.commit()
     database.close()
 
@@ -630,12 +635,12 @@ class ArchiveRun:
 
 
 class ArchiveWorld:
-    def __init__(self, cleanup, layout=Layout(), projects=PROJECTS, threads=THREADS, skip=None):
+    def __init__(self, cleanup, layout=Layout(), projects=PROJECTS, threads=THREADS, nodes=(), subagents=(), skip=None):
         self.sandbox = Sandbox(cleanup, layout, skip=skip)
         self.stub = McpStub(cleanup)
         userdata = self.sandbox.home / layout.t3_home / "userdata"
         self.database = userdata / "statev2.sqlite"
-        build_database(self.database, projects, threads)
+        build_database(self.database, projects, threads, nodes=nodes, subagents=subagents)
         (userdata / "server-runtime.json").write_text(json.dumps({"origin": self.stub.origin}))
 
     def run(self, script, *flags, config=True, project="fixture project"):
@@ -1387,7 +1392,7 @@ class ArchiveTest(OpsTest):
         self.assertEqual((done.returncode, done.stdout, done.stderr), (1, "", "expected one project titled 'fixture project', found 2\n"))
         self.assertEqual(twins.stub.requests, [])
 
-    def test_a_missing_file_credential_or_update_time_ends_with_a_traceback_and_exit_1(self):
+    def test_a_missing_file_or_update_time_ends_with_a_traceback_and_exit_1(self):
         world = self.world()
         (world.database.parent / "server-runtime.json").unlink()
         done = world.run(ARCHIVE)
@@ -1397,10 +1402,6 @@ class ArchiveTest(OpsTest):
         done = world.run(ARCHIVE)
         self.assertEqual((done.returncode, done.stdout), (1, ""))
         self.assertRegex(done.stderr, r"(?s)^Traceback .*\nsqlite3\.OperationalError: ")
-        world = self.world()
-        done = world.sandbox.run(ARCHIVE, "--project", "fixture project")
-        self.assertEqual((done.returncode, done.stdout, world.stub.requests), (1, ARCHIVE_CASES[0][1] + "\n", []))
-        self.assertRegex(done.stderr, r"(?s)^Traceback .*\nKeyError: 'T3_CODE_MCP_AUTHORIZATION'\n")
         world = self.world(threads=(("top", P1, None, (), OLD, ""), ("kid", P1, "top", (), None, "S")))
         done = world.run(ARCHIVE)
         self.assertEqual((done.returncode, done.stdout, world.stub.requests), (1, "", []))
@@ -1413,6 +1414,86 @@ class ArchiveTest(OpsTest):
         (decoy / "server-runtime.json").write_text(json.dumps({"origin": world.stub.origin}))
         done = world.run(ARCHIVE)
         self.assertEqual((done.returncode, sorted(done.archived)), (0, sorted(ARCHIVE_CASES[0][2])))
+
+    def test_a_runless_child_with_a_pending_or_running_node_is_not_selected(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("kid-pending", P1, "top", (), OLD, "S"),
+                   ("kid-running", P1, "top", (), OLD, "S"), ("kid-old", P1, "top", (), OLD, "S"))
+        nodes = (("kid-pending", None, "pending"), ("kid-running", None, "running"))
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE)
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("kid-pending", done.archived)
+        self.assertNotIn("kid-running", done.archived)
+        self.assertIn("kid-old", done.archived)
+        self.assertNotIn("top", done.archived)
+
+    def test_a_runless_child_with_a_waiting_provider_native_subagent_row_is_not_selected(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("kid-waiting", P1, "top", (), OLD, "S"),
+                   ("kid-old", P1, "top", (), OLD, "S"))
+        subagents = (("top", None, "kid-waiting", "provider_native", "waiting"),)
+        world = self.world(threads=threads, subagents=subagents)
+        done = world.run(ARCHIVE)
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("kid-waiting", done.archived)
+        self.assertNotIn("top", done.archived)
+        self.assertNotIn("kid-old", done.archived)
+
+    def test_a_runless_child_whose_rows_are_all_terminal_and_which_is_past_the_cutoff_is_selected(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("kid-done", P1, "top", ("completed",), OLD, "S"))
+        nodes = (("kid-done", "kid-done-run-0", "completed"),)
+        subagents = (("top", "top-run-0", "kid-done", "provider_native", "completed"),)
+        world = self.world(threads=threads, nodes=nodes, subagents=subagents)
+        done = world.run(ARCHIVE)
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("kid-done", done.archived)
+
+    def test_a_live_runless_child_protects_its_ancestors(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("mid", P1, "top", (), OLD, "S"),
+                   ("kid-live", P1, "mid", (), OLD, "S"))
+        nodes = (("kid-live", None, "pending"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE)
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("kid-live", done.archived)
+        self.assertNotIn("mid", done.archived)
+        self.assertNotIn("top", done.archived)
+        self.assertEqual(done.archived, ())
+
+    def test_a_child_under_the_named_coordinator_follows_the_same_rule(self):
+        threads = (("coord", P1, None, ("running",), RECENT), ("kid-live", P1, "coord", (), OLD, "S"),
+                   ("kid-done", P1, "coord", ("completed",), OLD, "S"))
+        nodes = (("kid-live", None, "running"),)
+        world = self.world(threads=threads, nodes=nodes)
+        done = world.run(ARCHIVE, "--coordinator", "coord")
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("kid-live", done.archived)
+        self.assertIn("kid-done", done.archived)
+
+    def test_the_selection_flag_prints_the_expected_json_and_never_constructs_the_client(self):
+        world = self.world()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--selection-only")
+        self.assertEqual((done.returncode, done.stderr, world.stub.requests), (0, "", []))
+        self.assertEqual(sorted(json.loads(done.stdout)), sorted(ARCHIVE_CASES[0][2]))
+
+    def test_without_the_flag_and_without_the_variable_the_exit_is_non_zero_and_the_line_names_the_variable_and_the_flag(self):
+        world = self.world()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(world.stub.requests, [])
+        self.assertIn("T3_CODE_MCP_AUTHORIZATION", done.stderr)
+        self.assertIn("--selection-only", done.stderr)
+        self.assertEqual(len(done.stderr.strip().splitlines()), 1)
+
+    def test_a_database_missing_a_needed_table_archives_nothing_and_exits_non_zero(self):
+        world = self.world()
+        base = sqlite3.connect(world.database)
+        base.execute("alter table orchestration_v2_projection_nodes rename to renamed_nodes")
+        base.commit()
+        base.close()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--selection-only",
+                                 T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(world.stub.requests, [])
 
 
 class ScanTest(OpsTest):

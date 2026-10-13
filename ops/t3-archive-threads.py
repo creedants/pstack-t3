@@ -3,6 +3,7 @@
 
     t3-archive-threads.py [--config FILE] --project pstack-t3 [--older-than-hours 24]
                           [--coordinator ID] [--keep ID ...] [--top-level-settled] [--dry-run]
+                          [--selection-only]
 
 `--config FILE` counts only as the first two arguments. `ARCHIVE_T3_HOME` in that
 file names T3 Code's home.
@@ -10,15 +11,19 @@ file names T3 Code's home.
 Run it from inside a T3 agent session: it calls T3's own `t3_thread_organize`
 tool over the session's local tool endpoint, with the session's credential from
 T3_CODE_MCP_AUTHORIZATION. It reads T3's state database read-only to choose the
-threads and never writes to it.
+threads and never writes to it. With `--selection-only` it prints candidates
+and never reads the credential.
 
 What it archives. A sub-agent thread that is not archived, has no run that is
-running, queued, starting, preparing, or waiting, and was last updated at least
---older-than-hours ago. A thread under a top-level thread that has such a run is
-skipped unless that top-level thread is archived or is named with --coordinator,
-whose finished children are archived by age like any other. With
+running, queued, starting, preparing, or waiting and has no execution node or
+provider-native subagent that is pending, running, or waiting including a null
+run id and is not named as the child of such a subagent, and was last updated
+at least --older-than-hours ago. A thread with a live ancestor is skipped
+unless that ancestor is archived or is named with --coordinator, whose finished
+children are archived by age like any other. A thread with a live runless
+descendant is never archived. With
 --top-level-settled it also archives a top-level thread that is settled, not
-pinned, not the --coordinator thread, has no such run, and is that old. A
+pinned, not the --coordinator thread, has no such live work, and is that old. A
 thread named with --keep is never archived. Archiving is reversible in T3
 (unarchive).
 """
@@ -137,7 +142,11 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
     if len(pids) != 1:
         sys.exit(f"expected one project titled {project!r}, found {len(pids)}")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
-    live = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs where status in ('running','queued','starting','preparing','waiting')")}
+    live = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs where status in ('running','queued','starting','preparing','waiting')") if t is not None}
+    runless = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_nodes where status in ('pending','running','waiting')") if t is not None}
+    runless |= {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')") if t is not None}
+    runless |= {t for (t,) in c.execute("select distinct child_thread_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')") if t is not None}
+    live |= runless
     rows = c.execute("select thread_id, updated_at, archived_at, payload_json from orchestration_v2_projection_threads "
                      "where project_id = ? and deleted_at is null", (pids[0],)).fetchall()
     info = {}
@@ -146,12 +155,25 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         info[tid] = {"parent": (p.get("lineage") or {}).get("parentThreadId"), "updated": upd, "archived": arch,
                      "settled": bool(p.get("settledAt")), "pinned": bool(p.get("pinnedAt"))}
 
+    def ancestors(tid):
+        out, seen = [], {tid}
+        cur = info.get(tid, {}).get("parent")
+        while cur and cur not in seen:
+            seen.add(cur)
+            out.append(cur)
+            cur = info.get(cur, {}).get("parent")
+        return out
+
     def root(tid):
         seen = set()
         while info.get(tid, {}).get("parent") and tid not in seen:
             seen.add(tid)
             tid = info[tid]["parent"]
         return tid
+
+    shielded = set()
+    for tid in runless:
+        shielded.update(ancestors(tid))
 
     picked, skipped = [], {"live": 0, "recent": 0, "under a running thread": 0, "kept": 0}
     for tid, i in info.items():
@@ -160,10 +182,11 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         top = root(tid)
         if tid in keep or top in keep and top != coordinator:
             skipped["kept"] += 1
-        elif tid in live:
+        elif tid in live or tid in shielded:
             skipped["live"] += 1
         elif i["parent"]:
-            if top in live and top != coordinator and not info.get(top, {}).get("archived"):
+            block = any(a in live and a != coordinator and not info.get(a, {}).get("archived") for a in ancestors(tid))
+            if block:
                 skipped["under a running thread"] += 1
             elif i["updated"] > cutoff:
                 skipped["recent"] += 1
@@ -184,11 +207,19 @@ def main():
     ap.add_argument("--keep", action="append", default=[], help="thread id to leave alone. A top-level id that is not the --coordinator also keeps every thread under it")
     ap.add_argument("--top-level-settled", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--selection-only", action="store_true",
+                    help="print candidate thread ids as a sorted JSON array of strings on stdout and exit without archiving")
     a = ap.parse_args(argv)
     picked, skipped = choose(userdata / "statev2.sqlite", a.project, a.older_than_hours, set(a.keep), a.coordinator, a.top_level_settled)
+    if a.selection_only:
+        print(json.dumps(sorted(picked)))
+        return 0
     print(f"to archive: {len(picked)}; skipped: " + ", ".join(f"{k} {v}" for k, v in skipped.items()))
     if a.dry_run or not picked:
         return 0
+    if "T3_CODE_MCP_AUTHORIZATION" not in os.environ:
+        print(f"{ME}: T3_CODE_MCP_AUTHORIZATION is not set; re-run with --selection-only to print candidates without archiving", file=sys.stderr)
+        return 1
     mcp = Mcp(userdata / "server-runtime.json")
     done = failed = 0
     for tid in picked:
