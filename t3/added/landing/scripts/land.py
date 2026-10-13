@@ -337,7 +337,7 @@ def _hold_path(name):
 
 
 def _dump_holder(path, holder):
-    """Write one holder record atomically, replacing whatever the slot file's previous holder left.
+    """Write one holder record atomically, replacing whatever the previous holder left.
 
     The record is written to a temporary file whose descriptor is already locked, and that inode
     is renamed into place, so the record lock travels with the record.
@@ -2664,7 +2664,7 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
-    p.add_argument("--repo", dest="slot_repo", default=None,
+    p.add_argument("--repo", dest="slot_repo", metavar="REPO", default=None,
                    help="the repository to name in the holder record (default: current directory)")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     return top
