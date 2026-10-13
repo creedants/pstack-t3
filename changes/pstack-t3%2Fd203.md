@@ -1,0 +1,1 @@
+- The landing tests remove their scratch directory after every other cleanup. `LandingTest.setUp` registers the removal with `addCleanup`, and `tearDown` only stops the environment patch. A slot holder that a test leaves running is released through its fifo and exits before the directory is removed. The removal used to run first, and that release raised `FileNotFoundError`.

@@ -496,6 +496,8 @@ class SlotCallers:
 class LandingTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        # Cleanups run after tearDown, last registered first, so this one runs after every holder a test leaves running is stopped.
+        self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.env = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.base / "state")})
         self.env.start()
@@ -542,7 +544,6 @@ class LandingTest(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
-        self.temporary.cleanup()
 
     def commit(self, message, cwd=None):
         sh("git", "add", "-A", cwd=cwd or self.work)
@@ -4115,6 +4116,18 @@ os.execv({real!r}, [{real!r}, *args])
             time.sleep(0.01)
         self.assertTrue(ready.exists(), f"{kind} holder did not take its slot")
         return process
+
+    def test_a_running_holder_is_released_before_the_fixture_directory_goes(self):
+        self.governor(1)
+        holders = []
+
+        def check():
+            self.assertEqual(holders[0].returncode, 0)
+            self.assertTrue((self.base / "holder-worker" / "release").exists())
+
+        self.addCleanup(check)
+        holders.append(self.start_holder())
+        self.assertIsNone(holders[0].poll())
 
     def exclusive_args(self, argv, cap=None, grace=None, cap_max=None):
         return [sys.executable, "-c", EXCLUSIVE_MAIN, str(SCRIPT.parent),
