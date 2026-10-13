@@ -800,6 +800,22 @@ class CheckoutRuleTest(unittest.TestCase):
             "ops/t3-nightly-update.sh:1: holds this machine's host name",
         ])
 
+    def test_a_quoted_dotted_host_reports_the_host(self):
+        who = check.Identity("/home/zed", "zed", "box7.lan")
+        text = 'ssh "box7.lan"\nHOST="box7.lan"\nserver = "box7.lan"\nssh "BOX7.LAN"\nssh "box7.lan:2222"\n'
+        ops, document = self._ops_repo(text, "ok\n")
+        hit = "ops/t3-nightly-update.sh:%d: holds this machine's host name"
+        self.assertEqual(check.machine_value_findings(ops, document, who), [hit % n for n in range(1, 6)])
+
+    def test_a_dotted_host_in_a_slash_path_reports_the_host(self):
+        who = check.Identity("/home/zed", "zed", "box7.lan")
+        text = "export BACKUPS=/mnt/box7.lan/archives\nscp backup:/box7.lan/data dest\n"
+        ops, document = self._ops_repo(text, "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+            "ops/t3-nightly-update.sh:2: holds this machine's host name",
+        ])
+
     def _pair(self, roles, install):
         root = self._directory()
         roles_path = root / "roles.py"
