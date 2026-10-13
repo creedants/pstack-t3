@@ -3,6 +3,7 @@ from .support import (
     LAND_SCRIPT,
     Path,
     SCRIPT,
+    BrigadeTest,
     StoresTest,
     _AdminRace,
     _wait_for_path,
@@ -18,6 +19,7 @@ from .support import (
 class AdminTest(StoresTest, _AdminRace):
     """The executive admin at `app/.admin`, beside the coordinators on the same root."""
 
+    assert_refused_choice = BrigadeTest.assert_refused_choice
     STAMP = "2026-10-06T00:00:00Z"
 
     def admin(self, *args, ok=True):
@@ -275,8 +277,9 @@ class AdminTest(StoresTest, _AdminRace):
         self.assertEqual(self.admin("rule", "set", "R3", "--state", "expired"), "R3 expired")
         self.assertEqual([row[8] for row in self.rows(".admin", "rulings.tsv")], ["overruled", "superseded", "expired"])
         self.assertEqual(self.admin("rule", "list", "--state", "in-force"), "no rulings")
-        self.assertIn("invalid choice: 'guess'", self.admin("rule", "add", "--kind", "ownership", "--parties", "docs",
-                                                          "--question", "q", "--rule", "guess", "--decision", "d", ok=False))
+        self.assert_refused_choice(self.admin("rule", "add", "--kind", "ownership", "--parties", "docs",
+                                              "--question", "q", "--rule", "guess", "--decision", "d", ok=False),
+                                   "--rule", "guess", ("purpose", "priority", "age", "related-work", "dependency", "floor", "user"))
 
     def _ruling_section(self, *lines):
         return "\n".join(["## Rulings", "", *lines])

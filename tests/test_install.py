@@ -3,8 +3,6 @@
 import errno
 import fcntl
 import hashlib
-import importlib.util
-import inspect
 import json
 import os
 import re
@@ -5789,27 +5787,3 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(dry.stdout, "would remove 0 links, would restore 0 entries\n")
         self.assertNotIn("Traceback", dry.stderr)
-
-
-def loaded(name, file):
-    spec = importlib.util.spec_from_file_location(name, file)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        del sys.modules[name]
-    return module
-
-
-class SharedSourceTest(unittest.TestCase):
-    def test_install_and_roles_hold_the_same_ignored_line_and_the_same_config_home_source(self):
-        install = loaded("install_under_test", ROOT / "scripts" / "install.py")
-        roles = loaded("roles_under_test", ROOT / "t3" / "scripts" / "roles.py")
-        self.assertEqual(roles.IGNORED, install.IGNORED)
-        self.assertEqual(inspect.getsource(roles.config_home), inspect.getsource(install.config_home))
-
-    def test_install_and_roles_hold_the_same_new_file_source(self):
-        install = loaded("install_under_test", ROOT / "scripts" / "install.py")
-        roles = loaded("roles_under_test", ROOT / "t3" / "scripts" / "roles.py")
-        self.assertEqual(inspect.getsource(roles.new_file), inspect.getsource(install.new_file))

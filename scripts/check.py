@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges only the tree it is given. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
+import dataclasses
 import importlib.util
+import inspect
 import json
+import os
+import pwd
 import re
+import socket
 import sys
 
 try:
@@ -285,6 +290,11 @@ def check_tree(root):
                     findings.append(f"{rel}: broken link {target}")
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
+    if (root / RENDERED_MARKER).is_file():
+        repo = Path(__file__).resolve().parents[1]
+        findings.extend(library_wording_findings(repo / "tests"))
+        findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
+        findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
     return findings
 
 
@@ -515,6 +525,330 @@ def fence_findings(tests_dir):
         findings.extend(_module_fence_findings(module, rel, reference, copy, label))
     findings.extend(_brigade_findings(tests_dir, label, reference, copy))
     return findings
+
+
+@dataclasses.dataclass(frozen=True)
+class Identity:
+    """home, user, and host compared as a path or an address in ops and the operations doc."""
+
+    home: str
+    user: str
+    host: str
+
+
+LIBRARY_SENTENCES = (
+    "invalid choice",
+    "the following arguments are required",
+    "unrecognized arguments",
+    "expected one argument",
+)
+EXEMPT_FUNCTION = "assert_refused_choice"
+EXEMPT_FILE = "test_check.py"
+EXEMPT_METHOD_PREFIX = "test_library_wording"
+REQUIRED_SCAN = (
+    "ops/t3-nightly-update.sh",
+    "ops/t3-archive-threads.py",
+    "ops/config.example",
+    "docs/operations.md",
+)
+SHARED = (
+    ("IGNORED", "assign"),
+    ("config_home", "def"),
+    ("new_file", "def"),
+)
+RENDERED_MARKER = Path("pstack-runtime/scripts/roles.py")
+
+
+def _docstring_statement(node):
+    body = getattr(node, "body", None)
+    if not body:
+        return None
+    first = body[0]
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+        return first
+    return None
+
+
+def _ast_list(value):
+    if isinstance(value, ast.AST):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, ast.AST):
+                yield item
+
+
+def _library_strings(node, stack):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for field, value in ast.iter_fields(node):
+            if field == "body":
+                continue
+            for child in _ast_list(value):
+                yield from _library_strings(child, stack)
+        inner = (*stack, node.name)
+        skipped = _docstring_statement(node)
+        for statement in node.body:
+            if statement is not skipped:
+                yield from _library_strings(statement, inner)
+        return
+    if isinstance(node, (ast.Module, ast.ClassDef)):
+        for field, value in ast.iter_fields(node):
+            if field == "body":
+                continue
+            for child in _ast_list(value):
+                yield from _library_strings(child, stack)
+        skipped = _docstring_statement(node)
+        for statement in node.body:
+            if statement is not skipped:
+                yield from _library_strings(statement, stack)
+        return
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            yield node, stack
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _library_strings(child, stack)
+
+
+def _library_allowed(path, stack):
+    if EXEMPT_FUNCTION in stack:
+        return True
+    nearest = stack[-1] if stack else ""
+    return path.name == EXEMPT_FILE and nearest.startswith(EXEMPT_METHOD_PREFIX)
+
+
+def library_wording_findings(tests_dir):
+    """Report a string literal under tests_dir that contains one of argparse's own sentences.
+
+    The sentences are invalid choice, the following arguments are required,
+    unrecognized arguments, and expected one argument. The formatting of argparse's choice list differs
+    between Python 3.10 and 3.12. A comment is not a finding, because it is
+    not in the syntax tree. The docstring, meaning the first string statement
+    of a module, class, function, or async function, is not a finding. A later
+    bare string statement is a finding. A string is allowed when an enclosing
+    function is named assert_refused_choice. It is also allowed when the file
+    name is test_check.py and the nearest enclosing function name starts with
+    test_library_wording. A module-level constant in test_check.py is still
+    checked. A helper in that file whose name does not start with
+    test_library_wording is still checked. The allowance is the function name,
+    not a line number. An unreadable or unparseable Python file is a finding
+    that names the exception type. An empty list means nothing matched.
+    """
+    tests_dir = Path(tests_dir)
+    findings = []
+    files = sorted(
+        (path for path in tests_dir.rglob("*.py") if path.is_file()),
+        key=lambda path: path.relative_to(tests_dir).as_posix(),
+    )
+    for path in files:
+        rel = path.relative_to(tests_dir.parent).as_posix()
+        try:
+            tree = ast.parse(path.read_text(), str(path))
+        except (OSError, ValueError, SyntaxError, UnicodeDecodeError) as error:
+            findings.append(
+                f"{rel}: could not be read or parsed, so argparse wording was not checked: {type(error).__name__}"
+            )
+            continue
+        for node, stack in _library_strings(tree, ()):
+            if _library_allowed(path, stack):
+                continue
+            for sentence in LIBRARY_SENTENCES:
+                if sentence in node.value:
+                    findings.append(
+                        f"{rel}:{node.lineno}: contains the argparse phrase {sentence!r}. "
+                        "Assert the exit status and the words this project wrote, or call assert_refused_choice"
+                    )
+    return findings
+
+
+def _machine_value_hits(text, identity):
+    name, word = "A-Za-z0-9._-", "A-Za-z0-9_-"
+    home, user, first_host_label = (re.escape(value) for value in (identity.home, identity.user, identity.host.split(".")[0]))
+    patterns = []
+    if len(identity.home) > 1:
+        as_a_whole_path_prefix = rf"(?<![{name}]){home}(?![{name}])"
+        patterns.append(("home directory", as_a_whole_path_prefix, 0))
+    if len(identity.user) > 1:
+        after_a_slash_or_a_tilde = rf"(?<=[/~]){user}(?![{name}])"
+        before_an_at_sign = rf"(?<![{name}]){user}(?=@)"
+        patterns.append(("user name", f"{after_a_slash_or_a_tilde}|{before_an_at_sign}", 0))
+    if len(identity.host.split(".")[0]) > 1:
+        after_an_at_sign_or_two_slashes = rf"(?:(?<=@)|(?<=//)){first_host_label}(?![{word}])"
+        before_a_domain_or_a_port = rf"(?<![{word}]){first_host_label}(?=\.[A-Za-z0-9]|:[0-9])"
+        patterns.append(("host name", f"{after_an_at_sign_or_two_slashes}|{before_a_domain_or_a_port}", re.IGNORECASE))
+    return [(kind, number, line) for number, line in enumerate(text.splitlines(), 1)
+            for kind, pattern, flags in patterns if re.search(pattern, line, flags)]
+
+
+def machine_value_findings(ops_dir, operations_doc, identity):
+    """Report the given identity's home directory, user name, or host name in a path or address.
+
+    Scan every file under ops_dir, sorted, then operations_doc. Read text with
+    errors='replace'. Skip a pattern when the home, the user name, or the
+    first host label has length 1 or less.
+    Each hit becomes
+    f"{rel}:{number}: holds this machine's {kind}"
+    with kind one of 'home directory', 'user name', or 'host name', in that
+    pattern order for a line. rel is the path relative to ops_dir.parent.
+    When one of REQUIRED_SCAN is missing, append
+    f"{rel}: is missing, so this machine's home directory, user name, and host name were not scanned"
+    and do not invent a scan of that path. An empty list means the required
+    files exist and none of the scanned text matched.
+    """
+    ops_dir = Path(ops_dir)
+    operations_doc = Path(operations_doc)
+    repo = ops_dir.parent
+    findings = []
+    scanned = []
+    if ops_dir.is_dir():
+        scanned.extend(sorted(path for path in ops_dir.rglob("*") if path.is_file()))
+    if operations_doc.is_file() and all(path.resolve() != operations_doc.resolve() for path in scanned):
+        scanned.append(operations_doc)
+    for path in scanned:
+        rel = path.relative_to(repo).as_posix()
+        text = path.read_text(errors="replace")
+        for kind, number, _line in _machine_value_hits(text, identity):
+            findings.append(f"{rel}:{number}: holds this machine's {kind}")
+    for label in REQUIRED_SCAN:
+        path = operations_doc if label == "docs/operations.md" else ops_dir / Path(label).name
+        if not path.is_file():
+            findings.append(
+                f"{label}: is missing, so this machine's home directory, user name, and host name were not scanned"
+            )
+    return findings
+
+
+def _module_assignment(module, name):
+    found = None
+    for statement in module.body:
+        if isinstance(statement, ast.Assign) and any(_target_binds(target, name) for target in statement.targets):
+            found = statement
+        elif isinstance(statement, ast.AnnAssign) and statement.value is not None and _target_binds(statement.target, name):
+            found = statement
+    return found
+
+
+def _shared_node(module, name, kind):
+    if kind == "def":
+        return _module_function(module, name)
+    return _module_assignment(module, name)
+
+
+def _load_shared(path):
+    if not path.is_file():
+        return None
+    source = path.read_text()
+    return source, ast.parse(source, str(path))
+
+
+def _function_source(source, node):
+    lines = source.splitlines(keepends=True)
+    start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+    return "".join(inspect.getblock(lines[start - 1:]))
+
+
+def _binds_shared(statement, name):
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return statement.name == name
+    if isinstance(statement, ast.Assign):
+        return any(_target_binds(target, name) for target in statement.targets)
+    if isinstance(statement, ast.AnnAssign):
+        return statement.value is not None and _target_binds(statement.target, name)
+    if isinstance(statement, ast.AugAssign):
+        return _target_binds(statement.target, name)
+    return False
+
+
+def _unresolved_bindings(module, name):
+    found = []
+
+    def walk(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if _binds_shared(child, name):
+                    found.append(child)
+                continue
+            if _binds_shared(child, name):
+                found.append(child)
+            walk(child)
+
+    for statement in module.body:
+        if isinstance(statement, (ast.If, ast.Try, ast.With, ast.For, ast.While, ast.Match)):
+            walk(statement)
+        elif name == "IGNORED" and isinstance(statement, ast.AugAssign) and _target_binds(statement.target, name):
+            found.append(statement)
+    return found
+
+
+def shared_source_findings(roles_path, install_path, roles_label="t3/scripts/roles.py", install_label="scripts/install.py"):
+    """Report source text of IGNORED, config_home, or new_file that differs between the two files.
+
+    Parse both files. Do not import them. IGNORED is the last assignment to
+    that name directly in the module body. config_home and new_file are the
+    last def of that name directly in the module body. A function's compared
+    text is the lines from its first decorator, or from the def line when it
+    has no decorator, through the last line inspect.getblock keeps. A
+    decorator line, the def, the body, an inline comment on the last
+    statement, and an indented comment after the last statement are kept.
+    A blank line inside the function is kept. A blank line after the last
+    kept line is dropped. A comment at column 0 after the function is
+    dropped. An assignment is compared with ast.get_source_segment. A def,
+    an async def, an assignment, an annotated assignment with a value, or an
+    augmented assignment to one of these three names inside if, try, with,
+    for, while, or match at module level is a binding the static comparison
+    cannot resolve. An augmented assignment to IGNORED directly in the module
+    body is the same kind of binding. A binding inside a function or class
+    body is not a module binding. The last direct definition still wins among
+    direct ones. A missing file, a missing name, or an unreadable file is a
+    finding. None on both sides is not a match. An empty list means all three
+    names exist as direct definitions in both files, none of them has a
+    binding the static comparison cannot resolve, and their source text is
+    the same.
+    """
+    roles_path = Path(roles_path)
+    install_path = Path(install_path)
+    loaded = {}
+    findings = []
+    for label, path in ((roles_label, roles_path), (install_label, install_path)):
+        try:
+            loaded[label] = _load_shared(path)
+        except (OSError, ValueError, SyntaxError, UnicodeDecodeError) as error:
+            loaded[label] = error
+        if loaded[label] is None:
+            findings.append(f"{label}: is missing, so IGNORED, config_home, and new_file were not compared")
+        elif isinstance(loaded[label], Exception):
+            findings.append(
+                f"{label}: could not be read or parsed, so shared source was not compared: {type(loaded[label]).__name__}"
+            )
+    if any(not isinstance(loaded[label], tuple) for label in (roles_label, install_label)):
+        return findings
+    roles_source, roles_module = loaded[roles_label]
+    install_source, install_module = loaded[install_label]
+    for name, kind in SHARED:
+        for label, module in ((roles_label, roles_module), (install_label, install_module)):
+            for node in _unresolved_bindings(module, name):
+                findings.append(f"{label}:{node.lineno}: {name} is bound where the static comparison cannot resolve it")
+        roles_node = _shared_node(roles_module, name, kind)
+        install_node = _shared_node(install_module, name, kind)
+        if roles_node is None:
+            findings.append(f"{roles_label}: has no {name}. Define it with the same source text as {install_label}")
+        if install_node is None:
+            findings.append(f"{install_label}: has no {name}. Define it with the same source text as {roles_label}")
+        if roles_node is None or install_node is None:
+            continue
+        roles_text = _function_source(roles_source, roles_node) if kind == "def" else ast.get_source_segment(roles_source, roles_node)
+        install_text = _function_source(install_source, install_node) if kind == "def" else ast.get_source_segment(install_source, install_node)
+        if roles_text is None or install_text is None or roles_text != install_text:
+            findings.append(
+                f"{roles_label}: {name} differs from the one in {install_label}. Make the source text the same"
+            )
+    return findings
+
+
+def _machine_identity():
+    """Identity(pwd.getpwuid(os.getuid()).pw_dir, pw_name, socket.gethostname())."""
+    entry = pwd.getpwuid(os.getuid())
+    return Identity(entry.pw_dir, entry.pw_name, socket.gethostname())
 
 
 def main(argv):

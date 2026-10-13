@@ -4,10 +4,8 @@ import hashlib
 import http.server
 import json
 import os
-import pwd
 import re
 import shutil
-import socket
 import sqlite3
 import stat
 import subprocess
@@ -20,6 +18,8 @@ from pathlib import Path
 from typing import Callable, Literal, NamedTuple, Optional, Union
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from check import Identity, machine_value_findings  # noqa: E402
 NIGHTLY = ROOT / "ops/t3-nightly-update.sh"
 ARCHIVE = ROOT / "ops/t3-archive-threads.py"
 EXAMPLE = ROOT / "ops/config.example"
@@ -647,41 +647,6 @@ class ArchiveWorld:
         self.stub.reset()
         done = self.sandbox.run(script, "--project", project, *flags, config=config, T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
         return ArchiveRun(done.returncode, done.stdout, done.stderr, tuple(self.stub.archived()))
-
-
-@dataclasses.dataclass(frozen=True)
-class Identity:
-    home: str
-    user: str
-    host: str
-
-
-def machine_identity():
-    entry = pwd.getpwuid(os.getuid())
-    return Identity(entry.pw_dir, entry.pw_name, socket.gethostname())
-
-
-def scanned_files():
-    return [*sorted(path for path in (ROOT / "ops").rglob("*") if path.is_file()), DOC]
-
-
-def machine_value_findings(text, identity):
-    name, word = "A-Za-z0-9._-", "A-Za-z0-9_-"
-    home, user, first_host_label = (re.escape(value) for value in (identity.home, identity.user, identity.host.split(".")[0]))
-    patterns = []
-    if len(identity.home) > 1:
-        as_a_whole_path_prefix = rf"(?<![{name}]){home}(?![{name}])"
-        patterns.append(("home directory", as_a_whole_path_prefix, 0))
-    if len(identity.user) > 1:
-        after_a_slash_or_a_tilde = rf"(?<=[/~]){user}(?![{name}])"
-        before_an_at_sign = rf"(?<![{name}]){user}(?=@)"
-        patterns.append(("user name", f"{after_a_slash_or_a_tilde}|{before_an_at_sign}", 0))
-    if len(identity.host.split(".")[0]) > 1:
-        after_an_at_sign_or_two_slashes = rf"(?:(?<=@)|(?<=//)){first_host_label}(?![{word}])"
-        before_a_domain_or_a_port = rf"(?<![{word}]){first_host_label}(?=\.[A-Za-z0-9]|:[0-9])"
-        patterns.append(("host name", f"{after_an_at_sign_or_two_slashes}|{before_a_domain_or_a_port}", re.IGNORECASE))
-    return [(kind, number, line) for number, line in enumerate(text.splitlines(), 1)
-            for kind, pattern, flags in patterns if re.search(pattern, line, flags)]
 
 
 class OpsTest(unittest.TestCase):
@@ -1683,19 +1648,23 @@ class ArchiveTest(OpsTest):
 
 
 class ScanTest(OpsTest):
-    def test_ops_files_and_the_operations_doc_hold_no_home_directory_and_no_user_or_host_name_in_a_path_or_address(self):
-        files = scanned_files()
-        self.assertEqual({NIGHTLY, ARCHIVE, EXAMPLE, DOC} - set(files), set())
-        identity = machine_identity()
-        for file in files:
-            with self.subTest(file=file.relative_to(ROOT).as_posix()):
-                self.assertEqual(machine_value_findings(file.read_text(errors="replace"), identity), [])
+    def repo(self, doc):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        ops = root / "ops"
+        ops.mkdir()
+        for name in ("t3-nightly-update.sh", "t3-archive-threads.py", "config.example"):
+            (ops / name).write_text("echo ok\n")
+        document = root / "docs" / "operations.md"
+        document.parent.mkdir()
+        document.write_text(doc)
+        return ops, document
 
     def test_the_scan_is_silent_for_the_ci_runner_and_a_root_container(self):
         for identity in (Identity("/home/runner", "runner", "localhost"), Identity("/root", "root", "localhost")):
-            for file in scanned_files():
-                with self.subTest(user=identity.user, file=file.relative_to(ROOT).as_posix()):
-                    self.assertEqual(machine_value_findings(file.read_text(errors="replace"), identity), [])
+            with self.subTest(user=identity.user):
+                self.assertEqual(machine_value_findings(ROOT / "ops", DOC, identity), [])
 
     def test_the_scan_reports_planted_values_and_ignores_longer_names(self):
         who = Identity("/home/zed", "zed", "box7.lan")
@@ -1703,15 +1672,29 @@ class ScanTest(OpsTest):
                    "http://Box7.tail.example:3773", f"cd /srv/{who.user}", "ping BOX7.LAN", "curl box7:3773/x", "open //box7/share"]
         benign = ["rm -rf squashfs-zed", "def zed(tid):", "top = zed(tid)", "the zed is fast", "/home/zedekiah/x", "/home/zed.bak",
                   "ssh box7", "it runs on box7.", "box70.lan", "unbox7.lan", "@box7x", "box7: a label"]
-        self.assertEqual(machine_value_findings("\n".join(planted + benign), who), [
-            ("home directory", 1, planted[0]), ("user name", 1, planted[0]), ("user name", 2, planted[1]),
-            ("user name", 3, planted[2]), ("user name", 4, planted[3]), ("host name", 4, planted[3]),
-            ("host name", 5, planted[4]), ("user name", 6, planted[5]), ("host name", 7, planted[6]),
-            ("host name", 8, planted[7]), ("host name", 9, planted[8])])
-        root = Identity("/root", "root", "x")
-        self.assertEqual(machine_value_findings('rm -rf "$APPS/squashfs-root" "$NEW"\ntop = root(tid)\n/rootfs\n', root), [])
-        self.assertEqual(machine_value_findings("cd /root\nls ~root\n", root),
-                         [("home directory", 1, "cd /root"), ("user name", 1, "cd /root"), ("user name", 2, "ls ~root")])
+        ops, document = self.repo("\n".join(planted + benign) + "\n")
+        self.assertEqual(machine_value_findings(ops, document, who), [
+            "docs/operations.md:1: holds this machine's home directory",
+            "docs/operations.md:1: holds this machine's user name",
+            "docs/operations.md:2: holds this machine's user name",
+            "docs/operations.md:3: holds this machine's user name",
+            "docs/operations.md:4: holds this machine's user name",
+            "docs/operations.md:4: holds this machine's host name",
+            "docs/operations.md:5: holds this machine's host name",
+            "docs/operations.md:6: holds this machine's user name",
+            "docs/operations.md:7: holds this machine's host name",
+            "docs/operations.md:8: holds this machine's host name",
+            "docs/operations.md:9: holds this machine's host name",
+        ])
+        container = Identity("/root", "root", "x")
+        ops, document = self.repo('rm -rf "$APPS/squashfs-root" "$NEW"\ntop = root(tid)\n/rootfs\n')
+        self.assertEqual(machine_value_findings(ops, document, container), [])
+        ops, document = self.repo("cd /root\nls ~root\n")
+        self.assertEqual(machine_value_findings(ops, document, container), [
+            "docs/operations.md:1: holds this machine's home directory",
+            "docs/operations.md:1: holds this machine's user name",
+            "docs/operations.md:2: holds this machine's user name",
+        ])
 
 
 if __name__ == "__main__":

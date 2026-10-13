@@ -4467,7 +4467,7 @@ class RuntimeModeCliTest(unittest.TestCase):
                     completed = repo.run(command, "--catalog", str(CATALOG), "--runtime-mode", "auto")
                     self.assertEqual(completed.returncode, 2)
                     self.assertEqual(completed.stdout, "")
-                    self.assertIn("error: unrecognized arguments: --runtime-mode auto", completed.stderr)
+                    self.assertIn("--runtime-mode", completed.stderr)
                     self.assertFalse(repo.user.exists())
 
     MUSE_PARENT = "muse/muse-spark-1"
