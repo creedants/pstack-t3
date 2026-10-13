@@ -1704,7 +1704,7 @@ class BuildShardsTest(unittest.TestCase):
             def sweep(self):
                 return []
 
-        # list_tests would start a process, and Watch would adopt this process.
+        # list_tests starts a child. Watch replaces SIGINT and SIGTERM. When it is the child subreaper, its sweep kills processes below this one.
         originals = (run_tests.list_tests, run_tests.run_pool, run_tests.Watch)
         run_tests.list_tests = list_tests
         run_tests.run_pool = run_pool
