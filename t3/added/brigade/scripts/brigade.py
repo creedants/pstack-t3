@@ -60,6 +60,7 @@ try:
     from brigade_lib.reporting import GROUPED_SECTIONS, REPAIR, REQUEST_NOTE, SECTIONS, _ruling_note, add_ruling, admin_requests, admin_sections, counts, display_root, end_ruling, events_since, finished_by_coordinator, goal_lines, leases_for, log_rows, log_rulings, overrule, relayed, report, republish, ruling_line, section_lines, send_request, status_label_lines, status_line, sync, tally_words, unclaimed_reports, unlogged_rulings, walk
     from brigade_lib.reports import ITEM_REPORT, NOT_A_REPORT, REVIEW_FILE, in_reports, item_report, report_entry, report_stat
     from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, THREADS_ITEM, THREADS_REFUSED, THREADS_REFUSED_LINE, THREADS_SECTION, cross_family, edits_gate, fix_round_refusal, item_verdicts, latest_verdict, pass_check, pass_json, record_pass, report_threads, report_threads_refusal, review_report, roles_family, round_count, round_debt, round_decision, send_backs, unrecorded_reviews, verify_edits, worker_report, write_threads
+    from brigade_lib.spend import add_arguments, spend_text
     from brigade_lib.shared import BrigadeError, FENCE_OPEN, FENCE_OPEN_INDENTED, KEPT_CELLS, MalformedTable, age, clean, command_words, fence_close, fence_open, now, one_of, plural, same_text, slug, stored, threads_fence_open
     from brigade_lib.store import ADDED_COLUMNS, ADMIN_COMMANDS, ADMIN_DIR, ADMIN_LINES, ADMIN_MENU, ADMIN_NAME, AUTOFIRE, CHILD_ROLES, CLAIM_WAIT_SECONDS, CLOSED_GOAL_STATES, COUNTED_STATES, DISH_STATES, EDITS_VERDICT, GENERATED_ROOT, GOAL_MOVES, GOAL_STATES, HELD_LOCKS, HOUSE_RULES, IN_FLIGHT_STATES, KINDS, KIND_CHOICE, LEASED_STATES, LINE_SUFFIX, LIVE_TICKET_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MENU, MESSAGE_ONLY, MODES, NEEDS_CONTRACT, NOTHING_HANDED, OFF_MENU_TEMPLATE, OPEN_LINES, OPEN_RUN_MINUTES, OWING_STATES, PREFIX, PRIORITIES_BY_RANK, PURPOSE_TEMPLATE, REPORTING, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, RULING_KINDS, RULING_RULES, RULING_STATES, Restaurant, SNAPSHOT_CHUNK, SOURCE_PRIORITY, SOURCE_ROOT, STATION_KIND, TABLES, THREADS_WRITERS, THREAD_COMMAND_ROLES, THREAD_ROLES, TICKET_STATES, UNSENT, VERDICTS, WORKER_ROLES, WORK_COMMANDS, _read_meta, holder_prefix, intake_owner, is_admin, is_timestamp, menu_section, open_restaurant, parse_row, read_chunk, refuse_owned_intake, reporting_of, roles_script, sibling_lines, siblings, store_path, store_root, wait_for_meta, write_atomic
     from brigade_lib.tickets import ActsOn, EVERY_ROW, Fault, FollowUps, GOALS_ONLY, Goal, Label, LabelCounts, Labels, NO_WORK, Tally, Tracked, add_goal, add_ticket, append_ticket, base_source, count_labels, file_follow_ups, finish_request, finished_requests, follow_up_kind, follow_ups, frozen_label, goal_share, goal_work, handed_count, handoff_id, in_flight_tickets, inbox_file, intake_list, is_live, label_words, move_ticket, open_goal, paths_of, pattern_directory, priority_of, quoted_paths, read_goal, read_label, read_labels, record_paths, refuse_live_ref, request_files, says_no_work, set_goal, set_intake, sibling_named, sibling_rails, take_inbox, take_tickets, taken_row, tell, ticket_paths, tracked_paths, unique_names, whole_share
@@ -440,6 +441,7 @@ def parser():
     user = wake_parser("user", "a message from the user")
     user.add_argument("--question", action="store_true", help="the message asks a question")
     wake_parser("admin", "a request from the executive admin").add_argument("request")
+    add_arguments(sub)
     return top
 
 
@@ -552,6 +554,8 @@ def run(argv):
         raise BrigadeError("the executive admin routes work and never runs it")
     if not admin and args.command in ADMIN_COMMANDS:
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
+    if args.command == "spend":
+        return spend_text(restaurant, args)
     if args.command == "next":
         return next_text(restaurant, args)
     if args.command == "sync":
