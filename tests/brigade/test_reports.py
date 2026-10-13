@@ -492,6 +492,17 @@ class ReportsTest(BrigadeTest):
                            ("## Follow-ups\n\n1. ---\n", "---")):
             self.assertEqual(self.follow_ups_in(body, "--dry-run"), f"would add from perf/reports/D1.md#1: {line}")
 
+    def test_from_report_keeps_a_separator_line_inside_a_tilde_fence(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n- Preserve the YAML document marker in `src/config.py`:\n  ~~~yaml\n  ---\n  key: value\n  ~~~\n"
+        filed = "T2 added from perf/reports/D1.md#1: Preserve the YAML document marker in `src/config.py`: ~~~yaml --- key: value ~~~"
+        self.assertEqual(self.follow_ups_in(body), filed)
+
+    def test_a_tilde_line_inside_a_backtick_fence_does_not_close_it(self):
+        self.fired_bug_fix()
+        body = "## Follow-ups\n\n- Run it.\n\n```\n~~~\n---\n```\n"
+        self.assertEqual(self.follow_ups_in(body), "T2 added from perf/reports/D1.md#1: Run it. ``` ~~~ --- ```")
+
     def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
         self.fired_bug_fix()
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [
