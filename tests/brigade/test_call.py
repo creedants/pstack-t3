@@ -160,7 +160,9 @@ class CallTest(unittest.TestCase):
             env=marked,
             cwd=inside,
         )
+        self.assertEqual(outcome.code, real.returncode)
         self.assertEqual(outcome.stdout, real.stdout)
+        self.assertEqual(outcome.stderr, real.stderr)
         self.assertIn(b"import-line\n", outcome.stdout)
         self.assertIn(b"seen\n", outcome.stdout)
         self.assertIn(b"main-line\n", outcome.stdout)
@@ -173,6 +175,9 @@ class CallTest(unittest.TestCase):
         self.assertEqual(kept.stdout, b"a\r\nb\rc\n")
         self.assertEqual(kept.stdout_text(), shown.stdout)
         self.assertEqual(kept.stdout_text(), "a\nb\nc\n")
+
+    def test_a_raised_error_exits_1_and_names_the_error_on_stderr(self):
+        directory = self._directory()
         outcome, real = self._captured(
             directory,
             "runtime.py",
@@ -196,7 +201,8 @@ class CallTest(unittest.TestCase):
             """,
             [],
         )
-        self.assertEqual(outcome.code, real.returncode, (outcome.code, real.returncode))
+        self.assertEqual(outcome.code, real.returncode)
+        self.assertEqual(outcome.code, 1)
         self.assertIn(b"BrokenPipeError", outcome.stderr)
         self.assertIn(b"BrokenPipeError", real.stderr)
         self.assertIn(b"raise BrokenPipeError", outcome.stderr)

@@ -79,7 +79,7 @@ def _text_from_pipe(data):
 
 @dataclass(frozen=True)
 class Outcome:
-    """Bytes a process would have written, plus the exit code."""
+    """The exit code and the captured stdout and stderr bytes."""
 
     code: int
     stdout: bytes
