@@ -277,27 +277,29 @@ class ProbeContractTest(unittest.TestCase):
         self.assertEqual(calls, ["/opt/a"])
 
     def test_a_working_second_command_on_the_snap_launcher_is_probed(self):
-        calls = []
+        for resolved in ("/usr/bin/snap", "/usr/lib/snapd/snapd"):
+            with self.subTest(resolved):
+                calls = []
 
-        def runner(browser, *args, **kwargs):
-            calls.append(browser)
-            if browser == "/snap/bin/chrome":
-                return ""
-            raise subprocess.CalledProcessError(127, browser)
+                def runner(browser, *args, **kwargs):
+                    calls.append(browser)
+                    if browser == "/snap/bin/chrome":
+                        return ""
+                    raise subprocess.CalledProcessError(127, browser)
 
-        browser, unavailable = probe_with(
-            {"chromium": "/snap/bin/chromium", "chrome": "/snap/bin/chrome"},
-            {"/snap/bin/chromium": "/usr/bin/snap", "/snap/bin/chrome": "/usr/bin/snap"},
-            runner,
-        )
-        self.assertEqual(calls, ["/snap/bin/chromium", "/snap/bin/chrome"])
-        self.assertEqual(browser, "/snap/bin/chrome")
-        self.assertEqual(unavailable, [
-            "chromium (/snap/bin/chromium) exited 127",
-            "chromium-browser not found",
-            "google-chrome not found",
-            "google-chrome-stable not found",
-        ])
+                browser, unavailable = probe_with(
+                    {"chromium": "/snap/bin/chromium", "chrome": "/snap/bin/chrome"},
+                    {"/snap/bin/chromium": resolved, "/snap/bin/chrome": resolved},
+                    runner,
+                )
+                self.assertEqual(calls, ["/snap/bin/chromium", "/snap/bin/chrome"])
+                self.assertEqual(browser, "/snap/bin/chrome")
+                self.assertEqual(unavailable, [
+                    "chromium (/snap/bin/chromium) exited 127",
+                    "chromium-browser not found",
+                    "google-chrome not found",
+                    "google-chrome-stable not found",
+                ])
 
     def test_probe_timeout_is_twenty_seconds(self):
         timeouts = []
