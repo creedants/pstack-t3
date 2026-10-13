@@ -657,5 +657,144 @@ class BadgeCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+class CheckoutRuleTest(unittest.TestCase):
+    def _directory(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        return Path(temporary.name)
+
+    def test_library_wording_allows_a_comment_a_docstring_and_assert_refused_choice(self):
+        source = (
+            '"""invalid choice\n'
+            "the following arguments are required\n"
+            "unrecognized arguments\n"
+            "expected one argument\n"
+            '"""\n'
+            "# invalid choice\n"
+            "# the following arguments are required\n"
+            "# unrecognized arguments\n"
+            "# expected one argument\n"
+            "def assert_refused_choice():\n"
+            "    text = 'invalid choice'\n"
+            "    text = 'the following arguments are required'\n"
+            "    text = 'unrecognized arguments'\n"
+            "    text = 'expected one argument'\n"
+        )
+        tests = tests_tree(self._directory(), {"test_quiet.py": source})
+        self.assertEqual(check.library_wording_findings(tests), [])
+
+    def test_library_wording_reports_each_sentence(self):
+        source = (
+            "import unittest\n\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_refuses(self):\n"
+            "        self.assertIn(\"invalid choice: 'guess'\", err)\n"
+            "        self.assertIn('the following arguments are required: --name', err)\n"
+            "        self.assertIn('unrecognized arguments: --runtime-mode auto', err)\n"
+            "        self.assertIn('expected one argument', err)\n"
+        )
+        tests = tests_tree(self._directory(), {"test_sample.py": source})
+        self.assertEqual(check.library_wording_findings(tests), [
+            "tests/test_sample.py:5: asserts argparse's own sentence 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:6: asserts argparse's own sentence 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:7: asserts argparse's own sentence 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:8: asserts argparse's own sentence 'expected one argument'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+        ])
+        narrowed = (
+            'SENTENCE = "invalid choice"\n'
+            "def helper():\n"
+            "    return 'the following arguments are required'\n"
+            "def test_library_wording_nested():\n"
+            "    def helper():\n"
+            "        return 'unrecognized arguments'\n"
+            "    return helper\n"
+            "def assert_refused_choice():\n"
+            "    def helper():\n"
+            "        return 'expected one argument'\n"
+            "    return helper\n"
+        )
+        named = tests_tree(self._directory(), {"test_check.py": narrowed})
+        self.assertEqual(check.library_wording_findings(named), [
+            "tests/test_check.py:1: asserts argparse's own sentence 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_check.py:3: asserts argparse's own sentence 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_check.py:6: asserts argparse's own sentence 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+        ])
+
+    def _ops_repo(self, nightly, doc):
+        root = self._directory()
+        ops = root / "ops"
+        ops.mkdir()
+        (ops / "t3-nightly-update.sh").write_text(nightly)
+        (ops / "t3-archive-threads.py").write_text("echo ok\n")
+        (ops / "config.example").write_text("echo ok\n")
+        (ops / "notes.txt").write_text("hello from the build\n")
+        document = root / "docs" / "operations.md"
+        document.parent.mkdir()
+        document.write_text(doc)
+        return ops, document
+
+    def test_machine_values_are_quiet_on_benign_text(self):
+        who = check.Identity("/opt/plant-home", "planter", "plantbox")
+        ops, document = self._ops_repo("echo ok\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [])
+
+    def test_machine_values_report_a_planted_home_directory(self):
+        who = check.Identity("/opt/plant-home", "planter", "plantbox")
+        ops, document = self._ops_repo("APPS=/opt/plant-home/apps\n", "ok\n")
+        self.assertEqual(check.machine_value_findings(ops, document, who), [
+            "ops/t3-nightly-update.sh:1: holds this machine's home directory",
+        ])
+
+    def _pair(self, roles, install):
+        root = self._directory()
+        roles_path = root / "roles.py"
+        install_path = root / "install.py"
+        roles_path.write_text(roles)
+        install_path.write_text(install)
+        return roles_path, install_path
+
+    def test_shared_source_matches_when_the_three_names_are_the_same(self):
+        body = (
+            'IGNORED = "same"\n'
+            "def config_home(environ, default):\n"
+            "    return environ\n"
+            "def new_file(directory):\n"
+            "    return directory\n"
+        )
+        roles_path, install_path = self._pair(body, body)
+        self.assertEqual(check.shared_source_findings(roles_path, install_path), [])
+
+    def test_shared_source_reports_a_comment_and_a_missing_name(self):
+        install = (
+            'IGNORED = "same"\n'
+            "def config_home(environ, default):\n"
+            "    return environ\n"
+            "def new_file(directory):\n"
+            "    return directory\n"
+        )
+        commented = (
+            'IGNORED = "same"\n'
+            "def config_home(environ, default):\n"
+            "    # kept\n"
+            "    return environ\n"
+            "def new_file(directory):\n"
+            "    return directory\n"
+        )
+        roles_path, install_path = self._pair(commented, install)
+        self.assertEqual(check.shared_source_findings(roles_path, install_path), [
+            "t3/scripts/roles.py: config_home differs from the one in scripts/install.py. Make the source text the same",
+        ])
+        missing = (
+            "def config_home(environ, default):\n"
+            "    return environ\n"
+            "def new_file(directory):\n"
+            "    return directory\n"
+        )
+        roles_path, install_path = self._pair(missing, install)
+        self.assertEqual(check.shared_source_findings(roles_path, install_path), [
+            "t3/scripts/roles.py: has no IGNORED. Define it with the same source text as scripts/install.py",
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()
