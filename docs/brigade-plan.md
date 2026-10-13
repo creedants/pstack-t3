@@ -59,7 +59,7 @@ The head chef thread is the only writer. Nothing is committed.
 
 - `t3/added/brigade/SKILL.md`
 - `t3/added/brigade/scripts/brigade.py` with `open`, `ticket`, `fire`, `pass`, `86`, `close`, `walk`
-- `tests/test_brigade.py`
+- `tests/brigade/`
 - `docs/skills.md`, `README.md`, `CHANGELOG.md`
 
 ## Phases
@@ -69,7 +69,7 @@ The head chef thread is the only writer. Nothing is committed.
    - Its own `schedule_task` bound to it, and a forced run posted into its thread as a user message.
    - It delegated a child, read the child's thread, and saw the child in `t3_thread_list`.
    - The launching thread got `thread_not_found` from `t3_thread_read` on it. `t3_thread_read`, `t3_thread_send`, `t3_thread_list`, and `t3_thread_organize` only reach the calling project. So `$brigade open` hands off and never steers the head chef afterward. The user talks to the head chef in its own thread, and `walk` reads the store.
-1. `brigade.py` and tests. Done: `t3/added/brigade/scripts/brigade.py`, `tests/test_brigade.py`.
+1. `brigade.py` and tests. Done: `t3/added/brigade/scripts/brigade.py`, `tests/brigade/`.
 2. `SKILL.md`, then fresh-child tests. Done. Two services ran on a scratch repo with a planted bug.
    - Codex as head chef: grouped two reports of one bug into one dish, dropped an off-menu ticket, had Grok fix it, reviewed it with Codex at the exact SHA, and fast-forwarded `main`.
    - Grok as head chef: fixed the empty-mean ticket, parked the empty-median policy as a decision with a default instead of asking, and dropped a feature request.

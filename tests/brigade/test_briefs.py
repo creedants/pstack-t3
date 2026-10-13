@@ -41,7 +41,13 @@ class BriefsTest(BrigadeTest):
         self.assertEqual(len(numbered), 10)
         self.assertEqual(numbered[0], "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.")
         self.assertEqual(numbered[-1], "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?")
-        self.assertNotIn("Run builds and tests through", text)
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        for part in ("While working, run only the affected test modules.",
+                     "Run all builds and tests through",
+                     "slot -- <command>",
+                     "Run the full verification chain once, after the last commit."):
+            self.assertIn(part, verify)
+        self.assertNotIn("Run builds and tests through", verify)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
