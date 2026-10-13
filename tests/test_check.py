@@ -695,10 +695,10 @@ class CheckoutRuleTest(unittest.TestCase):
         )
         tests = tests_tree(self._directory(), {"test_sample.py": source})
         self.assertEqual(check.library_wording_findings(tests), [
-            "tests/test_sample.py:5: asserts argparse's own sentence 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
-            "tests/test_sample.py:6: asserts argparse's own sentence 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
-            "tests/test_sample.py:7: asserts argparse's own sentence 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
-            "tests/test_sample.py:8: asserts argparse's own sentence 'expected one argument'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:5: contains the argparse phrase 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:6: contains the argparse phrase 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:7: contains the argparse phrase 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_sample.py:8: contains the argparse phrase 'expected one argument'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
         ])
         narrowed = (
             'SENTENCE = "invalid choice"\n'
@@ -715,9 +715,9 @@ class CheckoutRuleTest(unittest.TestCase):
         )
         named = tests_tree(self._directory(), {"test_check.py": narrowed})
         self.assertEqual(check.library_wording_findings(named), [
-            "tests/test_check.py:1: asserts argparse's own sentence 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
-            "tests/test_check.py:3: asserts argparse's own sentence 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
-            "tests/test_check.py:6: asserts argparse's own sentence 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_check.py:1: contains the argparse phrase 'invalid choice'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_check.py:3: contains the argparse phrase 'the following arguments are required'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
+            "tests/test_check.py:6: contains the argparse phrase 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
         ])
 
     def _ops_repo(self, nightly, doc):
@@ -794,6 +794,101 @@ class CheckoutRuleTest(unittest.TestCase):
         self.assertEqual(check.shared_source_findings(roles_path, install_path), [
             "t3/scripts/roles.py: has no IGNORED. Define it with the same source text as scripts/install.py",
         ])
+
+    def test_shared_source_reports_a_decorator_a_trailing_comment_or_an_unresolved_binding(self):
+        same = (
+            'IGNORED = "same"\n'
+            "def config_home(environ, default):\n"
+            "    return environ\n"
+            "def new_file(directory):\n"
+            "    return directory\n"
+        )
+        differs = "t3/scripts/roles.py: config_home differs from the one in scripts/install.py. Make the source text the same"
+        cases = (
+            (
+                "a decorator on one function",
+                'IGNORED = "same"\n'
+                "def review_identity(function):\n"
+                "    return function\n"
+                "\n"
+                "@review_identity\n"
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "def new_file(directory):\n"
+                "    return directory\n",
+                [differs],
+            ),
+            (
+                "a trailing inline comment",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ  # review comment\n"
+                "def new_file(directory):\n"
+                "    return directory\n",
+                [differs],
+            ),
+            (
+                "an indented trailing comment",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "    # review comment\n"
+                "def new_file(directory):\n"
+                "    return directory\n",
+                [differs],
+            ),
+            (
+                "a later definition inside if",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "def new_file(directory):\n"
+                "    return directory\n"
+                "if True:\n"
+                "    def config_home(environ, default):\n"
+                "        return environ\n",
+                ["t3/scripts/roles.py:7: config_home is bound where the static comparison cannot resolve it"],
+            ),
+            (
+                "a later definition inside try",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "def new_file(directory):\n"
+                "    return directory\n"
+                "try:\n"
+                "    def new_file(directory):\n"
+                "        return directory\n"
+                "except Exception:\n"
+                "    pass\n",
+                ["t3/scripts/roles.py:7: new_file is bound where the static comparison cannot resolve it"],
+            ),
+            (
+                "a conditional assignment to IGNORED",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "def new_file(directory):\n"
+                "    return directory\n"
+                "if True:\n"
+                '    IGNORED = "different"\n',
+                ["t3/scripts/roles.py:7: IGNORED is bound where the static comparison cannot resolve it"],
+            ),
+            (
+                "IGNORED +=",
+                'IGNORED = "same"\n'
+                "def config_home(environ, default):\n"
+                "    return environ\n"
+                "def new_file(directory):\n"
+                "    return directory\n"
+                'IGNORED += " different"\n',
+                ["t3/scripts/roles.py:6: IGNORED is bound where the static comparison cannot resolve it"],
+            ),
+        )
+        for label, roles, expected in cases:
+            with self.subTest(label):
+                roles_path, install_path = self._pair(roles, same)
+                self.assertEqual(check.shared_source_findings(roles_path, install_path), expected)
 
 
 if __name__ == "__main__":
