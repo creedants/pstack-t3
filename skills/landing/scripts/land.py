@@ -225,6 +225,9 @@ EXCLUSIVE_REASON_MAX = 80
 _Holder = namedtuple("_Holder", "kind pid repo started command cap reason")
 _UNKNOWN = _Holder(None, None, None, None, None, None, None)
 _Admission = namedtuple("_Admission", "handles records acquired names")
+# kind is worker, landing, or exclusive. count is how many files a worker locks.
+# The ticket and the holder record carry kind and never count.
+_Demand = namedtuple("_Demand", "kind count")
 _Hold = namedtuple("_Hold", "acquired names")
 
 
@@ -256,11 +259,36 @@ def _turn(mutex):
         raise
 
 
-def _try_take(kind, handles, slots):
-    """Flock the slot files kind needs, without blocking. Returns the locked files, or None with none locked.
-    Worker and landing need one file. Exclusive needs every file."""
+def _parse_slot_count(text):
+    """The --slots token as an int. None means the flag was omitted and returns 1."""
+    if text is None:
+        return 1
+    try:
+        count = int(text)
+    except ValueError:
+        count = 0
+    if count < 1:
+        raise LandError("--slots must be a positive integer")
+    return count
+
+
+def _demand(kind, count, slots):
+    """Build a _Demand, or raise LandError for a count that kind or a governor of `slots` worker slots cannot hold."""
+    if kind != "worker" and count != 1:
+        raise LandError("only a worker slot can take more than one")
+    if count < 1:
+        raise LandError("--slots must be a positive integer")
+    if kind == "worker" and count > slots:
+        raise LandError(f"--slots {count} is more than the {slots} worker slots this governor has")
+    return _Demand(kind, count)
+
+
+def _try_take(demand, handles, slots):
+    """Flock the slot files demand needs, without blocking. Returns the locked files, or None with none locked.
+    Worker needs demand.count files and skips a busy one. Landing needs its one file. Exclusive needs every file."""
+    kind = demand.kind
     names = _slot_names(kind, slots)
-    wanted = len(names) if kind == "exclusive" else 1
+    wanted = len(names) if kind == "exclusive" else demand.count
     taken = []
     for name in names:
         try:
@@ -278,8 +306,11 @@ def _try_take(kind, handles, slots):
 
 
 def _can_satisfy(kind, handles, slots):
-    """True when a waiter of kind could take its slots now. Holds nothing on return."""
-    taken = _try_take(kind, handles, slots)
+    """True when a one-slot waiter of kind could take its slots now. Holds nothing on return.
+
+    A ticket names a kind and no count, so a worker waiter of any count is probed as one file.
+    """
+    taken = _try_take(_Demand(kind, 1), handles, slots)
     for handle in taken or []:
         fcntl.flock(handle, fcntl.LOCK_UN)
     return taken is not None
@@ -682,9 +713,9 @@ def _raise_exit(signum, frame):
 
 
 @contextlib.contextmanager
-def _held(kind, repo, command, cap=None, reason=None):
-    """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
-    admission = _admit(kind, repo, command, cap, reason)
+def _held(demand, repo, command, cap=None, reason=None):
+    """Hold the slots demand needs, publish this holder, and clear the records while the flocks are still held."""
+    admission = _admit(demand, repo, command, cap, reason)
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
     for signum in previous:
         signal.signal(signum, _raise_exit)
@@ -699,12 +730,14 @@ def _held(kind, repo, command, cap=None, reason=None):
         _release_records(admission.records)
 
 
-def _admit(kind, repo=None, command=None, cap=None, reason=None):
-    """Take the slots kind needs, or wait for them behind a ticket. Returns an _Admission.
+def _admit(demand, repo=None, command=None, cap=None, reason=None):
+    """Take the slots demand needs, or wait for them behind a ticket named with demand.kind. Returns an _Admission.
 
     handles are every opened slot file. names are the locked ones.
     acquired is time.monotonic() taken after the slot flocks succeed and before the holder records are written.
+    A worker demand whose count passes the governor's worker slots during the wait removes its ticket and raises LandError.
     """
+    kind = demand.kind
     directory = governor_dir()
     tickets = directory / "tickets"
     tickets.mkdir(parents=True, exist_ok=True)
@@ -717,11 +750,20 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
         started, reported = time.time(), None
         while True:
             _turn(mutex)
+            try:
+                _demand(kind, demand.count, governor_slots())
+            except LandError:
+                if ticket is not None:
+                    try:
+                        os.unlink(ticket.name)
+                    except FileNotFoundError:
+                        pass
+                raise
             waiting = _waiting(tickets, number)
             earlier = {waiter for _, waiter in waiting if _conflicts(waiter, kind)}
             taken = None
             if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
-                taken = _try_take(kind, handles, slots)
+                taken = _try_take(demand, handles, slots)
             if taken is not None:
                 acquired = time.monotonic()
             if taken is None and ticket is None:
@@ -782,7 +824,7 @@ def exclusive_slot(repo=None, command=None, cap=None, reason=None):
     A later conflicting caller that waits on this governor leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    with _held("exclusive", repo, command, cap, reason) as hold:
+    with _held(_Demand("exclusive", 1), repo, command, cap, reason) as hold:
         _show_hold("exclusive", hold.names)
         try:
             yield hold.acquired
@@ -903,14 +945,15 @@ def exclusive_command(command, repo, for_text, reason_text):
 
 
 @contextlib.contextmanager
-def slot(pool="worker", repo=None, command=None):
-    """Hold one slot of a pool. Landing checks use their own one-slot pool so workers never starve the queue.
-    A command already inside a slot (LAND_SLOT set) runs without taking another, so nesting cannot deadlock.
-    A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it."""
+def slot(pool="worker", repo=None, command=None, *, count=1):
+    """Hold `count` worker slots, or one slot of another pool. Landing checks use their own one-slot pool so workers never starve the queue.
+    A command already inside a slot (LAND_SLOT set) runs without taking another, whatever its count, so nesting cannot deadlock.
+    A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it.
+    A count above one locks that many worker files in one admission or none."""
     if os.environ.get("LAND_SLOT"):
         yield
         return
-    with _held(pool, repo, command) as hold:
+    with _held(_demand(pool, count, governor_slots()), repo, command) as hold:
         _show_hold(pool, hold.names)
         try:
             yield
@@ -2987,6 +3030,9 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
+    p.add_argument("--slots", metavar="N", default=None,
+                   help="take N worker slots in one admission. The default is 1. "
+                        "A value above the governor's worker slots is refused")
     p.add_argument("--for", dest="slot_for", metavar="SECONDS", default=None,
                    help=f"cap this exclusive hold at SECONDS. The default is {EXCLUSIVE_CAP:g}. "
                         f"The maximum is {EXCLUSIVE_CAP_MAX:g}. A value over the default needs --reason")
@@ -3005,11 +3051,14 @@ def run(argv):
         if not command:
             raise LandError("slot needs a command after --")
         if args.exclusive:
+            if args.slots is not None:
+                raise LandError("--slots cannot be combined with --exclusive")
             return None, exclusive_command(
                 command, args.slot_repo or args.repo, args.slot_for, args.slot_reason)
         if args.slot_for is not None or args.slot_reason is not None:
             raise LandError("--for and --reason are only for slot --exclusive")
-        with slot(repo=args.slot_repo or args.repo, command=" ".join(command)):
+        count = _parse_slot_count(args.slots)
+        with slot(repo=args.slot_repo or args.repo, command=" ".join(command), count=count):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
