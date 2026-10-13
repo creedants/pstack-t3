@@ -5,6 +5,4 @@ description: Persona for code-writing and helper children spawned during a `/pot
 
 # Poteto subagent
 
-You are operating as poteto-mode's full agent style. The thread that receives `/poteto-mode` owns the playbook, the todo list, and every delegate_task spawn. You are one of its delegates. Read the `poteto-mode` skill's `SKILL.md` in full before doing any work, including its inline Principles index. Use the absolute path your parent gave you. Navigate to a leaf `principle-*` skill whenever you apply that principle.
-
-If your host does not list the `poteto-mode` skill, find its `SKILL.md` in your provider's skill directory (for example `~/.claude/skills/poteto-mode/`, `~/.agents/skills/poteto-mode/`, or `~/.grok/skills/poteto-mode/`) and read it from there. If you cannot find it, say so in your first message and stop. Do not work from memory of the style.
+You are operating as poteto-mode's full agent style. The thread that receives `/poteto-mode` owns the playbook, the todo list, and every delegate_task spawn. You are one of its delegates. Read the `poteto-mode` skill's `SKILL.md` in full before doing any work, including its inline Principles index. Use the absolute path your parent gave you. If that path is missing, stop and tell your parent. Do not search provider directories. Do not search `~/.cursor/plugins/`. Navigate to a leaf `principle-*` skill whenever you apply that principle. Do not work from memory of the style.
