@@ -66,7 +66,38 @@ def tests_tree(directory, modules):
     return tests
 
 
+def support_source(fence=None):
+    """support.py with the landing fence, unless fence replaces that function source, plus class Doc."""
+    body = FENCE_SOURCE if fence is None else fence
+    return FENCE_HEADER + body + "\n\n" + SETUP_SOURCE + "\n\nclass Doc:\n    pass\n"
+
+
+def brigade_tree(directory, support, modules):
+    """tests_tree plus tests/brigade/support.py and the given tests/brigade modules."""
+    tests = tests_tree(directory, {})
+    brigade = tests / "brigade"
+    brigade.mkdir()
+    if support is not None:
+        (brigade / "support.py").write_text(support)
+    for name, source in modules.items():
+        (brigade / name).write_text(source)
+    return tests
+
+
 COPY = "Copy fence_git_environment and setUpModule from tests/test_landing.py"
+BRIGADE_IMPORT = "Import setUpModule from tests/brigade/support.py"
+AREA_IMPORT = (
+    "from .support import (\n"
+    "    setUpModule,\n"
+    "    runpy,\n"
+    ")\n"
+    "\n"
+    "\n"
+    "class AreaTest(unittest.TestCase):\n"
+    "    def test_one(self):\n"
+    "        pass\n"
+)
+IMPORTS_ONLY = "from .support import (\n    Doc,\n)\n"
 README_AT_1_0_0 = (
     "Preamble keeps 1.0.0 and upstream pstack.\n"
     '  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license MIT"></a>\n'
@@ -238,6 +269,127 @@ class FenceCheckTest(unittest.TestCase):
             with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
                 status = check.main([str(skills)])
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
+
+
+class BrigadeFenceCheckTest(unittest.TestCase):
+    def test_support_with_the_landing_fence_and_an_area_import_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": AREA_IMPORT})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_an_absolute_import_of_setup_from_tests_brigade_support_passes(self):
+        source = "from tests.brigade.support import setUpModule\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_an_area_module_that_defines_the_landing_fence_itself_passes(self):
+        source = FENCE_HEADER + FENCE_SOURCE + "\n\n" + SETUP_SOURCE + "\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_support_whose_fence_differs_is_named(self):
+        drifted = FENCE_SOURCE.replace('    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull\n', "")
+        self.assertNotEqual(drifted, FENCE_SOURCE)
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(drifted), {"test_area.py": AREA_IMPORT})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/support.py: fence_git_environment differs from the one in tests/test_landing.py. {COPY}"],
+            )
+
+    def test_an_area_module_with_no_setup_is_named(self):
+        source = "from .support import Doc\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: has no setUpModule bound directly in the module body. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_local_setup_that_never_calls_the_fence_is_named(self):
+        source = "class AreaTest(unittest.TestCase):\n    pass\n\n\ndef setUpModule():\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [
+                    f"tests/brigade/test_area.py: has no def fence_git_environment directly in the module body. {BRIGADE_IMPORT}",
+                    f"tests/brigade/test_area.py: setUpModule contains no call to the bare name fence_git_environment. {BRIGADE_IMPORT}",
+                ],
+            )
+
+    def test_setup_imported_under_another_name_is_named(self):
+        source = "from .support import setUpModule as start\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: imports setUpModule under another name. {BRIGADE_IMPORT}"],
+            )
+
+    def test_setup_bound_only_inside_a_block_is_named(self):
+        source = "class AreaTest(unittest.TestCase):\n    pass\n\n\nif True:\n    from .support import setUpModule\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: has no setUpModule bound directly in the module body. {BRIGADE_IMPORT}"],
+            )
+
+    def test_setup_imported_from_another_module_is_named(self):
+        source = "from tests.other import setUpModule\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule by an import that is not from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_setup_bound_by_assignment_is_named(self):
+        source = "setUpModule = None\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule to something other than an import from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_module_that_only_imports_support_classes_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_docs_like.py": IMPORTS_ONLY})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_a_module_that_imports_a_support_function_and_no_setup_is_named(self):
+        source = "from .support import fence_git_environment\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: has no setUpModule bound directly in the module body. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_missing_brigade_directory_is_not_a_finding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tests = tests_tree(directory, {})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_a_brigade_directory_without_support_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, None, {})
+            self.assertEqual(
+                check.fence_findings(tests),
+                ["tests/brigade/support.py: could not be read or parsed, so its git environment fence was not checked: FileNotFoundError"],
+            )
+
+    def test_a_nested_brigade_module_is_not_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": AREA_IMPORT})
+            nested = tests / "brigade" / "nested"
+            nested.mkdir()
+            (nested / "test_deep.py").write_text("x = 1\n")
+            self.assertEqual(check.fence_findings(tests), [])
 
 
 class LinkCheckTest(unittest.TestCase):
