@@ -680,7 +680,7 @@ def _machine_value_hits(text, identity):
 
 
 def machine_value_findings(ops_dir, operations_doc, identity):
-    """Report this machine's home directory, user name, or host name in a path or address.
+    """Report the given identity's home directory, user name, or host name in a path or address.
 
     Scan every file under ops_dir, sorted, then operations_doc. Read text with
     errors='replace'. Skip a pattern when the home, the user name, or the

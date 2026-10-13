@@ -1670,7 +1670,9 @@ class ScanTest(OpsTest):
         who = Identity("/home/zed", "zed", "box7.lan")
         planted = [f"APPS={who.home}/apps", f"see ~{who.user}/notes", f"mail {who.user}@example.org", f"ssh {who.user}@box7",
                    "http://Box7.tail.example:3773", f"cd /srv/{who.user}", "ping BOX7.LAN", "curl box7:3773/x", "open //box7/share"]
-        ops, document = self.repo("\n".join(planted) + "\n")
+        benign = ["rm -rf squashfs-zed", "def zed(tid):", "top = zed(tid)", "the zed is fast", "/home/zedekiah/x", "/home/zed.bak",
+                  "ssh box7", "it runs on box7.", "box70.lan", "unbox7.lan", "@box7x", "box7: a label"]
+        ops, document = self.repo("\n".join(planted + benign) + "\n")
         self.assertEqual(machine_value_findings(ops, document, who), [
             "docs/operations.md:1: holds this machine's home directory",
             "docs/operations.md:1: holds this machine's user name",
