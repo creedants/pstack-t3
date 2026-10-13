@@ -67,3 +67,11 @@ class WorkerThreadTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 sent-back")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], THREAD_B)
+
+    def test_a_thread_bound_on_a_queued_item_is_cleared_on_the_return_to_in_progress(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass")
+        self.brigade("dish", "D1", "--state", "queued")
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.dish_fields("thread"), ("",))

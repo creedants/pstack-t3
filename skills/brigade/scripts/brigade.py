@@ -646,16 +646,16 @@ def run(argv):
 
 
 def _rebound_for_restart(restaurant, ident, thread):
-    """True when `thread` is the one open worker row started after the item left in-progress, and that id is not retired."""
+    """True when `thread` is the one open worker row started after the latest sent-back dish row, no queued or in-progress dish row follows that row, and that id is not retired."""
     if not thread or thread in set(retired_worker_threads(restaurant, ident)):
         return False
     departed = ""
     for row in restaurant.rows("log.tsv"):
         if row["id"] != ident or row["kind"] != "dish":
             continue
-        if row["state"] in ATTEMPT_AFTER:
+        if row["state"] == "sent-back":
             departed = row["at"]
-        elif row["state"] == "in-progress":
+        elif row["state"] in ("queued", "in-progress"):
             departed = ""
     if not departed:
         return False
