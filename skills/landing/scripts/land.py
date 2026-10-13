@@ -301,36 +301,58 @@ def _discard_ticket(path):
         pass
 
 
-def _open_ticket(path):
+def _unlink_ticket(path):
+    """Remove this directory entry. Leave any other link to the inode."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _open_ticket(path, aliased):
     """Return a read-only file opened for a shared probe, or None when path is not a ticket.
 
     O_NONBLOCK keeps a fifo from blocking the open, and O_NOFOLLOW keeps a symlink from being followed.
-    A regular file whose link count is not 1 is unlinked at this path and is not a ticket.
-    Any other link to that inode stays.
+    lstat reads the link count before that open. A regular file with another link is unlinked here, and so is
+    a later name of an inode this scan already recorded. Any link outside this directory stays.
+    An entry whose lstat or open fails is not a live waiter and does not stop the scan.
     """
     try:
-        if not stat.S_ISREG(os.lstat(path).st_mode):
-            _discard_ticket(path)
-            return None
+        info = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        _discard_ticket(path)
+        return None
+    key = (info.st_dev, info.st_ino)
+    if info.st_nlink != 1:
+        aliased.add(key)
+    if key in aliased:
+        _unlink_ticket(path)
+        return None
+    try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except FileNotFoundError:
         return None
     except OSError as error:
-        if error.errno != errno.ELOOP:
-            raise
-        _discard_ticket(path)
+        if error.errno == errno.ELOOP:
+            _discard_ticket(path)
         return None
-    info = os.fstat(descriptor)
-    if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+    try:
+        info = os.fstat(descriptor)
+    except OSError:
+        os.close(descriptor)
+        return None
+    key = (info.st_dev, info.st_ino)
+    if info.st_nlink != 1:
+        aliased.add(key)
+    if stat.S_ISREG(info.st_mode) and key not in aliased:
         return os.fdopen(descriptor, "r")
     os.close(descriptor)
     if not stat.S_ISREG(info.st_mode):
         _discard_ticket(path)
         return None
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    _unlink_ticket(path)
     return None
 
 
@@ -341,12 +363,14 @@ def _waiting(tickets, before):
     Each unlocked ticket is deleted. Runs under the turn mutex.
     The probe is a shared lock because an exclusive flock on a read-only open fails with EBADF where flock is a POSIX lock.
     The caller passes its own number, because its own ticket would probe free where flock is per process.
+    An inode seen with more than one link in this scan is not a live ticket under any of its names.
     """
     found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
                    if match and (before is None or int(match[1]) < before))
     live = []
+    aliased = set()
     for number, kind, name in found:
-        probe = _open_ticket(tickets / name)
+        probe = _open_ticket(tickets / name, aliased)
         if probe is None:
             continue
         with probe:
@@ -705,6 +729,8 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
                 while os.path.lexists(tickets / f"{number}-{kind}"):
                     number += 1
                 ticket = open(tickets / f"{number}-{kind}", "x")
+                # open creates the file as 0o666 masked by the umask. fchmod sets 0o600 anyway.
+                os.fchmod(ticket.fileno(), 0o600)
                 fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if taken is None:
                 busy = _busy_names(handles, _slot_names(kind, slots))
