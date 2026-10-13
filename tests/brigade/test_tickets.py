@@ -6,18 +6,19 @@ from .support import (
     CODEX,
     Path,
     ROOT,
+    ProcessReason,
     SCRIPT,
     STILL_OPEN,
     TRACKED,
     _TicketsRace,
     _wait_for_path,
+    call,
     datetime,
     json,
     os,
+    real_process,
     runpy,
     shlex,
-    subprocess,
-    sys,
     timezone,
 )
 
@@ -158,8 +159,11 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         for flags, message in ((("--summary", "x", "--from-report", "reports/D1.md"),
                                 "argument --from-report: not allowed with argument --summary"),
                                ((), "one of the arguments --summary --from-report is required")):
-            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                     "ticket", "add", *flags], capture_output=True, text=True)
+            # process exit status
+            result = real_process(
+                ProcessReason.EXIT_STATUS, SCRIPT,
+                ["--store", str(self.store), "--at", str(self.at), "ticket", "add", *flags],
+            )
             self.assertEqual(result.returncode, 2)
             self.assertIn(message, result.stderr)
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before)
@@ -250,9 +254,12 @@ class TicketsTest(BrigadeTest, _TicketsRace):
                 owner = None
             else:
                 owner_code = owner_out = owner_err = None
-            added = subprocess.run(
-                [sys.executable, str(SCRIPT), "--at", str(directory), "ticket", "add", "--kind", "fix", "--summary", "Keep this ticket"],
-                capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+            # inherited environment
+            added = real_process(
+                ProcessReason.INHERITED_ENV, SCRIPT,
+                ["--at", str(directory), "ticket", "add", "--kind", "fix", "--summary", "Keep this ticket"],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            )
             self.assertEqual((added.returncode, added.stdout), (0, "T1\n"), added.stderr)
             menu = directory / "menu.md"
             menu.write_text(menu.read_text() + "Keep the menu sentence.\n")
@@ -365,9 +372,8 @@ class TicketsTest(BrigadeTest, _TicketsRace):
              "brigade: --mode full needs open work; run --state queued without it"),
         ]
         for args, message in refusals:
-            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
-                                    capture_output=True, text=True)
-            self.assertEqual((result.returncode, result.stderr.strip()), (1, message), args)
+            outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at), *args])
+            self.assertEqual((outcome.code, outcome.stderr_text().strip()), (1, message), args)
         self.assertEqual((self.at / "log.tsv").read_bytes(), before)
         self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal fix [user] t")
 
@@ -1456,6 +1462,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.assertEqual(after, before)
 
     def test_ticket_help_names_paths(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
+        # -h output
+        result = real_process(ProcessReason.HELP, SCRIPT, ["--help"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("add, list, update, move, take, or record paths on tickets on the rail", " ".join(result.stdout.split()))

@@ -4,9 +4,12 @@ from .support import (
     CLAUDE,
     CODEX,
     Path,
+    ProcessReason,
     ROOT,
     SCRIPT,
     _wait_for_path,
+    real_popen,
+    real_process,
     json,
     os,
     runpy,
@@ -29,8 +32,11 @@ class StoreTest(BrigadeTest):
     def test_set_landing_exits_2(self):
         self.open()
         before = (self.at / "restaurant.json").read_bytes()
-        result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                 "set", "--landing", "merge"], capture_output=True, text=True)
+        # process exit status
+        result = real_process(
+            ProcessReason.EXIT_STATUS, SCRIPT,
+            ["--store", str(self.store), "--at", str(self.at), "set", "--landing", "merge"],
+        )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
 
@@ -145,13 +151,14 @@ class StoreTest(BrigadeTest):
             path.mkdir(parents=True)
             roots.append(path)
         directory = self.store / "app" / "docs"
-        procs = [
-            subprocess.Popen(
+        procs = []
+        for root in roots:
+            # race between two processes
+            procs.append(real_popen(
+                ProcessReason.RACE,
                 [sys.executable, str(SCRIPT), "--store", str(self.store),
                  "open", "--project-root", str(root), "--name", "Docs"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            for root in roots
-        ]
+            ))
         finished = []
         for proc in procs:
             out, err = proc.communicate(timeout=15)
@@ -183,11 +190,13 @@ class StoreTest(BrigadeTest):
         self.at.mkdir(parents=True)
         path = self.at / "restaurant.json"
         path.write_text('{"restaurant":')
-        proc = subprocess.Popen(
+        # race between two processes
+        proc = real_popen(
+            ProcessReason.RACE,
             [sys.executable, str(SCRIPT), "--store", str(self.store), "open",
              "--project-root", str(self.project), "--name", "Perf"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+        )
         try:
             time.sleep(0.2)
             self.assertIsNone(proc.poll())

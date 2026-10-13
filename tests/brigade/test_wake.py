@@ -8,6 +8,7 @@ from .support import (
     ROOT,
     SCRIPT,
     STILL_OPEN,
+    call,
     _WakeRace,
     datetime,
     json,
@@ -1216,9 +1217,8 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(self.landing_rows(), landing)
         self.assertFalse((self.at / "goals.tsv").exists())
         self.brigade("set", "--thread", "t1")
-        bare = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), "next"],
-                              capture_output=True, text=True)
-        self.assertEqual((bare.returncode, bare.stdout, bare.stderr),
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at), "next"])
+        self.assertEqual((outcome.code, outcome.stdout_text(), outcome.stderr_text()),
                          (1, "", "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status\n"))
         self.assertEqual(self.brigade("--owner", "other@1", "next", ok=False),
                          "brigade: owner other@1 is stale; this store is owned by t1@1")

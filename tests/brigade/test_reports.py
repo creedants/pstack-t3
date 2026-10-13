@@ -13,12 +13,13 @@ from .support import (
     PROSE_ABOVE_A_LEAD_IN,
     Path,
     REAL_FOLLOW_UPS,
+    ProcessReason,
     SCRIPT,
     TRACKED,
     TWO_SECTIONS,
     fcntl,
     os,
-    subprocess,
+    real_popen,
     sys,
     time,
 )
@@ -221,9 +222,12 @@ class ReportsTest(BrigadeTest):
         held = os.open(self.at / "restaurant.lock", os.O_RDWR | os.O_CREAT, 0o644)
         self.addCleanup(os.close, held)
         fcntl.flock(held, fcntl.LOCK_EX)
-        dry_run = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
-                                    "ticket", "add", "--from-report", "reports/D1.md", "--dry-run"],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # lock held by another running brigade.py
+        dry_run = real_popen(
+            ProcessReason.OTHER_LOCK,
+            [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at),
+             "ticket", "add", "--from-report", "reports/D1.md", "--dry-run"],
+        )
         try:
             time.sleep(0.3)
             self.assertIsNone(dry_run.poll())
