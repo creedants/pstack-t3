@@ -356,6 +356,79 @@ class BrigadeFenceCheckTest(unittest.TestCase):
                 [f"tests/brigade/test_area.py: binds setUpModule to something other than an import from tests.brigade.support. {BRIGADE_IMPORT}"],
             )
 
+    def test_an_async_setup_after_a_valid_import_is_named(self):
+        source = (
+            "from .support import setUpModule, fence_git_environment\n"
+            "import os\n"
+            "import unittest\n"
+            "\n"
+            "async def setUpModule():\n"
+            "    fence_git_environment()\n"
+            "\n"
+            "class AreaTest(unittest.IsolatedAsyncioTestCase):\n"
+            "    async def test_sentinel(self):\n"
+            '        self.assertIn("GIT_D202_REVIEW_PROBE", os.environ)\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule to something other than an import from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_class_named_setup_after_a_valid_import_is_named(self):
+        source = "from .support import setUpModule\n\n\nclass setUpModule:\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule to something other than an import from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_value_free_annotation_after_a_valid_import_passes(self):
+        source = (
+            "from .support import setUpModule\n"
+            "from typing import Callable\n"
+            "import os\n"
+            "import unittest\n"
+            "\n"
+            "setUpModule: Callable[[], None]\n"
+            "\n"
+            "class AreaTest(unittest.TestCase):\n"
+            "    def test_fence(self):\n"
+            '        self.assertNotIn("GIT_D202_REVIEW_PROBE", os.environ)\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(check.fence_findings(tests), [])
+
+    def test_an_annotated_assignment_of_setup_is_named(self):
+        source = "from .support import setUpModule\n\nsetUpModule: Callable[[], None] = None\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule to something other than an import from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_plain_import_that_binds_setup_is_named(self):
+        source = "import setUpModule\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: binds setUpModule by an import that is not from tests.brigade.support. {BRIGADE_IMPORT}"],
+            )
+
+    def test_a_plain_import_that_renames_setup_away_leaves_the_name_unbound(self):
+        source = "import setUpModule as start\n\n\nclass AreaTest(unittest.TestCase):\n    pass\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tests = brigade_tree(directory, support_source(), {"test_area.py": source})
+            self.assertEqual(
+                check.fence_findings(tests),
+                [f"tests/brigade/test_area.py: has no setUpModule bound directly in the module body. {BRIGADE_IMPORT}"],
+            )
+
     def test_a_module_that_only_imports_support_classes_passes(self):
         with tempfile.TemporaryDirectory() as directory:
             tests = brigade_tree(directory, support_source(), {"test_docs_like.py": IMPORTS_ONLY})
