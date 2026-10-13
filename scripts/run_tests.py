@@ -5,8 +5,9 @@ A listing child discovers the tests. The runner cuts them into shards of at most
 classes are defined in one module and runs each shard in a fresh process. A worker makes the same discovery
 call as the listing child. It runs nothing unless its test ids equal the listing's in number and order. It
 then runs the test objects its own discovery put at the positions of its shard. It appends one JSON line per
-event to its own result file. Before it prints the report, the runner settles exactly one verdict per
-discovered test, so the `Ran` line counts the tests discovery returned.
+event to its own result file. Before it prints the report, the runner settles exactly one verdict per test
+this run selected. The `Ran` line counts the tests this run settled. A run with no `--part` settles every
+discovered test.
 
 The runner opens each result file before it starts the worker and reads the file through that descriptor. It
 stops reading a result file when it finds that the path of the file no longer leads to the file it opened, or
@@ -30,11 +31,15 @@ When discovery returns no test, the report ends as `python3 -m unittest discover
 That is NO TESTS RAN from Python 3.12 on and OK before it.
 
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
-are not written to defeat the runner. A run that discovers a test exits 0 only when each discovered test has
-exactly one verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the
-test's shard, and each shard finished cleanly. So each of these makes the run exit with another status than
-0. A failing assertion. An error in a test or in a fixture. A module that fails to import. A worker that
-exits or is killed before it reported that it had finished, as when a test calls `os._exit`. A worker past
+are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
+verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
+shard, and each shard of the run finished cleanly. A run with no `--part` selects every test discovery
+returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
+Part i of n is every test whose index in that sequence, counting from 0, leaves remainder i - 1 when divided
+by n. A run with `--part i/n` selects part i of n by the rule above and no other test. So each of these makes
+the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
+that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
+test calls `os._exit`. A worker past
 the `--timeout` limit. A result file that the runner finds removed, replaced, or cut shorter than what it
 read. A line the runner reads from a result file that is not an event. SIGINT or SIGTERM that stops the run.
 A worker runs the test objects its own discovery builds, and the run fails when that discovery differs from
@@ -187,10 +192,11 @@ class LedgerError(Exception):
 class Ledger:
     """Holds at most one verdict per seq of the plan. settle is the only writer of verdicts."""
 
-    def __init__(self, size: int) -> None:
+    def __init__(self, size: int, required: tuple[int, ...] | None = None) -> None:
         self.size = size
         self.verdicts: dict[int, Verdict] = {}
         self.run_errors: list[Problem] = []
+        self.required = range(size) if required is None else required
 
     def settle(self, seq: int, verdict: Verdict) -> None:
         if not 0 <= seq < self.size:
@@ -200,7 +206,7 @@ class Ledger:
         self.verdicts[seq] = verdict
 
     def close(self) -> None:
-        for seq in range(self.size):
+        for seq in self.required:
             if seq not in self.verdicts:
                 self.settle(seq, Verdict("lost", cause="No worker reported it."))
 
@@ -429,7 +435,19 @@ def account(shard: Shard, events: list[dict], ended: Ended, stopped: bool = Fals
     return Accounting(verdicts, tuple(fixtures), tuple(violations), ending)
 
 
+def tests_in_part(plan: tuple[Test, ...], index: int, count: int) -> tuple[Test, ...]:
+    grouped: dict[str, list[Test]] = {}
+    for test in plan:
+        grouped.setdefault(test.module, []).append(test)
+    sequence: list[Test] = []
+    for name in sorted(grouped, key=lambda name: (-len(grouped[name]), name)):
+        sequence.extend(sorted(grouped[name], key=lambda test: test.id))
+    chosen = {test.seq for position, test in enumerate(sequence) if position % count == index - 1}
+    return tuple(test for test in plan if test.seq in chosen)
+
+
 def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
+    by_seq = {test.seq: test for test in plan}
     modules: dict[str, list[int]] = {}
     for test in plan:
         modules.setdefault(test.module, []).append(test.seq)
@@ -439,7 +457,7 @@ def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
         # When a module needs more than one shard, a stride puts neighbours in discovery order in different shards.
         for offset in range(count):
             mine = tuple(seqs[offset::count])
-            shards.append(Shard(len(shards) + 1, module, mine, tuple(plan[seq].cls for seq in mine)))
+            shards.append(Shard(len(shards) + 1, module, mine, tuple(by_seq[seq].cls for seq in mine)))
     return shards
 
 
@@ -624,7 +642,7 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
             worker.channel.close()
 
 
-def run(start: Path, jobs: int, timeout: float) -> int:
+def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None) -> int:
     if os.environ.get(ACTIVE) == str(start):
         raise Refusal(f"already running on {start}. A test must not start the runner on its own suite.")
     if not start.is_dir():
@@ -641,8 +659,11 @@ def run(start: Path, jobs: int, timeout: float) -> int:
     try:
         try:
             plan = list_tests(start, scratch, timeout, watch.pause)
-            shards = build_shards(plan)
-            ledger = Ledger(len(plan))
+            selected = plan if part is None else tests_in_part(plan, part[0], part[1])
+            if part is not None and not selected:
+                raise Refusal(f"part {part[0]}/{part[1]} has no test")
+            shards = build_shards(selected)
+            ledger = Ledger(len(plan), None if part is None else tuple(test.seq for test in selected))
 
             def settle(seq: int, verdict: Verdict) -> None:
                 ledger.settle(seq, verdict)
@@ -681,9 +702,9 @@ def run(start: Path, jobs: int, timeout: float) -> int:
                 if now - progress_at >= PROGRESS_SECONDS:
                     progress_at = now
                     not_ok = sum(fails(verdict) for verdict in ledger.verdicts.values()) + len(ledger.run_errors)
-                    say(f"run_tests: {len(ledger.verdicts)}/{len(plan)} done, {not_ok} not ok, {now - began:.0f}s")
+                    say(f"run_tests: {len(ledger.verdicts)}/{len(selected)} done, {not_ok} not ok, {now - began:.0f}s")
 
-            say(f"run_tests: {plural(len(plan), 'test')}, {plural(len(shards), 'shard')}, {min(jobs, len(shards))} at a time")
+            say(f"run_tests: {plural(len(selected), 'test')}, {plural(len(shards), 'shard')}, {min(jobs, len(shards))} at a time")
             run_pool(shards, jobs, timeout, lambda shard: launch(shard, scratch, start), finish, tick, watch.pause)
         finally:
             left = watch.sweep()
@@ -720,7 +741,7 @@ def discover(start: Path) -> list:
                 yield item
 
     enter(start)
-    return list(flatten(unittest.defaultTestLoader.discover(str(start))))
+    return list(flatten(unittest.TestLoader().discover(str(start))))
 
 
 class Recorder(unittest.TestResult):
@@ -835,6 +856,18 @@ def positive(kind):
     return parse
 
 
+def parse_part(text: str) -> tuple[int, int]:
+    matched = re.fullmatch(r"(-?\d+)/(-?\d+)", text)
+    if matched is None:
+        raise argparse.ArgumentTypeError(f"{text} is not i/n")
+    index, count = int(matched.group(1)), int(matched.group(2))
+    if count < 1:
+        raise argparse.ArgumentTypeError(f"{text} has n below 1")
+    if index < 1 or index > count:
+        raise argparse.ArgumentTypeError(f"{text} has i outside 1 to n")
+    return index, count
+
+
 def main(argv: list[str] | None = None) -> int:
     # The width argparse wraps the rest of the help at.
     width = shutil.get_terminal_size().columns - 2
@@ -848,6 +881,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Directory to discover tests under. Each worker runs in the parent of this directory. The default is tests/ in this repository.")
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,
                         help=f"Seconds a worker may go without writing an event before the runner kills it. The listing of the tests gets the same number of seconds in all. The default is {DEFAULT_TIMEOUT:g}.")
+    parser.add_argument("--part", type=parse_part,
+                        help="Run part i of n, written as i/n. i is an integer from 1 to n. The default is every test discovery returned.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -857,7 +892,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         return list_main(start, Path(args.list))
     try:
-        return run(start, args.jobs, args.timeout)
+        return run(start, args.jobs, args.timeout, args.part)
     except Refusal as refusal:
         print(f"run_tests: {refusal}", file=sys.stderr)
         return 2

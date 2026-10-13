@@ -1266,6 +1266,145 @@ class RunTestsTest(unittest.TestCase):
         self.assertRegex(result.stderr, r"\nThe number of further lines of its result file that are not events is \d+\.\n")
         self.assertTrue(result.stderr.endswith("\n\nFAILED (errors=1, lost=1)\n"), result.stderr)
 
+    def plan_of(self, start):
+        saved = sys.path[:]
+        try:
+            found = run_tests.discover(start)
+        finally:
+            sys.path[:] = saved
+        return tuple(run_tests.Test(seq, test.id(), type(test).__module__, run_tests.class_name(test))
+                     for seq, test in enumerate(found))
+
+    def test_parts_cover_a_long_module_and_a_one_test_module_without_putting_the_one_test_in_part_1(self):
+        lines = ["import unittest", "", "class LongTest(unittest.TestCase):"]
+        for index in range(11):
+            lines.append(f"    def test_{index:02d}(self):")
+            lines.append("        pass")
+        self.write("test_long.py", "\n".join(lines) + "\n")
+        self.write("test_one.py", """
+            import unittest
+
+            class OneTest(unittest.TestCase):
+                def test_only(self):
+                    pass
+        """)
+        plan = self.plan_of(self.tests)
+        ids = [test.id for test in plan]
+        for count in range(1, 9):
+            parts = [run_tests.tests_in_part(plan, index, count) for index in range(1, count + 1)]
+            got = [test.id for part in parts for test in part]
+            self.assertEqual(sorted(got), sorted(ids))
+            self.assertEqual(len(got), len(set(test.seq for part in parts for test in part)))
+        fourth = [
+            ["test_long.LongTest.test_00", "test_long.LongTest.test_04", "test_long.LongTest.test_08"],
+            ["test_long.LongTest.test_01", "test_long.LongTest.test_05", "test_long.LongTest.test_09"],
+            ["test_long.LongTest.test_02", "test_long.LongTest.test_06", "test_long.LongTest.test_10"],
+            ["test_long.LongTest.test_03", "test_long.LongTest.test_07", "test_one.OneTest.test_only"],
+        ]
+        self.assertEqual([[test.id for test in run_tests.tests_in_part(plan, index, 4)] for index in range(1, 5)], fourth)
+        repo = self.plan_of(run_tests.ROOT / "tests")
+        repo_ids = [test.id for test in repo]
+        for count in range(1, 9):
+            parts = [run_tests.tests_in_part(repo, index, count) for index in range(1, count + 1)]
+            got = [test.id for part in parts for test in part]
+            self.assertEqual(sorted(got), sorted(repo_ids))
+            self.assertEqual(len(got), len(repo))
+            self.assertTrue(all(parts))
+
+    def test_part_flag_runs_one_test_of_a_pair_and_refuses_a_part_outside_the_plan(self):
+        for text, message in (("2/1", "2/1 has i outside 1 to n"),
+                              ("1/0", "1/0 has n below 1"),
+                              ("no", "no is not i/n")):
+            result = self.runner("--part", text)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(message, result.stderr)
+        self.write("test_pair.py", """
+            import unittest
+
+            class PairTest(unittest.TestCase):
+                def test_a(self):
+                    pass
+
+                def test_b(self):
+                    pass
+        """)
+        plan = self.plan_of(self.tests)
+        self.assertEqual([test.id for test in run_tests.tests_in_part(plan, 1, 2)], ["test_pair.PairTest.test_a"])
+        self.assertEqual([test.id for test in run_tests.tests_in_part(plan, 2, 2)], ["test_pair.PairTest.test_b"])
+        first = self.runner("--part", "1/2")
+        second = self.runner("--part", "2/2")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertRegex(first.stderr, r"Ran 1 test")
+        self.assertRegex(second.stderr, r"Ran 1 test")
+        outside = self.runner("--part", "3/2")
+        self.assertEqual(outside.returncode, 2, outside.stderr)
+        self.assertIn("3/2 has i outside 1 to n", outside.stderr)
+        self.assertNotIn("Ran ", outside.stderr)
+        self.write("test_pair.py", """
+            import unittest
+
+            class PairTest(unittest.TestCase):
+                def test_only(self):
+                    pass
+        """)
+        empty = self.runner("--part", "2/2")
+        self.assertEqual(empty.returncode, 2, empty.stderr)
+        self.assertIn("part 2/2 has no test", empty.stderr)
+
+    def test_ci_runs_eight_part_jobs_and_two_gates(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        try:
+            import yaml
+        except ImportError:
+            self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4]", text)
+            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4]", text)
+            self.assertEqual(text.count("if: always()"), 2)
+            for index in range(1, 5):
+                self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
+            return
+        jobs = yaml.safe_load(text)["jobs"]
+        self.assertEqual(list(jobs), [
+            "part_310_1", "part_310_2", "part_310_3", "part_310_4",
+            "part_312_1", "part_312_2", "part_312_3", "part_312_4",
+            "test_310", "test_312",
+        ])
+        for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
+            for index in range(1, 5):
+                job = jobs[f"{prefix}_{index}"]
+                self.assertEqual(job["name"], f"part ({version}, {index}/4)")
+                self.assertEqual(job["runs-on"], "ubuntu-latest")
+                self.assertNotIn("if", job)
+                self.assertNotIn("strategy", job)
+                setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
+                self.assertEqual(setup["with"]["python-version"], version)
+                self.assertIsInstance(setup["with"]["python-version"], str)
+                self.assertEqual(job["steps"][0]["uses"], "actions/checkout@v7")
+                self.assertEqual([step["run"] for step in job["steps"] if "run" in step],
+                                 ["pip install pyyaml", f"python3 scripts/run_tests.py --part {index}/4"])
+                self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in job["steps"]))
+        self.assertNotIn("strategy:", text)
+        self.assertNotIn("fail-fast", text)
+        for version, gate, prefix in (("3.10", "test_310", "part_310"), ("3.12", "test_312", "part_312")):
+            job = jobs[gate]
+            self.assertEqual(job["name"], f"test ({version})")
+            self.assertEqual(job["if"], "always()")
+            self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
+            self.assertEqual(job["runs-on"], "ubuntu-latest")
+            setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
+            self.assertEqual(setup["with"]["python-version"], version)
+            self.assertIsInstance(setup["with"]["python-version"], str)
+            check = next(step["run"] for step in job["steps"] if step.get("name") != "Generated skills match the sources" and "needs." in step.get("run", ""))
+            for index in range(1, 5):
+                self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = success', check)
+            skill = next(step for step in job["steps"] if step.get("name") == "Generated skills match the sources")
+            self.assertEqual(skill["run"], "python3 scripts/build.py\n"
+                             "git diff --exit-code -- skills docs/skills.md\n"
+                             "test -z \"$(git status --porcelain -- skills docs/skills.md)\"\n")
+        named = [job_id for job_id, job in jobs.items()
+                 if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
+        self.assertEqual(named, ["test_310", "test_312"])
+
 
 class BuildShardsTest(unittest.TestCase):
     def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):
