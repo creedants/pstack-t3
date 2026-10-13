@@ -170,6 +170,18 @@ def copy_file(source, target):
     shutil.copymode(source, target)
 
 
+BRIGADE_LIB = ("__init__", "seam", "shared", "store", "reports", "tickets", "leases", "edits", "reviews", "items",
+               "briefs", "wake", "reporting")
+
+
+def check_brigade_lib(base):
+    """Every area module the brigade entry imports. A missing one fails the build."""
+    missing = [f"brigade_lib/{name}.py" for name in BRIGADE_LIB
+               if not (base / "brigade" / "scripts" / "brigade_lib" / f"{name}.py").is_file()]
+    if missing:
+        raise SystemExit("brigade build is missing " + ", ".join(missing))
+
+
 def render(destination):
     removed = removed_paths()
     skills = VENDOR / "skills"
@@ -181,6 +193,8 @@ def render(destination):
         base = T3 / layer
         for rel in relative_files(base):
             copy_file(base / rel, destination / rel)
+    check_brigade_lib(T3 / "added")
+    check_brigade_lib(destination)
     runtime = destination / "pstack-runtime"
     copy_file(T3 / "runtime.md", runtime / "SKILL.md")
     copy_file(T3 / "scripts/roles.py", runtime / "scripts/roles.py")
