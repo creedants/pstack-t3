@@ -10,6 +10,8 @@ from .support import (
     THREAD_A,
     ProcessReason,
     real_process,
+    real_popen,
+    _race_args,
     THREAD_B,
     THREAD_C,
     _ItemsRace,
@@ -546,10 +548,16 @@ class ItemsTest(BrigadeTest, _ItemsRace):
             ("land-pause", ["--repo", str(self.project), "lease", "renew", "L1", "--owner", "docs/@1"], stale_land),
         ]
         running = []
+        support = Path(__file__).resolve().parent / "support.py"
         for number, (mode, args, message) in enumerate(commands):
             case = Path(self.temporary.name) / f"stale{number}"
             case.mkdir()
-            running.append((case, self._spawn_race(mode, case, args), message))
+            proc = real_popen(
+                ProcessReason.RACE,
+                [sys.executable, str(support), *_race_args(mode, case, args)],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                text=True)
+            running.append((case, proc, message))
         for case, _, _ in running:
             _wait_for_path(case / "paused", timeout=20)
         self.run_at(docs, "set", "--thread", "t2", "--replace")
@@ -621,8 +629,14 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.coordinator()
         case = Path(self.temporary.name) / "race"
         case.mkdir()
-        churning = self._spawn_race("brief-churn", case, ["--store", str(self.store), "--at", str(self.at),
-                                                           *_owner_words(self.at), *self.BRIEF])
+        support = Path(__file__).resolve().parent / "support.py"
+        churning = real_popen(
+            ProcessReason.PRE_MAIN,
+            [sys.executable, str(support), *_race_args(
+                "brief-churn", case,
+                ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *self.BRIEF])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         self.assertEqual(self._finish_race(churning), (1, "", "brigade: D1 changed while resolving its mode; run brief again"))
         self.assertFalse((self.at / "briefs/D1.md").exists())
 

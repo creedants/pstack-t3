@@ -63,6 +63,8 @@ class ProcessReason(enum.Enum):
     INHERITED_ENV = "inherited environment"
     HELP = "-h output"
     OTHER_LOCK = "lock held by another process"
+    STOPPED = "child stopped while the test runs in-process"
+    PRE_MAIN = "patch installed before main"
 
 
 def _pipe_encoding():
@@ -339,6 +341,10 @@ def real_popen(reason, argv, *, stdin=None, env=None, cwd=None, text=True):
         env=None if env is None else dict(env),
         text=text,
     )
+
+
+def _race_args(mode, case, args):
+    return ["--race-child", mode, str(case), *(str(arg) for arg in args)]
 
 
 def _wait_for_path(path, timeout=8):
@@ -1045,10 +1051,15 @@ class BrigadeTest(unittest.TestCase):
                 for line in self.land("lease", "list").splitlines()]
 
     def _spawn_race(self, mode, case, args):
-        return subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "--race-child", mode, str(case), *args],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        """Start one side of the owner and loser pair."""
+        if mode not in ("owner", "loser"):
+            raise SystemExit(f"_spawn_race starts owner or loser, not {mode}")
+        support = Path(__file__).resolve()
+        return real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(support), *_race_args(mode, case, args)],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
 
     def _finish_race(self, proc):
         try:
@@ -1271,9 +1282,16 @@ class BrigadeTest(unittest.TestCase):
         return "\n".join([f"Use the poteto-mode skill and its `{station}` playbook.", *lines, "Gate: brigade", self.SEAT_RULE])
 
     def paused_brief(self, case):
+        """The child waits in `roles_mode`. The patch is installed before `main`. The test does not overlap this child with another started process. The test acts while the child is stopped, and `call` cannot return that status."""
         case.mkdir()
-        return self._spawn_race("brief-pause", case, ["--store", str(self.store), "--at", str(self.at),
-                                                      *_owner_words(self.at), *self.BRIEF])
+        support = Path(__file__).resolve()
+        tail = _race_args("brief-pause", case, ["--store", str(self.store), "--at", str(self.at),
+                                                *_owner_words(self.at), *self.BRIEF])
+        return real_popen(
+            ProcessReason.STOPPED,
+            [sys.executable, str(support), *tail],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
 
     def cells(self, ident):
         row = self.table_row(self.at, "rail.tsv", ident)
@@ -1585,10 +1603,14 @@ class BrigadeTest(unittest.TestCase):
         return case
 
     def fire_with_fake_land(self, case, *words):
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                 "--store", str(self.store), "--at", str(self.at), "fire", *words],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        """The child replaces `LAND` before `main`. The test does not overlap it with another started process."""
+        support = Path(__file__).resolve()
+        tail = _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at), "fire", *words])
+        proc = real_popen(
+            ProcessReason.PRE_MAIN,
+            [sys.executable, str(support), *tail],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         return proc
 
@@ -1892,18 +1914,23 @@ class StoresTest(unittest.TestCase):
         return self.brigade(name, "open", "--project-root", str(self.project), "--name", name, *extra)
 
     def child(self, mode, name, *args):
-        return subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", mode, self.temporary.name,
-                               "--store", str(self.store), "--at", str(self.dir(name)), *args],
-                              capture_output=True, text=True, timeout=30, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        support = Path(__file__).resolve()
+        tail = _race_args(mode, self.temporary.name,
+                          ["--store", str(self.store), "--at", str(self.dir(name)), *args])
+        return real_process(ProcessReason.EXIT_STATUS, support, tail, timeout=30,
+                            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
     def paused(self, label, name, *args):
-        """A command that has parsed its arguments and waits before it takes the store lock."""
+        """A command that has parsed its arguments and waits before it takes the store lock. Every caller starts two of these and lets both reach the wait before either resumes."""
         case = Path(self.temporary.name) / label
         case.mkdir()
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "pause", str(case),
-                                 "--store", str(self.store), "--at", str(self.dir(name)), *args],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        support = Path(__file__).resolve()
+        tail = _race_args("pause", case, ["--store", str(self.store), "--at", str(self.dir(name)), *args])
+        proc = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(support), *tail],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         _wait_for_path(case / "paused", timeout=20)
         return case, proc
@@ -2123,16 +2150,18 @@ class _TicketsRace:
             "print('ok')\n")
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
-        refused = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                  "--store", str(self.store), "--at", str(self.at),
-                                  "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
-                                 capture_output=True, text=True)
+        refused = real_process(
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
+            _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at),
+                                           "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"]))
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
         self.assertIn("blocked: lease", self.brigade("ticket", "list"))
-        watching = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                     "--store", str(self.store), "--at", str(self.at), "watch"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        watching = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(Path(__file__).resolve()), *_race_args(
+                "fake-land", case, ["--store", str(self.store), "--at", str(self.at), "watch"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         try:
             _wait_for_path(case / "checking")
             # race between two processes
@@ -2168,11 +2197,13 @@ class _ItemsRace:
             "    sys.exit(1)\n")
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
-        firing = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                   "--store", str(self.store), "--at", str(self.at),
-                                   "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        firing = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(Path(__file__).resolve()), *_race_args(
+                "fake-land", case, ["--store", str(self.store), "--at", str(self.at),
+                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         try:
             _wait_for_path(case / "claiming")
             # race between two processes
@@ -2210,11 +2241,13 @@ class _ReportingRace:
         self.open()
         (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
-        firing = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                   "--store", str(self.store), "--at", str(self.at),
-                                   "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        firing = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(Path(__file__).resolve()), *_race_args(
+                "fake-land", case, ["--store", str(self.store), "--at", str(self.at),
+                                    "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         try:
             _wait_for_path(case / "claiming")
             # race between two processes
@@ -2251,14 +2284,14 @@ class _WakeRace:
             "sys.exit(0)\n")
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
-        refused = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                  "--store", str(self.store), "--at", str(self.at),
-                                  "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"],
-                                 capture_output=True, text=True)
+        refused = real_process(
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
+            _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at),
+                                           "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s", "--paths", "src"]))
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
-        watched = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--race-child", "fake-land", str(case),
-                                  "--store", str(self.store), "--at", str(self.at), "watch"],
-                                 capture_output=True, text=True)
+        watched = real_process(
+            ProcessReason.PRE_MAIN, Path(__file__).resolve(),
+            _race_args("fake-land", case, ["--store", str(self.store), "--at", str(self.at), "watch"]))
         self.assertEqual(watched.returncode, 0, watched.stderr)
         self.assertEqual(watched.stdout.strip(),
                          "workers: 0 of 2 running, 2 idle, auto-start: normal\nT1: waiting on the landing queue (queue database is locked)")
@@ -2267,11 +2300,14 @@ class _WakeRace:
 class _HandoffRace:
     def test_two_processes_appending_200_rows_each_leave_400_rows(self):
         self.open("core")
-        procs = [subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "append",
-                                   self.temporary.name, str(self.dir("core")), label],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
-                 for label in ("a", "b")]
+        support = Path(__file__).resolve()
+        procs = [
+            real_popen(
+                ProcessReason.RACE,
+                [sys.executable, str(support), *_race_args("append", self.temporary.name, [str(self.dir("core")), label])],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                text=True)
+            for label in ("a", "b")]
         (Path(self.temporary.name) / "go").touch()
         for proc in procs:
             _, err = proc.communicate(timeout=60)
@@ -2286,22 +2322,28 @@ class _HandoffRace:
 
 class _AdminRace:
     def admin_child(self, mode, label, *args):
-        """A race child running brigade.py on the admin store, started and not yet finished."""
+        """Every caller overlaps another started process before this one resumes."""
         case = Path(self.temporary.name) / label
         case.mkdir()
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", mode, str(case),
-                                 "--store", str(self.store), "--at", str(self.dir(".admin")), *args],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        support = Path(__file__).resolve()
+        tail = _race_args(mode, case, ["--store", str(self.store), "--at", str(self.dir(".admin")), *args])
+        proc = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(support), *tail],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         return case, proc
 
     def append_row(self, name, *fields):
-        """Restaurant.append of one log.tsv row in its own process, started and not yet finished."""
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--race-child", "append-row", self.temporary.name,
-                                 str(self.dir(name)), *fields],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        """The caller overlaps an already started pause child and does not wait on that child's lock."""
+        support = Path(__file__).resolve()
+        tail = _race_args("append-row", self.temporary.name, [str(self.dir(name)), *fields])
+        proc = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(support), *tail],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         return proc
 

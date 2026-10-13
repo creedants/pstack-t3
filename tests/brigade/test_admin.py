@@ -6,9 +6,14 @@ from .support import (
     BrigadeTest,
     StoresTest,
     _AdminRace,
+    _race_args,
     _wait_for_path,
+    call,
     json,
     os,
+    ProcessReason,
+    real_process,
+    real_popen,
     runpy,
     subprocess,
     sys,
@@ -122,9 +127,9 @@ class AdminTest(StoresTest, _AdminRace):
     # The store.
 
     def test_two_admin_opens_at_once_leave_one_store(self):
-        procs = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "open", "--admin",
-                                   "--project-root", str(self.project)],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        argv = [sys.executable, str(SCRIPT), "--store", str(self.store), "open", "--admin",
+                "--project-root", str(self.project)]
+        procs = [real_popen(ProcessReason.RACE, argv, text=True) for _ in range(2)]
         words = sorted(proc.communicate(timeout=30)[0].split()[0] for proc in procs)
         self.assertEqual(words, ["exists", "opened"])
         self.assertEqual(sorted(path.name for path in (self.store / "app").iterdir()), [".admin"])
@@ -426,7 +431,17 @@ class AdminTest(StoresTest, _AdminRace):
         self.open_admin()
         self.brigade("core", "set", "--thread", "core-thread")
         self.admin("request", "--to", "core", "reports-to core admin-thread")
-        case, proc = self.admin_child("pause-after-finished", "republish", "request", "--republish")
+        case = Path(self.temporary.name) / "republish"
+        case.mkdir()
+        support = Path(__file__).resolve().parent / "support.py"
+        proc = real_popen(
+            ProcessReason.STOPPED,
+            [sys.executable, str(support), *_race_args(
+                "pause-after-finished", case,
+                ["--store", str(self.store), "--at", str(self.dir(".admin")), "request", "--republish"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
         _wait_for_path(case / "paused", timeout=20)
         self.assertEqual(self.brigade("core", "inbox", "done", "A1"), "A1 done")
         self.assertEqual(self.inbox("core"), [])
@@ -493,7 +508,16 @@ class AdminTest(StoresTest, _AdminRace):
         self.open("docs")
         self.open_admin()
         self.brigade("docs", "ticket", "add", "--kind", "fix", "--summary", "one")
-        case, outer = self.admin_child("pause", "outer", "sync")
+        case = Path(self.temporary.name) / "outer"
+        case.mkdir()
+        support = Path(__file__).resolve().parent / "support.py"
+        outer = real_popen(
+            ProcessReason.STOPPED,
+            [sys.executable, str(support), *_race_args(
+                "pause", case, ["--store", str(self.store), "--at", str(self.dir(".admin")), "sync"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
+        self.addCleanup(lambda: outer.poll() is None and outer.kill())
         _wait_for_path(case / "paused", timeout=20)
         self.brigade("docs", "ticket", "add", "--kind", "fix", "--summary", "two")
         self.admin("sync")
@@ -553,7 +577,15 @@ class AdminTest(StoresTest, _AdminRace):
         log.write_bytes(log.read_bytes() + f"{self.STAMP}\tticket\tT6\twaiting\tfro".encode())
         case, sync = self.admin_child("read16", "reader", "sync")
         _wait_for_path(case / "paused", timeout=20)
-        append = self.append_row("core", "2026-10-06T00:00:01Z", "ticket", "T7", "waiting", "from app/engine/T7")
+        support = Path(__file__).resolve().parent / "support.py"
+        append = real_popen(
+            ProcessReason.OTHER_LOCK,
+            [sys.executable, str(support), *_race_args(
+                "append-row", self.temporary.name,
+                [str(self.dir("core")), "2026-10-06T00:00:01Z", "ticket", "T7", "waiting", "from app/engine/T7"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
+        self.addCleanup(lambda: append.poll() is None and append.kill())
         time.sleep(1)
         self.assertIsNone(append.poll(), "the append waits for the reader's lock")
         (case / "proceed").touch()
@@ -584,12 +616,15 @@ class AdminTest(StoresTest, _AdminRace):
             data = os.read(fd, 16)
             reads[0] += len(data)
             if reads[0] == 42 and data:
-                proc = subprocess.run([sys.executable, "-B", "-c",
-                                       "import runpy,sys; g=runpy.run_path(sys.argv[1]); r=g['Restaurant'](sys.argv[2]); "
-                                       "r.append('log.tsv',{'at':'2026-10-06T00:00:01Z','kind':'ticket','id':'T7',"
-                                       "'state':'waiting','note':'from app/engine/T7'})",
-                                       str(SCRIPT), str(docs.dir)],
-                                      capture_output=True, text=True, timeout=3)
+                proc = real_process(
+                    ProcessReason.EXIT_STATUS,
+                    "-B",
+                    ["-c",
+                     "import runpy,sys; g=runpy.run_path(sys.argv[1]); r=g['Restaurant'](sys.argv[2]); "
+                     "r.append('log.tsv',{'at':'2026-10-06T00:00:01Z','kind':'ticket','id':'T7',"
+                     "'state':'waiting','note':'from app/engine/T7'})",
+                     str(SCRIPT), str(docs.dir)],
+                    timeout=3)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
             return data
 
@@ -615,9 +650,11 @@ class AdminTest(StoresTest, _AdminRace):
 
     def test_two_recoveries_racing_leave_one_claim(self):
         self.with_thread()
-        procs = [subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")),
-                                   "set", "--thread", f"recovering:{name}", "--replace", "--expect", "t1"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for name in ("a", "b")]
+        procs = [real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")),
+             "set", "--thread", f"recovering:{name}", "--replace", "--expect", "t1"],
+            text=True) for name in ("a", "b")]
         results = [(proc.communicate(timeout=30), proc.returncode) for proc in procs]
         self.assertEqual(sorted(code for _, code in results), [0, 1])
         meta = self.meta(".admin")
@@ -702,8 +739,9 @@ class AdminTest(StoresTest, _AdminRace):
         self.assertEqual(land("init", "--trunk", "lane", "--mode", "local", "--base", "main").returncode, 0)
         self.open_admin()
         for args in (("set", "--thread", "t1"), ("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")):
-            result = subprocess.run([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")), *args],
-                                    capture_output=True, text=True, env=env)
+            argv = ["--store", str(self.store), "--at", str(self.dir(".admin")), *args]
+            command = [sys.executable, str(SCRIPT), *argv]
+            result = call(self, SCRIPT, argv, env=env).completed(command)
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(land("owner", "--prefix", ".admin/", "--generation", "1").stderr.strip(),
                          "land: .admin/ is at generation 2; a floor never lowers")
@@ -747,9 +785,20 @@ class AdminTest(StoresTest, _AdminRace):
 
     def test_claim_first_then_a_paused_rule_add_is_refused(self):
         self.with_thread()
-        case, proc = self.admin_child("pause", "rule", "--owner", "t1@1", "rule", "add", "--kind", "ownership",
-                                      "--parties", "docs,engine", "--question", "Who owns T1?", "--rule", "priority",
-                                      "--decision", "docs")
+        case = Path(self.temporary.name) / "rule"
+        case.mkdir()
+        support = Path(__file__).resolve().parent / "support.py"
+        proc = real_popen(
+            ProcessReason.STOPPED,
+            [sys.executable, str(support), *_race_args(
+                "pause", case,
+                ["--store", str(self.store), "--at", str(self.dir(".admin")),
+                 "--owner", "t1@1", "rule", "add", "--kind", "ownership",
+                 "--parties", "docs,engine", "--question", "Who owns T1?", "--rule", "priority",
+                 "--decision", "docs"])],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            text=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
         _wait_for_path(case / "paused", timeout=20)
         self.admin("set", "--thread", "recovering:t9", "--replace", "--expect", "t1")
         after_claim = self.files(".admin")
@@ -791,9 +840,11 @@ class AdminTest(StoresTest, _AdminRace):
                                       "--parties", "docs,engine", "--question", "Who owns T1?", "--rule", "priority",
                                       "--decision", "docs")
         _wait_for_path(case / "holding", timeout=20)
-        claim = subprocess.Popen([sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")),
-                                  "set", "--thread", "recovering:t9", "--replace", "--expect", "t1"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        claim = real_popen(
+            ProcessReason.OTHER_LOCK,
+            [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.dir(".admin")),
+             "set", "--thread", "recovering:t9", "--replace", "--expect", "t1"],
+            text=True)
         self.addCleanup(lambda: claim.poll() is None and claim.kill())
         time.sleep(0.5)
         self.assertIsNone(claim.poll(), "the claim waits for the lock")
