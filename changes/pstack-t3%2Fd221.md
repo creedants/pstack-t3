@@ -1,0 +1,1 @@
+- `select_browser` keys a resolved path by the which path when its file name is `snap` or the path is `/usr/lib/snapd/snapd`. A failing first command on that path does not hide a later command. Two names that resolve to one other binary are still probed once. `PROBE_TIMEOUT` stays 20 seconds.

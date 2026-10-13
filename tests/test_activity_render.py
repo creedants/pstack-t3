@@ -148,7 +148,7 @@ def skip_segments(items):
 def select_browser(directory):
     """The first browser of BROWSERS that starts on a small valid document under directory.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except a real path whose last component is snap. That path is keyed by the which path, so each command on that launcher is probed on its own.
+    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by the which path.
     """
     items = []
     by_resolved = {}
@@ -160,7 +160,7 @@ def select_browser(directory):
             items.append(BrowserMiss(name))
             continue
         resolved = os.path.realpath(found)
-        key = found if os.path.basename(resolved) == "snap" else resolved
+        key = found if os.path.basename(resolved) == "snap" or resolved == "/usr/lib/snapd/snapd" else resolved
         binary = by_resolved.get(key)
         if binary is None:
             binary = BrowserBinary(found, [name])
@@ -277,27 +277,29 @@ class ProbeContractTest(unittest.TestCase):
         self.assertEqual(calls, ["/opt/a"])
 
     def test_a_working_second_command_on_the_snap_launcher_is_probed(self):
-        calls = []
+        for resolved in ("/usr/bin/snap", "/usr/lib/snapd/snapd"):
+            with self.subTest(resolved):
+                calls = []
 
-        def runner(browser, *args, **kwargs):
-            calls.append(browser)
-            if browser == "/snap/bin/chrome":
-                return ""
-            raise subprocess.CalledProcessError(127, browser)
+                def runner(browser, *args, **kwargs):
+                    calls.append(browser)
+                    if browser == "/snap/bin/chrome":
+                        return ""
+                    raise subprocess.CalledProcessError(127, browser)
 
-        browser, unavailable = probe_with(
-            {"chromium": "/snap/bin/chromium", "chrome": "/snap/bin/chrome"},
-            {"/snap/bin/chromium": "/usr/bin/snap", "/snap/bin/chrome": "/usr/bin/snap"},
-            runner,
-        )
-        self.assertEqual(calls, ["/snap/bin/chromium", "/snap/bin/chrome"])
-        self.assertEqual(browser, "/snap/bin/chrome")
-        self.assertEqual(unavailable, [
-            "chromium (/snap/bin/chromium) exited 127",
-            "chromium-browser not found",
-            "google-chrome not found",
-            "google-chrome-stable not found",
-        ])
+                browser, unavailable = probe_with(
+                    {"chromium": "/snap/bin/chromium", "chrome": "/snap/bin/chrome"},
+                    {"/snap/bin/chromium": resolved, "/snap/bin/chrome": resolved},
+                    runner,
+                )
+                self.assertEqual(calls, ["/snap/bin/chromium", "/snap/bin/chrome"])
+                self.assertEqual(browser, "/snap/bin/chrome")
+                self.assertEqual(unavailable, [
+                    "chromium (/snap/bin/chromium) exited 127",
+                    "chromium-browser not found",
+                    "google-chrome not found",
+                    "google-chrome-stable not found",
+                ])
 
     def test_probe_timeout_is_twenty_seconds(self):
         timeouts = []
