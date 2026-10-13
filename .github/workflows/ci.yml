@@ -18,6 +18,22 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pyyaml
+      - &select_browser
+        run: |
+          set -e
+          browser=$(python3 - <<'PY'
+          import tempfile
+          from tests.test_activity_render import select_browser
+          with tempfile.TemporaryDirectory() as directory:
+              path, unavailable = select_browser(directory)
+          if path is None:
+              print("no working headless browser: " + "; ".join(unavailable))
+              raise SystemExit(1)
+          print(path)
+          PY
+          ) || { printf '%s\n' "$browser"; exit 1; }
+          printf '%s\n' "$browser"
+          "$browser" --version
       - run: python3 scripts/run_tests.py --part 1/4
 
   part_310_2:
@@ -29,6 +45,7 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 2/4
 
   part_310_3:
@@ -40,6 +57,7 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 3/4
 
   part_310_4:
@@ -51,6 +69,7 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 4/4
 
   part_312_1:
@@ -62,6 +81,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 1/4
 
   part_312_2:
@@ -73,6 +93,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 2/4
 
   part_312_3:
@@ -84,6 +105,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 3/4
 
   part_312_4:
@@ -95,6 +117,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - run: python3 scripts/run_tests.py --part 4/4
 
   test_310:

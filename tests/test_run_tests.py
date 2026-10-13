@@ -1381,8 +1381,11 @@ class RunTestsTest(unittest.TestCase):
                 self.assertEqual(setup["with"]["python-version"], version)
                 self.assertIsInstance(setup["with"]["python-version"], str)
                 self.assertEqual(job["steps"][0]["uses"], "actions/checkout@v7")
-                self.assertEqual([step["run"] for step in job["steps"] if "run" in step],
-                                 ["pip install pyyaml", f"python3 scripts/run_tests.py --part {index}/4"])
+                runs = [step["run"] for step in job["steps"] if "run" in step]
+                self.assertEqual(len(runs), 3)
+                self.assertEqual(runs[0], "pip install pyyaml")
+                self.assertIn("select_browser", runs[1])
+                self.assertEqual(runs[2], f"python3 scripts/run_tests.py --part {index}/4")
                 self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in job["steps"]))
         self.assertNotIn("strategy:", text)
         self.assertNotIn("fail-fast", text)
