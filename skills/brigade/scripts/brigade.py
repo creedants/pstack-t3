@@ -645,6 +645,26 @@ def run(argv):
         return command(restaurant, args, rails=rails)
 
 
+def _rebound_for_restart(restaurant, ident, thread):
+    """True when `thread` is the one open worker row started after the item left in-progress, and that id is not retired."""
+    if not thread or thread in set(retired_worker_threads(restaurant, ident)):
+        return False
+    departed = ""
+    for row in restaurant.rows("log.tsv"):
+        if row["id"] != ident or row["kind"] != "dish":
+            continue
+        if row["state"] in ATTEMPT_AFTER:
+            departed = row["at"]
+        elif row["state"] == "in-progress":
+            departed = ""
+    if not departed:
+        return False
+    open_rows = [row for row in restaurant.rows("threads.tsv")
+                 if row["dish"] == ident and row["role"] in WORKER_ROLES and not row["end"]
+                 and row["thread"] == thread and row["start"] > departed]
+    return len(open_rows) == 1
+
+
 def command(restaurant, args, contract=None, rails=None):
     if args.command == "set":
         meta = restaurant.meta
@@ -817,13 +837,17 @@ def command(restaurant, args, contract=None, rails=None):
             if not ok:
                 raise BrigadeError(f"only reviewed work lands: {why}")
         entering = args.state == "in-progress" and current["state"] != "in-progress"
-        restart = entering and current["state"] in ("sent-back", "queued")
+        restart = entering and current["state"] in ATTEMPT_AFTER
         replacing = (bool(args.thread) and args.thread != current.get("thread", "")
                      and current["state"] == "in-progress" and args.state in (None, "in-progress"))
-        thread = "" if restart and args.thread is None else args.thread
+        rebound = _rebound_for_restart(restaurant, args.id, current.get("thread", "")) if restart else False
+        if restart and args.thread is None and rebound:
+            thread = current.get("thread", "")
+        else:
+            thread = "" if restart and args.thread is None else args.thread
         recorded = set(retired_worker_threads(restaurant, args.id))
         earlier = set(recorded)
-        if restart and current.get("thread"):
+        if restart and current.get("thread") and not rebound:
             earlier.add(current["thread"])
         if thread and thread in earlier:
             raise BrigadeError(f"thread {thread} is an earlier attempt of {args.id}; a send-back launches a fresh worker")

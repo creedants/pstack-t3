@@ -2,6 +2,7 @@ from .support import (
     setUpModule,
     BrigadeTest,
     THREAD_A,
+    THREAD_B,
 )
 
 
@@ -21,3 +22,48 @@ class WorkerThreadTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--thread", "   "), "D1 in-progress")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")
         self.assertIn(f"worker\tD1\tretired\t{THREAD_A}", (self.at / "log.tsv").read_text())
+
+    def test_a_thread_bound_after_send_back_stays_when_the_item_returns_to_in_progress(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 sent-back")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.dish_fields("state", "thread"), ("in-progress", THREAD_B))
+
+    def test_repeating_that_thread_on_the_in_progress_command_is_not_an_earlier_attempt(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.brigade("dish", "D1", "--thread", THREAD_B)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", THREAD_B), "D1 in-progress")
+        self.assertEqual(self.dish_fields("thread"), (THREAD_B,))
+
+    def test_one_call_with_state_and_a_new_thread_still_starts_the_fix_attempt(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", THREAD_B), "D1 in-progress")
+        self.assertEqual(self.dish_fields("state", "thread"), ("in-progress", THREAD_B))
+
+    def test_a_sent_back_item_that_did_not_bind_a_new_thread_still_clears_it(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")
+
+    def test_a_thread_bound_onto_an_empty_sent_back_cell_stays_for_the_restart(self):
+        self.fired_bug_fix()
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 sent-back")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], THREAD_B)
+
+    def test_a_thread_bound_after_dish_state_sent_back_stays_for_the_restart(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.assertEqual(self.brigade("dish", "D1", "--thread", THREAD_B), "D1 sent-back")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], THREAD_B)
