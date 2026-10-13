@@ -1,1 +1,2 @@
 - The CI gate test runs each gate script under `bash -e` after substituting the four part results. Exit 0 means every result is success. A result of failure, cancelled, skipped, or empty exits nonzero.
+- A run with `--part` starts every shard of one test before any shard of more than one test. A run without `--part` keeps the shard order from `build_shards`. Which tests each part contains is unchanged.

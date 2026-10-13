@@ -1459,6 +1459,20 @@ class BuildShardsTest(unittest.TestCase):
     def test_no_test_makes_no_shard(self):
         self.assertEqual(run_tests.build_shards(()), [])
 
+    def test_a_part_queue_starts_one_test_shards_before_larger_shards_and_a_full_queue_keeps_build_order(self):
+        plan = []
+        seq = 0
+        for module, count in (("big", 11), ("early", 1), ("late", 1)):
+            for _ in range(count):
+                plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
+                seq += 1
+        shards = run_tests.build_shards(tuple(plan))
+        self.assertEqual([shard.module for shard in shards], ["big", "big", "early", "late"])
+        self.assertEqual(run_tests.launch_order(shards, False), tuple(shards))
+        front = run_tests.launch_order(shards, True)
+        self.assertEqual([shard.number for shard in front], [3, 4, 1, 2])
+        self.assertEqual([len(shard.seqs) for shard in front], [1, 1, 6, 5])
+
 
 class AccountTest(unittest.TestCase):
     OK = {"ev": "result", "status": "ok", "problems": []}

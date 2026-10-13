@@ -446,6 +446,14 @@ def tests_in_part(plan: tuple[Test, ...], index: int, count: int) -> tuple[Test,
     return tuple(test for test in plan if test.seq in chosen)
 
 
+def launch_order(shards: list[Shard], parted: bool) -> tuple[Shard, ...]:
+    if not parted:
+        return tuple(shards)
+    ones = [shard for shard in shards if len(shard.seqs) == 1]
+    rest = [shard for shard in shards if len(shard.seqs) != 1]
+    return tuple(ones + rest)
+
+
 def build_shards(plan: tuple[Test, ...], size: int = SHARD_SIZE) -> list[Shard]:
     by_seq = {test.seq: test for test in plan}
     modules: dict[str, list[int]] = {}
@@ -662,7 +670,7 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
             selected = plan if part is None else tests_in_part(plan, part[0], part[1])
             if part is not None and not selected:
                 raise Refusal(f"part {part[0]}/{part[1]} has no test")
-            shards = build_shards(selected)
+            shards = list(launch_order(build_shards(selected), part is not None))
             ledger = Ledger(len(plan), None if part is None else tuple(test.seq for test in selected))
 
             def settle(seq: int, verdict: Verdict) -> None:
