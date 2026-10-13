@@ -31,10 +31,24 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 import sys as _sys
+import types as _types
+import uuid as _uuid
 from pathlib import Path as _Path
-_here = _Path(__file__).resolve().parent
-if str(_here) not in _sys.path:
-    _sys.path.insert(0, str(_here))
+_libdir = _Path(__file__).resolve().parent / "brigade_lib"
+
+
+def _drop_cached_brigade(*names):
+    """Drop every cached module under one of these names, so a load cannot reuse another load's copy."""
+    for _n in [n for n in _sys.modules if any(n == name or n.startswith(name + ".") for name in names)]:
+        del _sys.modules[_n]
+
+
+_drop_cached_brigade("brigade_lib")
+_pkg = "_brigade_ns_" + _uuid.uuid4().hex
+_alias = _types.ModuleType(_pkg)
+_alias.__path__ = [str(_libdir)]
+_sys.modules[_pkg] = _alias
+_sys.modules["brigade_lib"] = _alias
 _bw = _sys.dont_write_bytecode
 _sys.dont_write_bytecode = True
 try:
@@ -55,6 +69,8 @@ finally:
     del _bw
 from brigade_lib import seam
 seam.bind(globals())
+_drop_cached_brigade("brigade_lib", _pkg)
+del _drop_cached_brigade, _pkg, _alias, _libdir, _types, _uuid
 
 # next sets this. A write or a land.py call then raises instead of changing a store.
 READ_ONLY = False
