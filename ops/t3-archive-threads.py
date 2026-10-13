@@ -14,18 +14,21 @@ T3_CODE_MCP_AUTHORIZATION. It reads T3's state database read-only to choose the
 threads and never writes to it. With `--selection-only` it prints candidates
 and never reads the credential.
 
-What it archives. A sub-agent thread that is not archived, has no run that is
-running, queued, starting, preparing, or waiting and has no execution node or
-provider-native subagent that is pending, running, or waiting including a null
-run id and is not named as the child of such a subagent, and was last updated
-at least --older-than-hours ago. A thread with a live ancestor is skipped
-unless that ancestor is archived or is named with --coordinator, whose finished
-children are archived by age like any other. A thread with a live runless
-descendant is never archived. With
---top-level-settled it also archives a top-level thread that is settled, not
-pinned, not the --coordinator thread, has no such live work, and is that old. A
-thread named with --keep is never archived. Archiving is reversible in T3
-(unarchive).
+What it archives. A sub-agent thread is archived only when it is not already
+archived, it has no run that is running, queued, starting, preparing, or
+waiting, it has no execution node or provider-native subagent that is pending,
+running, or waiting including a null run id, it is not named as the child of
+such a subagent, and it was last updated at least --older-than-hours ago. A
+thread with a live ancestor is skipped unless that ancestor is archived or is
+named with --coordinator, whose finished children are archived by age like any
+other. A descendant with a run in one of those statuses, or with an execution
+node or provider-native subagent that is pending, running, or waiting,
+including a null run id, or named as the child of such a subagent, keeps every
+ancestor from being archived.
+With --top-level-settled it also archives a top-level thread only when that
+thread is settled, not pinned, not the --coordinator thread, has no such live
+work, and is that old. A thread named with --keep is never archived. Archiving
+is reversible in T3 (unarchive).
 """
 import argparse
 import json
@@ -177,7 +180,7 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         return tid
 
     shielded = set()
-    for tid in runless:
+    for tid in live:
         shielded.update(ancestors(tid))
 
     picked, skipped = [], {"live": 0, "recent": 0, "under a running thread": 0, "kept": 0}
