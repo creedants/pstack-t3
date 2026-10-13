@@ -154,11 +154,35 @@ class _Store:
 
 
 def add_arguments(sub):
-    parser = sub.add_parser("spend", help="print wall time, rounds, send-backs, and threads from the store. It writes nothing")
+    parser = sub.add_parser(
+        "spend",
+        help=(
+            "print wall time, rounds, send-backs, and threads from the store. It writes nothing\n"
+            "\n"
+            "A wholly missing measure is the string `not recorded` or `open` when it names one gap, "
+            "and an object of those words to counts when it names both. Without `--tokens` the text "
+            "ends `tokens not requested. Pass --tokens to read them.` and JSON sets "
+            "`threads_without_a_token_source` to `not requested`. Token totals need `--tokens`.\n"
+            "\n"
+            "A Claude model line prints `reasoning not recorded`. A recorded reasoning count prints "
+            "as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning "
+            "when either total was not recorded. Output and dollars stay the recorded totals.\n"
+            "\n"
+            "`--by reviewer` groups whole items by the seat that reviewed them. Its token lines "
+            "include the worker's and every other ledger role's usage for those items. An item "
+            "reviewed by several seats appears under one joined key."
+        ),
+    )
     parser.add_argument("--by", choices=tuple(DIMENSIONS), default="item", help="what one row groups (default: item)")
     parser.add_argument("--item", help="only this dish, such as D12")
     parser.add_argument("--since", help="only dishes fired at or after this UTC date, as YYYY-MM-DD")
-    parser.add_argument("--json", action="store_true", help="print the same report as JSON")
+    parser.add_argument(
+        "--json", action="store_true",
+        help=(
+            "print the same report as JSON. Wall time is in whole seconds. A mixed measure is an object "
+            "with value for the counted total and open or not recorded for the number of items with that gap"
+        ),
+    )
     parser.add_argument("--tokens", action="store_true",
                         help="also read token totals. A model lists dollars only when prices.json prices it")
     parser.add_argument("--t3-home", help="T3 Code base directory for --tokens (default $T3CODE_HOME, else ~/.t3)")

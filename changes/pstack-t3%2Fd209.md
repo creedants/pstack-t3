@@ -3,3 +3,8 @@
 - The default command reads the store only. It does not open T3's database.
 - `t3/added/brigade/SKILL.md` is outside this lease and needs two sentences. `spend` prints wall time, rounds, send-backs, and threads from the store. `--tokens` adds token totals, and dollars appear only for models listed in the restaurant's `prices.json`.
 - `store.py` is outside this lease. Spend does not reuse the `next` read-only flag, so that message stays as it is.
+- A Claude token line prints `reasoning not recorded`. JSON carries the string `not recorded`. A recorded count prints the number, and 0 stays 0.
+- Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
+- `--json` says wall time is whole seconds. A mixed measure is an object with `value` for the counted total and `open` or `not recorded` for how many items have that gap.
+- A wholly missing measure with one absence word is that word. Two absence words are an object of word to count. Without `--tokens`, the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`.
+- `--by reviewer` groups whole items by the seat that reviewed them. Token lines include the worker and every other ledger role on those items. Several seats use one joined key.
