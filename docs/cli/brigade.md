@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `spend`.
 
 ## brigade.py open
 
@@ -762,3 +762,20 @@ a request from the executive admin
 | `--failure FAILURE` |  | `fixable`, `stuck` | `==SUPPRESS==` | fixable or stuck, for a failure this wake already knows |
 | `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
 | `request` | yes |  |  |  |
+
+## brigade.py spend
+
+```text
+brigade.py [flags] spend [--by BY] [--item ITEM] [--since SINCE] [--json] [--tokens] [--t3-home T3_HOME]
+```
+
+print wall time, rounds, send-backs, and threads from the store. It writes nothing
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--by BY` |  | `item`, `goal`, `kind`, `model`, `reviewer` | `item` | what one row groups (default: item) |
+| `--item ITEM` |  |  |  | only this dish, such as D12 |
+| `--since SINCE` |  |  |  | only dishes fired at or after this UTC date, as YYYY-MM-DD |
+| `--json` |  |  |  | print the same report as JSON |
+| `--tokens` |  |  |  | also read token totals. A model lists dollars only when prices.json prices it |
+| `--t3-home T3_HOME` |  |  |  | T3 Code base directory for --tokens (default $T3CODE_HOME, else ~/.t3) |

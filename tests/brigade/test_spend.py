@@ -1,4 +1,7 @@
+import os
 import runpy
+import sqlite3
+from pathlib import Path
 
 from .support import (
     setUpModule,
@@ -45,12 +48,116 @@ class SpendTest(BrigadeTest):
     def close(self, ident="D1", at=CLOSE, state="merged"):
         return {"at": at, "kind": "dish", "id": ident, "state": state, "note": "note sentinel"}
 
-    def streams(self, *args):
+    def streams(self, *args, env=None):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--store", str(self.store), "--at", str(self.at), *args],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=env,
         )
         return result.returncode, result.stdout, result.stderr
+
+    def token_env(self, claude=None):
+        home = Path(self.temporary.name) / "home"
+        home.mkdir(exist_ok=True)
+        if claude is None:
+            claude = Path(self.temporary.name) / "claude"
+            claude.mkdir(exist_ok=True)
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["CLAUDE_CONFIG_DIR"] = str(claude)
+        env.pop("T3CODE_HOME", None)
+        return env
+
+    def database(self, providers=(), turns=(), *, tables=True, indexed=True):
+        base = Path(self.temporary.name) / "t3"
+        path = base / "userdata" / "statev2.sqlite"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            extra = Path(str(path) + suffix)
+            if extra.exists():
+                extra.unlink()
+        connection = sqlite3.connect(path)
+        try:
+            if tables:
+                connection.execute(
+                    "CREATE TABLE orchestration_v2_projection_provider_threads "
+                    "(thread_id TEXT, provider_thread_id TEXT, driver TEXT, payload_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE orchestration_v2_projection_provider_turns "
+                    "(provider_thread_id TEXT, payload_json TEXT)"
+                )
+                if indexed:
+                    connection.execute(
+                        "CREATE INDEX provider_threads_thread "
+                        "ON orchestration_v2_projection_provider_threads(thread_id)"
+                    )
+                    connection.execute(
+                        "CREATE INDEX provider_turns_thread "
+                        "ON orchestration_v2_projection_provider_turns(provider_thread_id)"
+                    )
+                else:
+                    connection.execute(
+                        "CREATE INDEX provider_threads_driver "
+                        "ON orchestration_v2_projection_provider_threads(driver)"
+                    )
+                connection.executemany(
+                    "INSERT INTO orchestration_v2_projection_provider_threads "
+                    "(thread_id, provider_thread_id, driver, payload_json) VALUES (?, ?, ?, ?)",
+                    providers,
+                )
+                connection.executemany(
+                    "INSERT INTO orchestration_v2_projection_provider_turns "
+                    "(provider_thread_id, payload_json) VALUES (?, ?)",
+                    turns,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return base
+
+    def provider(self, thread, provider, driver, native=None, **extra):
+        payload = dict(extra)
+        if native is not None:
+            payload["nativeThreadRef"] = {"nativeId": native}
+        return (thread, provider, driver, json.dumps(payload))
+
+    def turn(self, provider, incoming, outgoing, cached=0, created=0, reasoning=0, status="complete", token_usage=None):
+        body = {"turnTokenUsage": {
+            "usageStatus": status,
+            "inputTokens": incoming,
+            "cachedInputTokens": cached,
+            "cacheCreationTokens": created,
+            "outputTokens": outgoing,
+            "reasoningTokens": reasoning,
+        }}
+        if token_usage is not None:
+            body["tokenUsage"] = token_usage
+        return (provider, json.dumps(body))
+
+    def assistant(self, ident, model, incoming, outgoing, cache_read=None, cache_write=None, content=None):
+        usage = {"input_tokens": incoming, "output_tokens": outgoing}
+        if cache_read is not None:
+            usage["cache_read_input_tokens"] = cache_read
+        if cache_write is not None:
+            usage["cache_creation_input_tokens"] = cache_write
+        message = {"id": ident, "model": model, "usage": usage}
+        if content is not None:
+            message["content"] = [{"type": "text", "text": content}]
+        return json.dumps({"type": "assistant", "message": message})
+
+    def write_claude(self, native, session_lines, subagent_lines=()):
+        base = Path(self.temporary.name) / "claude"
+        project = base / "projects" / "work"
+        project.mkdir(parents=True, exist_ok=True)
+        (project / f"{native}.jsonl").write_text("\n".join(session_lines) + "\n")
+        if subagent_lines:
+            folder = project / native / "subagents"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "child.jsonl").write_text("\n".join(subagent_lines) + "\n")
+        return base
+
+    def ledger(self, thread="ledger-1", seat="codex/gpt-6.1-sol"):
+        return {"at": FIRE, "dish": "D1", "role": "worker", "thread": thread, "seat": seat}
 
     def test_no_ledger_rows_print_threads_not_recorded(self):
         self.fill([self.dish()], logs=[self.close()])
@@ -206,3 +313,268 @@ class SpendTest(BrigadeTest):
             proxy.append("log.tsv", {"at": FIRE})
         self.assertEqual(str(caught.exception), "spend is read-only")
         self.assertEqual(self.store_files(), before)
+
+    def test_private_text_stays_out_of_both_streams(self):
+        """run_at returns only one stream, so this test starts the process itself."""
+        native = "sessAb12"
+        self.fill([self.dish()], threads=[self.ledger("ledger-priv", "claudeAgent/claude-opus-4-6")], logs=[self.close()])
+        claude = self.write_claude(native, [
+            "not json secret fragment",
+            self.assistant("msgOk1", "claude-opus-4-6", 10, 4, content="secret message text"),
+            self.assistant("msgPriv99", "secret model sentinel", 6, 6, content="secret message text"),
+        ])
+        base = self.database([
+            self.provider("ledger-priv", "prov-1", "claudeAgent", native, provider_session_id="native-session-sentinel"),
+        ])
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "threads without a token source 1\n",
+        )
+        for secret in (
+            "note sentinel", native, "secret model sentinel", "secret message text",
+            "msgPriv99", "msgOk1", "not json secret fragment", "native-session-sentinel",
+            "summary sentinel", "dish-thread-sentinel",
+        ):
+            self.assertNotIn(secret, out + err)
+
+    def test_grok_and_cursor_print_not_recorded_and_not_a_zero(self):
+        for driver in ("grok", "cursor"):
+            with self.subTest(driver=driver):
+                self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+                base = self.database(
+                    [self.provider("ledger-1", "prov-1", driver)],
+                    [self.turn("prov-1", 40, 40)],
+                )
+                code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+                self.assertEqual(code, 0, out + err)
+                self.assertEqual(err, "")
+                self.assertEqual(
+                    out,
+                    "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+                    "  not recorded\n"
+                    "threads without a token source 1\n",
+                )
+                self.assertNotIn("in 0", out)
+
+    def test_turn_token_usage_ignores_the_larger_token_usage(self):
+        self.fill([self.dish()], threads=[self.ledger(seat="opencode/opencode-go")], logs=[self.close()])
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "opencode", provider_session_id="native-session-sentinel")],
+            [self.turn("prov-1", 100, 20, cached=80, created=5, reasoning=4, token_usage={"inputTokens": 1000000, "outputTokens": 500000})],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  model not recorded  in 15  cache-read 80  cache-write 5  out 20\n"
+            "threads without a token source 0\n",
+        )
+        self.assertNotIn("1000000", out + err)
+        self.assertNotIn("500000", out + err)
+        self.assertNotIn("native-session-sentinel", out + err)
+        self.assertNotIn("reasoning", out)
+        code, json_out, json_err = self.streams(
+            "spend", "--tokens", "--json", "--t3-home", str(base), env=self.token_env(),
+        )
+        self.assertEqual(code, 0, json_out + json_err)
+        report = json.loads(json_out)
+        self.assertEqual(report["rows"][0]["models"], [{
+            "model": "model not recorded", "in": 15, "cache_read": 80, "cache_write": 5, "out": 20,
+        }])
+        self.assertEqual(report["threads_without_a_token_source"], 0)
+        self.assertNotIn("dollars", report["rows"][0]["models"][0])
+
+    def test_a_partial_turn_prints_not_recorded(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "codex")],
+            [self.turn("prov-1", 100, 20, cached=80), self.turn("prov-1", 25, 25, status="partial")],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "threads without a token source 1\n",
+        )
+        self.assertNotIn("20", out)
+        self.assertNotIn("25", out)
+
+    def test_claude_output_is_the_deduped_log_total(self):
+        native = "sessDedupe1"
+        self.fill([self.dish()], threads=[self.ledger(seat="claudeAgent/claude-opus-4-6")], logs=[self.close()])
+        claude = self.write_claude(
+            native,
+            [self.assistant("m1", "claude-opus-4-6", 10, 20, cache_read=4, cache_write=1)],
+            [
+                self.assistant("m1", "claude-opus-4-6", 99, 5, cache_read=50, cache_write=9),
+                self.assistant("m2", "claude-opus-4-6", 3, 7),
+            ],
+        )
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "claudeAgent", native)],
+            [self.turn("prov-1", 1, 999)],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  claude-opus-4-6  in 13  cache-read 4  cache-write 1  out 27\n"
+            "threads without a token source 0\n",
+        )
+        self.assertNotIn("999", out + err)
+        self.assertNotIn(native, out + err)
+
+    def test_an_unknown_token_schema_still_prints_the_store(self):
+        cases = (
+            ("no provider tables", {"tables": False}),
+            ("no usable index", {"indexed": False}),
+        )
+        for name, options in cases:
+            with self.subTest(name=name):
+                self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+                base = self.database(**options)
+                code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+                self.assertEqual(code, 0, out + err)
+                self.assertEqual(err.strip(), "token schema is not the one this command knows")
+                self.assertEqual(
+                    out,
+                    "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+                    "  not recorded\n"
+                    "threads without a token source 1\n",
+                )
+                self.assertNotIn("SCAN", err)
+                self.assertNotIn("SEARCH", err)
+
+    def test_tokens_leave_the_fixture_store_and_database_unchanged(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        lock = self.at / "restaurant.lock"
+        if lock.exists():
+            lock.unlink()
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "codex")],
+            [self.turn("prov-1", 12, 4, cached=2, created=1, reasoning=1)],
+        )
+        database = base / "userdata" / "statev2.sqlite"
+        before_store = self.store_files()
+        before_db = database.read_bytes()
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  model not recorded  in 9  cache-read 2  cache-write 1  out 4\n"
+            "threads without a token source 0\n",
+        )
+        self.assertEqual(self.store_files(), before_store)
+        self.assertEqual(database.read_bytes(), before_db)
+        self.assertFalse(lock.exists())
+        self.assertFalse(Path(str(database) + "-wal").exists())
+        self.assertFalse(Path(str(database) + "-shm").exists())
+
+    def test_dollars_print_only_for_a_listed_model(self):
+        native = "sessBill1"
+        self.fill([self.dish()], threads=[self.ledger(seat="claudeLean/claude-opus-4-6")], logs=[self.close()])
+        claude = self.write_claude(native, [
+            self.assistant("bill-opus", "claude-opus-4-6", 1000, 250, cache_read=2000, cache_write=500),
+            self.assistant("bill-haiku", "claude-haiku-4-5", 8, 2, cache_read=0, cache_write=0),
+            self.assistant("bill-sonnet", "claude-sonnet-4-6", 4, 3, cache_read=1, cache_write=1),
+        ])
+        (self.at / "prices.json").write_text(json.dumps({
+            "claude-opus-4-6": {"input": 3, "cache_read": 1.5, "cache_write": 6, "output": 12},
+            "claude-haiku-4-5": "subscription",
+        }))
+        base = self.database([self.provider("ledger-1", "prov-1", "claudeLean", native)])
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  claude-haiku-4-5  in 8  cache-read 0  cache-write 0  out 2\n"
+            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  $0.012000\n"
+            "  claude-sonnet-4-6  in 4  cache-read 1  cache-write 1  out 3\n"
+            "threads without a token source 0\n",
+        )
+
+    def test_a_bad_price_list_prints_no_report(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        (self.at / "prices.json").write_text('{"claude-opus-4-6": {"input": 1, "output": 2}}')
+        base = Path(self.temporary.name) / "t3-missing"
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 1, out + err)
+        self.assertEqual(out, "")
+        self.assertEqual(err.strip(), "brigade: prices.json is not a price list")
+        self.assertFalse((base / "userdata" / "statev2.sqlite").exists())
+
+    def test_a_negative_input_is_not_recorded(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "codex")],
+            [self.turn("prov-1", 10, 4, cached=8, created=5)],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "threads without a token source 1\n",
+        )
+        self.assertNotIn("in -3", out)
+        self.assertNotIn("in 10", out)
+
+    def test_a_shared_thread_adds_no_tokens(self):
+        self.fill(
+            [self.dish("D1"), self.dish("D2")],
+            threads=[
+                {"at": FIRE, "dish": "D1", "role": "worker", "thread": "ledger-shared", "seat": "codex/gpt-6.1-sol"},
+                {"at": FIRE, "dish": "D2", "role": "worker", "thread": "ledger-shared", "seat": "codex/gpt-6.1-sol"},
+            ],
+            logs=[self.close("D1", CLOSE), self.close("D2", HOUR)],
+        )
+        base = self.database(
+            [self.provider("ledger-shared", "prov-1", "codex")],
+            [self.turn("prov-1", 77, 77)],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "D2  wall 1h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "threads without a token source 1\n",
+        )
+        self.assertEqual(err.strip(), "brigade: warning: D1 and D2 share a ledger thread")
+        self.assertNotIn("ledger-shared", out + err)
+        self.assertNotIn("77", out + err)
+        self.assertNotIn("could not be opened", err)
+
+    def test_a_default_run_does_not_open_the_database(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        home = Path(self.temporary.name) / "home"
+        home.mkdir(exist_ok=True)
+        empty = Path(self.temporary.name) / "empty-t3"
+        empty.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["T3CODE_HOME"] = str(empty)
+        env["CLAUDE_CONFIG_DIR"] = str(Path(self.temporary.name) / "claude-empty")
+        code, out, err = self.streams("spend", env=env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n" + FOOTER + "\n",
+        )
+        self.assertEqual(err, "")
+        self.assertNotIn("could not be opened", out + err)
+        self.assertFalse((empty / "userdata" / "statev2.sqlite").exists())
+        self.assertFalse((home / ".t3").exists())

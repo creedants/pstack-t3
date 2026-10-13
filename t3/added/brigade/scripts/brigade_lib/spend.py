@@ -1,7 +1,14 @@
 import json
+import math
+import os
 import re
+import runpy
+import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_EVEN
+from pathlib import Path
 
 from brigade_lib.reviews import item_verdicts, send_backs
 from brigade_lib.shared import BrigadeError, age
@@ -10,12 +17,35 @@ from brigade_lib.store import PREFIX, WORKER_ROLES
 OPEN = "open"
 NOT_RECORDED = "not recorded"
 NOT_REQUESTED = "not requested"
+MODEL_MISSING = "model not recorded"
 SEATS_DIFFER = "seats differ"
 SEAT_MISSING = "seat not recorded"
 CLOSED = ("merged", "dropped")
 ABSENT_WORDS = (OPEN, NOT_RECORDED)
 SINCE = re.compile(r"\d{4}-\d{2}-\d{2}")
 DISH_ID = re.compile(re.escape(PREFIX["dishes.tsv"]) + r"\d+")
+NATIVE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$")
+MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,80}$")
+INDEX_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SCHEMA = "token schema is not the one this command knows"
+UNREADABLE = "T3's database could not be opened read-only"
+PRICE_KEYS = ("input", "cache_read", "cache_write", "output")
+MILLION = Decimal(1000000)
+PLACES = Decimal("0.000001")
+PROVIDER_THREADS = "orchestration_v2_projection_provider_threads"
+PROVIDER_TURNS = "orchestration_v2_projection_provider_turns"
+TURN_FIELDS = (
+    "usageStatus", "inputTokens", "cachedInputTokens",
+    "cacheCreationTokens", "outputTokens", "reasoningTokens",
+)
+DRIVERS = {
+    "claudeAgent": "claude",
+    "claudeLean": "claude",
+    "codex": "turns",
+    "opencode": "turns",
+    "grok": "gap",
+    "cursor": "gap",
+}
 
 
 @dataclass(frozen=True)
@@ -140,11 +170,11 @@ def spend_text(restaurant, args):
     with restaurant.read_lock(create=False):
         items = _items(store, question)
     _warn_shares(store, items)
-    totals = _unrecorded(items) if question.tokens else None
+    prices, totals = _read_prices_and_tokens(restaurant.dir, items, question)
     rows = _rows(items, question.by)
     if question.as_json:
-        return json.dumps(_json_report(question, rows, items, totals), indent=2)
-    return _text(question, rows, items, totals)
+        return json.dumps(_json_report(question, rows, items, totals, prices), indent=2)
+    return _text(question, rows, items, totals, prices)
 
 
 def _question(args):
@@ -253,13 +283,17 @@ def _dish_number(dish_id):
     return int(dish_id[len(PREFIX["dishes.tsv"]):])
 
 
-def _warn_shares(store, items):
+def _threads_by_item(items):
     groups = {}
     for item in items:
         for thread in item.threads or ():
             groups.setdefault(thread, []).append(item.dish_id)
+    return groups
+
+
+def _warn_shares(store, items):
     texts = []
-    for ids in groups.values():
+    for ids in _threads_by_item(items).values():
         unique = sorted(set(ids), key=_dish_number)
         if len(unique) < 2:
             continue
@@ -269,14 +303,6 @@ def _warn_shares(store, items):
             texts.append(f"{', '.join(unique[:-1])}, and {unique[-1]} share a ledger thread")
     for text in dict.fromkeys(texts):
         store.warn(text)
-
-
-def _unrecorded(items):
-    totals = {}
-    for item in items:
-        for thread in item.threads or ():
-            totals.setdefault(thread, None)
-    return totals
 
 
 def _rows(items, by):
@@ -323,12 +349,16 @@ def _missing_threads(items, totals):
     return len(missing)
 
 
-def _text(question, rows, items, totals):
+def _text(question, rows, items, totals, prices):
     lines = []
     for row in rows:
         lines.append(_row_line(row))
-        if totals is not None and any(item.threads for item in row.items):
+        models = _row_models(row, totals)
+        if models == NOT_RECORDED:
             lines.append("  not recorded")
+        elif models:
+            for name, counts in models:
+                lines.append(_model_line(name, counts, _dollars(counts, (prices or {}).get(name))))
     if totals is None:
         lines.append("tokens not requested. Pass --tokens to read them.")
     else:
@@ -348,18 +378,484 @@ def _json_measure(measure):
     return body
 
 
-def _json_report(question, rows, items, totals):
-    body = {
-        "by": question.by,
-        "rows": [{
+def _json_report(question, rows, items, totals, prices):
+    rendered = []
+    for row in rows:
+        entry = {
             "key": row.key,
             "wall": _json_measure(row.wall),
             "rounds": _json_measure(row.rounds),
             "send_backs": _json_measure(row.send_backs),
             "threads": _json_measure(row.threads),
-        } for row in rows],
+        }
+        models = _row_models(row, totals)
+        if models is not None:
+            entry["models"] = _json_models(models, prices)
+        rendered.append(entry)
+    body = {
+        "by": question.by,
+        "rows": rendered,
         "threads_without_a_token_source": NOT_REQUESTED if totals is None else _missing_threads(items, totals),
     }
     if question.since is not None:
         body["since"] = question.since.date().isoformat()
+    return body
+
+
+class _Bare(Exception):
+    def __init__(self):
+        # The failing log line must not leave this function inside the exception.
+        Exception.__init__(self)
+
+
+class _Schema(Exception):
+    pass
+
+
+class _Closed(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class _Counts:
+    incoming: int
+    cache_read: int
+    cache_write: int
+    outgoing: int
+
+
+@dataclass(frozen=True)
+class _Call:
+    ident: str
+    model: str
+    incoming: int
+    cache_read: int
+    cache_write: int
+    outgoing: int
+
+
+def _add(left, right):
+    return _Counts(
+        left.incoming + right.incoming, left.cache_read + right.cache_read,
+        left.cache_write + right.cache_write, left.outgoing + right.outgoing,
+    )
+
+
+def _read_prices_and_tokens(directory, items, question):
+    if not question.tokens:
+        return None, None
+    return _prices(directory), _token_totals(items, question)
+
+
+def _prices(directory):
+    path = Path(directory) / "prices.json"
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise BrigadeError("prices.json is not a price list") from None
+    if not isinstance(raw, dict):
+        raise BrigadeError("prices.json is not a price list")
+    prices = {}
+    for name, value in raw.items():
+        if value == "subscription":
+            prices[name] = value
+            continue
+        if not isinstance(value, dict) or set(value) != set(PRICE_KEYS):
+            raise BrigadeError("prices.json is not a price list")
+        prices[name] = {key: _rate(value[key]) for key in PRICE_KEYS}
+    return prices
+
+
+def _rate(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise BrigadeError("prices.json is not a price list")
+    return Decimal(str(value))
+
+
+def _blank(threads):
+    return {thread: None for thread in threads}
+
+
+def _token_totals(items, question):
+    groups = _threads_by_item(items)
+    shared = [thread for thread, ids in groups.items() if len(set(ids)) > 1]
+    wanted = [thread for thread in groups if thread not in set(shared)]
+    if not wanted:
+        return _blank(shared)
+    try:
+        loaded, connection = _open_tokens(question)
+    except _Closed:
+        print(UNREADABLE, file=sys.stderr)
+        return _blank([*shared, *wanted])
+    try:
+        folded = _folded_tokens(connection, loaded, wanted)
+    except _Schema:
+        print(SCHEMA, file=sys.stderr)
+        return _blank([*shared, *wanted])
+    totals = _blank(shared)
+    totals.update(folded)
+    return totals
+
+
+def _open_tokens(question):
+    try:
+        loaded = runpy.run_path(str(Path(__file__).resolve().parent.parent / "activity.py"))
+    except OSError:
+        raise _Closed() from None
+    try:
+        database = loaded["t3_database"](question.t3_home, os.environ, Path.home())
+        connection = loaded["open_t3"](database)
+    except (loaded["SourceError"], sqlite3.Error):
+        raise _Closed() from None
+    return loaded, connection
+
+
+def _folded_tokens(connection, loaded, wanted):
+    try:
+        _probe(connection)
+        provider_rows = _rows_in(connection, _provider_sql, wanted, loaded["BATCH"])
+        by_thread = {thread: [] for thread in wanted}
+        for thread_id, provider_id, driver, native in provider_rows:
+            if thread_id in by_thread:
+                by_thread[thread_id].append((provider_id, driver, native))
+        turn_ids = list(dict.fromkeys(
+            provider_id
+            for providers in by_thread.values()
+            for provider_id, driver, _native in providers
+            if DRIVERS.get(driver) == "turns" and _viable(providers)
+        ))
+        turn_rows = _rows_in(connection, _turn_sql, turn_ids, loaded["BATCH"]) if turn_ids else []
+    finally:
+        connection.close()
+    turns = {}
+    for row in turn_rows:
+        turns.setdefault(row[0], []).append(row[1:])
+    folded = {}
+    for thread, providers in by_thread.items():
+        folded[thread] = _ledger_totals(providers, turns)
+    return folded
+
+
+def _viable(providers):
+    return bool(providers) and all(DRIVERS.get(driver) in ("claude", "turns") for _provider, driver, _native in providers)
+
+
+def _ledger_totals(providers, turns):
+    if not _viable(providers):
+        return None
+    parts = []
+    for provider_id, driver, native in providers:
+        kind = DRIVERS.get(driver)
+        part = _claude_totals(native) if kind == "claude" else _turn_totals(turns.get(provider_id, ()))
+        if part is None:
+            return None
+        parts.append(part)
+    return _merge(parts)
+
+
+def _merge(parts):
+    merged = {}
+    for part in parts:
+        for name, counts in part.items():
+            merged[name] = _add(merged[name], counts) if name in merged else counts
+    return merged or None
+
+
+def _probe(connection):
+    try:
+        got = connection.execute("SELECT json_extract('{\"n\": 1}', '$.n')").fetchone()
+    except sqlite3.Error:
+        raise _Schema() from None
+    if got is None or got[0] != 1:
+        raise _Schema()
+    _require_table(
+        connection, PROVIDER_THREADS,
+        ("thread_id", "provider_thread_id", "driver", "payload_json"), "thread_id",
+    )
+    _require_table(connection, PROVIDER_TURNS, ("provider_thread_id", "payload_json"), "provider_thread_id")
+    _searches(connection, _provider_sql(1), ("x",))
+    _searches(connection, _turn_sql(1), ("x",))
+
+
+def _require_table(connection, table, columns, lead):
+    try:
+        found = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,),
+        ).fetchone()
+        present = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        indexes = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?", (table,),
+        ).fetchall()
+    except sqlite3.Error:
+        raise _Schema() from None
+    if found is None or any(column not in present for column in columns):
+        raise _Schema()
+    if not any(_leads(connection, name, lead) for (name,) in indexes):
+        raise _Schema()
+
+
+def _leads(connection, name, column):
+    if INDEX_NAME.fullmatch(name or "") is None:
+        return False
+    try:
+        info = connection.execute(f"PRAGMA index_info({name})").fetchall()
+    except sqlite3.Error:
+        raise _Schema() from None
+    ordered = sorted(info, key=lambda row: row[0])
+    return bool(ordered) and ordered[0][2] == column
+
+
+def _searches(connection, sql, params):
+    try:
+        plan = connection.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+    except sqlite3.Error:
+        raise _Schema() from None
+    detail = " ".join(str(row[3]) for row in plan if len(row) > 3)
+    if "SEARCH" not in detail or "SCAN" in detail:
+        raise _Schema()
+
+
+def _rows_in(connection, sql_of, ids, batch):
+    groups = [tuple(ids[start:start + batch]) for start in range(0, len(ids), batch)]
+    planned = [(sql_of(len(group)), group) for group in groups]
+    for sql, group in planned:
+        _searches(connection, sql, group)
+    found = []
+    for sql, group in planned:
+        try:
+            found.extend(connection.execute(sql, group).fetchall())
+        except sqlite3.Error:
+            raise _Schema() from None
+    return found
+
+
+def _marks(count):
+    return ", ".join("?" * count)
+
+
+def _provider_sql(count):
+    return (
+        "SELECT thread_id, provider_thread_id, driver, "
+        "json_extract(payload_json, '$.nativeThreadRef.nativeId') "
+        f"FROM {PROVIDER_THREADS} WHERE thread_id IN ({_marks(count)})"
+    )
+
+
+def _turn_sql(count):
+    extracts = ", ".join(f"json_extract(payload_json, '$.turnTokenUsage.{field}')" for field in TURN_FIELDS)
+    types = ", ".join(f"json_type(payload_json, '$.turnTokenUsage.{field}')" for field in TURN_FIELDS)
+    return (
+        f"SELECT provider_thread_id, {extracts}, {types} "
+        f"FROM {PROVIDER_TURNS} WHERE provider_thread_id IN ({_marks(count)})"
+    )
+
+
+def _turn_totals(rows):
+    if not rows:
+        return None
+    incoming = cache_read = cache_write = outgoing = 0
+    for row in rows:
+        status, values, kinds = row[0], row[1:6], row[6:12]
+        # json_extract turns JSON true into 1, so only a JSON integer counts.
+        if kinds[0] != "text" or status != "complete" or any(kind != "integer" for kind in kinds[1:]):
+            return None
+        if any(type(value) is not int or value < 0 for value in values):
+            return None
+        fresh, cached, created, output, _reasoning = values
+        # Claude input_tokens already excludes cache. T3 inputTokens includes it.
+        fresh -= cached + created
+        if fresh < 0:
+            return None
+        incoming += fresh
+        cache_read += cached
+        cache_write += created
+        outgoing += output
+    return {MODEL_MISSING: _Counts(incoming, cache_read, cache_write, outgoing)}
+
+
+def _claude_base():
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured is not None and configured.strip() != "":
+        return Path(configured)
+    return Path.home() / ".claude"
+
+
+def _contained(path, root):
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _claude_totals(native):
+    if not isinstance(native, str) or NATIVE_ID.fullmatch(native) is None:
+        return None
+    projects = _claude_base() / "projects"
+    try:
+        children = list(projects.iterdir()) if projects.is_dir() else []
+        sessions = [
+            child / f"{native}.jsonl"
+            for child in children
+            if child.is_dir() and (child / f"{native}.jsonl").is_file()
+        ]
+    except OSError:
+        return None
+    if len(sessions) != 1:
+        return None
+    session = sessions[0]
+    files = [session]
+    subagents = session.with_suffix("") / "subagents"
+    try:
+        if subagents.is_dir():
+            files.extend(sorted(
+                (path for path in subagents.iterdir() if path.is_file() and path.suffix == ".jsonl"),
+                key=lambda path: path.name,
+            ))
+    except OSError:
+        return None
+    if any(not _contained(path, projects) for path in files):
+        return None
+    try:
+        calls = [call for path in files for call in _read_log(path)]
+        kept = _dedupe(calls)
+    except _Bare:
+        return None
+    if not kept:
+        return None
+    totals = {}
+    for call in kept.values():
+        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing)
+        totals[call.model] = _add(totals[call.model], counts) if call.model in totals else counts
+    return totals
+
+
+def _read_log(path):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise _Bare() from None
+    calls = []
+    for line in text.splitlines():
+        if line.strip() == "":
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            raise _Bare() from None
+        call = _call_from(obj)
+        if call is not None:
+            calls.append(call)
+    return calls
+
+
+def _usage_count(usage, key, required):
+    if key not in usage:
+        return None if required else 0
+    value = usage[key]
+    if type(value) is not int or value < 0:
+        return None
+    return value
+
+
+def _call_from(obj):
+    if not isinstance(obj, dict):
+        return None
+    message = obj.get("message")
+    if not isinstance(message, dict):
+        return None
+    if obj.get("type") != "assistant" and message.get("role") != "assistant":
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    ident = message.get("id")
+    model = message.get("model")
+    incoming = _usage_count(usage, "input_tokens", True)
+    outgoing = _usage_count(usage, "output_tokens", True)
+    cache_read = _usage_count(usage, "cache_read_input_tokens", False)
+    cache_write = _usage_count(usage, "cache_creation_input_tokens", False)
+    if not isinstance(ident, str) or ident == "" or None in (incoming, outgoing, cache_read, cache_write):
+        raise _Bare()
+    if not isinstance(model, str):
+        model = ""
+    if MODEL_NAME.fullmatch(model) is None:
+        if (incoming, outgoing, cache_read, cache_write) == (0, 0, 0, 0):
+            return None
+        raise _Bare()
+    return _Call(ident, model, incoming, cache_read, cache_write, outgoing)
+
+
+def _dedupe(calls):
+    found = {}
+    for call in calls:
+        previous = found.get(call.ident)
+        if previous is None or call.outgoing > previous.outgoing:
+            found[call.ident] = call
+            continue
+        if call.outgoing == previous.outgoing and call != previous:
+            raise _Bare()
+    return found
+
+
+def _row_models(row, totals):
+    if totals is None:
+        return None
+    combined = {}
+    saw = False
+    for item in row.items:
+        for thread in dict.fromkeys(item.threads or ()):
+            saw = True
+            models = totals.get(thread)
+            if not models:
+                continue
+            for name, counts in models.items():
+                combined[name] = _add(combined[name], counts) if name in combined else counts
+    if not saw:
+        return None
+    if not combined:
+        return NOT_RECORDED
+    return tuple((name, combined[name]) for name in sorted(combined))
+
+
+def _dollars(counts, rate):
+    if not isinstance(rate, dict):
+        return None
+    amount = (
+        Decimal(counts.incoming) * rate["input"]
+        + Decimal(counts.cache_read) * rate["cache_read"]
+        + Decimal(counts.cache_write) * rate["cache_write"]
+        + Decimal(counts.outgoing) * rate["output"]
+    ) / MILLION
+    return f"{amount.quantize(PLACES, rounding=ROUND_HALF_EVEN):f}"
+
+
+def _model_line(name, counts, dollars):
+    line = (
+        f"  {name}  in {counts.incoming}  cache-read {counts.cache_read}  "
+        f"cache-write {counts.cache_write}  out {counts.outgoing}"
+    )
+    if dollars is not None:
+        line += f"  ${dollars}"
+    return line
+
+
+def _json_models(models, prices):
+    if models == NOT_RECORDED:
+        return NOT_RECORDED
+    body = []
+    for name, counts in models:
+        entry = {
+            "model": name,
+            "in": counts.incoming,
+            "cache_read": counts.cache_read,
+            "cache_write": counts.cache_write,
+            "out": counts.outgoing,
+        }
+        dollars = _dollars(counts, (prices or {}).get(name))
+        if dollars is not None:
+            entry["dollars"] = dollars
+        body.append(entry)
     return body

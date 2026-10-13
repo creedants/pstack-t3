@@ -1,0 +1,5 @@
+- `spend` prints wall time, rounds, send-backs, and threads from the store. It writes nothing.
+- `--tokens` adds token totals. Dollars appear only for models listed in the restaurant's `prices.json`. A missing token source prints `not recorded`.
+- The default command reads the store only. It does not open T3's database.
+- `t3/added/brigade/SKILL.md` is outside this lease and needs two sentences. `spend` prints wall time, rounds, send-backs, and threads from the store. `--tokens` adds token totals, and dollars appear only for models listed in the restaurant's `prices.json`.
+- `store.py` is outside this lease. Spend does not reuse the `next` read-only flag, so that message stays as it is.
