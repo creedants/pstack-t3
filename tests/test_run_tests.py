@@ -1405,7 +1405,7 @@ class RunTestsTest(unittest.TestCase):
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
 
-    def test_a_gate_exits_nonzero_when_a_part_result_is_not_success(self):
+    def test_a_gate_exits_nonzero_for_failure_cancelled_skipped_or_an_empty_part_result(self):
         # This starts a process because the check is an exit status.
         import yaml
         jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
