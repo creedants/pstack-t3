@@ -219,9 +219,12 @@ class CheckBriefCliTest(unittest.TestCase):
 
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
-        suffix = " Do not work from memory of the style."
-        self.assertTrue(body.endswith(suffix), body[-80:])
-        brief = f"{body[:-len(suffix)]}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        split = body.rfind(". ")
+        self.assertGreater(split, 0)
+        sentence = body[split + 2:]
+        self.assertTrue(sentence.endswith("."))
+        self.assertLess(len(sentence), len(body))
+        brief = f"{body[:-len(sentence)].rstrip()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_PERSONA)
 
