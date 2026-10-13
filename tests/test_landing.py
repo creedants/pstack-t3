@@ -139,6 +139,33 @@ HOLD_SCRIPT = (
     "    os.read(os.open(release, os.O_RDONLY), 1)\n"
 )
 
+# A child that runs land.main. Empty cap, grace, or maximum strings leave those constants alone.
+EXCLUSIVE_MAIN = (
+    "import sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "cap, grace, cap_max = sys.argv[2:5]\n"
+    "if cap:\n"
+    "    land.EXCLUSIVE_CAP = float(cap)\n"
+    "if grace:\n"
+    "    land.EXCLUSIVE_CAP_GRACE = float(grace)\n"
+    "if cap_max:\n"
+    "    land.EXCLUSIVE_CAP_MAX = float(cap_max)\n"
+    "sys.exit(land.main(sys.argv[5:]))\n"
+)
+
+# A command that forks one child in the same process group and writes both pids.
+GROUP_SLEEP = (
+    "import os, sys, time\n"
+    "from pathlib import Path\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    Path(sys.argv[2]).write_text(str(os.getpid()))\n"
+    "    time.sleep(3600)\n"
+    "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+    "time.sleep(3600)\n"
+)
+
 # A waiter with a shortened report interval. It runs its wrapped command once it holds a slot.
 WAIT_SCRIPT = (
     "import sys\n"
@@ -4037,6 +4064,57 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertTrue(ready.exists(), f"{kind} holder did not take its slot")
         return process
 
+    def exclusive_args(self, argv, cap=None, grace=None, cap_max=None):
+        return [sys.executable, "-c", EXCLUSIVE_MAIN, str(SCRIPT.parent),
+                "" if cap is None else str(cap),
+                "" if grace is None else str(grace),
+                "" if cap_max is None else str(cap_max),
+                *argv]
+
+    def run_exclusive(self, argv, cap=None, grace=None, cap_max=None, timeout=20):
+        return subprocess.run(
+            self.exclusive_args(argv, cap, grace, cap_max),
+            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=timeout)
+
+    def popen_exclusive(self, argv, cap=None, grace=None, cap_max=None):
+        return subprocess.Popen(
+            self.exclusive_args(argv, cap, grace, cap_max),
+            cwd=self.base, env=self.slot_env(), start_new_session=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def assert_slots_free(self):
+        directory = self.base / "state/pstack-t3/governor"
+        for name in ("landing-0", "worker-0"):
+            descriptor = os.open(directory / name, os.O_RDWR)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+        holds = directory / "holds"
+        self.assertFalse(holds.exists() and any(holds.iterdir()))
+
+    def assert_dead(self, pid):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        self.fail(f"pid {pid} is still running")
+
+    def assert_worker_holder_keeps_the_slot(self, holder):
+        self.assertIsNone(holder.poll())
+        record = json.loads((land.governor_dir() / "holds" / "worker-0").read_text())
+        self.assertEqual(record["pid"], holder.pid)
+        self.assertEqual(record["command"], "make test")
+        descriptor = os.open(land.governor_dir() / "worker-0", os.O_RDWR)
+        try:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
+
     def wait_for_line(self, path, timeout=20):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -4136,6 +4214,322 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertFalse(releaser.is_alive())
         self.assertTrue(attempted.is_set(), "the waiter never printed a wait line")
         self.assertEqual(body, ["ran"])
+
+    def test_an_exclusive_command_that_outlives_its_cap_is_stopped(self):
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.05, timeout=10)
+        self.assertEqual(result.returncode, 124)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            "land: stopped the command at the 0.4s exclusive cap. "
+            "--for sets a longer cap and needs --reason past 0.4s.\n")
+        self.assert_slots_free()
+
+    def test_an_exclusive_cap_stops_a_child_still_in_the_commands_process_group(self):
+        self.governor(1)
+        parent_path, child_path = self.base / "parent.pid", self.base / "child.pid"
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", GROUP_SLEEP, str(parent_path), str(child_path)],
+            cap=1, grace=0.05, timeout=10)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("1s exclusive cap", result.stderr)
+        self.assertIn("--for", result.stderr)
+        self.assert_dead(int(parent_path.read_text()))
+        self.assert_dead(int(child_path.read_text()))
+        self.assert_slots_free()
+
+    def test_an_exclusive_command_that_ignores_sigterm_is_killed_after_the_grace(self):
+        self.governor(1)
+        log_path = self.base / "term-log"
+        command = (
+            "import signal, sys, time\n"
+            "from pathlib import Path\n"
+            "log = Path(sys.argv[1])\n"
+            "def note(word):\n"
+            "    handle = log.open('a')\n"
+            "    handle.write(f'{word} {time.time()}\\n')\n"
+            "    handle.close()\n"
+            "def on_term(signum, frame):\n"
+            "    note('term')\n"
+            "signal.signal(signal.SIGTERM, on_term)\n"
+            "note('start')\n"
+            "time.sleep(3600)\n"
+        )
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", command, str(log_path)],
+            cap=0.6, grace=0.3, timeout=4)
+        self.assertEqual(result.returncode, 124)
+        lines = log_path.read_text().splitlines()
+        self.assertEqual([line.split()[0] for line in lines], ["start", "term"])
+        start, term = (float(line.split()[1]) for line in lines)
+        self.assertGreater(term - start, 0.2)
+        self.assertGreater(time.time() - term, 0.12)
+        self.assert_slots_free()
+
+    def test_an_exclusive_command_that_finishes_before_the_cap_keeps_its_status_and_output(self):
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c",
+             "import sys; print('out'); print('err', file=sys.stderr); raise SystemExit(7)"],
+            cap=2, grace=0.05, timeout=10)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, "out\n")
+        self.assertEqual(result.stderr, "err\n")
+        self.assert_slots_free()
+
+    def test_an_exclusive_cap_starts_when_the_hold_takes_the_slots(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="make test")
+        release = self.base / "holder-worker" / "release"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--for", "0.5", "--", sys.executable, "-c",
+             "import time; time.sleep(0.2); print('ok', flush=True)"])
+        try:
+            time.sleep(0.8)
+            self.assertIsNone(process.poll(), "the exclusive caller exited while the slots were still busy")
+            with open(release, "w") as handle:
+                handle.write("x")
+            stdout, stderr = process.communicate(timeout=10)
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+            if holder.poll() is None:
+                holder.wait(timeout=20)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stdout, "ok\n")
+        self.assertNotIn("exclusive cap", stderr)
+        self.assert_slots_free()
+
+    def test_bad_exclusive_flags_are_refused_before_a_slot_is_taken(self):
+        self.governor(1)
+        holder = self.start_holder(kind="worker", command="make test")
+        refused = "land: --for must be a positive number of seconds\n"
+        only = "land: --for and --reason are only for slot --exclusive\n"
+        needs = "land: --for over 600 seconds needs --reason\n"
+        cases = [
+            (["slot", "--exclusive", "--for", "601", "--", "true"], needs, "--for"),
+            (["slot", "--exclusive", "--for", "0", "--", "true"], refused, "--for"),
+            (["slot", "--exclusive", "--for", "-2", "--", "true"], refused, "--for"),
+            (["slot", "--exclusive", "--for", "nope", "--", "true"], refused, "--for"),
+            (["slot", "--exclusive", "--for", "inf", "--", "true"], refused, "--for"),
+            (["slot", "--exclusive", "--for", "7201", "--", "true"],
+             "land: --for cannot pass 7200 seconds\n", "--for"),
+            (["slot", "--exclusive", "--for", "7200", "--", "true"], needs, "--for"),
+            (["slot", "--exclusive", "--for", "601", "--reason", "\n\x01", "--", "true"], needs, "--reason"),
+            (["slot", "--for", "10", "--", "true"], only, "--for"),
+            (["slot", "--reason", "because", "--", "true"], only, "--reason"),
+        ]
+        try:
+            for argv, stderr, flag in cases:
+                with self.subTest(argv=argv):
+                    result = self.run_exclusive(argv, timeout=2)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stderr, stderr)
+                    self.assertIn(flag, result.stderr)
+                    self.assert_worker_holder_keeps_the_slot(holder)
+            with self.subTest(argv="missing command"):
+                result = self.run_exclusive(["slot", "--exclusive", "--for", "10"], timeout=2)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stderr, "land: slot needs a command after --\n")
+                self.assert_worker_holder_keeps_the_slot(holder)
+        finally:
+            if holder.poll() is None:
+                with open(self.base / "holder-worker" / "release", "w") as handle:
+                    handle.write("x")
+                holder.wait(timeout=20)
+
+    def test_an_exclusive_cap_at_the_default_needs_no_reason_and_the_maximum_needs_one(self):
+        self.governor(1)
+        plain = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "0.4", "--", sys.executable, "-c", "print('ok')"],
+            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+        self.assertEqual((plain.returncode, plain.stdout), (0, "ok\n"), plain.stderr)
+        self.assertNotIn("exclusive cap", plain.stderr)
+        longest = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "0.8", "--reason", "cold pricing bench", "--",
+             sys.executable, "-c", "print('max')"],
+            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+        self.assertEqual((longest.returncode, longest.stdout), (0, "max\n"), longest.stderr)
+        shorter = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "0.2", "--reason", "shorter cap", "--",
+             sys.executable, "-c", "print('short')"],
+            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+        self.assertEqual((shorter.returncode, shorter.stdout), (0, "short\n"), shorter.stderr)
+        named = self.run_exclusive(
+            ["slot", "--exclusive", "--reason", "cold pricing bench", "--",
+             sys.executable, "-c", "print('why')"],
+            cap=2, grace=0.05, timeout=10)
+        self.assertEqual((named.returncode, named.stdout), (0, "why\n"), named.stderr)
+
+    def test_an_exclusive_holder_record_and_its_wait_line_carry_the_cap_and_the_reason(self):
+        self.governor(1)
+        directory = self.base / "capped"
+        directory.mkdir()
+        ready, release = directory / "ready", directory / "release"
+        os.mkfifo(release)
+        command = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "Path(sys.argv[1]).touch()\n"
+            "os.read(os.open(sys.argv[2], os.O_RDONLY), 1)\n"
+        )
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--repo", str(self.work), "--for", "30", "--reason", "cold pricing bench", "--",
+             sys.executable, "-c", command, str(ready), str(release)])
+        gate = None
+        try:
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.01)
+            detail = process.stderr.read() if process.poll() is not None else "the hold did not start"
+            self.assertTrue(ready.exists(), detail)
+            record = json.loads(land._hold_path("landing-0").read_text())
+            self.assertEqual(record["kind"], "exclusive")
+            self.assertEqual(record["pid"], process.pid)
+            self.assertEqual(record["cap"], 30)
+            self.assertEqual(record["reason"], "cold pricing bench")
+            worker = json.loads(land._hold_path("worker-0").read_text())
+            self.assertEqual((worker["cap"], worker["reason"]), (30, "cold pricing bench"))
+            gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+            code, stdout, stderr, line = self.run_waiter(WAIT_SCRIPT, gate, after="0.2")
+            process.wait(timeout=10)
+        finally:
+            if gate is not None:
+                os.close(gate)
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(stdout, "ran\n")
+        self.assertIn(f"exclusive {self.work} for ", line)
+        self.assertIn("left of 30s", line)
+        self.assertIn(", cold pricing bench: ", line)
+        self.assertIn(f": {record['command']}\n", stderr)
+        self.assertNotIn("\n", line)
+        self.assert_slots_free()
+
+    def test_an_old_exclusive_record_with_no_cap_prints_as_it_does_today(self):
+        self.governor(1)
+        holds = land.governor_dir() / "holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        path = holds / "landing-0"
+        payload = {
+            "kind": "exclusive", "pid": os.getpid(), "repo": str(self.work),
+            "started": time.time(), "command": "bench --all",
+        }
+        self.assertNotIn("cap", payload)
+        self.assertNotIn("reason", payload)
+        writer = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+        fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            path.write_text(json.dumps(payload))
+            holder = land._read_holder(path)
+            self.assertIsNone(holder.cap)
+            self.assertIsNone(holder.reason)
+            line = land._format_wait(15, land._live_holders(["landing-0"]))
+        finally:
+            os.close(writer)
+        self.assertRegex(
+            line,
+            rf"^land: waited 15s for a slot; exclusive {re.escape(str(self.work))} for \d+s: bench --all$")
+        self.assertNotIn("left of", line)
+
+    def test_an_exclusive_reason_drops_a_newline_and_a_control_character(self):
+        self.governor(1)
+        directory = self.base / "reason"
+        directory.mkdir()
+        ready, release = directory / "ready", directory / "release"
+        os.mkfifo(release)
+        command = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "Path(sys.argv[1]).touch()\n"
+            "os.read(os.open(sys.argv[2], os.O_RDONLY), 1)\n"
+        )
+        raw = ("n" * 40) + "\n" + ("c" * 40) + "\x01\t" + ("z" * 40)
+        expected = ("n" * 40) + ("c" * 40)
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--for", "30", "--reason", raw, "--",
+             sys.executable, "-c", command, str(ready), str(release)])
+        gate = None
+        try:
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), "the hold did not start")
+            record = json.loads(land._hold_path("landing-0").read_text())
+            self.assertEqual(record["reason"], expected)
+            self.assertNotIn("\n", record["reason"])
+            self.assertNotIn("z", record["reason"])
+            gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+            code, stdout, _, line = self.run_waiter(WAIT_SCRIPT, gate, after="0.2")
+            process.wait(timeout=10)
+        finally:
+            if gate is not None:
+                os.close(gate)
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "ran\n")
+        self.assertIn(expected, line)
+        self.assertNotIn("z" * 40, line)
+        self.assertNotIn("\n", line)
+        self.assertNotIn("n" * 40 + " ", line)
+
+    def test_a_direct_exclusive_slot_record_has_no_cap(self):
+        self.governor(1)
+        with self.no_slot():
+            with land.exclusive_slot(repo=str(self.work), command="bench"):
+                record = land._read_holder(land._hold_path("landing-0"))
+                self.assertEqual(record.kind, "exclusive")
+                self.assertIsNone(record.cap)
+                self.assertIsNone(record.reason)
+                line = land._format_wait(15, [record])
+        self.assertNotIn("left of", line)
+        self.assertIn(": bench", line)
+
+    def test_sigterm_to_an_exclusive_land_py_stops_the_group_and_clears_the_record(self):
+        self.governor(1)
+        parent_path, child_path = self.base / "sig-parent.pid", self.base / "sig-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", GROUP_SLEEP, str(parent_path), str(child_path)],
+            cap=30, grace=0.2)
+        try:
+            deadline = time.monotonic() + 10
+            while not (parent_path.exists() and child_path.exists()) and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.01)
+            self.assertTrue(child_path.exists(), "the command group did not start")
+            os.kill(process.pid, signal.SIGTERM)
+            code = process.wait(timeout=10)
+            stderr = process.stderr.read()
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual(code, 143)
+        self.assertNotIn("exclusive cap", stderr)
+        self.assert_dead(int(parent_path.read_text()))
+        self.assert_dead(int(child_path.read_text()))
+        self.assert_slots_free()
 
     def test_a_record_whose_holder_is_gone_is_not_shown_as_holding(self):
         self.governor(1)
@@ -4300,6 +4694,10 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(crlf["command"], "x" * 60 + " " * 10)
         self.assertNotIn("SECRET", crlf["command"])
         self.assertEqual(set(record), set(land._Holder._fields))
+        self.assertIsNone(record["cap"])
+        self.assertIsNone(record["reason"])
+        self.assertIsNone(crlf["cap"])
+        self.assertIsNone(crlf["reason"])
 
     def test_a_reporting_probe_cannot_let_a_later_landing_caller_pass_an_earlier_exclusive(self):
         slots = SlotCallers(self, 1)
@@ -4461,6 +4859,8 @@ os.execv({real!r}, [{real!r}, *args])
             with land.slot("worker", repo=str(self.work), command="make test"):
                 record = land._read_holder(land._hold_path("worker-0"))
                 self.assertEqual((record.kind, record.repo, record.command), ("worker", str(self.work), "make test"))
+                self.assertIsNone(record.cap)
+                self.assertIsNone(record.reason)
                 self.assertTrue(land._hold_path("worker-0").exists())
             self.assertFalse(land._hold_path("worker-0").exists())
 

@@ -218,12 +218,17 @@ TICKET_KINDS = {b"w": "worker", b"l": "landing", b"e": "exclusive"}
 # A waiter reports why it waits after REPORT_AFTER seconds, then again every REPORT_EVERY seconds.
 REPORT_AFTER = 15
 REPORT_EVERY = 60
+EXCLUSIVE_CAP = 600
+EXCLUSIVE_CAP_GRACE = 5
+EXCLUSIVE_CAP_MAX = 7200
+EXCLUSIVE_CAP_STATUS = 124
+EXCLUSIVE_REASON_MAX = 80
 
 # A holder record names its holder. kind is one of the three kinds or None. pid identifies
 # records for dedupe and cleanup. started is a wall-clock float. command is a rendering of
 # the wrapped command with at most 80 characters.
-_Holder = namedtuple("_Holder", "kind pid repo started command")
-_UNKNOWN = _Holder(None, None, None, None, None)
+_Holder = namedtuple("_Holder", "kind pid repo started command cap reason")
+_UNKNOWN = _Holder(None, None, None, None, None, None, None)
 
 
 def _slot_names(kind, slots):
@@ -377,6 +382,55 @@ def _finite(value):
         return False
 
 
+def _short_reason(text):
+    """One line of reason text, or None.
+
+    Keeps characters for which str.isprintable() is true, strips the ends,
+    and cuts to EXCLUSIVE_REASON_MAX. Reads that limit at call time.
+    Tabs, newlines, and other non-printable characters are deleted.
+    """
+    if not isinstance(text, str):
+        return None
+    kept = "".join(character for character in text if character.isprintable()).strip()
+    return kept[:EXCLUSIVE_REASON_MAX] or None
+
+
+def _cap_seconds(value):
+    """A positive finite cap in seconds, or None. A bool is not a cap."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+def _parse_exclusive_cap(text, reason):
+    """Return the exclusive cap in seconds and its short reason, or raise LandError.
+
+    Reads EXCLUSIVE_CAP, EXCLUSIVE_CAP_MAX, and EXCLUSIVE_REASON_MAX at call time.
+    A refusal takes no slot.
+    """
+    if text is None:
+        seconds = float(EXCLUSIVE_CAP)
+    else:
+        try:
+            seconds = float(text)
+        except (TypeError, ValueError):
+            raise LandError("--for must be a positive number of seconds") from None
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise LandError("--for must be a positive number of seconds")
+    if seconds > EXCLUSIVE_CAP_MAX:
+        raise LandError(f"--for cannot pass {EXCLUSIVE_CAP_MAX:g} seconds")
+    short = _short_reason(reason)
+    if seconds > EXCLUSIVE_CAP and short is None:
+        raise LandError(f"--for over {EXCLUSIVE_CAP:g} seconds needs --reason")
+    return seconds, short
+
+
 def _read_holder(path):
     """The holder a record names, with each unreadable field as unknown. A missing, empty, or malformed record is unknown."""
     try:
@@ -385,7 +439,7 @@ def _read_holder(path):
         return _UNKNOWN
     if not isinstance(record, dict):
         return _UNKNOWN
-    kind, pid, repo, started, command = (record.get(field) for field in _Holder._fields)
+    kind, pid, repo, started, command, cap, reason = (record.get(field) for field in _Holder._fields)
     if not (isinstance(command, str) and command and len(command) <= 80
             and "\n" not in command and "\r" not in command):
         command = None
@@ -395,6 +449,8 @@ def _read_holder(path):
         repo if isinstance(repo, str) and repo else None,
         started if _finite(started) else None,
         command,
+        _cap_seconds(cap),
+        _short_reason(reason),
     )
 
 
@@ -434,12 +490,16 @@ def _busy_names(handles, names):
     return [name for name in names if _slot_busy(handles, name)]
 
 
-def _publish(kind, handles, taken, repo, command):
+def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     """Write one holder record for each slot just taken, before the turn mutex unlocks.
 
     Returns the locked record descriptors, one per slot whose write succeeded.
+    Stores cap and reason only when kind is exclusive.
     """
-    holder = _Holder(kind, os.getpid(), _repo_text(repo), time.time(), _short_command(command))
+    if kind != "exclusive":
+        cap = None
+        reason = None
+    holder = _Holder(kind, os.getpid(), _repo_text(repo), time.time(), _short_command(command), cap, reason)
     records = []
     for name, handle in handles.items():
         if handle not in taken:
@@ -485,19 +545,64 @@ def _held_for(holder):
     return f"{int(max(0, time.time() - holder.started))}s"
 
 
+def _span(seconds):
+    """A duration for a wait line. Whole minutes when seconds is a positive multiple of 60."""
+    if seconds > 0 and seconds % 60 == 0:
+        return f"{seconds / 60:g}m"
+    if float(seconds).is_integer():
+        return f"{int(seconds)}s"
+    return f"{seconds:g}s"
+
+
+def _cap_clause(holder):
+    """The wait-line cap phrase for an exclusive holder, or None."""
+    if holder.kind != "exclusive":
+        return None
+    cap = _cap_seconds(holder.cap)
+    if cap is None:
+        return None
+    cap_text = _span(cap)
+    if not _finite(holder.started):
+        return f"cap {cap_text}"
+    left = max(0.0, cap - (time.time() - holder.started))
+    return f"{_span(left)} left of {cap_text}"
+
+
+def _cap_stopped_line(seconds):
+    """The one stderr line for a cap stop. Reads EXCLUSIVE_CAP at call time."""
+    return (f"land: stopped the command at the {seconds:g}s exclusive cap. "
+            f"--for sets a longer cap and needs --reason past {EXCLUSIVE_CAP:g}s.")
+
+
+def _report_cap(seconds):
+    """Print the cap line. An OSError or ValueError from print is ignored."""
+    line = _cap_stopped_line(seconds)
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
 def _format_wait(elapsed, holders):
     """One line naming each proven holder by kind, repository, hold duration, and short command.
 
     A holder with no proven record reads as unknown, and so does each field its record
-    does not carry. Zero holders produce no holder text.
+    does not carry. Zero holders produce no holder text. An exclusive holder with a cap
+    names the time left and, when the record has one, the reason.
     """
     named = []
     for holder in holders:
         if holder == _UNKNOWN:
             named.append("unknown")
-        else:
-            named.append(f"{holder.kind or 'unknown'} {holder.repo or 'unknown'} for {_held_for(holder)}: "
-                         f"{holder.command or 'unknown'}")
+            continue
+        clause = _cap_clause(holder)
+        extra = ""
+        if clause:
+            extra = f", {clause}"
+            if holder.reason:
+                extra += f", {holder.reason}"
+        named.append(f"{holder.kind or 'unknown'} {holder.repo or 'unknown'} for {_held_for(holder)}{extra}: "
+                     f"{holder.command or 'unknown'}")
     if not named:
         return f"land: waited {int(elapsed)}s for a slot"
     return f"land: waited {int(elapsed)}s for a slot; " + "; ".join(named)
@@ -514,9 +619,9 @@ def _raise_exit(signum, frame):
 
 
 @contextlib.contextmanager
-def _held(kind, repo, command):
+def _held(kind, repo, command, cap=None, reason=None):
     """Hold the slots kind needs, publish this holder, and clear the records while the flocks are still held."""
-    held, records = _admit(kind, repo, command)
+    held, records = _admit(kind, repo, command, cap, reason)
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
     for signum in previous:
         signal.signal(signum, _raise_exit)
@@ -531,7 +636,7 @@ def _held(kind, repo, command):
         _release_records(records)
 
 
-def _admit(kind, repo=None, command=None):
+def _admit(kind, repo=None, command=None, cap=None, reason=None):
     directory = governor_dir()
     directory.mkdir(parents=True, exist_ok=True)
     slots = governor_slots()
@@ -556,7 +661,7 @@ def _admit(kind, repo=None, command=None):
             if taken is None:
                 busy = _busy_names(handles, _slot_names(kind, slots))
             else:
-                records = _publish(kind, handles, taken, repo, command)
+                records = _publish(kind, handles, taken, repo, command, cap, reason)
             if taken is not None and ticket is not None:
                 _ofd_unlock(place, TURN_PLACE + ticket)
             _ofd_unlock(gate, TURN_MUTEX)
@@ -582,18 +687,83 @@ def _admit(kind, repo=None, command=None):
 
 
 @contextlib.contextmanager
-def exclusive_slot(repo=None, command=None):
+def exclusive_slot(repo=None, command=None, cap=None, reason=None):
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
     It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
     A later conflicting caller that waits on this turn file leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
-    with _held("exclusive", repo, command):
+    with _held("exclusive", repo, command, cap, reason):
         os.environ["LAND_SLOT"] = "exclusive"
         try:
             yield
         finally:
             os.environ.pop("LAND_SLOT", None)
+
+
+_real_sleep = time.sleep
+
+
+def exclusive_command(command, repo, for_text, reason_text):
+    """Hold every slot, run command, and stop its session at the cap.
+
+    command is an argv list. for_text and reason_text are the raw flag strings, or None.
+    Returns the command's status, or EXCLUSIVE_CAP_STATUS.
+    """
+    seconds, reason = _parse_exclusive_cap(for_text, reason_text)
+
+    def wait_with_real_sleep(process, timeout):
+        current = time.sleep
+        time.sleep = _real_sleep
+        try:
+            return process.wait(timeout=timeout)
+        finally:
+            time.sleep = current
+
+    def stop_group(process):
+        if process.returncode is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            process.wait()
+            return
+        try:
+            wait_with_real_sleep(process, EXCLUSIVE_CAP_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+        except BaseException:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
+        else:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+    with exclusive_slot(repo=repo, command=" ".join(command), cap=seconds, reason=reason):
+        origin = time.monotonic()
+        process = subprocess.Popen(command, start_new_session=True)
+        try:
+            if hasattr(process, "_sigint_wait_secs"):
+                process._sigint_wait_secs = 0  # CPython waits 0.25s on SIGINT after setsid, and the child did not see that signal.
+            remaining = seconds - (time.monotonic() - origin)
+            try:
+                wait_with_real_sleep(process, max(0.0, remaining))
+            except subprocess.TimeoutExpired:
+                stop_group(process)
+                _report_cap(seconds)
+                return EXCLUSIVE_CAP_STATUS
+            return process.returncode
+        finally:
+            if process.returncode is None:
+                stop_group(process)
 
 
 @contextlib.contextmanager
@@ -2681,6 +2851,11 @@ def parser():
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
+    p.add_argument("--for", dest="slot_for", metavar="SECONDS", default=None,
+                   help=f"cap this exclusive hold at SECONDS. The default is {EXCLUSIVE_CAP:g}. "
+                        f"The maximum is {EXCLUSIVE_CAP_MAX:g}. A value over the default needs --reason")
+    p.add_argument("--reason", dest="slot_reason", metavar="TEXT", default=None,
+                   help="why this exclusive hold may pass the default cap. Waiters see it")
     p.add_argument("--repo", dest="slot_repo", metavar="REPO", default=None,
                    help="the repository to name in the holder record (default: current directory)")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
@@ -2693,8 +2868,12 @@ def run(argv):
         command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
         if not command:
             raise LandError("slot needs a command after --")
-        holder = (exclusive_slot if args.exclusive else slot)
-        with holder(repo=args.slot_repo or args.repo, command=" ".join(command)):
+        if args.exclusive:
+            return None, exclusive_command(
+                command, args.slot_repo or args.repo, args.slot_for, args.slot_reason)
+        if args.slot_for is not None or args.slot_reason is not None:
+            raise LandError("--for and --reason are only for slot --exclusive")
+        with slot(repo=args.slot_repo or args.repo, command=" ".join(command)):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
