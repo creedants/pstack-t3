@@ -6,18 +6,132 @@ on:
   pull_request:
 
 jobs:
-  test:
+  part_310_1:
+    name: part (3.10, 1/4)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.10"
       - run: pip install pyyaml
-      - run: python3 scripts/run_tests.py
+      - run: python3 scripts/run_tests.py --part 1/4
+
+  part_310_2:
+    name: part (3.10, 2/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 2/4
+
+  part_310_3:
+    name: part (3.10, 3/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 3/4
+
+  part_310_4:
+    name: part (3.10, 4/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 4/4
+
+  part_312_1:
+    name: part (3.12, 1/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 1/4
+
+  part_312_2:
+    name: part (3.12, 2/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 2/4
+
+  part_312_3:
+    name: part (3.12, 3/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 3/4
+
+  part_312_4:
+    name: part (3.12, 4/4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python3 scripts/run_tests.py --part 4/4
+
+  test_310:
+    name: test (3.10)
+    runs-on: ubuntu-latest
+    needs: [part_310_1, part_310_2, part_310_3, part_310_4]
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - run: pip install pyyaml
+      - run: |
+          test "${{ needs.part_310_1.result }}" = success
+          test "${{ needs.part_310_2.result }}" = success
+          test "${{ needs.part_310_3.result }}" = success
+          test "${{ needs.part_310_4.result }}" = success
+      - name: Generated skills match the sources
+        run: |
+          python3 scripts/build.py
+          git diff --exit-code -- skills docs/skills.md
+          test -z "$(git status --porcelain -- skills docs/skills.md)"
+
+  test_312:
+    name: test (3.12)
+    runs-on: ubuntu-latest
+    needs: [part_312_1, part_312_2, part_312_3, part_312_4]
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: |
+          test "${{ needs.part_312_1.result }}" = success
+          test "${{ needs.part_312_2.result }}" = success
+          test "${{ needs.part_312_3.result }}" = success
+          test "${{ needs.part_312_4.result }}" = success
       - name: Generated skills match the sources
         run: |
           python3 scripts/build.py

@@ -1352,6 +1352,59 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(empty.returncode, 2, empty.stderr)
         self.assertIn("part 2/2 has no test", empty.stderr)
 
+    def test_ci_runs_eight_part_jobs_and_two_gates(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        try:
+            import yaml
+        except ImportError:
+            self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4]", text)
+            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4]", text)
+            self.assertEqual(text.count("if: always()"), 2)
+            for index in range(1, 5):
+                self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
+            return
+        jobs = yaml.safe_load(text)["jobs"]
+        self.assertEqual(list(jobs), [
+            "part_310_1", "part_310_2", "part_310_3", "part_310_4",
+            "part_312_1", "part_312_2", "part_312_3", "part_312_4",
+            "test_310", "test_312",
+        ])
+        for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
+            for index in range(1, 5):
+                job = jobs[f"{prefix}_{index}"]
+                self.assertEqual(job["name"], f"part ({version}, {index}/4)")
+                self.assertEqual(job["runs-on"], "ubuntu-latest")
+                self.assertNotIn("if", job)
+                self.assertNotIn("strategy", job)
+                setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
+                self.assertEqual(setup["with"]["python-version"], version)
+                self.assertIsInstance(setup["with"]["python-version"], str)
+                self.assertEqual(job["steps"][0]["uses"], "actions/checkout@v7")
+                self.assertEqual([step["run"] for step in job["steps"] if "run" in step],
+                                 ["pip install pyyaml", f"python3 scripts/run_tests.py --part {index}/4"])
+                self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in job["steps"]))
+        self.assertNotIn("strategy:", text)
+        self.assertNotIn("fail-fast", text)
+        for version, gate, prefix in (("3.10", "test_310", "part_310"), ("3.12", "test_312", "part_312")):
+            job = jobs[gate]
+            self.assertEqual(job["name"], f"test ({version})")
+            self.assertEqual(job["if"], "always()")
+            self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
+            self.assertEqual(job["runs-on"], "ubuntu-latest")
+            setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
+            self.assertEqual(setup["with"]["python-version"], version)
+            self.assertIsInstance(setup["with"]["python-version"], str)
+            check = next(step["run"] for step in job["steps"] if step.get("name") != "Generated skills match the sources" and "needs." in step.get("run", ""))
+            for index in range(1, 5):
+                self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = success', check)
+            skill = next(step for step in job["steps"] if step.get("name") == "Generated skills match the sources")
+            self.assertEqual(skill["run"], "python3 scripts/build.py\n"
+                             "git diff --exit-code -- skills docs/skills.md\n"
+                             "test -z \"$(git status --porcelain -- skills docs/skills.md)\"\n")
+        named = [job_id for job_id, job in jobs.items()
+                 if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
+        self.assertEqual(named, ["test_310", "test_312"])
+
 
 class BuildShardsTest(unittest.TestCase):
     def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):
