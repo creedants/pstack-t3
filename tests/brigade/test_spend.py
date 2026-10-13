@@ -9,6 +9,7 @@ from .support import (
     setUpModule,
     BrigadeTest,
     SCRIPT,
+    call,
     json,
     subprocess,
     sys,
@@ -618,3 +619,79 @@ class SpendTest(BrigadeTest):
         )
         self.assertEqual(stderr.getvalue(), "")
         self.assertTrue(database.is_file())
+
+    def test_missing_reasoning_stays_missing_through_the_sum_and_a_recorded_zero_stays_zero(self):
+        space = runpy.run_path(str(SCRIPT))["spend_text"].__globals__
+        counts = space["_Counts"]
+        merge = space["_merge"]
+        line = space["_model_line"]
+        rendered = space["_json_models"]
+        cases = (
+            (None, None, None, "not recorded", "not recorded"),
+            (None, 0, None, "not recorded", "not recorded"),
+            (None, 11, None, "not recorded", "not recorded"),
+            (0, None, None, "not recorded", "not recorded"),
+            (0, 0, 0, "0", 0),
+            (0, 11, 11, "11", 11),
+            (7, None, None, "not recorded", "not recorded"),
+            (7, 0, 7, "7", 7),
+            (7, 11, 18, "18", 18),
+        )
+        for left, right, summed, text, json_reasoning in cases:
+            with self.subTest(left=left, right=right):
+                got = merge([
+                    {"m": counts(1, 2, 3, 4, left)},
+                    {"m": counts(1, 2, 3, 4, right)},
+                ])["m"]
+                self.assertEqual(
+                    (got.reasoning, got.incoming, got.cache_read, got.cache_write, got.outgoing),
+                    (summed, 2, 4, 6, 8),
+                )
+                self.assertEqual(
+                    line("m", got, None),
+                    f"  m  in 2  cache-read 4  cache-write 6  out 8  reasoning {text}",
+                )
+                self.assertEqual(rendered((("m", got),), {}), [{
+                    "model": "m", "in": 2, "cache_read": 4, "cache_write": 6, "out": 8,
+                    "reasoning": json_reasoning,
+                }])
+
+    def test_an_invalid_model_name_stays_off_both_streams(self):
+        native = "sessHidden"
+        model = "bad model name"
+        content = "hidden model body"
+        ident = "msgHidden9"
+        self.fill(
+            [self.dish()],
+            threads=[self.ledger(seat="claudeAgent/claude-opus-4-6")],
+            logs=[self.close()],
+        )
+        claude = self.write_claude(native, [
+            self.assistant(ident, model, 10, 4, content=content),
+            self.assistant("msgLater41", "claude-opus-4-6", 41, 43, cache_read=17, cache_write=19),
+        ])
+        base = self.database([
+            self.provider("ledger-1", "prov-1", "claudeAgent", native, provider_session_id="native-session-sentinel"),
+        ])
+        argv = ["--store", str(self.store), "--at", str(self.at), "spend", "--tokens", "--t3-home", str(base)]
+        env = self.token_env(claude)
+        outcome = call(self, SCRIPT, argv, env=env)
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stderr_text(), "")
+        self.assertEqual(
+            outcome.stdout_text(),
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  not recorded\n"
+            "threads without a token source 1\n",
+        )
+        json_outcome = call(self, SCRIPT, [*argv, "--json"], env=env)
+        self.assertEqual(json_outcome.code, 0, json_outcome.stdout_text() + json_outcome.stderr_text())
+        self.assertEqual(json_outcome.stderr_text(), "")
+        report = json.loads(json_outcome.stdout_text())
+        self.assertEqual(report["rows"][0]["models"], "not recorded")
+        self.assertEqual(report["threads_without_a_token_source"], 1)
+        for secret in (model, content, ident, native, "native-session-sentinel", "in 41", "out 43"):
+            self.assertNotIn(secret, outcome.stdout_text())
+            self.assertNotIn(secret, outcome.stderr_text())
+            self.assertNotIn(secret, json_outcome.stdout_text())
+            self.assertNotIn(secret, json_outcome.stderr_text())
