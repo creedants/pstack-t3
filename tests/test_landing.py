@@ -4580,6 +4580,91 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual([path.name for path in tickets.iterdir()], [])
         self.assertEqual(lock.stat().st_nlink, 1)
 
+    def test_a_sigkill_waiter_under_umask_0o444_does_not_stop_later_callers(self):
+        """The waiter is its own process so the test can set that process's umask and kill it with SIGKILL."""
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os, sys\n"
+             "sys.path.insert(0, sys.argv[1])\n"
+             "import land\n"
+             "os.umask(0o444)\n"
+             "sys.exit(land.main(['slot', '--', 'true']))\n",
+             str(SCRIPT.parent)],
+            env=slots.env, stderr=subprocess.PIPE, start_new_session=True)
+
+        def stop():
+            if waiter.poll() is None:
+                os.kill(waiter.pid, signal.SIGKILL)
+                waiter.wait(timeout=20)
+            waiter.stderr.close()
+
+        self.addCleanup(stop)
+        ticket = slots.governor / "tickets" / "1-worker"
+        slots.wait(lambda: ticket.exists(), "the restricted-umask waiter created its ticket")
+        mode = ticket.stat().st_mode & 0o777
+        os.kill(waiter.pid, signal.SIGKILL)
+        waiter.wait(timeout=20)
+        slots.release(holder)
+        statuses = []
+        for _ in range(2):
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "slot", "--", "true"],
+                env=slots.env, capture_output=True, text=True, timeout=20)
+            statuses.append(result.returncode)
+        self.assertEqual((bool(mode & 0o400), statuses), (True, [0, 0]), oct(mode))
+
+    def test_a_ticket_name_hard_linked_to_an_unreadable_file_does_not_stop_a_slot(self):
+        """The slot command is a process because the test asserts its exit status."""
+        tickets = self.base / "state/pstack-t3/governor/tickets"
+        tickets.mkdir(parents=True)
+        outside = self.base / "outside-unreadable"
+        outside.write_bytes(b"keep")
+        outside.chmod(0)
+        os.link(outside, tickets / "1-worker")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "slot", "--", "true"],
+            capture_output=True, text=True, timeout=20, env=self.slot_env())
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual([path.name for path in tickets.iterdir()], [])
+        self.assertEqual(outside.stat().st_nlink, 1)
+        outside.chmod(0o600)
+        self.assertEqual(outside.read_bytes(), b"keep")
+
+    def test_two_names_of_one_live_ticket_do_not_keep_a_free_landing_caller_waiting(self):
+        """The waiter and the landing caller are processes so the test can order their attempts."""
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        waiter = slots.start("waiter", stepped=True)
+        self.assertEqual(slots.settle(waiter), "waiting")
+        tickets = slots.governor / "tickets"
+        os.link(tickets / "1-worker", tickets / "2-exclusive")
+        mutex = open(slots.governor / "tickets.lock", "a")
+        self.addCleanup(mutex.close)
+        fcntl.flock(mutex, fcntl.LOCK_EX)
+        try:
+            found = land._waiting(tickets, None)
+        finally:
+            fcntl.flock(mutex, fcntl.LOCK_UN)
+        slots.release(holder)
+        landing = slots.start("landing", pool="landing", stepped=True)
+        landing_state = slots.settle(landing)
+        self.assertEqual((found, landing_state), ([], "started"))
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), [])
+        self.assertEqual(slots.step(waiter), "started")
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
+        slots.release(landing)
+        slots.release(waiter)
+
     def test_a_slot_runs_when_its_ticket_is_removed_while_it_waits(self):
         slots = SlotCallers(self, 1)
         holder = slots.enter(slots.start("holder"))
@@ -4896,7 +4981,24 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(self.contend(2, kinds, hold=1.5), 2)
         self.admit_latest_first(2, kinds)
 
+    def ofd_locks_exist(self):
+        """True when this platform accepts an OFD byte lock."""
+        import struct
+        path = self.base / "ofd-probe"
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.fcntl(descriptor, 37, struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 0, 1, 0))
+        except OSError:
+            return False
+        else:
+            return True
+        finally:
+            os.close(descriptor)
+            os.unlink(path)
+
     def test_an_ofd_caller_and_a_flock_caller_reorder_without_sharing_a_slot(self):
+        if not self.ofd_locks_exist():
+            self.skipTest("this platform does not provide OFD locks")
         ofd = self.base / "ofd/land.py"
         ofd.parent.mkdir()
         ofd.write_text(OFD_SLOT_SCRIPT)
@@ -5408,6 +5510,7 @@ os.execv({real!r}, [{real!r}, *args])
             process.stderr.close()
             self.release_recorded_group(parent_path, child_path)
 
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test reads a zombie state from /proc")
     def test_a_signal_during_grace_after_the_leader_exits_kills_the_group(self):
         self.governor(1)
 
