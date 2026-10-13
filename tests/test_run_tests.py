@@ -8,6 +8,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1405,6 +1406,14 @@ class RunTestsTest(unittest.TestCase):
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
 
+    def test_a_pull_request_sets_real_process_or_a_push_omits_it(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            with self.subTest(reader=reader):
+                switch = read_workflow_switch(text, reader)
+                self.assertEqual(switch.exported("push"), "1")
+                self.assertEqual(switch.exported("pull_request"), "")
+
     def test_a_gate_exits_nonzero_for_failure_cancelled_skipped_or_an_empty_part_result(self):
         # This starts a process because the check is an exit status.
         cases = (
@@ -1464,6 +1473,95 @@ def gate_readers() -> tuple[str, ...]:
     except ImportError:
         return ("indent",)
     return ("yaml", "indent")
+
+
+@dataclass(frozen=True)
+class WorkflowSwitch:
+    expression: str
+
+    def exported(self, event_name: str) -> str:
+        expression = self.expression.strip()
+        if not expression.startswith("${{") or not expression.endswith("}}"):
+            raise AssertionError("cannot read the real-process switch")
+        inside = expression[len("${{"):-len("}}")].strip()
+        if inside.count("||") != 1 or inside.count("&&") != 1:
+            raise AssertionError("cannot read the real-process switch")
+        left, right = (part.strip() for part in inside.split("||"))
+        comparison, arm = (part.strip() for part in left.split("&&"))
+        if comparison != "github.event_name == 'push'":
+            raise AssertionError("cannot read the real-process switch")
+        chosen = arm if event_name == "push" else right
+        if len(chosen) < 2 or chosen[0] != "'" or chosen[-1] != "'":
+            raise AssertionError("cannot read the real-process switch")
+        return chosen[1:-1]
+
+
+def read_workflow_switch(text: str, reader: str) -> WorkflowSwitch:
+    if reader == "yaml":
+        return yaml_workflow_switch(text)
+    if reader == "indent":
+        return indent_workflow_switch(text)
+    raise AssertionError(reader)
+
+
+def yaml_workflow_switch(text: str) -> WorkflowSwitch:
+    try:
+        import yaml
+    except ImportError:
+        raise AssertionError("cannot find the real-process switch") from None
+    loaded = yaml.safe_load(text)
+    env = loaded.get("env") if isinstance(loaded, dict) else None
+    value = env.get("PSTACK_TEST_REAL_PROCESS") if isinstance(env, dict) else None
+    if not isinstance(value, str):
+        raise AssertionError("cannot find the real-process switch")
+    jobs = loaded.get("jobs") if isinstance(loaded, dict) else None
+    if not isinstance(jobs, dict):
+        raise AssertionError("cannot find the real-process switch")
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            raise AssertionError("cannot find the real-process switch")
+        job_env = job.get("env")
+        if isinstance(job_env, dict) and "PSTACK_TEST_REAL_PROCESS" in job_env:
+            raise AssertionError("cannot find the real-process switch")
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            raise AssertionError("cannot find the real-process switch")
+        for step in steps:
+            step_env = step.get("env") if isinstance(step, dict) else None
+            if isinstance(step_env, dict) and "PSTACK_TEST_REAL_PROCESS" in step_env:
+                raise AssertionError("cannot find the real-process switch")
+    return WorkflowSwitch(value)
+
+
+def indent_workflow_switch(text: str) -> WorkflowSwitch:
+    lines = text.splitlines(keepends=True)
+    key = "PSTACK_TEST_REAL_PROCESS"
+    if sum(key in line for line in lines) != 1:
+        raise AssertionError("cannot find the real-process switch")
+    header = next((index for index, line in enumerate(lines) if line.rstrip("\n") == "env:"), None)
+    if header is None:
+        raise AssertionError("cannot find the real-process switch")
+    block = []
+    for line in lines[header + 1:]:
+        if line.strip() and not line.startswith(" "):
+            break
+        block.append(line)
+    value = None
+    for line in block:
+        stripped = line.strip()
+        prefix = key + ": "
+        if stripped.startswith(prefix):
+            value = stripped[len(prefix):]
+            break
+    if value is None or value[:1] in {"'", '"'}:
+        raise AssertionError("cannot find the real-process switch")
+    for gate, part_prefix in GATES:
+        jobs = [gate, *(f"{part_prefix}_{index}" for index in range(1, 5))]
+        for job in jobs:
+            body = job_body(lines, job)
+            if body is None or any(key in line for line in body):
+                raise AssertionError("cannot find the real-process switch")
+    return WorkflowSwitch(value)
 
 
 def gate_scripts(text: str, reader: str = "auto") -> tuple[tuple[str, str], ...]:
