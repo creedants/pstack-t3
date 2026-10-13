@@ -1059,20 +1059,18 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(out.splitlines()[0], "# Perf report")
         self.assertFalse((self.at / "edits.tsv").exists())
 
-    def test_fire_of_a_ticket_with_no_kind_is_blocked_by_a_full_worker_cap_with_the_words_it_had_before_kinds(self):
+    def test_fire_of_a_ticket_with_no_kind_is_refused_for_the_kind_before_the_worker_cap(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
         self.rail_before_kinds("a", "b")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
         self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "feature", "--summary", "Do b", ok=False),
-                         "brigade: nothing fired: 1 of 1 workers running")
-        self.assertEqual(self.blocked_note(self.at, "T2"),
-                         {"kind": "workers", "tickets": ["T2"], "station": "feature", "summary": "Do b", "paths": "", "timebox": 60})
+                         f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}")
+        blocked = [line for line in (self.at / "log.tsv").read_text().splitlines()
+                   if "\tticket\tT2\tblocked\t" in line]
+        self.assertEqual(blocked, [])
         self.brigade("dish", "D1", "--state", "sent-back")
         line = "T2: unblocked; run fire --tickets=T2 --station=feature '--summary=Do b' --timebox=60"
-        self.assertIn(line, self.brigade("watch").splitlines())
-        ran = self.bash_unblocked(self.at, line)
-        self.assertEqual((ran.returncode, ran.stderr.strip()),
-                         (1, f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}"))
+        self.assertNotIn(line, self.brigade("watch").splitlines())
 
     def test_a_block_note_written_before_kinds_reprints_the_fire_line_it_printed_then(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
