@@ -1,0 +1,1 @@
+- The archiver shields every ancestor of a thread with live work, including a run that is running, queued, starting, preparing, or waiting. A finished sibling of that thread stays eligible by age.

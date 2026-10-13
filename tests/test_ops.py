@@ -562,33 +562,33 @@ THREADS = (
     Thread("p2-idle-top",  P2, None,          (),                         OLD, SETTLED),
     Thread("p2-kid",       P2, "p2-idle-top", (),                         OLD, SETTLED),
 )
-_DONE = ("d-old", "d-unsettled", "d-pinned", "d-parent", "d-grand-old")
+_DONE = ("d-old", "d-unsettled", "d-pinned", "d-grand-old")
 _LOOSE = ("q-old", "g-old", "del-kid", "loop-a", "loop-b")
-_COORD = ("c-old", "c-parent", "c-grand-old")
+_COORD = ("c-old", "c-grand-old")
 ARCHIVE_CASES = (
     ((),
-     "to archive: 10; skipped: live 8, recent 1, under a running thread 6, kept 0", (*_DONE, *_LOOSE)),
+     "to archive: 9; skipped: live 12, recent 1, under a running thread 5, kept 0", (*_DONE, *_LOOSE)),
     (("--top-level-settled",),
-     "to archive: 12; skipped: live 8, recent 1, under a running thread 6, kept 0", ("idle-top", "quiet-top", *_DONE, *_LOOSE)),
+     "to archive: 10; skipped: live 12, recent 1, under a running thread 5, kept 0", ("idle-top", *_DONE, *_LOOSE)),
     (("--coordinator", "coord"),
-     "to archive: 13; skipped: live 8, recent 2, under a running thread 2, kept 0", (*_COORD, *_DONE, *_LOOSE)),
+     "to archive: 11; skipped: live 12, recent 2, under a running thread 2, kept 0", (*_COORD, *_DONE, *_LOOSE)),
     (("--coordinator", "coord", "--top-level-settled"),
-     "to archive: 15; skipped: live 8, recent 2, under a running thread 2, kept 0",
-     ("idle-top", "quiet-top", *_COORD, *_DONE, *_LOOSE)),
+     "to archive: 12; skipped: live 12, recent 2, under a running thread 2, kept 0",
+     ("idle-top", *_COORD, *_DONE, *_LOOSE)),
     (("--keep", "done-top"),
-     "to archive: 5; skipped: live 6, recent 0, under a running thread 6, kept 9", _LOOSE),
+     "to archive: 5; skipped: live 8, recent 0, under a running thread 5, kept 9", _LOOSE),
     (("--keep", "coord", "--coordinator", "coord"),
-     "to archive: 13; skipped: live 7, recent 2, under a running thread 2, kept 1", (*_COORD, *_DONE, *_LOOSE)),
+     "to archive: 11; skipped: live 11, recent 2, under a running thread 2, kept 1", (*_COORD, *_DONE, *_LOOSE)),
     (("--keep", "d-parent", "--keep", "c-old", "--coordinator", "coord"),
-     "to archive: 11; skipped: live 8, recent 2, under a running thread 2, kept 2",
-     ("c-parent", "c-grand-old", "d-old", "d-unsettled", "d-pinned", "d-grand-old", *_LOOSE)),
+     "to archive: 10; skipped: live 11, recent 2, under a running thread 2, kept 2",
+     ("c-grand-old", "d-old", "d-unsettled", "d-pinned", "d-grand-old", *_LOOSE)),
     (("--older-than-hours", "0.5", "--top-level-settled"),
-     "to archive: 14; skipped: live 8, recent 0, under a running thread 6, kept 0",
-     ("idle-top", "recent-top", "quiet-top", "d-old", "d-recent", "d-unsettled", "d-pinned", "d-parent", "d-grand-old", *_LOOSE)),
+     "to archive: 12; skipped: live 12, recent 0, under a running thread 5, kept 0",
+     ("idle-top", "recent-top", "d-old", "d-recent", "d-unsettled", "d-pinned", "d-grand-old", *_LOOSE)),
     (("--older-than-hours", "72", "--top-level-settled"),
-     "to archive: 0; skipped: live 8, recent 11, under a running thread 6, kept 0", ()),
+     "to archive: 0; skipped: live 12, recent 10, under a running thread 5, kept 0", ()),
     (("--coordinator", "idle-top", "--top-level-settled"),
-     "to archive: 11; skipped: live 8, recent 1, under a running thread 6, kept 0", ("quiet-top", *_DONE, *_LOOSE)),
+     "to archive: 9; skipped: live 12, recent 1, under a running thread 5, kept 0", (*_DONE, *_LOOSE)),
 )
 
 
@@ -1339,13 +1339,13 @@ class ArchiveTest(OpsTest):
     def test_nothing_to_archive_sends_nothing(self):
         world = self.world()
         done = world.run(ARCHIVE, "--older-than-hours", "72", "--top-level-settled")
-        self.assertEqual((done.returncode, done.stdout), (0, "to archive: 0; skipped: live 8, recent 11, under a running thread 6, kept 0\n"))
+        self.assertEqual((done.returncode, done.stdout), (0, "to archive: 0; skipped: live 12, recent 10, under a running thread 5, kept 0\n"))
         self.assertEqual(world.stub.requests, [])
 
     def test_the_database_file_is_unchanged_after_a_run(self):
         world = self.world()
         before = world.database.read_bytes()
-        self.assertEqual(len(world.run(ARCHIVE).archived), 10)
+        self.assertEqual(len(world.run(ARCHIVE).archived), 9)
         self.assertEqual(world.database.read_bytes(), before)
         self.assertEqual(sorted(path.name for path in world.database.parent.iterdir()), ["server-runtime.json", "statev2.sqlite"])
 
@@ -1353,10 +1353,10 @@ class ArchiveTest(OpsTest):
         world = self.world()
         done = world.run(ARCHIVE)
         requests = world.stub.requests
-        self.assertEqual([request["method"] for request in requests], ["initialize", "notifications/initialized", *["tools/call"] * 10])
+        self.assertEqual([request["method"] for request in requests], ["initialize", "notifications/initialized", *["tools/call"] * 9])
         self.assertEqual({request["path"] for request in requests}, {"/mcp"})
         self.assertEqual({request["authorization"] for request in requests}, {CREDENTIAL})
-        self.assertEqual([request["session"] for request in requests], [None, *[SESSION] * 11])
+        self.assertEqual([request["session"] for request in requests], [None, *[SESSION] * 10])
         self.assertEqual([request["params"] for request in requests[2:]], [
             {"name": "t3_thread_organize", "arguments": {"action": "archive", "threadId": name}} for name in done.archived])
 
@@ -1364,7 +1364,7 @@ class ArchiveTest(OpsTest):
         world = self.world()
         world.stub.event_stream = True
         done = world.run(ARCHIVE)
-        self.assertEqual((done.returncode, done.stdout.splitlines()[1]), (0, "archived 10, failed 0"))
+        self.assertEqual((done.returncode, done.stdout.splitlines()[1]), (0, "archived 9, failed 0"))
         self.assertEqual(sorted(done.archived), sorted(ARCHIVE_CASES[0][2]))
 
     def test_a_failed_archive_is_reported_and_the_rest_continue(self):
@@ -1378,9 +1378,9 @@ class ArchiveTest(OpsTest):
                 reply = world.stub.answer({"id": number, "method": "tools/call", "params": {"arguments": {"threadId": name}}})[2]
                 failures.append("failed: " + json.dumps(reply)[:200])
         self.assertEqual((sum('"isError": true' in line for line in failures), sum('"error": {"code"' in line for line in failures),
-                          failures.count("failed: null")), (4, 3, 1))
-        self.assertEqual(done.stdout.splitlines(), [ARCHIVE_CASES[0][1], *failures[:5], "archived 2, failed 8"])
-        self.assertEqual((done.returncode, len(done.archived)), (1, 10))
+                          failures.count("failed: null")), (4, 2, 1))
+        self.assertEqual(done.stdout.splitlines(), [ARCHIVE_CASES[0][1], *failures[:5], "archived 2, failed 7"])
+        self.assertEqual((done.returncode, len(done.archived)), (1, 9))
 
     def test_the_project_title_must_match_exactly_one_project(self):
         world = self.world()
@@ -1539,6 +1539,43 @@ class ArchiveTest(OpsTest):
         done = world.run(ARCHIVE, "--selection-only")
         self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
         self.assertEqual(done.archived, ())
+
+    def test_an_ancestor_of_a_child_with_a_running_run_is_not_selected_with_top_level_settled(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("mid", P1, "top", (), OLD, "S"),
+                   ("kid", P1, "mid", ("running",), OLD, "S"))
+        world = self.world(threads=threads)
+        done = world.run(ARCHIVE, "--top-level-settled", "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_an_ancestor_above_a_deleted_bridge_whose_child_has_a_running_run_is_not_selected_with_top_level_settled(self):
+        threads = (("top", P1, None, (), OLD, "S"), ("mid", P1, "top", (), OLD, "S"),
+                   ("bridge", P1, "mid", (), OLD, "D"), ("kid", P1, "bridge", ("running",), OLD, "S"))
+        world = self.world(threads=threads)
+        done = world.run(ARCHIVE, "--top-level-settled", "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+        self.assertEqual(done.archived, ())
+
+    def test_a_finished_sibling_of_a_child_with_a_running_run_under_the_coordinator_is_still_selected(self):
+        threads = (("coord", P1, None, ("running",), RECENT),
+                   ("kid-live", P1, "coord", ("running",), OLD, "S"),
+                   ("kid-done", P1, "coord", ("completed",), OLD, "S"))
+        world = self.world(threads=threads)
+        done = world.run(ARCHIVE, "--coordinator", "coord")
+        self.assertEqual((done.returncode, done.stdout, done.stderr),
+                         (0, "to archive: 1; skipped: live 2, recent 0, under a running thread 0, kept 0\n"
+                          "archived 1, failed 0\n", ""))
+        self.assertEqual(done.archived, ("kid-done",))
+
+    def test_a_thread_whose_descendant_run_is_completed_is_selected_once_past_the_cutoff(self):
+        threads = (("top", P1, None, (), RECENT, ""), ("mid", P1, "top", (), OLD, "S"),
+                   ("kid", P1, "mid", ("completed",), OLD, "S"))
+        world = self.world(threads=threads)
+        done = world.run(ARCHIVE)
+        self.assertEqual((done.returncode, done.stdout, done.stderr),
+                         (0, "to archive: 2; skipped: live 0, recent 0, under a running thread 0, kept 0\n"
+                          "archived 2, failed 0\n", ""))
+        self.assertEqual(done.archived, ("mid", "kid"))
 
 
 class ScanTest(OpsTest):
