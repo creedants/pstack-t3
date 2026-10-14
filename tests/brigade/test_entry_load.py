@@ -132,3 +132,37 @@ class EntryLoadTest(unittest.TestCase):
             runpy.run_path(str(source))
         self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
         self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
+
+    def test_a_failed_import_drops_added_brigade_package_modules_and_restores_prior_modules_and_the_bytecode_flag(self):
+        case = Path(self.temporary.name) / "load"
+        case.mkdir()
+        source = case / "brigade.py"
+        source.write_text(Path(SCRIPT).read_text().replace(
+            "from brigade_lib.spend import add_arguments, spend_text",
+            "from brigade_lib.spend import add_arguments, spend_text, _not_a_real_export",
+            1,
+        ))
+        (case / "brigade_lib").symlink_to(Path(SCRIPT).parent / "brigade_lib")
+        unrelated = types.ModuleType("brigade_lib.unrelated")
+        sys.modules["brigade_lib.unrelated"] = unrelated
+        self.addCleanup(self.forget_planted_modules, unrelated)
+        before = sys.dont_write_bytecode
+        sys.dont_write_bytecode = False
+        try:
+            prior = sys.modules.copy()
+            with self.assertRaises(ImportError):
+                runpy.run_path(str(source))
+            added = [
+                name for name in sys.modules
+                if name not in prior and (
+                    name == "brigade_lib" or name.startswith("brigade_lib.") or name.startswith("_brigade_ns_")
+                )
+            ]
+            self.assertEqual(added, [])
+            self.assertEqual(
+                [name for name in prior if sys.modules.get(name) is not prior[name]],
+                [],
+            )
+            self.assertIs(sys.dont_write_bytecode, False)
+        finally:
+            sys.dont_write_bytecode = before

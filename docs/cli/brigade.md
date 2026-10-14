@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -763,6 +763,24 @@ a request from the executive admin
 | `--unsent UNSENT` |  | `merged`, `sent-back`, `decision`, `failed`, `drained`, `report`, `blocked`, `misrouted`, `reply`, `contest`, `appeal` | `==SUPPRESS==` | a line to the executive admin that did not send |
 | `request` | yes |  |  |  |
 
+## brigade.py launch
+
+```text
+brigade.py [flags] launch --parent PARENT --catalog CATALOG dish
+```
+
+print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.
+
+The object always names instanceId, model, and options. A seat with no options object prints an empty options object. providerInstanceId is renamed to instanceId. A brief with one Mode line of full or light is passed as --brief-mode. bug-fix, perf-issue, and hillclimb use that role name. feature and refactoring use the role "feature, refactoring". investigation has no code-delegate role and the command exits 1.
+
+The command exits 1 when the role is missing, seats are a string, or the seat count is not one. It exits 1 when the seat lacks providerInstanceId or model, and when options are not an object. The refusal is printed on stderr.
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  | dish id, such as D1 |
+| `--parent PARENT` | yes |  |  | this thread's provider/model |
+| `--catalog CATALOG` | yes |  |  | orchestrator_capabilities JSON for roles.py show |
+
 ## brigade.py spend
 
 ```text
@@ -773,7 +791,7 @@ print wall time, rounds, send-backs, and threads from the store. It writes nothi
 
 In text, a wholly missing measure prints its absence words and no counts. In JSON, one absence word is that string, and two are an object of word to count. Without `--tokens` the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets `threads_without_a_token_source` to `not requested`. Token totals need `--tokens`.
 
-A Claude model line prints `reasoning not recorded`. A recorded reasoning count prints as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
+A Claude model line prints `reasoning not recorded` when `usage.output_tokens_details.thinking_tokens` is missing, null, negative, a bool, or not an integer. A recorded count prints as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
 
 `--by reviewer` groups whole items by the seat that reviewed them. Its token lines include the worker's and every other ledger role's usage for those items. An item reviewed by several seats appears under one joined key.
 

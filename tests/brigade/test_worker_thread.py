@@ -75,3 +75,19 @@ class WorkerThreadTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.dish_fields("thread"), ("",))
+
+    def test_a_thread_bound_after_send_back_is_cleared_when_queued_comes_before_in_progress(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "pass")
+        self.record("def", "send-back", "--note", "the attempt")
+        self.brigade("dish", "D1", "--thread", THREAD_B)
+        self.brigade("dish", "D1", "--state", "queued", "--sha", "abc")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")
+        self.assertIn(f"worker\tD1\tretired\t{THREAD_B}", (self.at / "log.tsv").read_text())
+        self.assertEqual(
+            self.brigade("dish", "D1", "--thread", THREAD_B, ok=False),
+            f"brigade: thread {THREAD_B} is an earlier attempt of D1; a send-back launches a fresh worker",
+        )
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "")

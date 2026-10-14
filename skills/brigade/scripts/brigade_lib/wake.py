@@ -250,6 +250,22 @@ def dish_progress(restaurant, dish, moment, held=False):
     return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
 
 
+HANDOFF_BYTES = 40000
+
+
+def handoff_size_line(directory):
+    path = directory / "handoff.md"
+    try:
+        if not path.is_file():
+            return None
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size <= HANDOFF_BYTES:
+        return None
+    return f"handoff.md is {size} bytes. Rewrite its current-state section in place and move the old text to an archive file."
+
+
 def watch(restaurant):
     rails = sibling_rails(restaurant)
     with restaurant.checked():
@@ -310,7 +326,11 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=seam.now())
-    return "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
+    text = "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
+    sentence = handoff_size_line(restaurant.dir)
+    if sentence:
+        restaurant.warn(sentence)
+    return text
 
 
 def hang_attempt(row, starts):
