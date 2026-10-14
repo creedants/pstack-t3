@@ -194,8 +194,8 @@ def parser():
     a = t.add_parser("set", help="change a goal's state, name, purpose, done test, or share")
     a.add_argument("id")
     a.add_argument("--state", choices=GOAL_STATES,
-                   help="paused starts no ticket of the goal on its own, whatever its priority or the auto-start level; "
-                        "a low ticket can still ride along in another goal's item. The goal's items in flight finish "
+                   help="paused starts no ticket of the goal on its own, whatever its priority or the auto-start level. The goal's items in flight finish "
+                        "and land. "
                         "and land. "
                         "A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is "
                         "waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting "
@@ -870,7 +870,8 @@ def command(restaurant, args, contract=None, rails=None):
             if pairs is None:
                 continue
             # An empty flag text clears the whole map. Each pair then sets or clears its own kind's entry.
-            merged = dict(meta.get(key) or {}) if pairs else {}
+            existing = meta.get(key)
+            merged = dict(existing) if (pairs and isinstance(existing, dict)) else ({} if pairs else {})
             for kind, value in pairs.items():
                 if value:
                     merged[kind] = value

@@ -30,6 +30,13 @@ from brigade_lib.tickets import EVERY_ROW, Label, handed_count, handoff_id, inbo
 
 
 
+def _goal_paused(goal, refill):
+    if not goal:
+        return False
+    found = refill.goals.get(goal)
+    return found is not None and found.state == "paused"
+
+
 NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
 DRAIN_LABELS = ("in progress", "in review", "passed review", "waiting to land")
@@ -98,7 +105,10 @@ def plan(tickets, refill, running, cap, level, refusals, now):
             kind = "unknown"
         elif ticket.id in refusals:
             kind, why = "blocked", refusals[ticket.id]
-        elif low and len(shared) == 1 and priorities[shared[0]] != "low" and paths_inside(ticket.paths, started[shared[0]]):
+        elif ticket.label.goal and _goal_paused(ticket.label.goal, refill):
+            kind, why = "paused", "its goal is paused"
+        elif (low and len(shared) == 1 and priorities[shared[0]] != "low"
+              and paths_inside(ticket.paths, started[shared[0]])):
             kind, why = "rides", shared[0]
         elif shared:
             kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))

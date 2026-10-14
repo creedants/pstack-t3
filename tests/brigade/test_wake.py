@@ -1249,12 +1249,12 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("ticket", "add", "--summary", "Add f", "--kind", "feature", "--paths", "a.txt", "--goal", "G2")
         self.brigade("goal", "set", "G2", "--state", "paused")
         lines = ["workers: 0 of 3 running, 3 idle, auto-start: normal",
-                 "waiting tickets: 6, startable: 1, blocked: 1, unknown: 1, below auto-start: 1, goal paused: 1, goal share: 1",
+                 "waiting tickets: 6, startable: 1, unknown: 1, below auto-start: 1, goal paused: 2, goal share: 1",
                  "T3 urgent{}, 0m: its goal is paused; c.txt",
                  "T1 normal{}, 0m: startable; a.txt", "  Fix a",
                  "T2 normal{}, 0m: the G1 share holds (1 of 1); b.txt",
                  "T5 normal{}, 0m: unknown, no paths recorded",
-                 "T6 normal{}, 0m: blocked, starts after T1; a.txt",
+                 "T6 normal{}, 0m: its goal is paused; a.txt",
                  "T4 low{}, 0m: below auto-start; d.txt"]
         words = iter((" upkeep G2", " fix G1", " feature G1", " study", " feature G2", " polish"))
         self.assertEqual(self.brigade("startable").splitlines(),

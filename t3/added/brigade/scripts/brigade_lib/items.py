@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.leases import ClaimError, claim_lease, holder, refusal_kind, refill_of, release_lease, running_workers, with_fragment, worker_cap
+from brigade_lib.leases import ClaimError, Hold, claim_lease, holder, refusal_kind, refill_of, release_lease, running_workers, with_fragment, worker_cap
 from brigade_lib.reviews import fix_round_refusal, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug
 from brigade_lib.store import KIND_CHOICE, LEASED_STATES, STATION_KIND
@@ -145,9 +145,18 @@ def checked_fire_label(restaurant, ids, station, kind, ride_along):
     return fire_label(labels, rail, ids, station, kind, ride_along)
 
 
-def spend_hold(restaurant, label):
-    """Why a spend control holds this item, or None. `label` is the kind and goal the label check gave."""
+def spend_hold(restaurant, label, ids=()):
+    """Why a spend control holds this item, or None. `label` is the kind and goal the label check gave.
+
+    `ids` are the selected tickets; a paused goal of any one of them holds the fire, so a
+    paused goal starts nothing whatever the item's label.
+    """
     labels = read_labels(restaurant, ActsOn(items=(), tickets=()))
+    for ident in ids:
+        ticket_label = labels.tickets.get(ident, Label())
+        goal = ticket_label.goal
+        if goal and labels.goals.get(goal) is not None and labels.goals[goal].state == "paused":
+            return Hold("paused", "its goal is paused")
     return refill_of(restaurant.meta, restaurant.rows("dishes.tsv"), labels).hold(label)
 
 
@@ -397,7 +406,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if refusal:
                 raise BrigadeError(refusal)
-            held = spend_hold(restaurant, label)
+            held = spend_hold(restaurant, label, ids)
             if held:
                 raise BrigadeError(f"nothing fired: {held.words}")
             full = workers_full(restaurant)
@@ -425,7 +434,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             if not refusal:
                 label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if label:
-                hold = spend_hold(restaurant, label)
+                hold = spend_hold(restaurant, label, ids)
                 if hold:
                     label, refusal = None, hold.words
             full = None if refusal else workers_full(restaurant)
