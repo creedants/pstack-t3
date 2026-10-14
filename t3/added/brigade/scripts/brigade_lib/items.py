@@ -385,14 +385,14 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
             leased = with_fragment(paths, known) if paths else ""
+            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+            if refusal:
+                raise BrigadeError(refusal)
             full = workers_full(restaurant)
             if full:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
                                doc_item)
                 raise BrigadeError(f"nothing fired: {full}")
-            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
-            if refusal:
-                raise BrigadeError(refusal)
         # land.py can wait on the landing database, so the claim runs outside the store lock.
         # Another command may fire or take the tickets meanwhile, so the checks run again before the write.
         try:
@@ -409,11 +409,11 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             if not refusal and isinstance(gate, DocRefused):
                 refusal = gate.line
             current = restaurant.next_id("dishes.tsv")
-            full = None if refusal else workers_full(restaurant)
             label = None
-            if not refusal and not full:
+            if not refusal:
                 label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
-            if label and current == dish:
+            full = None if refusal else workers_full(restaurant)
+            if label and not full and current == dish:
                 write_lead_kind(restaurant, ids, label.kind)
                 restaurant.append("dishes.tsv", {"id": dish, "at": seam.now(), "state": "in-progress", "station": station,
                                                  "tickets": ",".join(ids), "task": task, "thread": thread,

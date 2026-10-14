@@ -1,0 +1,1 @@
+- `fire` checks the ticket's label (kind, goal, and ride-along rules) before the worker cap in both lock phases; a fire that the label check refuses is refused at once at a full cap and records no block; a fire the label check accepts still records the workers block at a full cap.

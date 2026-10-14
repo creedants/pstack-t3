@@ -1059,20 +1059,27 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(out.splitlines()[0], "# Perf report")
         self.assertFalse((self.at / "edits.tsv").exists())
 
-    def test_fire_of_a_ticket_with_no_kind_is_blocked_by_a_full_worker_cap_with_the_words_it_had_before_kinds(self):
+    def test_fire_of_a_ticket_with_no_kind_is_refused_for_the_kind_before_the_worker_cap(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
         self.rail_before_kinds("a", "b")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
         self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "feature", "--summary", "Do b", ok=False),
-                         "brigade: nothing fired: 1 of 1 workers running")
-        self.assertEqual(self.blocked_note(self.at, "T2"),
-                         {"kind": "workers", "tickets": ["T2"], "station": "feature", "summary": "Do b", "paths": "", "timebox": 60})
+                         f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}")
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ticket" and row["id"] == "T2" and row["state"] == "blocked"], [])
         self.brigade("dish", "D1", "--state", "sent-back")
         line = "T2: unblocked; run fire --tickets=T2 --station=feature '--summary=Do b' --timebox=60"
-        self.assertIn(line, self.brigade("watch").splitlines())
-        ran = self.bash_unblocked(self.at, line)
-        self.assertEqual((ran.returncode, ran.stderr.strip()),
-                         (1, f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}"))
+        self.assertNotIn(line, self.brigade("watch").splitlines())
+
+    def test_a_goal_mismatch_at_a_full_cap_is_refused_for_the_goal_and_records_no_block(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.goal("one")
+        self.goal("two")
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "polish", "--goal", "G2")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Do b")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T3", "--station", "feature", "--summary", "Do one", ok=False), "brigade: T3 is under G2 and the lead ticket T1 is under G1; name T3 in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ticket" and row["state"] == "blocked"], [])
 
     def test_a_block_note_written_before_kinds_reprints_the_fire_line_it_printed_then(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
