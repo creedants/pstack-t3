@@ -696,6 +696,51 @@ class ArchiveTest(OpsTest):
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         self.assertEqual(sorted(path.name for path in batch.iterdir()), ["batch-1.txt", "batch-2.txt", "batch-3.txt"])
 
+    def test_default_batch_size_splits_141_candidates_into_140_and_1(self):
+        threads = (("top", P1, None, (), OLD, ""),
+                   *[(f"n-{n:03d}", P1, "top", (), OLD, "S") for n in range(141)])
+        world = self.world(threads=threads)
+        batch = world.sandbox.root / "batches"
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--selection-only",
+                                 "--batch-dir", str(batch))
+        ids = [f"n-{n:03d}" for n in range(141)]
+        self.assertEqual((done.returncode, done.stderr, world.stub.requests), (0, "", []))
+        self.assertEqual(sorted(path.name for path in batch.iterdir()), ["batch-1.txt", "batch-2.txt"])
+        self.assertEqual((batch / "batch-1.txt").read_text().splitlines(), ids[:140])
+        self.assertEqual((batch / "batch-2.txt").read_text().splitlines(), ids[140:])
+        self.assertEqual(done.stdout, f"{batch / 'batch-1.txt'}\t140\n{batch / 'batch-2.txt'}\t1\n")
+
+    def test_batch_dir_with_missing_parent_writes_nothing_and_exits_1(self):
+        world = self.world()
+        batch = world.sandbox.root / "no-parent" / "batches"
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--selection-only",
+                                 "--batch-dir", str(batch))
+        self.assertEqual((done.returncode, done.stdout, world.stub.requests), (1, "", []))
+        self.assertRegex(done.stderr, r"(?s)^Traceback .*\nFileNotFoundError: ")
+        self.assertFalse(batch.exists())
+        self.assertFalse(batch.parent.exists())
+
+    def test_dry_run_with_selection_only_prints_sorted_json(self):
+        world = self.world()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--dry-run", "--selection-only")
+        self.assertEqual((done.returncode, done.stdout, done.stderr, world.stub.requests),
+                         (0, json.dumps(sorted(ARCHIVE_CASES[0][2])) + "\n", "", []))
+
+    def test_direct_run_without_credential_exits_1_with_summary_on_stdout_and_one_stderr_line(self):
+        world = self.world()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project")
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout, ARCHIVE_CASES[0][1] + "\n")
+        self.assertEqual(world.stub.requests, [])
+        self.assertIn("T3_CODE_MCP_AUTHORIZATION", done.stderr)
+        self.assertEqual(len(done.stderr.strip().splitlines()), 1)
+
+    def test_unknown_flag_exits_2(self):
+        world = self.world()
+        done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--no-such-flag")
+        self.assertEqual((done.returncode, done.stdout, world.stub.requests), (2, "", []))
+        self.assertIn("--no-such-flag", done.stderr)
+
     def test_an_id_containing_percent_and_colon_is_written_unchanged(self):
         name = "a%b:c"
         world = self.world(threads=(("top", P1, None, (), OLD, ""), (name, P1, "top", (), OLD, "S")))
