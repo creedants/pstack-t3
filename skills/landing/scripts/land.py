@@ -225,8 +225,6 @@ EXCLUSIVE_REASON_MAX = 80
 _Holder = namedtuple("_Holder", "kind pid repo started command cap reason")
 _UNKNOWN = _Holder(None, None, None, None, None, None, None)
 _Admission = namedtuple("_Admission", "handles records acquired names")
-# kind is worker, landing, or exclusive. count is how many files a worker locks.
-# The ticket and the holder record carry kind and never count.
 _Demand = namedtuple("_Demand", "kind count")
 _Hold = namedtuple("_Hold", "acquired names")
 
@@ -306,9 +304,10 @@ def _try_take(demand, handles, slots):
 
 
 def _can_satisfy(kind, handles, slots):
-    """True when a one-slot waiter of kind could take its slots now. Holds nothing on return.
+    """True when a probe of this kind could lock now. Holds nothing on return.
 
-    A ticket names a kind and no count, so a worker waiter of any count is probed as one file.
+    A ticket carries a kind and no count. The worker probe locks one file.
+    Exclusive still needs every file.
     """
     taken = _try_take(_Demand(kind, 1), handles, slots)
     for handle in taken or []:
