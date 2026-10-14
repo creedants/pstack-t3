@@ -76,7 +76,7 @@ class WorkerThreadTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
         self.assertEqual(self.dish_fields("thread"), ("",))
 
-    def test_a_queued_row_after_send_back_clears_the_rebound_thread(self):
+    def test_a_thread_bound_after_send_back_is_cleared_when_queued_comes_before_in_progress(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--thread", THREAD_A)
         self.record("abc", "pass")

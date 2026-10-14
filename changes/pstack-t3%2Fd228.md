@@ -1,4 +1,4 @@
 - `launch` prints one JSON object for the dish seat and writes nothing.
 - `watch` warns when `handoff.md` is larger than 40000 bytes. The watch text stays the same.
-- A Claude log record counts `thinking_tokens` as reasoning when that value is a non-negative integer.
-- A failed import restores the entry loader's bytecode flag. A queued row after send-back clears the rebound thread.
+- A Claude log record counts `usage.output_tokens_details.thinking_tokens` as reasoning when that value is a non-negative integer.
+- A failed import puts `sys.dont_write_bytecode` back. A thread bound after send-back is cleared when a queued row comes before the return to in-progress.

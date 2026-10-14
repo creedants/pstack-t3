@@ -147,12 +147,12 @@ class EntryLoadTest(unittest.TestCase):
         sys.modules["brigade_lib.unrelated"] = unrelated
         self.addCleanup(self.forget_planted_modules, unrelated)
         before = sys.dont_write_bytecode
-        sys.dont_write_bytecode = not before
+        sys.dont_write_bytecode = False
         try:
             with self.assertRaises(ImportError):
                 runpy.run_path(str(source))
             self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
             self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
-            self.assertEqual(sys.dont_write_bytecode, not before)
+            self.assertIs(sys.dont_write_bytecode, False)
         finally:
             sys.dont_write_bytecode = before
