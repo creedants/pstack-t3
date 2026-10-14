@@ -376,7 +376,7 @@ else
 		&& [ -s "$prs" ]; then
 		:
 	else
-		echo "warn: gh or jq missing; PR shows -" >&2
+		echo "warn: pull request list could not be read; PR shows -" >&2
 		echo "[]" > "$prs"
 	fi
 fi
