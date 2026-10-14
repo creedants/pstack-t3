@@ -1,0 +1,5 @@
+- kind fix
+- `.github/workflows/ci.yml` passes `timeout=60` on the second `select_browser` call and no timeout on the first
+- `tests/test_activity_render.py` gives `select_browser` a `timeout` argument defaulting to `PROBE_TIMEOUT` and probes with it
+- `measure` still passes `RENDER_TIMEOUT` to `confined_run`
+- A runner with no working browser spends at most 200 seconds more (five browsers times 40 seconds)

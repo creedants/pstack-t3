@@ -30,7 +30,7 @@ jobs:
           if path is None:
               print("no working headless browser: " + "; ".join(unavailable), file=sys.stderr)
               with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
-                  path, unavailable = select_browser(directory)
+                  path, unavailable = select_browser(directory, timeout=60)
           if path is None:
               print("no working headless browser: " + "; ".join(unavailable))
               raise SystemExit(1)
