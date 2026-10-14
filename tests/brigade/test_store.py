@@ -72,6 +72,23 @@ class StoreTest(BrigadeTest):
             self.assertIn(level, opened)
         self.assertFalse((self.store / "bridge-kit" / "loud").exists())
 
+    def test_set_cap_and_review_repair_a_string_int_and_list_stored_map_and_write_a_clean_one(self):
+        # A hand edit leaves a non-object here, and set merges into an existing value only when it is a dictionary.
+        self.open()
+        cases = (("caps", '"oops"', ("--cap", "polish=1"), {"polish": 1}),
+                 ("caps", "2", ("--cap", "polish=1"), {"polish": 1}),
+                 ("caps", '["polish"]', ("--cap", "polish=1"), {"polish": 1}),
+                 ("review", '"oops"', ("--review", "fix=light"), {"fix": "light"}),
+                 ("review", "2", ("--review", "fix=light"), {"fix": "light"}),
+                 ("review", '["fix"]', ("--review", "fix=light"), {"fix": "light"}))
+        for key, stored, flag, clean in cases:
+            with self.subTest(key=key, stored=stored):
+                meta = json.loads((self.at / "restaurant.json").read_text())
+                meta[key] = json.loads(stored)
+                (self.at / "restaurant.json").write_text(json.dumps(meta))
+                self.assertEqual(json.loads(self.brigade("set", *flag))[key], clean)
+                self.assertEqual(json.loads((self.at / "restaurant.json").read_text())[key], clean)
+
     def test_dropping_an_item_returns_its_tickets_to_waiting(self):
         from unittest import mock
         self.init_landing()

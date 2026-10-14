@@ -1014,6 +1014,24 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.brigade("goal", "set", "G1", "--state", "open")
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix one"), "D1")
 
+    def test_fire_refuses_a_ride_along_ticket_of_a_paused_goal_and_starts_no_item(self):
+        # The lead ticket T4 has no goal and the rider T5 is under paused G1, so the fire must read both.
+        self.queue()
+        self.goal("activity view")
+        self.filed("a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a", "--paths", "a.txt")
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--paths", "b.txt", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--paths", "c.txt")
+        self.brigade("ticket", "add", "--summary", "Add d", "--kind", "feature", "--paths", "d.txt", "--priority", "urgent")
+        self.brigade("ticket", "add", "--summary", "Paused rider", "--kind", "polish", "--paths", "d.txt", "--priority", "low", "--goal", "G1")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        before = self.tables()
+        self.assertEqual(self.brigade("fire", "--tickets", "T4,T5", "--ride-along", "T5", "--station", "feature", "--summary", "Add d", ok=False),
+                         "brigade: nothing fired: its goal is paused")
+        self.assertEqual(self.tables(), before)
+        self.assertEqual(self.brigade("ticket", "list", "--state", "assigned"), "T1 assigned normal fix G1 [user] a")
+
     def test_fire_refuses_a_second_item_of_a_kind_at_its_cap(self):
         self.open()
         self.brigade("set", "--cap", "fix=1")

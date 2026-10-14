@@ -1089,6 +1089,69 @@ class WakeTest(BrigadeTest, _WakeRace):
             "T7 low polish, 0m: below auto-start; six.txt",
         ]))
 
+    def test_startable_never_lists_a_low_ticket_of_a_paused_goal_as_riding_with_another_ticket(self):
+        # The paused check comes before the ride-along branch, so a paused goal starts nothing even as a rider.
+        self.queue()
+        self.goal("activity view")
+        self.goal("current with upstream", "--share", "1")
+        self.filed("a", "--paths", "a.txt", "--goal", "G2")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a", "--paths", "a.txt")
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--paths", "b.txt", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--paths", "c.txt", "--goal", "G2")
+        self.brigade("ticket", "add", "--summary", "d", "--kind", "polish", "--paths", "d.txt", "--goal", "G2")
+        self.brigade("ticket", "add", "--summary", "e", "--kind", "polish", "--paths", "e.txt", "--priority", "low", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "Add e", "--kind", "feature", "--paths", "e.txt", "--priority", "urgent")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 5, startable: 1, goal paused: 2, kind cap: 1, goal share: 1",
+            "T6 urgent feature, 0m: startable; e.txt",
+            "  Add e",
+            "T2 normal fix G1, 0m: its goal is paused; b.txt",
+            "T3 normal fix G2, 0m: the fix cap holds (1 of 1); c.txt",
+            "T4 normal polish G2, 0m: the G2 share holds (1 of 1); d.txt",
+            "T5 low polish G1, 0m: its goal is paused; e.txt",
+        ]))
+
+    def test_startable_rides_a_low_ticket_of_an_open_goal_and_pauses_one_of_a_paused_goal(self):
+        # The paused check leaves the open goal's rider alone and holds the paused goal's rider even when it overlaps a startable ticket.
+        self.queue()
+        self.goal("activity view")
+        self.goal("current with upstream")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.brigade("ticket", "add", "--summary", "Tidy a", "--kind", "polish", "--paths", "a.txt", "--priority", "low", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "Pause a", "--kind", "polish", "--paths", "a.txt", "--priority", "low", "--goal", "G2")
+        self.brigade("goal", "set", "G2", "--state", "paused")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, riding: 1, goal paused: 1",
+            "T1 normal fix, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 low polish G1, 0m: rides with T1; a.txt",
+            "  Tidy a",
+            "T3 low polish G2, 0m: its goal is paused; a.txt",
+        ]))
+
+    def test_startable_pauses_a_waiting_rider_of_a_goal_whose_running_item_keeps_running(self):
+        # A paused goal holds its waiting tickets and lets the item already in flight finish.
+        self.queue()
+        self.goal("activity view")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a", "--paths", "a.txt")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        self.brigade("ticket", "add", "--summary", "Paused rider", "--kind", "polish", "--paths", "b.txt", "--priority", "low", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "Add b", "--kind", "feature", "--paths", "b.txt", "--priority", "urgent")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 2, startable: 1, goal paused: 1",
+            "T3 urgent feature, 0m: startable; b.txt",
+            "  Add b",
+            "T2 low polish G1, 0m: its goal is paused; b.txt",
+        ]))
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
+        self.assertEqual(self.brigade("ticket", "list", "--state", "assigned"), "T1 assigned normal fix G1 [user] Fix a")
+
     def test_startable_orders_tickets_by_priority_then_oldest_filed_then_the_number_in_the_id(self):
         self.open()
         stamp = (datetime.now(timezone.utc) - timedelta(hours=5, minutes=1)).isoformat()
