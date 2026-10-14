@@ -106,6 +106,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | Skill | What it does |
 | --- | --- |
 | [`in-your-own-words`](../skills/in-your-own-words/SKILL.md) | Restate in your own words what you think the user's goals are and what problem they're trying to solve. Use for /in-your-own-words. |
+| [`sharpen`](../skills/sharpen/SKILL.md) | Sharpen a task before starting: the expert approach, what the user is really after, and the right level of specification. Use for /sharpen. |
 
 ## poteto-mode playbooks
 
