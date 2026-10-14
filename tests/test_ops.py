@@ -1,10 +1,12 @@
 import dataclasses
+import hashlib
 import http.server
 import json
 import os
 import re
 import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import threading
@@ -80,6 +82,19 @@ class Sandbox:
         data = self.config_text(drop, **overrides) if text is None else text
         path.write_bytes(data if isinstance(data, bytes) else data.encode())
         return path
+
+    def tree(self):
+        tree = {}
+        for path in sorted(self.home.rglob("*")):
+            mode = stat.S_IMODE(path.lstat().st_mode)
+            if path.is_symlink():
+                entry = ("link", mode, os.readlink(path))
+            elif path.is_dir():
+                entry = ("dir", mode, "")
+            else:
+                entry = ("file", mode, hashlib.sha256(path.read_bytes()).hexdigest())
+            tree[path.relative_to(self.home).as_posix()] = entry
+        return tree
 
     def run(self, script, *args, config: Union[bool, Path] = True, **extra_env):
         flag = []
@@ -335,6 +350,13 @@ READER_CASES = (
     ("key that is not UTF-8", lambda base: base.encode() + b"K\xff=1\n", "line 2 is not KEY=value"),
     ("other key twice", lambda base: base + "X=1\nX=1\n", "line 3 sets X a second time"),
     ("archive key twice", lambda base: base + "ARCHIVE_T3_HOME=/a/t3\n", "line 2 sets ARCHIVE_T3_HOME a second time"),
+    ("nightly apps dir kept", lambda base: base + "NIGHTLY_APPS_DIR=/a/apps\n", ACCEPTED),
+    ("nightly app name kept", lambda base: base + "NIGHTLY_APP_NAME=t3code\n", ACCEPTED),
+    ("nightly restart env kept", lambda base: base + "NIGHTLY_RESTART_ENV=/a/restart.env\n", ACCEPTED),
+    ("nightly mise tools kept", lambda base: base + "NIGHTLY_MISE_TOOLS=alpha\n", ACCEPTED),
+    ("nightly version commands kept", lambda base: base + "NIGHTLY_VERSION_COMMANDS=alpha\n", ACCEPTED),
+    ("nightly key twice", lambda base: base + "NIGHTLY_APP_NAME=t3code\nNIGHTLY_APP_NAME=t3code\n",
+     "line 3 sets NIGHTLY_APP_NAME a second time"),
     ("empty file", lambda base: "", NO_OWN_KEY),
 )
 
@@ -349,14 +371,14 @@ class ConfigTest(OpsTest):
     def test_no_config_prints_one_line_naming_the_file_and_changes_nothing(self):
         world = self.world()
         box = world.sandbox
-        before = sorted(path.relative_to(box.root).as_posix() for path in box.root.rglob("*"))
+        before = box.tree()
         for arguments in ((), ("--help",), ("--project", "fixture project"),
                           ("--project", "fixture project", "--top-level-settled")):
             with self.subTest(arguments=arguments):
                 done = box.run(ARCHIVE, *arguments, config=False, T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
                 self.assertRefused(done, ARCHIVE, f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
                                                   "Copy ops/config.example to that path and set every key.")
-                self.assertEqual(sorted(path.relative_to(box.root).as_posix() for path in box.root.rglob("*")), before)
+                self.assertEqual(box.tree(), before)
                 self.assertEqual(world.stub.requests, [])
 
     def test_xdg_config_home_is_used_only_when_it_is_absolute(self):
@@ -430,7 +452,9 @@ class ConfigTest(OpsTest):
         with self.subTest(line="ARCHIVE_DB=/x"):
             self.assertRefused(self.probe(world),
                                ARCHIVE, f"config file {file} line 2 sets ARCHIVE_DB, and this script has no such key")
-        for line in ("NIGHTLY_LOG=/x", "OTHER=1"):
+        for line in ("NIGHTLY_APPS_DIR=/a/apps", "NIGHTLY_APP_NAME=t3code", "NIGHTLY_RESTART_ENV=/a/restart.env",
+                     "NIGHTLY_MISE_TOOLS=alpha", "NIGHTLY_VERSION_COMMANDS=alpha",
+                     "NIGHTLY_LOG=/x", "OTHER=1"):
             with self.subTest(line=line):
                 box.write_config(text=box.config_text() + line + "\n")
                 self.assertRan(self.probe(world))
@@ -446,6 +470,21 @@ class ConfigTest(OpsTest):
         file = box.write_config(text="".join(line for line in example.splitlines(True) if not line.startswith("ARCHIVE_T3_HOME=")))
         self.assertRefused(box.run(ARCHIVE, "--project", "fixture project", "--dry-run", config=file),
                            ARCHIVE, f"config file {file} does not set ARCHIVE_T3_HOME")
+        legacy = (("NIGHTLY_APPS_DIR", "/a/apps"), ("NIGHTLY_APP_NAME", "t3code"),
+                  ("NIGHTLY_RESTART_ENV", "/a/restart.env"), ("NIGHTLY_MISE_TOOLS", "alpha"),
+                  ("NIGHTLY_VERSION_COMMANDS", "alpha"))
+        full = example + "".join(f"{key}={value}\n" for key, value in legacy)
+        full_file = box.write_config(text=full)
+        full_run = box.run(ARCHIVE, "--project", "fixture project", "--dry-run", config=full_file)
+        self.assertEqual((full_run.returncode, full_run.stdout), (1, ""))
+        self.assertIn("sqlite3.OperationalError", full_run.stderr)
+        for key, _ in legacy:
+            with self.subTest(key=key):
+                omitted = "".join(line for line in full.splitlines(True) if not line.startswith(key + "="))
+                done = box.run(ARCHIVE, "--project", "fixture project", "--dry-run",
+                               config=box.write_config(text=omitted))
+                self.assertEqual((done.returncode, done.stdout), (1, ""))
+                self.assertIn("sqlite3.OperationalError", done.stderr)
 
     def test_archive_refuses_a_t3_home_that_is_relative_or_holds_a_uri_character(self):
         world = self.world()

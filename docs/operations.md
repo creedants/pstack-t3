@@ -69,7 +69,7 @@ On T3 Code 0.0.46-nightly.20261014.3105 or later, only one server can own a T3 h
 | `--keep ID` | A thread to leave alone. It can be given more than once. |
 | `--top-level-settled` | Also archive settled top-level threads. |
 | `--dry-run` | Choose and print. Archive nothing. |
-| `--selection-only` | Print the candidate thread ids as a sorted JSON array of strings on stdout and exit without constructing the MCP client and without reading `T3_CODE_MCP_AUTHORIZATION`. |
+| `--selection-only` | When `--batch-dir` is absent, print the candidate thread ids as a sorted JSON array of strings on stdout. Exit without constructing the MCP client and without reading `T3_CODE_MCP_AUTHORIZATION`. |
 
 The script prints two lines.
 
