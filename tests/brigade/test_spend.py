@@ -21,6 +21,7 @@ CLOSE = "2026-10-01T02:00:00+00:00"
 HOUR = "2026-10-01T01:00:00+00:00"
 FOOTER = "tokens not requested. Pass --tokens to read them."
 _OMIT = object()
+_EMPTY_DETAILS = object()
 
 
 class SpendTest(BrigadeTest):
@@ -144,7 +145,9 @@ class SpendTest(BrigadeTest):
             usage["cache_read_input_tokens"] = cache_read
         if cache_write is not None:
             usage["cache_creation_input_tokens"] = cache_write
-        if thinking is not _OMIT:
+        if thinking is _EMPTY_DETAILS:
+            usage["output_tokens_details"] = {}
+        elif thinking is not _OMIT:
             usage["output_tokens_details"] = {"thinking_tokens": thinking}
         message = {"id": ident, "model": model, "usage": usage}
         if content is not None:
@@ -733,9 +736,10 @@ class SpendTest(BrigadeTest):
         ])
         self.assertEqual(out, self.opus_report(0))
 
-    def test_a_missing_null_negative_bool_or_non_integer_thinking_count_stays_not_recorded(self):
+    def test_a_missing_empty_details_null_negative_bool_or_non_integer_thinking_count_stays_not_recorded(self):
         cases = (
             ("missing", _OMIT),
+            ("empty-details", _EMPTY_DETAILS),
             ("null", None),
             ("bool", True),
             ("negative", -1),
