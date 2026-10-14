@@ -39,20 +39,30 @@ def setUpModule():
 
 
 class UncaughtExceptionTest(unittest.TestCase):
+    def assert_same_as_real_interpreter(self, program):
+        invocation = in_process.Invocation(program=program)
+        real = in_process.finished(in_process.Reason.INTERPRETER_EXIT, invocation)
+        saved = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+        try:
+            here = in_process.invoke(invocation)
+        finally:
+            if saved is not None:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = saved
+        self.assertEqual(
+            (here.returncode, here.stdout, here.stderr),
+            (real.returncode, real.stdout, real.stderr),
+        )
+
     def test_an_uncaught_exception_prints_the_same_traceback_as_a_real_process(self):
         self.maxDiff = None
         with tempfile.TemporaryDirectory() as directory:
             program = Path(directory) / "raises.py"
             program.write_text(SCRIPT)
-            invocation = in_process.Invocation(program=program)
-            real = in_process.finished(in_process.Reason.INTERPRETER_EXIT, invocation)
-            saved = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
-            try:
-                here = in_process.invoke(invocation)
-            finally:
-                if saved is not None:
-                    os.environ["PSTACK_TEST_REAL_PROCESS"] = saved
-        self.assertEqual(
-            (here.returncode, here.stdout, here.stderr),
-            (real.returncode, real.stdout, real.stderr),
-        )
+            self.assert_same_as_real_interpreter(program)
+
+    def test_a_script_named_runpy_keeps_its_own_traceback_frames(self):
+        self.maxDiff = None
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / "runpy.py"
+            program.write_text(SCRIPT)
+            self.assert_same_as_real_interpreter(program)
