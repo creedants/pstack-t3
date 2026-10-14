@@ -36,7 +36,7 @@ The brief has to carry the decision because a child can miss the project file. `
 
 The coordinator resolves the worker `modelSelection` when it launches the worker. It resolves the gate verifier seat when it launches the verifier. It resolves both with `show --brief-mode <the item mode>`. It never uses `--coordinator-mode` there. An escalated item worker and gate get full seats.
 
-A coordinator set to `light` over a project set to `full` writes `Mode: light` into its worker brief. The worker runs `roles.py show --brief-mode light`. With budget `default` the seats it and its delegates resolve outside the `verifiers` and `review backups` roles use budget `small`. A child escalated to `full` under a project set to `light` gets `Mode: full`. Its `roles.py show --brief-mode full` applies no light cap.
+A coordinator set to `light` over a project set to `full` writes `Mode: light` into its worker brief, unless the item kind has a recorded review depth that says otherwise. The worker runs `roles.py show --brief-mode light`. With budget `default` the seats it and its delegates resolve outside the `verifiers` and `review backups` roles use budget `small`. A child escalated to `full` under a project set to `light` gets `Mode: full`. Its `roles.py show --brief-mode full` applies no light cap.
 
 ### The reasoning cap
 
