@@ -1,4 +1,5 @@
 """call reads os.environ.get("PSTACK_TEST_REAL_PROCESS") at the start of every call, before it installs a command env and before it loads. The value 1 sends that call through a real process. Any other value runs in this process. The read uses the process environment at the start of call. A command env mapping does not change that read.
+call_in_process runs the script in this process and does not read that variable.
 
 After an in-process call, including when main raises, the helper restores the process. When a restore step raises, the helper still runs the later steps, then raises the first restore error.
 
@@ -232,6 +233,11 @@ def _load(test, script):
     return loaded
 
 
+def run_globals(test, script):
+    """Load this script for this test on the first call and return the run globals of its module."""
+    return _load(test, script)["run"].__globals__
+
+
 def _capture_stream(line_buffering):
     raw = io.BytesIO()
     wrapper = io.TextIOWrapper(
@@ -321,6 +327,15 @@ def call(test, script, argv, *, stdin=None, env=None, cwd=None):
     if os.environ.get("PSTACK_TEST_REAL_PROCESS") == "1":
         command = [sys.executable, str(script), *(str(arg) for arg in argv)]
         return _run_interpreter(command, stdin=stdin, env=env, cwd=cwd, timeout=None)
+    return _call_in_process(test, script, argv, stdin=stdin, env=env, cwd=cwd)
+
+
+def call_in_process(test, script, argv, *, stdin=None, env=None, cwd=None):
+    """Run the script for argv in this test's process whatever PSTACK_TEST_REAL_PROCESS says.
+
+    A test that installs a fake roles.py script, or patches the loaded module, in this process needs the
+    command to read those globals, which a separate interpreter does not share. The other arguments follow call.
+    """
     return _call_in_process(test, script, argv, stdin=stdin, env=env, cwd=cwd)
 
 
