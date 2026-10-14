@@ -1,0 +1,3 @@
+- The verify rule says to run the claims check again after any later edit to prose, and to include `python3 -m unittest tests.test_pstack_t3` in the final run because that module checks the change note.
+- A prose-only commit runs that module and the claims check, and it does not rerun the rest of the verification chain.
+- The docstring of `fire` says the label check comes before the worker cap in both lock phases.

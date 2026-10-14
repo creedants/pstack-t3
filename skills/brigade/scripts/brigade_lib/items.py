@@ -364,9 +364,10 @@ def prepare_doc_fire(project_root, paths, timebox, ticket_count, doc_item):
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=(), doc_item=False):
     """Start one item for the tickets in `ids`. The item takes the kind and goal fire_label gives.
 
-    The kind and goal check runs twice, each time under the store lock. The first run comes after the owner check, unfireable, and the worker
-    cap, so a fire that one of those refuses or blocks gets the words it got before kinds and goals. It comes before the
-    lease claim, so a fire it refuses claims no lease. The second run sees a change made while the claim ran.
+    The label check runs twice, each time under the store lock. It covers kind, goal, and ride-along rules. Both runs come
+    before the worker cap. The first run comes after the owner check and unfireable, so a fire that one of those refuses
+    gets the words it got before the label check. It comes before the lease claim, so a fire it refuses claims no lease.
+    The second run sees a change made while the claim ran.
     The lead ticket's kind cell takes the item's kind in a rewrite of its own, before the item row is appended. A fire
     killed between its writes leaves no item whose kind its lead ticket lacks. No other kind or goal cell
     of a ticket changes, so a ticket that rides along keeps its own.

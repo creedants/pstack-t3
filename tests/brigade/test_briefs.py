@@ -48,7 +48,9 @@ class BriefsTest(BrigadeTest):
                      "slot --slots 2 -- python3 scripts/run_tests.py -j 8",
                      "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run.",
                      "An affected-module run stays one slot.",
-                     "Run the full verification chain once, after the last commit."):
+                     "Run the full verification chain once, after the last commit.",
+                     "after any later edit to prose",
+                     "tests.test_pstack_t3"):
             self.assertIn(part, verify)
         self.assertNotIn("Run builds and tests through", verify)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)

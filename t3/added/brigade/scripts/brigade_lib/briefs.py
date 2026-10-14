@@ -170,6 +170,10 @@ def verify_rule(land):
         "Run the full verification chain once, after the last commit. "
         "The chain is the first bullet of this section. "
         "A later commit that changes only prose does not rerun it. "
+        "Run the claims check again after any later edit to prose. "
+        "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. "
+        "The final run of the chain also includes `python3 -m unittest tests.test_pstack_t3`, because that module checks the change note. "
+        "A prose-only commit runs that module and does not rerun the chain. "
         "A fix round runs the affected modules while working and one full run at the end."
     )
 
