@@ -1,1 +1,1 @@
-- In `items.py`, `fire` calls `checked_fire_label` before `workers_full` in both lock phases, so a ticket with no kind on a station that gives none is refused at once and records no workers block, while a ticket with a valid kind at a full cap still records the workers block.
+- `fire` checks the ticket's label (kind, goal, and ride-along rules) before the worker cap in both lock phases; a fire that the label check refuses is refused at once at a full cap and records no block; a fire the label check accepts still records the workers block at a full cap.

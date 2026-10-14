@@ -1065,12 +1065,21 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
         self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "feature", "--summary", "Do b", ok=False),
                          f"brigade: T2 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}")
-        blocked = [line for line in (self.at / "log.tsv").read_text().splitlines()
-                   if "\tticket\tT2\tblocked\t" in line]
-        self.assertEqual(blocked, [])
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ticket" and row["id"] == "T2" and row["state"] == "blocked"], [])
         self.brigade("dish", "D1", "--state", "sent-back")
         line = "T2: unblocked; run fire --tickets=T2 --station=feature '--summary=Do b' --timebox=60"
         self.assertNotIn(line, self.brigade("watch").splitlines())
+
+    def test_a_goal_mismatch_at_a_full_cap_is_refused_for_the_goal_and_records_no_block(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.goal("one")
+        self.goal("two")
+        self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "polish", "--goal", "G2")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Do b")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1,T3", "--station", "feature", "--summary", "Do one", ok=False), "brigade: T3 is under G2 and the lead ticket T1 is under G1; name T3 in --ride-along, which takes a low ticket that is not a feature, or start it on its own")
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ticket" and row["state"] == "blocked"], [])
 
     def test_a_block_note_written_before_kinds_reprints_the_fire_line_it_printed_then(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
