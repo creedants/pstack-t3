@@ -256,7 +256,7 @@ def _restore(saved):
 
 
 class _TypedArgv(list):
-    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so a plain item assignment to index 0 is ignored."""
+    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so an item assignment with the integer index 0 is ignored. A negative index, a slice, or a list method can still change element 0."""
 
     def __setitem__(self, index, value):
         if index != 0:
