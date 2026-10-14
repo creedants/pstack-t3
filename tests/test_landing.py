@@ -1700,19 +1700,13 @@ exit 0
         self.assertEqual(self.land("lease", "renew", "L9", ok=False), "land: no L9")
 
     def lease_row(self, number):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return tuple(store.db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone())
-        finally:
-            store.db.close()
 
     def owner_state(self):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return ([tuple(row) for row in store.db.execute("SELECT * FROM owner")],
                     store.db.execute("SELECT count(*) FROM log").fetchone()[0])
-        finally:
-            store.db.close()
 
     def test_an_owner_floor_rises_and_never_lowers(self):
         self.init()
@@ -2106,8 +2100,7 @@ exit 0
 
     def rebuild_entry_without_autoincrement(self):
         """Rewrite entry as an older database: the same rows, and no AUTOINCREMENT."""
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             rows = [dict(row) for row in store.db.execute("SELECT * FROM entry")]
             store.db.execute("DROP TABLE entry")
             store.db.executescript(land.SCHEMA.replace(" AUTOINCREMENT", ""))
@@ -2119,8 +2112,6 @@ exit 0
                     [row[name] for name in present])
             if store.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
                 store.db.execute("DELETE FROM sqlite_sequence WHERE name = 'entry'")
-        finally:
-            store.db.close()
 
     def test_a_bounced_entry_resubmitted_gets_a_new_id(self):
         self.init()
@@ -2307,15 +2298,15 @@ exit 0
         sha = self.worker("w1", {"a.txt": "agent\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
-        store = land.Store.for_repo(self.work)
         real = land.publish
 
         def publish_then_crash(*args):
             real(*args)
             raise KeyboardInterrupt
 
-        with mock.patch.object(land, "publish", publish_then_crash), self.assertRaises(KeyboardInterrupt):
-            land.land(store)
+        with land.Store.for_repo(self.work) as store:
+            with mock.patch.object(land, "publish", publish_then_crash), self.assertRaises(KeyboardInterrupt):
+                land.land(store)
         self.assertEqual(self.land_in_another_process("status", "E1").split(" (")[0], "E1 landing")
         self.assertEqual(self.land_in_another_process("land"), "nothing to land")
         self.assertIn("E1 landed", self.land_in_another_process("status", "E1"))
@@ -2324,44 +2315,44 @@ exit 0
 
     def subprocesses_during_land(self):
         """Commands this land run starts while a write transaction is open."""
-        store = land.Store.for_repo(self.work)
-        depth = {"n": 0}
-        hits = []
-        original_tx = land.Store.tx
-        original_run = land.subprocess.run
-        original_popen = land.subprocess.Popen
+        with land.Store.for_repo(self.work) as store:
+            depth = {"n": 0}
+            hits = []
+            original_tx = land.Store.tx
+            original_run = land.subprocess.run
+            original_popen = land.subprocess.Popen
 
-        @contextlib.contextmanager
-        def watching_tx(store_self):
-            depth["n"] += 1
-            try:
-                with original_tx(store_self) as db:
-                    yield db
-            finally:
-                depth["n"] -= 1
+            @contextlib.contextmanager
+            def watching_tx(store_self):
+                depth["n"] += 1
+                try:
+                    with original_tx(store_self) as db:
+                        yield db
+                finally:
+                    depth["n"] -= 1
 
-        def record(command):
-            if isinstance(command, (list, tuple)):
-                hits.append(" ".join(str(part) for part in command))
-            else:
-                hits.append(str(command))
+            def record(command):
+                if isinstance(command, (list, tuple)):
+                    hits.append(" ".join(str(part) for part in command))
+                else:
+                    hits.append(str(command))
 
-        def watching_run(*args, **kwargs):
-            if depth["n"]:
-                record(args[0] if args else kwargs.get("args"))
-            return original_run(*args, **kwargs)
+            def watching_run(*args, **kwargs):
+                if depth["n"]:
+                    record(args[0] if args else kwargs.get("args"))
+                return original_run(*args, **kwargs)
 
-        def watching_popen(*args, **kwargs):
-            # subprocess.run calls Popen for the same command. Record a direct Popen only.
-            if depth["n"] and inspect.stack()[1].function != "run":
-                record(args[0] if args else kwargs.get("args"))
-            return original_popen(*args, **kwargs)
+            def watching_popen(*args, **kwargs):
+                # subprocess.run calls Popen for the same command. Record a direct Popen only.
+                if depth["n"] and inspect.stack()[1].function != "run":
+                    record(args[0] if args else kwargs.get("args"))
+                return original_popen(*args, **kwargs)
 
-        with mock.patch.object(land.Store, "tx", watching_tx), \
-             mock.patch.object(land.subprocess, "run", watching_run), \
-             mock.patch.object(land.subprocess, "Popen", watching_popen):
-            land.land(store)
-        return hits
+            with mock.patch.object(land.Store, "tx", watching_tx), \
+                 mock.patch.object(land.subprocess, "run", watching_run), \
+                 mock.patch.object(land.subprocess, "Popen", watching_popen):
+                land.land(store)
+            return hits
 
     def test_a_land_run_runs_no_subprocess_inside_a_write_transaction(self):
         self.init()
@@ -2385,12 +2376,12 @@ exit 0
 
     def test_a_held_queue_lock_reports_busy(self):
         self.init()
-        store = land.Store.for_repo(self.work)
-        import fcntl
-        with open(store.dir / ".queue.lock", "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            result = real_process(
-                ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+        with land.Store.for_repo(self.work) as store:
+            import fcntl
+            with open(store.dir / ".queue.lock", "a") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                result = real_process(
+                    ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("queue busy", result.stdout)
 
@@ -2753,7 +2744,8 @@ os.execv(real, [real, *args])
         }))
 
     def stored_merge_method(self):
-        return land.Store.for_repo(self.work).contract["mergeMethod"]
+        with land.Store.for_repo(self.work) as store:
+            return store.contract["mergeMethod"]
 
     def arm_auto_merge(self):
         (self.base / "auto-merge-request.json").write_text(
@@ -3226,10 +3218,10 @@ os.execv({real!r}, [{real!r}, *args])
 
     def leave_awaiting_merge_without_a_pr(self):
         """Push landing/e<n>, mark the entry awaiting merge, and die before gh pr create."""
-        store = land.Store.for_repo(self.work)
-        with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                land.land(store)
+        with land.Store.for_repo(self.work) as store:
+            with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    land.land(store)
         status = self.land_in_another_process("status", "E1")
         self.assertIn("awaiting-merge", status)
         self.assertNotIn("pull/", status)
@@ -3355,7 +3347,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertFalse((self.base / "merge-calls").exists())
 
     def absent_marker(self):
-        return land.Store.for_repo(self.work).contract.get("absentDrain") or {}
+        with land.Store.for_repo(self.work) as store:
+            return store.contract.get("absentDrain") or {}
 
     def test_merge_mode_does_not_merge_a_just_opened_pr_with_zero_posted_checks(self):
         with self.fake_gh():
@@ -3476,14 +3469,16 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", first)
             self.assertNotIn("queue paused", first)
             self.assertNotIn("landed", first)
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
             self.assertIn("waiting for required checks", self.land("status", "E1"))
             self.assertNotIn("Paused", self.land("status"))
             self.assertIn("protection/required_status_checks", (self.base / "gh-calls").read_text())
             (self.base / "pr-checks.json").unlink()
             (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
 
     def test_merge_mode_pauses_when_policy_refuses_and_every_required_check_is_posted(self):
         with self.fake_gh():
@@ -3504,9 +3499,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
@@ -3526,9 +3522,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
 
@@ -3548,9 +3545,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
@@ -3567,7 +3565,8 @@ os.execv({real!r}, [{real!r}, *args])
             first = self.land("land")
             self.assertNotIn("queue paused", first)
             self.assertIn("landed E1 (r/D1)", first)
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
             self.assertEqual(self.land("land"), "nothing to land")
 
     def test_merge_mode_does_not_merge_when_a_pending_check_appears_between_reads(self):
@@ -3855,31 +3854,31 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
-            store = land.Store.for_repo(self.work)
-            with store.tx() as db:
-                db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps("push"),))
-            store = land.Store.for_repo(self.work)
-            self.assertEqual(store.contract["mode"], "push")
-            remote = self.base / "origin.git"
-            self.merged_queue_branch()
-            sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
-            sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
-            sh("git", "config", "push.followTags", "true", cwd=self.work)
-            (self.base / "branch-query-fails").write_text("x")
-            entry = store.entries("awaiting-merge")[0]
-            log = self.record_pushes()
-            try:
-                landed, bounced = [], []
-                self.assertTrue(land.take_pr(store, entry, landed, bounced))
-            finally:
-                self.stop_recording_pushes()
-            self.assertEqual(landed, [entry["id"]])
-            self.assertEqual(bounced, [])
-            self.assertEqual(
-                log.read_text().splitlines(),
-                ["push --no-follow-tags origin --delete landing/e1"])
-            self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
-            self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
+            with land.Store.for_repo(self.work) as store:
+                with store.tx() as db:
+                    db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps("push"),))
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract["mode"], "push")
+                remote = self.base / "origin.git"
+                self.merged_queue_branch()
+                sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
+                sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+                sh("git", "config", "push.followTags", "true", cwd=self.work)
+                (self.base / "branch-query-fails").write_text("x")
+                entry = store.entries("awaiting-merge")[0]
+                log = self.record_pushes()
+                try:
+                    landed, bounced = [], []
+                    self.assertTrue(land.take_pr(store, entry, landed, bounced))
+                finally:
+                    self.stop_recording_pushes()
+                self.assertEqual(landed, [entry["id"]])
+                self.assertEqual(bounced, [])
+                self.assertEqual(
+                    log.read_text().splitlines(),
+                    ["push --no-follow-tags origin --delete landing/e1"])
+                self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
+                self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
             self.assertEqual(self.land_in_another_process("status", "E1").splitlines()[0].split(". ")[0], "E1 landed (r/D1, w1)")
             self.assertEqual(self.land_in_another_process("lease", "list"), "no leases held")
 
@@ -5065,11 +5064,10 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_a_store_from_before_pr_text_columns_is_migrated(self):
         self.init()
-        store = land.Store.for_repo(self.work)
-        store.db.execute("DROP TABLE entry")
-        store.db.executescript(land.SCHEMA)
-        self.assertNotIn("title", {row["name"] for row in store.db.execute("PRAGMA table_info(entry)")})
-        store.db.close()
+        with land.Store.for_repo(self.work) as store:
+            store.db.execute("DROP TABLE entry")
+            store.db.executescript(land.SCHEMA)
+            self.assertNotIn("title", {row["name"] for row in store.db.execute("PRAGMA table_info(entry)")})
         self.assertEqual(self.queue_one(), "E1")
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
 
@@ -5675,6 +5673,44 @@ os.execv({real!r}, [{real!r}, *args])
             with land.slot("worker", count=3):
                 self.assertEqual(os.environ["LAND_SLOT_FILES"], "worker-0")
         self.assertFalse((directory / "worker-0").exists())
+
+    def test_a_refused_slot_count_leaves_no_open_landing_database(self):
+        self.init()
+        self.governor(2)
+        database = os.path.realpath(next((self.base / "state").glob("pstack-t3/landing/*/land.db")))
+        marker = self.base / "ran"
+        opened = []
+        real_connect = land.sqlite3.connect
+
+        def connect(path, *args, **kwargs):
+            connection = real_connect(path, *args, **kwargs)
+            opened.append((connection, os.path.realpath(path)))
+            return connection
+
+        def refused(argv):
+            opened.clear()
+            stderr = io.StringIO()
+            with mock.patch.object(land.sqlite3, "connect", connect), contextlib.redirect_stderr(stderr):
+                code = land.main(argv)
+            return code, stderr.getvalue()
+
+        def assert_closed():
+            for connection, path in opened:
+                self.assertEqual(path, database)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
+
+        self.assertEqual(refused(["--repo", str(self.work), "status", "E9"]), (1, "land: no E9\n"))
+        self.assertTrue(opened)
+        assert_closed()
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("LAND_SLOT", None)
+            self.assertEqual(
+                refused(["slot", "--slots", "3", "--", "touch", str(marker)]),
+                (1, "land: --slots 3 is more than the 2 worker slots this governor has\n"))
+        self.assertFalse(marker.exists())
+        assert_closed()
 
     def test_a_waiter_killed_with_sigkill_does_not_block_a_later_caller(self):
         slots = SlotCallers(self, 1)
@@ -7133,11 +7169,8 @@ os.execv({real!r}, [{real!r}, *args])
         return self.land("contest", *args, *ADMIN, ok=ok)
 
     def ruling_rows(self, table):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return [dict(row) for row in store.db.execute(f"SELECT * FROM {table} ORDER BY 1")]
-        finally:
-            store.db.close()
 
     def reserved_until(self, number):
         return next(row for row in self.ruling_rows("reservation") if row["id"] == number)["expires"][:16]
@@ -7434,15 +7467,12 @@ os.execv({real!r}, [{real!r}, *args])
         self.share("engine/", 2)
 
         def snapshot():
-            store = land.Store.for_repo(self.work)
-            try:
+            with land.Store.for_repo(self.work) as store:
                 shares = [(row["prefix"], row["count"]) for row in store.db.execute(
                     "SELECT prefix, count FROM share ORDER BY prefix")]
                 log = [(row["kind"], row["id"], row["state"], row["note"]) for row in store.db.execute(
                     "SELECT kind, id, state, note FROM log ORDER BY at")]
                 return store.contract.get("cap"), shares, log
-            finally:
-                store.db.close()
 
         before = snapshot()
         refusal = "land: shares add up to 4 (docs/ 2, engine/ 2), over the cap of 3"
@@ -7601,18 +7631,17 @@ os.execv({real!r}, [{real!r}, *args])
     def test_a_contest_waits_for_a_running_land_to_release_the_queue_lock(self):
         import fcntl
         self.init()
-        store = land.Store.for_repo(self.work)
-        with open(store.dir / ".queue.lock", "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            proc = real_popen(
-                ProcessReason.LOCK,
-                [sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
-                env=os.environ.copy())
-            time.sleep(1)
-            self.assertIsNone(proc.poll())
-            self.assertEqual(self.ruling_rows("contest"), [])
-        out, err = proc.communicate(timeout=20)
-        store.db.close()
+        with land.Store.for_repo(self.work) as store:
+            with open(store.dir / ".queue.lock", "a") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                proc = real_popen(
+                    ProcessReason.LOCK,
+                    [sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
+                    env=os.environ.copy())
+                time.sleep(1)
+                self.assertIsNone(proc.poll())
+                self.assertEqual(self.ruling_rows("contest"), [])
+            out, err = proc.communicate(timeout=20)
         self.assertEqual((proc.returncode, out.strip()), (0, "C1"), err)
 
     def test_every_ruling_write_needs_an_owner(self):

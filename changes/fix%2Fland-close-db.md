@@ -1,0 +1,1 @@
+- landing: land.py closes its database before it refuses a command, so Python 3.13 and later print no ResourceWarning.
