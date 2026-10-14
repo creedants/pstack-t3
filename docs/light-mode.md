@@ -24,11 +24,11 @@ The setting is one key named `mode` with the values `full` and `light`. It lives
 
 The highest level present wins. The order is brief, then session, then coordinator, then project, then user, then `full`. `roles.py` owns this order in `effective_mode` in `t3/scripts/roles.py`.
 
-`roles.py show` and `roles.py mode` both accept `--brief-mode`, `--session-mode`, and `--coordinator-mode`. Each takes `full` or `light`. Both print `mode` and `modeSource`. `show` then resolves every seat under that mode.
+`roles.py show` and `roles.py mode` both accept `--brief-mode`, `--session-mode`, and `--coordinator-mode`. Each takes `full` or `light`. `show` prints `mode` and `modeSource` keys. `mode` prints `Mode:` and `Mode source:` lines. `show` then resolves every seat under that mode.
 
 A brief `Mode:` line is the frozen decision. A child copies that line bare value into `--brief-mode` on every `roles.py mode` and `roles.py show` call it makes. It passes no other mode flag. It never resolves the mode again.
 
-A parent writes `Mode: <effective mode>` into every brief whose child resolves seats or spawns. That covers brigade workers, code delegates, Autopilot and Orchestrate owners, sub-coordinators, unit workers, visual-parity owners, landing writers, and fresh-child tests that run a playbook. Read-only leaves such as a `how` explainer get no line because they resolve nothing.
+A parent writes `Mode: <effective mode>` into every brief whose child resolves seats or spawns. That covers brigade workers, code delegates, Autopilot and Orchestrate owners, sub-coordinators, unit workers, visual-parity owners, and landing writers. Read-only leaves such as a `how` explainer get no line because they resolve nothing.
 
 A session in light mode passes `--session-mode light` to every `roles.py` call it makes. It writes `Mode: light` into its children briefs.
 
@@ -129,7 +129,7 @@ Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" m
 | Gate verifier | 1 per attempt | 1 per attempt, same seat, same reasoning level | Kept |
 | Landing writer | 1 per unit | 1 per unit, with `Mode: light` in its brief | Kept |
 | Landing queue | Checks | Checks | Kept |
-| Setup smoke test | 1 per provider | 1 per provider. Setup runs once, and a failed smoke test is the only proof a seat works | Kept |
+| Setup smoke test | 1 per provider | 1 per provider | Kept |
 
 A send-back in light mode is a fix attempt with a fresh worker. Its brief carries the findings and waives the steps [Waivers](#waivers) names.
 
@@ -214,12 +214,12 @@ Gate: brigade
 ```
 
 - `Mode:` holds only `full` or `light`. Nothing follows the value.
-- `Mode source:` holds one of `brief`, `session`, `restaurant.json`, `.pstack/t3-roles.json`, `roles.json`, `default`, or `escalated: <reason>`. It is for people, and no command reads it.
+- `Mode source:` holds one of `brief`, `session`, `restaurant.json`, `.pstack/t3-roles.json`, `roles.json`, `default`, or `escalated: <reason>`. It names where the decision came from. Brigade reads an `escalated:` reason back to keep the escalation durable.
 - `Attempt:` holds `first`, `fix`, or `bounce`.
 - `Waived by mode:` lists the waivers, comma-separated, in table order.
-- `Gate:` holds `brigade` or `standalone`.
+- `Gate:` holds `brigade` in a brigade brief.
 
-`roles.py mode` prints exactly these lines for an item, and `brigade.py brief` writes them unchanged.
+`roles.py mode` prints the `Playbook:`, `Mode:`, `Mode source:`, `Attempt:`, and `Waived by mode:` lines for an item. `brigade.py brief` writes them unchanged and then adds `Gate: brigade` and the seat rule.
 
 ### `roles.py check-brief`
 
