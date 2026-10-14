@@ -3787,6 +3787,62 @@ class LedgerTest(OutputCase):
         self.assertEqual(text_phrases(text), [phrase(number) for number in range(1, 402)])
         self.assertEqual((text_phrases(text)[0], text_phrases(text)[-1]), (phrase(1), phrase(401)))
 
+    def test_ordinary_ledger_secret_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
+        token = "ledger-secret-token"
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": token, "seat": token, "start": stamp, "end": ""}])
+        document, text = self.document(), self.out("--text")
+        self.assertNotIn(token, document)
+        self.assertNotIn(token, text)
+        self.assertIn("attempt 1 · worker · open", text)
+
+    def test_ordinary_ledgertoken_in_the_thread_attempt_role_and_seat_is_absent_from_both_forms(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        token, other = "ledgertoken", "ledger-secret-token"
+        row = {"at": stamp, "dish": "D7", "start": stamp, "end": ""}
+        write_threads(fixture, [{**row, "attempt": token, "role": token, "thread": token, "seat": token}, {**row, "attempt": "1", "role": "worker", "thread": other, "seat": other}])
+        document, text = self.document(), self.out("--text")
+        self.assertIn("attempt 1 · worker · open", text)
+        self.assertEqual([token in document, token in text, other in document, other in text], [False, False, False, False])
+
+    def test_stored_attempt_orders_two_then_ten_then_the_spaced_cell_that_displays_2(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        rows = (("10", "ten", "opaque=ten"), (" 2 ", "spaced", "opaque=spaced"), ("2", "two", "opaque=two"))
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": attempt, "role": role, "thread": thread, "start": stamp, "end": ""} for attempt, role, thread in rows])
+        text, document = self.out("--text"), self.document()
+        order = [line.strip() for line in text.split("\n") if line.strip().startswith("attempt ")]
+        self.assertEqual(order, ["attempt 2 · two · open", "attempt 10 · ten · open", "attempt 2 · spaced · open"])
+        self.assertNotIn("opaque=", document)
+        self.assertNotIn("opaque=", text)
+
+    def test_padded_thread_cell_is_absent_from_both_forms(self):
+        token = " ledgertoken "
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": token, "seat": token, "start": stamp, "end": ""}])
+        document, text = self.document(), self.out("--text")
+        self.assertIn("attempt 1 · worker · open", text)
+        self.assertNotIn(token.strip(), document)
+        self.assertNotIn(token.strip(), text)
+
+    def test_short_thread_cell_is_absent_as_its_own_word_and_stays_inside_a_longer_word(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "T1", "thread": "T1", "seat": "T12", "start": stamp, "end": ""}])
+        document, text = self.document(), self.out("--text")
+        self.assertIsNone(re.search(r"(?<![\w-])T1(?![\w-])", document))
+        self.assertIsNone(re.search(r"(?<![\w-])T1(?![\w-])", text))
+        self.assertIn("T12", document)
+        self.assertIn("T12", text)
+
+    def test_attempt_rank_reads_one_to_eighteen_ascii_digits_as_an_integer(self):
+        rank = MOD["attempt_rank"]
+        self.assertEqual((rank("007"), rank("9" * 18)), ((0, 7), (0, int("9" * 18))))
+        self.assertEqual((rank("9" * 19), rank(""), rank("٢")), ((1, "9" * 19), (1, ""), (1, "٢")))
+
 
 if __name__ == "__main__":
     unittest.main()

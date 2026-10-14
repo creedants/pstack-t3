@@ -20,6 +20,9 @@ The identifiers are the thread ids, the sub-agent ids, and the work items' task 
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
 A form of spaces only is not private text either. Neither is an identifier form of fewer than 4 characters.
+A non-empty thread-column value is private text whatever its form, read as stored and with its percent escapes decoded once and twice, and also without the spaces that start and end each of those forms.
+A form of 4 or more characters is private text anywhere in a word.
+A shorter form is private text only where no letter, digit, underscore, or hyphen stands directly before or after it.
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
 Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
 A path form of 4 or more characters is private text anywhere in a word.
@@ -958,12 +961,13 @@ class Privacy:
     field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
 
-    def __init__(self, identifiers=(), paths=(), requests=()):
-        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
+    def __init__(self, identifiers=(), paths=(), requests=(), cells=()):
+        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, of a request name with a hyphen that is not one TOKEN, and of a thread-column value that holds a character other than a space.
         roots holds each shorter form of a path that is not blank, in lower case, without the slashes that end it. A form of slashes only is `/`.
         names holds each request name that is one TOKEN, in lower case.
-        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
+        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, and each shorter form of a thread-column value that holds a character other than a space, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
         A request name, and each form of one that is not one TOKEN, is read without the spaces that start and end it. A request name with no hyphen is in none of the four.
+        A thread-column value is read as stored and with its percent escapes decoded once and twice, and each of those forms is also read without the spaces that start and end it. ordinary() does not exempt it. A form of spaces only is in none of the four.
         """
         index, roots, shorts = {}, set(), set()
         requests = {plain(value).strip() for value in requests if "-" in value}
@@ -985,6 +989,15 @@ class Privacy:
                     index.setdefault(low[:ANCHOR], set()).add(low)
                 else:
                     shorts.add(low)
+                value = unescaped(value)[0]
+        for value in map(plain, cells):
+            for _ in range(3):
+                low = lowered(value)
+                for form in (low, low.strip()):
+                    if form.strip() and len(form) >= ANCHOR:
+                        index.setdefault(form[:ANCHOR], set()).add(form)
+                    elif form.strip():
+                        shorts.add(form)
                 value = unescaped(value)[0]
         self.roots = frozenset(roots)
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
@@ -1101,16 +1114,17 @@ class Privacy:
 def privacy_of(store, t3, paths=()):
     """The filter for one run. Its identifiers are the thread ids, sub-agent ids, and task values of the store and of T3's rows.
     Its paths are the project root the store records and the given paths.
-    Its request names are the names request_name() reads from those identifiers.
+    The non-empty values in the thread column are not identifiers.
+    Its request names are the names request_name() reads from those identifiers and from those values.
     """
     ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
         ids.update((unit.worker, unit.task, *unit.earlier_workers))
-    ids.update(row["thread"] for row in store.threads if row["thread"])
+    cells = tuple(row["thread"] for row in store.threads if row["thread"])
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
-    return Privacy(ids, places, filter(None, map(request_name, ids)))
+    return Privacy(ids, places, filter(None, map(request_name, (*ids, *cells))), cells)
 
 
 def short(text, limit):
@@ -1278,20 +1292,18 @@ def is_open(row):
     return not row["end"]
 
 
+def attempt_rank(cell):
+    """(0, int(cell)) when cell is ASCII, its length is from 1 to 18, and every character is a digit. (1, cell) otherwise."""
+    if cell.isascii() and 1 <= len(cell) <= 18 and cell.isdigit():
+        return (0, int(cell))
+    return (1, cell)
+
+
 def lines_of(rows, dish, privacy):
     chosen = [(index, row) for index, row in enumerate(rows) if row["dish"] == dish]
-
-    def order(pair):
-        text = privacy.field(pair[1]["attempt"])
-        if text.isascii() and 1 <= len(text) <= 18 and text.isdigit():
-            rank = (0, int(text))
-        else:
-            rank = (1, text)
-        return (rank, pair[0])
-
     return tuple(
         LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
-        for _, row in sorted(chosen, key=order))
+        for _, row in sorted(chosen, key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
 
 
 def spoken(line):
