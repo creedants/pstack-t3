@@ -72,6 +72,23 @@ class StoreTest(BrigadeTest):
             self.assertIn(level, opened)
         self.assertFalse((self.store / "bridge-kit" / "loud").exists())
 
+    def test_set_scratch_dir_reads_back_stores_the_resolved_path_and_a_clear_removes_the_key(self):
+        self.open()
+        parent = str(Path.home().resolve())
+        meta = json.loads(self.brigade("set", "--scratch-dir", parent))
+        self.assertEqual(meta["scratchDir"], parent)
+        meta = json.loads(self.brigade("set", "--scratch-dir", ""))
+        self.assertNotIn("scratchDir", meta)
+
+    def test_set_scratch_dir_refuses_a_relative_tilde_or_tmp_value_and_changes_nothing(self):
+        self.open()
+        before = (self.at / "restaurant.json").read_bytes()
+        refusal = "brigade: --scratch-dir takes an absolute directory outside /tmp, or empty string to clear it"
+        for bad in ("scratch", "~/scratch", "/tmp", "/tmp/scratch", "/home\n"):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.brigade("set", "--scratch-dir", bad, ok=False), refusal)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
     def test_set_cap_and_review_repair_a_string_int_and_list_stored_map_and_write_a_clean_one(self):
         # A hand edit leaves a non-object here, and set merges into an existing value only when it is a dictionary.
         self.open()

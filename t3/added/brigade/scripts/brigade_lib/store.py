@@ -112,6 +112,9 @@ RULING_RULES = ("purpose", "priority", "age", "related-work", "dependency", "flo
 RULING_STATES = ("in-force", "done", "expired", "superseded", "overruled")
 NOTHING_HANDED = "nothing handed to you"
 NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contract key in --fields, and write none when the item has no safety, privacy, or integrity property")
+# The restaurant.json key that holds the parent directory worker briefs pass to mktemp -d -p.
+SCRATCH_KEY = "scratchDir"
+SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory outside /tmp, or empty string to clear it"
 SNAPSHOT_CHUNK = 1 << 16
 
 MENU = """# Menu: {restaurant}
@@ -164,6 +167,25 @@ def store_root(flag=None):
         return Path(os.environ["BRIGADE_STORE"])
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
     return Path(base) / "pstack-t3" / "brigade"
+
+
+def scratch_parent_text(value):
+    """The parent directory briefs pass to mktemp -d -p, or "" when the setting is unset.
+
+    None and "" mean unset. Any other value must be an absolute directory outside /tmp.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if not text.strip():
+        return ""
+    resolved = Path(text).resolve() if Path(text).is_absolute() else None
+    refused = (any(bad in text for bad in ("\n", "\r", "~")) or resolved is None
+               or resolved == Path("/tmp") or Path("/tmp") in resolved.parents
+               or (resolved.exists() and not resolved.is_dir()))
+    if refused:
+        raise BrigadeError(SCRATCH_REFUSAL)
+    return str(resolved)
 
 
 def write_atomic(path, text):
