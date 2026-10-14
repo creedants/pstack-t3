@@ -245,7 +245,7 @@ def check_tree(root):
     for skill_md in sorted(root.glob("*/SKILL.md")):
         skill = skill_md.parent.name
         text = skill_md.read_text()
-        if witness and len(text.split("---")) >= 2 and "disable-model-invocation" in text.split("---")[1]:
+        if witness and len(text.split("---")) >= 3 and "disable-model-invocation" in text.split("---")[1]:
             findings.append(f"{skill}/SKILL.md: frontmatter contains disable-model-invocation")
         match = re.match(r"---\n(.*?)\n---\n", text, re.S)
         if not match:

@@ -1008,6 +1008,12 @@ class RenderedTreeCheckTest(unittest.TestCase):
             ["demo/SKILL.md: frontmatter contains disable-model-invocation"],
         )
 
+    def test_disable_model_invocation_after_one_mark_is_only_missing_frontmatter(self):
+        demo = "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n"
+        self.assertEqual(
+            check.check_tree(self._root(roles=True, demo=demo)),
+            ["demo/SKILL.md: missing frontmatter"],
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
 - `scripts/check.py` reports `pstack-runtime/scripts/roles.py: is missing` when `pstack-runtime/SKILL.md` and `setup-pstack/SKILL.md` are both files and `pstack-runtime/scripts/roles.py` is not.
 - `scripts/check.py` reports `<skill>/SKILL.md: frontmatter contains disable-model-invocation` when `pstack-runtime/SKILL.md` and `setup-pstack/SKILL.md` are both files and the text between the first two `---` marks of that skill's `SKILL.md` contains `disable-model-invocation`.
 - The CI step `Generated skills match the sources` passes `docs/cli` to `git diff --exit-code` and to `git status --porcelain`, next to `skills` and `docs/skills.md`.
-- Removed `test_pstack_t3.GitEnvironmentFenceTest`, `test_pstack_t3.BuildTest.test_generated_tree_passes_check`, and `test_build.BuildReferenceTest.test_default_build_writes_the_committed_command_line_reference_pages`.
+- Removed `test_pstack_t3.GitEnvironmentFenceTest` and `test_pstack_t3.BuildTest.test_generated_tree_passes_check`.
