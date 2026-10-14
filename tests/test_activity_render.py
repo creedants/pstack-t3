@@ -146,10 +146,10 @@ def skip_segments(items):
     return lines
 
 
-def select_browser(directory):
+def select_browser(directory, timeout=PROBE_TIMEOUT):
     """The first browser of BROWSERS that starts on a small valid document under directory.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of PROBE_TIMEOUT seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by the which path.
+    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of timeout seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by the which path.
     """
     items = []
     by_resolved = {}
@@ -168,7 +168,7 @@ def select_browser(directory):
             by_resolved[key] = binary
             items.append(binary)
             try:
-                confined_run(found, target, directory, "q", PROBE_TIMEOUT)
+                confined_run(found, target, directory, "q", timeout)
             except subprocess.CalledProcessError as failed:
                 binary.failure = f"exited {failed.returncode}"
             except subprocess.TimeoutExpired as failed:
@@ -318,6 +318,29 @@ class ProbeContractTest(unittest.TestCase):
         probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
         self.assertEqual(timeouts, [PROBE_TIMEOUT])
         self.assertEqual(PROBE_TIMEOUT, 20)
+
+    def test_select_browser_with_timeout_60_passes_60_to_the_probe(self):
+        timeouts = []
+
+        def runner(browser, target, directory, prefix, timeout):
+            timeouts.append(timeout)
+            return ""
+
+        original = os.path.realpath
+
+        def which(name):
+            return "/opt/a" if name == "chromium" else None
+
+        def realpath(path):
+            return "/snap/one" if path == "/opt/a" else original(path)
+
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch("shutil.which", side_effect=which), \
+                mock.patch("os.path.realpath", side_effect=realpath), \
+                mock.patch(f"{__name__}.confined_run", side_effect=runner):
+            browser, _ = select_browser(root, timeout=60)
+        self.assertEqual(browser, "/opt/a")
+        self.assertEqual(timeouts, [60])
 
     def test_skip_reason_names_each_alias_and_the_exit(self):
         def runner(browser, *args, **kwargs):
