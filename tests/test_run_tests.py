@@ -1423,6 +1423,20 @@ class RunTestsTest(unittest.TestCase):
                 runs = [step["run"] for step in jobs[f"{prefix}_{index}"]["steps"] if "run" in step]
                 self.assertIn(needle, runs[1])
 
+    def test_the_browser_step_tries_select_browser_again_when_the_first_try_returns_no_path(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        needle = "select_browser(directory)"
+        try:
+            import yaml
+        except ImportError:
+            self.assertEqual(text.count(needle), 2)
+            return
+        jobs = yaml.safe_load(text)["jobs"]
+        for prefix in ("part_310", "part_312"):
+            for index in range(1, 5):
+                runs = [step["run"] for step in jobs[f"{prefix}_{index}"]["steps"] if "run" in step]
+                self.assertEqual(runs[1].count(needle), 2)
+
     def test_a_push_exports_the_real_process_switch_as_1_and_a_pull_request_exports_it_empty(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
