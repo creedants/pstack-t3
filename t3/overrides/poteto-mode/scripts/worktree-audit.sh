@@ -366,7 +366,7 @@ else
 	if command -v origin >/dev/null 2>&1 \
 		&& raw=$(origin pr list --author "@me" --state all --limit 1000 \
 			--json number,status,headRef 2>/dev/null) \
-		&& printf '%s' "$raw" | jq '[.[] | {number, state: .status, head: .headRef}]' > "$prs" 2>/dev/null \
+		&& printf '%s' "$raw" | jq '[.[] | {number, state: (.status | ascii_downcase), head: .headRef}]' > "$prs" 2>/dev/null \
 		&& [ -s "$prs" ]; then
 		:
 	elif command -v gh >/dev/null 2>&1 \
