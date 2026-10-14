@@ -1663,6 +1663,47 @@ class ArchiveTest(OpsTest):
                           "archived 2, failed 0\n", ""))
         self.assertEqual(done.archived, ("mid", "kid"))
 
+    def test_a_settled_thread_whose_latest_run_is_interrupted_cancelled_or_failed_is_selected_when_a_child_of_that_run_is_pending_running_or_waiting(self):
+        cases = (
+            ("interrupted", "pending", "node"),
+            ("interrupted", "pending", "subagent"),
+            ("cancelled", "running", "node"),
+            ("failed", "waiting", "subagent"),
+        )
+        for run_status, child_status, kind in cases:
+            with self.subTest(run_status=run_status, child_status=child_status, kind=kind):
+                threads = (("worker", P1, None, (run_status,), OLD, "S"),
+                           ("task", P1, "worker", (), OLD, "S"))
+                if kind == "node":
+                    nodes = (("task", "worker-run-0", child_status),)
+                    subagents = ()
+                else:
+                    nodes = ()
+                    subagents = (("worker", "worker-run-0", "task", "provider_native", child_status),)
+                world = self.world(threads=threads, nodes=nodes, subagents=subagents)
+                done = world.run(ARCHIVE, "--top-level-settled", "--selection-only")
+                self.assertEqual((done.returncode, done.stderr), (0, ""))
+                self.assertEqual(json.loads(done.stdout), ["task", "worker"])
+
+    def test_a_settled_thread_whose_latest_run_is_running_or_preparing_is_not_selected_when_a_child_of_that_run_is_pending_or_waiting(self):
+        cases = (
+            ("running", "pending", "node"),
+            ("preparing", "waiting", "subagent"),
+        )
+        for run_status, child_status, kind in cases:
+            with self.subTest(run_status=run_status, child_status=child_status, kind=kind):
+                threads = (("worker", P1, None, (run_status,), OLD, "S"),
+                           ("task", P1, "worker", (), OLD, "S"))
+                if kind == "node":
+                    nodes = (("task", "worker-run-0", child_status),)
+                    subagents = ()
+                else:
+                    nodes = ()
+                    subagents = (("worker", "worker-run-0", "task", "provider_native", child_status),)
+                world = self.world(threads=threads, nodes=nodes, subagents=subagents)
+                done = world.run(ARCHIVE, "--top-level-settled", "--selection-only")
+                self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "[]\n", ""))
+
 
 class ScanTest(OpsTest):
     def repo(self, doc):
