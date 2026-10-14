@@ -1,1 +1,0 @@
-- `README.md` and `docs/guide.md` carry corrections to what they say about the installer, the landing queue, `brigade.py`, and the test command.

@@ -1,1 +1,0 @@
-- `autopilot-full.md` opens an owner `message` with the item brief and the mode lines and seat rule, not the poteto-agent persona.

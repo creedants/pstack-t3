@@ -1,1 +1,0 @@
-- The activity page runs the request-name token scan on a maximal run of word characters and hyphens, excluding underscores, only when that run holds a hyphen, and a preceding slash stays inside the scan window.

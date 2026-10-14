@@ -1,1 +1,0 @@
-- AGENTS.md step 5 of Porting an upstream file says the build fails on a README upstream badge that is missing or disagrees with `upstream.json`.

@@ -1,2 +1,0 @@
-- The brief test requires its verify section to name affected modules while working, builds and tests through the slot wrapper, and one full run after the last commit. The old separate slot bullet is rejected only in that section.
-- `docs/brigade-plan.md`, `docs/light-mode.md`, and `docs/multi-coordinator.md` name `tests/brigade/` in the six lists that named `tests/test_brigade.py`.
