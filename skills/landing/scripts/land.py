@@ -610,10 +610,42 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     return records
 
 
+def _tmp_kept(path):
+    """True when this temporary record file stays in place rather than being removed.
+
+    The name is removed only when a nonblocking exclusive flock on a read-only open succeeds, because a
+    writer locks the file it opened before it writes the record and holds the lock until it lets the slot
+    go. A failed open and any lock error leave the name, since neither proves the writer is gone.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return True
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(descriptor)
+
+
 def _clear():
-    """Remove this process's records while its slot flocks are still held."""
-    for path in (governor_dir() / "holds").glob("*"):
+    """Remove this process's records while its slot flocks are still held.
+
+    A name in governor/holds that ends in .tmp is removed too, unless _tmp_kept keeps it. A holder that
+    died before it renamed its file into place left that name behind holding no lock.
+    """
+    holds = governor_dir() / "holds"
+    for path in holds.glob("*"):
         if _read_holder(path).pid == os.getpid():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        elif path.name.endswith(".tmp") and not _tmp_kept(path):
             try:
                 path.unlink()
             except OSError:
@@ -1148,6 +1180,133 @@ def committer(repo):
 
 Identity = namedtuple("Identity", "name email")
 CREDIT_LINE = re.compile(r"Based on #[0-9]+ by @[A-Za-z0-9-]+\.?")
+BRIGADE_ROOT = "BRIGADE_STORE"
+STORE_RECORD = "restaurant.json"
+DISHES_TABLE = "dishes.tsv"
+GOALS_TABLE = "goals.tsv"
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
+
+
+def _table_rows(path):
+    """The rows of one coordinator store table, each keyed by the cell names of its header line.
+
+    A table that does not exist, cannot be read, or is not UTF-8 has no rows. A line that holds more
+    cells than its header empties the whole table. A final line with no newline after it is not a row.
+    """
+    try:
+        text = path.read_bytes().decode()
+    except (OSError, ValueError):
+        return []
+    lines = text.split("\n")[:-1]
+    header = lines[0].split("\t") if lines else []
+    rows = []
+    for line in lines[1:]:
+        cells = line.split("\t")
+        if len(cells) > len(header):
+            return []
+        rows.append(dict(zip(header, cells)))
+    return rows
+
+
+def _store_record(directory):
+    """The coordinator record of one store directory, and whether that record is absent.
+
+    A record that cannot be read, or that is not a JSON object, gives an empty record that is not
+    absent, so the caller skips that store.
+    """
+    try:
+        text = (directory / STORE_RECORD).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, True
+    except (OSError, ValueError):
+        return {}, False
+    try:
+        record = json.loads(text)
+    except (ValueError, RecursionError):
+        return {}, False
+    return (record if isinstance(record, dict) else {}), False
+
+
+def _same_directory(text, repo):
+    """True when text resolves to the same directory as repo does."""
+    if not isinstance(text, str) or not text:
+        return False
+    try:
+        return Path(text).resolve() == Path(repo).resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def _item_store(repo):
+    """The coordinator store that records this repository, or None.
+
+    A store is a directory two levels under the store root. A store whose record is unreadable or is
+    not a JSON object, whose role is admin, or that holds no dishes table is skipped. A record that
+    names this repository as its project root selects its store. A store with no record at all is
+    skipped, unless it is the one store directory under the root and it holds a dishes table.
+    """
+    root = Path(os.environ.get(BRIGADE_ROOT) or state_home() / "brigade")
+    try:
+        candidates = sorted(directory for directory in root.glob("*/*") if directory.is_dir())
+    except OSError:
+        return None
+    for directory in candidates:
+        record, absent = _store_record(directory)
+        if absent:
+            if len(candidates) == 1 and (directory / DISHES_TABLE).is_file():
+                return directory
+            continue
+        if not (directory / DISHES_TABLE).is_file():
+            continue
+        if record.get("role") == "admin":
+            continue
+        if _same_directory(record.get("projectRoot"), repo):
+            return directory
+    return None
+
+
+def _item_row(directory, branch):
+    """The work item row of one store on this branch, the last row that names it, or None."""
+    found = None
+    for row in _table_rows(directory / DISHES_TABLE):
+        if row.get("branch") == branch:
+            found = row
+    return found
+
+
+def _goal_name(directory, ident):
+    """The name the goals table of one store gives this goal id, or "" when it has no such row.
+
+    A name that is empty, or that holds a carriage return or a line feed, reads as no name. The first
+    row with the id wins.
+    """
+    if not ident:
+        return ""
+    for row in _table_rows(directory / GOALS_TABLE):
+        if row.get("id") == ident:
+            name = row.get("name", "")
+            return name if name and "\r" not in name and "\n" not in name else ""
+    return ""
+
+
+def _item_line(store, entry):
+    """The Kind and Goal line of the coordinator's work item row on this entry's branch, or "".
+
+    The kind prints when it is one of KINDS. The goal prints as the name its id has in the goals table,
+    and a name that table rejects reads as no goal.
+    """
+    directory = _item_store(store.repo)
+    if directory is None:
+        return ""
+    row = _item_row(directory, entry["branch"])
+    if row is None:
+        return ""
+    kind = row.get("kind", "")
+    goal = _goal_name(directory, row.get("goal", ""))
+    parts = [f"Kind: {kind}"] if kind in KINDS else []
+    if goal:
+        parts.append(f"Goal: {goal}")
+    return ". ".join(parts)
 
 
 def configured_identity(repo):
@@ -1168,8 +1327,17 @@ def entry_commits(repo, entry):
 
 
 def pr_body(store, entry):
-    """The body ensure_pr passes to gh pr create. With no submitted body it is the message body of the reviewed commit."""
-    return entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
+    """The body ensure_pr passes to gh pr create. With no submitted body it is the message body of the reviewed commit.
+
+    The work item's Kind and Goal line follows the body after one blank line, and is the whole body when
+    the body holds no text but whitespace.
+    """
+    body = entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
+    line = _item_line(store, entry)
+    if not line:
+        return body
+    text = body.rstrip()
+    return f"{text}\n\n{line}" if text else line
 
 
 def foreign_author(store, entry):
