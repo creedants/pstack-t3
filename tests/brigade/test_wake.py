@@ -1299,7 +1299,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual((self.label("dishes.tsv", "D2"), self.label("rail.tsv", "T2"), self.label("rail.tsv", "T3")),
                          (("upkeep", "G1"), ("upkeep", "G1"), ("polish", "G2")))
 
-    def test_startable_gives_the_same_standings_in_the_same_order_with_kinds_and_goals_as_without_them(self):
+    def test_startable_keeps_ticket_order_with_kinds_and_goals_with_paused_and_share_where_they_hold(self):
         self.queue("--workers", "3")
         self.goal("activity view", "--share", "1")
         self.goal("current with upstream")
