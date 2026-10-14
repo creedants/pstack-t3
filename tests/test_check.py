@@ -657,8 +657,8 @@ class BadgeCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
-class GuideCountCheckTest(unittest.TestCase):
-    def _tree(self, guide, skills=()):
+class SkillCountCheckTest(unittest.TestCase):
+    def _tree(self, guide, skills=(), readme=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -674,7 +674,18 @@ class GuideCountCheckTest(unittest.TestCase):
         patcher = mock.patch.object(check, "GUIDE_PATH", document)
         patcher.start()
         self.addCleanup(patcher.stop)
+        if readme is None:
+            readme = f"See all {len(skills)} skills and every playbook.\n"
+        self._readme_states(root, readme)
         return root
+
+    def _readme_states(self, root, readme):
+        """Point README_PATH at a README holding the given text."""
+        document = root / "README.md"
+        document.write_text(readme)
+        patcher = mock.patch.object(check, "README_PATH", document)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_a_guide_that_quotes_the_shipped_count_is_quiet(self):
         root = self._tree("`doctor` should show `3/3 pstack-t3` for each provider you use.\n", ("a", "b", "c"))
@@ -706,7 +717,51 @@ class GuideCountCheckTest(unittest.TestCase):
         ])
 
     def test_an_explicit_tree_argument_gets_no_guide_finding(self):
-        root = self._tree("intro\n`doctor` should show `2/2 pstack-t3` for each provider you use.\n", ("a", "b"))
+        root = self._tree("intro\n`doctor` should show `2/2 pstack-t3` for each provider you use.\n", skills=("a", "b"))
+        (root / "pstack-runtime/SKILL.md").write_text(
+            "---\nname: pstack-runtime\ndescription: d\n---\n\n"
+            "Call `watch_pull_request`. Call `unwatch_pull_request`.\n"
+        )
+        tests = tests_tree(root, {})
+        output = io.StringIO()
+        with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
+            status = check.main([str(root)])
+        self.assertEqual((status, output.getvalue()), (0, "ok\n"))
+
+    def test_a_readme_that_states_the_shipped_count_is_quiet(self):
+        root = self._tree("`doctor` should show `2/2 pstack-t3` for each provider you use.\n", skills=("a", "b"))
+        self.assertEqual(check.check_tree(root), [])
+
+    def test_a_stale_readme_count_is_named_with_the_line_the_stated_count_and_the_shipped_count(self):
+        root = self._tree(
+            "`doctor` should show `3/3 pstack-t3` for each provider you use.\n",
+            readme="See all 60 skills and every playbook.\n",
+            skills=("a", "b", "c"),
+        )
+        self.assertEqual(check.check_tree(root), [
+            "README.md:1: states all 60 skills, and the shipped skill count is 3",
+        ])
+
+    def test_a_readme_that_states_no_skill_count_is_named(self):
+        root = self._tree("`doctor` should show `1/1 pstack-t3` for each provider you use.\n", skills=("a",))
+        self._readme_states(root, "no count here\n")
+        self.assertEqual(check.check_tree(root), [
+            "README.md: states no skill count, and the shipped skill count is 1",
+        ])
+
+    def test_a_readme_that_cannot_be_read_is_named(self):
+        root = self._tree("`doctor` should show `1/1 pstack-t3` for each provider you use.\n", skills=("a",))
+        (root / "README.md").unlink()
+        self.assertEqual(check.check_tree(root), [
+            "README.md: could not be read, so its skill count was not checked: FileNotFoundError",
+        ])
+
+    def test_an_explicit_tree_argument_gets_no_readme_count_finding(self):
+        root = self._tree(
+            "intro\n`doctor` should show `2/2 pstack-t3` for each provider you use.\n",
+            readme="See all 60 skills and every playbook.\n",
+            skills=("a", "b"),
+        )
         (root / "pstack-runtime/SKILL.md").write_text(
             "---\nname: pstack-runtime\ndescription: d\n---\n\n"
             "Call `watch_pull_request`. Call `unwatch_pull_request`.\n"
@@ -1053,6 +1108,11 @@ class RenderedTreeCheckTest(unittest.TestCase):
         shipped = len(list(root.glob("*/SKILL.md")))
         document.write_text(f"`doctor` should show `{shipped}/{shipped} pstack-t3` for each provider you use.\n")
         patcher = mock.patch.object(check, "GUIDE_PATH", document)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        readme = root / "README.md"
+        readme.write_text(f"See all {shipped} skills and every playbook.\n")
+        patcher = mock.patch.object(check, "README_PATH", readme)
         patcher.start()
         self.addCleanup(patcher.stop)
 
