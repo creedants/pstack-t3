@@ -9,6 +9,8 @@ from .support import (
     SCRIPT,
     Path,
     call,
+    call_in_process,
+    run_globals,
     runpy,
 )
 
@@ -32,7 +34,7 @@ class LaunchTest(BrigadeTest):
 
     def launch_call(self, dish="D1", catalog=None, parent=PARENT):
         catalog = CATALOG if catalog is None else catalog
-        return call(self, SCRIPT, [
+        return call_in_process(self, SCRIPT, [
             "--store", str(self.store), "--at", str(self.at),
             "launch", dish, "--parent", parent, "--catalog", str(catalog),
         ])
@@ -76,9 +78,7 @@ class LaunchTest(BrigadeTest):
         return path
 
     def entry_globals(self):
-        if "_brigade_entry" not in self.__dict__ or SCRIPT not in self._brigade_entry:
-            call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at), "status"])
-        return self._brigade_entry[SCRIPT]["run"].__globals__
+        return run_globals(self, SCRIPT)
 
     def install_show(self, text="", code=0, stderr=""):
         script = Path(self.temporary.name) / "show-roles.py"

@@ -9,9 +9,11 @@ from .support import (
     _owner_words,
     _shown_root,
     call,
+    call_in_process,
     json,
     os,
     real_process,
+    run_globals,
     runpy,
     tempfile,
 )
@@ -589,7 +591,7 @@ def size_warning(size):
 
 class HandoffSizeTest(BrigadeTest):
     def watch_call(self):
-        return call(self, SCRIPT, [
+        return call_in_process(self, SCRIPT, [
             "--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "watch",
         ])
 
@@ -630,7 +632,7 @@ class HandoffSizeTest(BrigadeTest):
 
     def test_a_stat_error_on_handoff_md_returns_no_size_line(self):
         self.open()
-        line = self._brigade_entry[SCRIPT]["run"].__globals__["watch"].__globals__["handoff_size_line"]
+        line = run_globals(self, SCRIPT)["watch"].__globals__["handoff_size_line"]
         real_is_file = Path.is_file
         real_stat = Path.stat
 

@@ -1,0 +1,6 @@
+- `tests/brigade/support.py` gains `run_globals`. It loads a script for a test and returns the run globals of its module, so a test that reads those globals no longer needs an earlier call in the same test to have loaded the entry.
+- `tests/brigade/support.py` gains `call_in_process`. It runs a script in the test process whatever `PSTACK_TEST_REAL_PROCESS` says.
+- `tests/brigade/test_launch.py` and `tests/brigade/test_handoff.py` read the module globals through `run_globals` and run the command they patch for through `call_in_process`. The launch tests install a fake roles script in those globals and the stat-error test patches `Path.stat`, so the command must run where those changes are visible.
+- The launch tests assert the seat the command prints, and that seat comes from the installed roles script, which a command in another interpreter cannot read.
+- A launch test sets the real-process switch, so every command the test runs through `call` starts in a separate interpreter, as it does on a push to main.
+- A push to main sets the real-process switch, and a command run through `call` then runs in a separate interpreter. The ten launch and handoff tests raised `AttributeError` for `_brigade_entry` there, because nothing had loaded the entry in the test process.
