@@ -190,11 +190,11 @@ def guide_count_findings(guide, root):
     """Report a doctor count quoted in the guide that disagrees with the tree's skill count.
 
     The shipped count is the set skill_names in scripts/install.py reads,
-    every directory in the tree that holds a SKILL.md. A quote is a pair of
-    numbers with a slash between them and pstack-t3 after them, the shape
-    link_health in scripts/install.py prints. A quote whose two numbers
-    differ, or whose first number differs from the shipped count, is a
-    finding that names the guide, the line, the quoted count, and the
+    every directory directly in the tree that holds a SKILL.md. A quote is
+    a pair of numbers with a slash between them and pstack-t3 after them,
+    the shape link_health in scripts/install.py prints. A quote whose two
+    numbers differ, or whose first number differs from the shipped count,
+    is a finding that names the guide, the line, the quoted count, and the
     shipped count. A guide that quotes no doctor count is one finding. A
     guide that cannot be read is one finding and no line is read. An empty
     list means every quote agrees with the shipped count.
