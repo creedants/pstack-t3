@@ -442,6 +442,26 @@ def parser():
     user = wake_parser("user", "a message from the user")
     user.add_argument("--question", action="store_true", help="the message asks a question")
     wake_parser("admin", "a request from the executive admin").add_argument("request")
+    p = sub.add_parser(
+        "launch",
+        help=(
+            "print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.\n"
+            "\n"
+            "The object names instanceId, model, and options when the seat has an options object. "
+            "providerInstanceId is renamed to instanceId. "
+            "A brief with one Mode line of full or light is passed as --brief-mode. "
+            "bug-fix, perf-issue, and hillclimb use that role name. "
+            "feature and refactoring use the role \"feature, refactoring\". "
+            "investigation has no code-delegate role and the command exits 1.\n"
+            "\n"
+            "The command exits 1 when the role is missing, seats are a string, or the seat count is not one. "
+            "It exits 1 when the seat lacks providerInstanceId or model, and when options are not an object. "
+            "The refusal is printed on stderr."
+        ),
+    )
+    p.add_argument("dish", help="dish id, such as D1")
+    p.add_argument("--parent", required=True, help="this thread's provider/model")
+    p.add_argument("--catalog", required=True, help="orchestrator_capabilities JSON for roles.py show")
     add_arguments(sub)
     return top
 
@@ -513,6 +533,96 @@ def _brief_fields(args):
     }
 
 
+def launch_role(station):
+    """The code-delegate role for one station. The map lives only here."""
+    roles = {
+        "bug-fix": "bug-fix",
+        "perf-issue": "perf-issue",
+        "hillclimb": "hillclimb",
+        "feature": "feature, refactoring",
+        "refactoring": "feature, refactoring",
+    }
+    try:
+        return roles[station]
+    except KeyError:
+        raise BrigadeError(f"{station} has no code-delegate role") from None
+
+
+def brief_mode(ident, text):
+    """The one Mode line in a brief, or None when the brief names none."""
+    if text is None:
+        return None
+    found = [line.removeprefix("Mode: ") for line in text.splitlines() if line.startswith("Mode: ")]
+    if not found:
+        return None
+    if len(found) != 1 or found[0] not in ("full", "light"):
+        raise BrigadeError(f"briefs/{ident}.md needs one Mode line of full or light")
+    return found[0]
+
+
+def selection_from_show(payload, role):
+    """The modelSelection object for one role. payload is the roles.py show JSON object."""
+    roles = payload.get("roles") if isinstance(payload, dict) else None
+    if not isinstance(roles, dict) or role not in roles:
+        raise BrigadeError(f"{role} is missing from roles.py show")
+    entry = roles[role]
+    seats = entry.get("seats") if isinstance(entry, dict) else None
+    if isinstance(seats, str):
+        raise BrigadeError(f"{role} seats are {seats}, not one seat")
+    if not isinstance(seats, list) or len(seats) != 1:
+        count = len(seats) if isinstance(seats, list) else 0
+        raise BrigadeError(f"{role} has {count} seats")
+    seat = seats[0]
+    if isinstance(seat, str):
+        raise BrigadeError(f"{role} seats are {seat}, not one seat")
+    provider = seat.get("providerInstanceId") if isinstance(seat, dict) else None
+    model = seat.get("model") if isinstance(seat, dict) else None
+    if not isinstance(provider, str) or not isinstance(model, str):
+        raise BrigadeError(f"{role} seat lacks providerInstanceId or model")
+    selected = {"instanceId": provider, "model": model}
+    if "options" in seat:
+        if not isinstance(seat["options"], dict):
+            raise BrigadeError(f"{role} seat options are not an object")
+        selected["options"] = seat["options"]
+    return selected
+
+
+def launch_text(restaurant, args):
+    """One JSON object for t3_thread_launch modelSelection. The command writes nothing."""
+    if HELD_LOCKS:
+        raise BrigadeError(f"roles.py may run git; release {HELD_LOCKS[0]}'s store lock before resolving the mode")
+    ident = args.dish
+    with restaurant.read_lock(create=False):
+        _, dish = restaurant.find("dishes.tsv", ident)
+        station = dish["station"]
+        project_root = restaurant.meta["projectRoot"]
+        brief_path = restaurant.dir / "briefs" / f"{ident}.md"
+        brief_bytes = brief_path.read_bytes() if brief_path.is_file() else None
+    if brief_bytes is None:
+        text = None
+    else:
+        try:
+            text = brief_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
+    role = launch_role(station)
+    mode = brief_mode(ident, text)
+    argv = [sys.executable, str(roles_script()), "show", "--cwd", project_root, "--catalog", args.catalog,
+            "--parent", args.parent, "--role", role]
+    if mode is not None:
+        argv += ["--brief-mode", mode]
+    result = subprocess.run(argv, capture_output=True, text=True)
+    if result.returncode:
+        raise BrigadeError(f"roles.py show refused the seat: {result.stderr.strip().removeprefix('error: ')}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise BrigadeError("roles.py show printed no JSON object") from None
+    if not isinstance(payload, dict):
+        raise BrigadeError("roles.py show printed no JSON object")
+    return json.dumps(selection_from_show(payload, role))
+
+
 def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
@@ -557,6 +667,8 @@ def run(argv):
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
     if args.command == "spend":
         return spend_text(restaurant, args)
+    if args.command == "launch":
+        return launch_text(restaurant, args)
     if args.command == "next":
         return next_text(restaurant, args)
     if args.command == "sync":

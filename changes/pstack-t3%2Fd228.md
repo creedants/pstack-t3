@@ -1,0 +1,1 @@
+- `launch` prints one JSON object for the dish seat and writes nothing.
