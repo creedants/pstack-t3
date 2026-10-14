@@ -2405,7 +2405,7 @@ def refusal_waits(store, plain, checks):
     The policy phrase must be in plain. A blocker of absent waits and does not read protection.
     Any other blocker waits only when read_required_contexts returns a tuple and missing_required is non-empty.
     None does not wait. An empty tuple does not wait.
-    Any other stderr returns False, including a merge conflict and a disabled auto-merge.
+    Stderr without the policy phrase returns False.
     """
     if not unposted_merge_refusal(plain):
         return False
