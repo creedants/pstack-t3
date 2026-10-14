@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 import unittest
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1835,6 +1836,63 @@ exit 0
             gc.collect()
             self.assertEqual(os.fstat(matched).st_size, 6)
             self.assertEqual(os.write(matched, b"after"), 5)
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+            for fd in opened:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def test_a_dead_weakref_proxy_cannot_stop_interrupted_descriptor_cleanup(self):
+        self.init()
+
+        class Referent:
+            pass
+
+        referent = Referent()
+        proxy = weakref.proxy(referent)
+        del referent
+
+        target = next(
+            number
+            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
+            if line == "    out = Outcome([], [], [], [], [])"
+        )
+        captured = []
+        opened = []
+
+        def trace(frame, event, arg):
+            if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
+                return trace
+            if not frame.f_code.co_filename.endswith("land.py"):
+                return trace
+            captured.append(frame.f_locals["handle"])
+            raise KeyboardInterrupt
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        retained = None
+        sys.settrace(trace)
+        try:
+            try:
+                drive(SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            except KeyboardInterrupt as error:
+                retained = error
+            sys.settrace(None)
+            self.assertEqual(len(captured), 1)
+            self.assertIsInstance(retained, KeyboardInterrupt)
+            self.assertTrue(captured[0].closed)
+            database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+            probe = os.open(database.parent / ".queue.lock", os.O_RDWR)
+            opened.append(probe)
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            retained.__traceback__ = None
+            retained = None
         finally:
             sys.settrace(None)
             if previous is None:
