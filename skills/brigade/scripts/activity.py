@@ -4,7 +4,7 @@
 Opens the coordinator's store and T3 Code's state database read-only.
 Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 The output and the newline after it take at most --max-bytes bytes.
-Output that would take more is shortened. It counts the agents, work items, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
+Output that would take more is shortened. It counts the agents, work items, attempt lines, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
 
 Every string a page emits passes one filter after its parts are joined.
 In the HTML document that is each string of the data element. In the plain form it is each line.
@@ -128,7 +128,6 @@ STORE_COLUMNS = {
 # How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
 ADDED_COLUMNS = {UNITS_TABLE: 2}
 TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table", THREADS_TABLE: "thread table"}
-WORKER_ROLES = ("worker", "fix worker")
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
 RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
@@ -345,6 +344,7 @@ class Hidden:
     dropped_agents: int = 0
     cut_agents: int = 0
     cut_in_flight: int = 0
+    cut_lines: int = 0
     other_threads: int = 0
     unknown_status: int = 0
     by_request_name: int = 0
@@ -1275,7 +1275,7 @@ def with_parents(agents):
 
 
 def is_open(row):
-    return row["role"] in WORKER_ROLES and not row["end"]
+    return not row["end"]
 
 
 def lines_of(rows, dish, privacy):
@@ -1283,7 +1283,11 @@ def lines_of(rows, dish, privacy):
 
     def order(pair):
         text = privacy.field(pair[1]["attempt"])
-        return ((0, int(text)) if text.isascii() and text.isdigit() else (1, text), pair[0])
+        if text.isascii() and 1 <= len(text) <= 18 and text.isdigit():
+            rank = (0, int(text))
+        else:
+            rank = (1, text)
+        return (rank, pair[0])
 
     return tuple(
         LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
@@ -1696,8 +1700,10 @@ def framed(page, limit):
     if height(page) <= limit:
         return page
     page = replace(page, name=clip(page.name, NAME_BYTES))
-    # Room for the three notes a cut can add, so the result needs no second pass.
-    worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1)
+    # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines, so the result needs no second pass.
+    has_lines = any(item.lines for item in items_of(page))
+    worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1,
+                    cut_lines=(page.hidden.cut_lines or 1) if has_lines else page.hidden.cut_lines)
     left = limit - fixed_height(page, notes(replace(page, hidden=worst), items_of(page)))
     drawn = [group.item for group in page.groups]
     listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
@@ -1733,23 +1739,103 @@ def framed(page, limit):
     return cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
 
 
+def line_count(page):
+    seen = set()
+    total = 0
+    for item in items_of(page):
+        if item.key in seen:
+            continue
+        seen.add(item.key)
+        total += len(item.lines)
+    return total
+
+
+def limit_ledger(page, keep):
+    """The page with the first keep attempt lines in display order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
+    Display order is items_of order, each work item key once, and within a key the order of its lines.
+    """
+    seen, remaining, removed, kept = set(), keep, 0, {}
+    for item in items_of(page):
+        if item.key in seen:
+            continue
+        seen.add(item.key)
+        take = min(len(item.lines), remaining)
+        kept[item.key] = item.lines[:take]
+        removed += len(item.lines) - take
+        remaining -= take
+
+    def trimmed(item):
+        if item is None or item.key not in kept:
+            return item
+        return replace(item, lines=kept[item.key])
+
+    groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
+    items = tuple(trimmed(item) for item in page.items)
+    hidden = replace(page.hidden, cut_lines=page.hidden.cut_lines + removed)
+    return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
+
+
+def within_budget(page, budget, clean, render):
+    """The page, its render, and whether that render's UTF-8 length is at most budget.
+    A page that already fits, or a page with no attempt line, is returned as it is.
+    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, it keeps no attempt line.
+    """
+    text = render(page, clean)
+    count = line_count(page)
+    fits = len(text.encode()) <= budget
+    if fits or count == 0:
+        return page, text, fits
+    cache = {count: (page, text, False)}
+
+    def at(keep):
+        if keep not in cache:
+            trimmed = limit_ledger(page, keep)
+            body = render(trimmed, clean)
+            cache[keep] = (trimmed, body, len(body.encode()) <= budget)
+        return cache[keep]
+
+    low, high, best = 0, count - 1, None
+    while low <= high:
+        mid = (low + high) // 2
+        if at(mid)[2]:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best is None:
+        return at(0)
+    for _ in range(count + 1):
+        chosen = at(best)[2]
+        nxt = best + 1
+        if chosen and (nxt >= count or not at(nxt)[2]):
+            break
+        if not chosen:
+            if best == 0:
+                break
+            best -= 1
+        else:
+            best += 1
+    return at(best)
+
+
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it, and the cut is used when its document is at most budget bytes or when the last fold is reached.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. When that document is over budget, the cut keeps the longest prefix of its attempt lines whose document fits, and on the last fold it keeps no attempt line when no prefix fits.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
-        document = render_html(page, clean)
-        small, last = len(document.encode()) <= budget, done == len(FOLDS)
-        if not small and not last:
+        trimmed, document, fits = within_budget(page, budget, clean, render_html)
+        last = done == len(FOLDS)
+        if not fits and not last:
             continue
+        page = trimmed
         if frame is None or height(page) <= frame:
             break
         if done >= FRAME_FOLDS:
             cut = framed(page, frame)
-            document = render_html(cut, clean)
-            if len(document.encode()) <= budget or last:
-                page = cut
+            trimmed, document, fits = within_budget(cut, budget, clean, render_html)
+            if fits or last:
+                page = trimmed
                 break
     return page, document
 
@@ -1764,7 +1850,10 @@ def shortened(page):
 
 def fit_text(page, budget, clean):
     text = render_text(page, clean)
-    return text if len(text.encode()) <= budget else render_text(shortened(page), clean)
+    if len(text.encode()) <= budget:
+        return text
+    _, text, _ = within_budget(shortened(page), budget, clean, render_text)
+    return text
 
 
 def say(number, one, several, **values):
@@ -1797,6 +1886,9 @@ def notes(page, listed):
     if hidden.cut_agents:
         lines.append(say(hidden.cut_agents, "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
                          "{n} more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."))
+    if hidden.cut_lines:
+        lines.append(say(hidden.cut_lines, "1 attempt line is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+                         "{n} attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."))
     if hidden.cut_in_flight:
         lines.append(say(hidden.cut_in_flight, "1 more work item in flight is not listed.", "{n} more work items in flight are not listed."))
     if CUT in links:

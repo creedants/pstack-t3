@@ -12,7 +12,7 @@ activity.py [--at AT] [--hours HOURS] [--text] [--out OUT] [--max-bytes MAX_BYTE
 
 Show what one brigade coordinator's agents and sub-agents are doing, as one HTML page.
 
-Opens the coordinator's store and T3 Code's state database read-only. Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names. The output and the newline after it take at most --max-bytes bytes. Output that would take more is shortened. It counts the agents, work items, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
+Opens the coordinator's store and T3 Code's state database read-only. Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names. The output and the newline after it take at most --max-bytes bytes. Output that would take more is shortened. It counts the agents, work items, attempt lines, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
 
 Every string a page emits passes one filter after its parts are joined. In the HTML document that is each string of the data element. In the plain form it is each line. The filter drops each character UTF-8 cannot hold and writes each control character, line separator, and paragraph separator as a space. It then removes each word that holds private text and repeats until no word does. The first word that stays follows the spaces that start the string, and each later word that stays follows the spaces that stood before it. A string that still holds private text after 8 passes is emitted empty. The filter reads each string as written, as the HTML document writes it, and both with their percent escapes decoded once and twice.
 

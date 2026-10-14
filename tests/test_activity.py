@@ -2118,7 +2118,7 @@ class SizeTest(OutputCase):
 
     def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_providers_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
-        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
+        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_lines", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
         hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
         legend = tuple((name, 9999999) for name in ("Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"))
         sizes = {}
@@ -2137,7 +2137,7 @@ class SizeTest(OutputCase):
                 unfolded = page(*groups, items=[big(number) for number in range(100, 140)], coordinator=row("coordinator", spans=spans, model=wide), hidden=hidden, name=wide)
                 totals = MOD["Totals"](9999999, 9999999, 9999999, 9999999)
                 largest = MOD["cap_everything"](replace(unfolded, window=MOD["Window"](1790000000.0, 1790604799.0), totals=totals, legend=legend))
-                self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 11))
+                self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 12))
                 self.assertEqual((MOD["wire"](largest)["w"][2], len(MOD["wire"](largest)["M"])), ("167h 59m 59s", 37))
                 sizes[status, character] = len(MOD["render_html"](largest, same).encode())
         self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 16000}, {})
@@ -2428,14 +2428,14 @@ class RendererTest(OutputCase):
             self.assertNotIn(ident, document)
             self.assertNotIn(ident, "\n".join(lines))
 
-    def test_worker_with_an_end_stamp_and_verifier_with_an_empty_end_say_ended(self):
+    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
             {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
             {"at": stamp, "dish": "D7", "attempt": "2", "role": "verifier", "thread": worker(2), "start": "", "end": ""},
         ])
-        phrases = ["attempt 1 · worker · ended", "attempt 2 · verifier · ended"]
+        phrases = ["attempt 1 · worker · ended", "attempt 2 · verifier · open"]
         texts = self.render(self.document())["texts"]
         self.assertEqual([text for text in texts if text.startswith("attempt ")], phrases)
         lines = self.out("--text").split("\n")
@@ -3388,7 +3388,7 @@ class BudgetTest(OutputCase):
             ["model-a", "m" * 21 + "…"], ["1 pull request link is not shown, because the page is at its size limit. Use a larger --max-bytes to see more."]))
 
     def test_largest_plain_form_of_a_shortened_page_is_under_8000_bytes_with_every_list_full_every_note_and_every_string_over_its_byte_limit(self):
-        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
+        counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_lines", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
         hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
         sizes = {}
         for character in ("s", "<", '"', "𝕏"):
@@ -3407,7 +3407,7 @@ class BudgetTest(OutputCase):
             unfolded = replace(page(*groups, items=[big(number) for number in range(100, 140)], hidden=hidden, name=wide),
                                window=MOD["Window"](1790000000.0, 1790604799.0), totals=MOD["Totals"](9999999, 9999999, 9999999, 9999999))
             lines = MOD["render_text"](MOD["shortened"](unfolded), same).split("\n")
-            self.assertEqual(([lines.index(heading) for heading in ("Running now", "Queued", "Work items", "Failed", "Notes")], len(lines)), ([2, 11, 17, 29, 35], 47))
+            self.assertEqual(([lines.index(heading) for heading in ("Running now", "Queued", "Work items", "Failed", "Notes")], len(lines)), ([2, 11, 17, 29, 35], 48))
             self.assertEqual((lines[10], lines[16], lines[27], lines[34]), ("  and 137 more running agents", "  and 140 more queued agents", "  and 43 more work items", "  and 152 more failed agents"))
             sizes[character] = len("\n".join(lines).encode())
         self.assertEqual({character: size for character, size in sizes.items() if size >= 8000}, {})
@@ -3688,20 +3688,104 @@ class LedgerTest(OutputCase):
             self.assertNotIn(b".ldg", document)
             self.assertNotIn(b"D.L", document)
 
-    def test_ledger_thread_id_used_as_a_seat_is_absent_from_the_page(self):
-        seat = "mcp:threadmarker-ledger-1"
+    def test_opaque_ledger_private_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
+        token = "opaque=ledger-private-token"
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
-            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(2), "seat": seat, "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": token, "seat": token, "start": stamp, "end": ""},
         ])
         document = self.document()
         lines = self.out("--text").split("\n")
-        self.assertNotIn(seat, document)
-        self.assertNotIn(seat, "\n".join(lines))
+        self.assertNotIn(token, document)
+        self.assertNotIn(token, "\n".join(lines))
         at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
         self.assertEqual(lines[at + 1], "    attempt 1 · worker · open")
-        self.assertNotIn(seat, MOD["roots_of"](MOD["read_store"](fixture.store)))
+        self.assertNotIn(token, MOD["roots_of"](MOD["read_store"](fixture.store)))
+
+    def test_an_attempt_of_five_thousand_digits_sorts_after_numeric_attempts(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "10", "role": "worker", "thread": "opaque=ledger-sort-10", "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": "opaque=ledger-sort-2", "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "9" * 5000, "role": "worker", "thread": "opaque=ledger-sort-long", "start": stamp, "end": ""},
+        ])
+        phrases = [
+            "attempt 2 · worker · open",
+            "attempt 10 · worker · open",
+            "attempt 999999999… · worker · open",
+        ]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + phrase for phrase in phrases])
+        shown = [line for _, rows in data_of(self.document()).get("L", []) for line in rows]
+        self.assertEqual(shown, phrases)
+
+    def test_five_hundred_ledger_rows_stay_within_max_bytes_and_the_note_counts_the_lines_left_out(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {
+                "at": stamp,
+                "dish": "D7",
+                "attempt": str(number),
+                "role": "worker",
+                "thread": f"opaque=ledger-row-{number}",
+                "seat": "grok/grok-4",
+                "start": stamp,
+                "end": "",
+            }
+            for number in range(1, 501)
+        ])
+
+        def phrase(number):
+            return f"attempt {number} · worker · grok/grok-4 · open"
+
+        def html_phrases(document):
+            return [line for _, lines in data_of(document).get("L", []) for line in lines]
+
+        def text_phrases(text):
+            return [line[4:] for line in text.split("\n") if line.startswith("    attempt ")]
+
+        html_bytes = fixture.stdout_bytes()
+        text_bytes = fixture.stdout_bytes("--text")
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15967, 15967))
+        self.assertLessEqual(len(html_bytes), 16000)
+        self.assertLessEqual(len(text_bytes), 16000)
+        html, text = self.document(), self.out("--text")
+        self.assertEqual(data_of(html)["N"], [
+            "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "358 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+        ])
+        self.assertEqual(html_phrases(html), [phrase(number) for number in range(1, 143)])
+        self.assertEqual((html_phrases(html)[0], html_phrases(html)[-1]), (phrase(1), phrase(142)))
+        self.assertIn("  181 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", text)
+        self.assertEqual(text_phrases(text), [phrase(number) for number in range(1, 320)])
+        self.assertEqual((text_phrases(text)[0], text_phrases(text)[-1]), (phrase(1), phrase(319)))
+
+        wide_html, wide_text = self.document("--max-bytes", "500000"), self.out("--text", "--max-bytes", "500000")
+        wide = [phrase(number) for number in range(1, 501)]
+        self.assertEqual(html_phrases(wide_html), wide)
+        self.assertEqual(text_phrases(wide_text), wide)
+        for output in (wide_html, wide_text):
+            self.assertNotIn("attempt line is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", output)
+            self.assertNotIn("attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", output)
+
+        html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
+        text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19965, 19984))
+        self.assertLessEqual(len(html_bytes), 20000)
+        self.assertLessEqual(len(text_bytes), 20000)
+        html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
+        self.assertEqual(data_of(html)["N"], [
+            "272 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+        ])
+        self.assertEqual(html_phrases(html), [phrase(number) for number in range(1, 229)])
+        self.assertEqual((html_phrases(html)[0], html_phrases(html)[-1]), (phrase(1), phrase(228)))
+        self.assertIn("  99 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", text)
+        self.assertEqual(text_phrases(text), [phrase(number) for number in range(1, 402)])
+        self.assertEqual((text_phrases(text)[0], text_phrases(text)[-1]), (phrase(1), phrase(401)))
 
 
 if __name__ == "__main__":
