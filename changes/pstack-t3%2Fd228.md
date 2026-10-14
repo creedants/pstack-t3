@@ -2,3 +2,5 @@
 - `watch` warns when `handoff.md` is larger than 40000 bytes. The watch text stays the same.
 - A Claude log record counts `usage.output_tokens_details.thinking_tokens` as reasoning when that value is a non-negative integer.
 - A failed import puts `sys.dont_write_bytecode` back. A thread bound after send-back is cleared when a queued row comes before the return to in-progress.
+- `launch` refuses a directory, bytes that are not UTF-8, and JSON that is not an object. The refusal names the catalog path, leaves stdout empty, and contains no traceback.
+- A seat with no options object prints an empty options object.
