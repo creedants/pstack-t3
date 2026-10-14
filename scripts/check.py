@@ -233,13 +233,20 @@ def catalog_heredoc_findings(rel, text):
     return findings
 
 
+def _witness_skills_are_files(root):
+    return (root / "pstack-runtime/SKILL.md").is_file() and (root / "setup-pstack/SKILL.md").is_file()
+
+
 def check_tree(root):
     root = Path(root)
     findings = []
     cells = light_waiver_cells()
+    witness = _witness_skills_are_files(root)
     for skill_md in sorted(root.glob("*/SKILL.md")):
         skill = skill_md.parent.name
         text = skill_md.read_text()
+        if witness and len(text.split("---")) >= 2 and "disable-model-invocation" in text.split("---")[1]:
+            findings.append(f"{skill}/SKILL.md: frontmatter contains disable-model-invocation")
         match = re.match(r"---\n(.*?)\n---\n", text, re.S)
         if not match:
             findings.append(f"{skill}/SKILL.md: missing frontmatter")
@@ -290,6 +297,8 @@ def check_tree(root):
                     findings.append(f"{rel}: broken link {target}")
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
+    if witness and not (root / RENDERED_MARKER).is_file():
+        findings.append(f"{RENDERED_MARKER.as_posix()}: is missing")
     if (root / RENDERED_MARKER).is_file():
         repo = Path(__file__).resolve().parents[1]
         findings.extend(library_wording_findings(repo / "tests"))
