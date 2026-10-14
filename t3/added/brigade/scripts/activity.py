@@ -4,7 +4,7 @@
 Opens the coordinator's store and T3 Code's state database read-only.
 Prints one self-contained HTML document, or plain lines with --text, or writes either to the file --out names.
 The output and the newline after it take at most --max-bytes bytes.
-Output that would take more is shortened. It counts the agents, work items, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
+Output that would take more is shortened. It counts the agents, work items, attempt lines, and pull request links it leaves out, and it ends each string it cuts with an ellipsis.
 
 Every string a page emits passes one filter after its parts are joined.
 In the HTML document that is each string of the data element. In the plain form it is each line.
@@ -20,6 +20,10 @@ The identifiers are the thread ids, the sub-agent ids, and the work items' task 
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
 A form of spaces only is not private text either. Neither is an identifier form of fewer than 4 characters.
+A non-empty thread-column value is read as stored and with its percent escapes decoded once and twice, and each of those forms is also read without the spaces that start and end it.
+A reading that holds a character other than a space is private text even when it reads as ordinary words.
+A form of 4 or more characters is private text anywhere in a word.
+A shorter form is private text only where no letter, digit, underscore, or hyphen stands directly before or after it.
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
 Each path is read as an absolute path, with symbolic links followed, and as given when that is absolute.
 A path form of 4 or more characters is private text anywhere in a word.
@@ -118,14 +122,16 @@ STORE_LOCK = "restaurant.lock"
 UNITS_TABLE = "dishes.tsv"
 LOG_TABLE = "log.tsv"
 GOALS_TABLE = "goals.tsv"
+THREADS_TABLE = "threads.tsv"
 STORE_COLUMNS = {
     UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported", "kind", "goal"),
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
     GOALS_TABLE: ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
+    THREADS_TABLE: ("at", "dish", "attempt", "role", "thread", "seat", "start", "end"),
 }
 # How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
 ADDED_COLUMNS = {UNITS_TABLE: 2}
-TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table"}
+TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table", THREADS_TABLE: "thread table"}
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
 RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
@@ -225,6 +231,7 @@ class Store:
     units: tuple[Unit, ...]
     project_root: str = ""
     goals: tuple[GoalRecord, ...] = ()
+    threads: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -308,6 +315,15 @@ class Item:
     key: int = 0
     kind: str = ""
     goal: str = ""
+    lines: tuple = ()
+
+
+@dataclass(frozen=True)
+class LedgerLine:
+    attempt: str
+    role: str
+    seat: str
+    open: bool
 
 
 @dataclass(frozen=True)
@@ -332,6 +348,7 @@ class Hidden:
     dropped_agents: int = 0
     cut_agents: int = 0
     cut_in_flight: int = 0
+    cut_lines: int = 0
     other_threads: int = 0
     unknown_status: int = 0
     by_request_name: int = 0
@@ -535,6 +552,7 @@ def read_store(directory):
         units = read_table(directory, UNITS_TABLE)
         log = read_table(directory, LOG_TABLE)
         goals = goals_of(directory)
+        threads = tuple(read_table(directory, THREADS_TABLE))
     except OSError as error:
         raise ActivityError(f"cannot read the store ({error.strerror}); check its permissions and run this again") from None
     earlier = {}
@@ -547,7 +565,7 @@ def read_store(directory):
     }
     name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
     coordinators = tuple(value for value in (record_text(meta, "thread"), record_text(meta, "previousThread")) if value.strip())
-    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals)
+    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals, threads)
 
 
 def roots_of(store):
@@ -944,12 +962,13 @@ class Privacy:
     field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
 
-    def __init__(self, identifiers=(), paths=(), requests=()):
-        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, and of a request name with a hyphen that is not one TOKEN.
+    def __init__(self, identifiers=(), paths=(), requests=(), cells=()):
+        """index holds each form of 4 or more characters of an identifier that does not read as ordinary words, of a path, of a request name with a hyphen that is not one TOKEN, and of a thread-column value that holds a character other than a space.
         roots holds each shorter form of a path that is not blank, in lower case, without the slashes that end it. A form of slashes only is `/`.
         names holds each request name that is one TOKEN, in lower case.
-        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
+        shorts matches, in its one group, each shorter form of a request name with a hyphen that is not one TOKEN, and each shorter form of a thread-column value that holds a character other than a space, in lower case, where no BESIDE character is directly before or after it. It is None when there is no such form.
         A request name, and each form of one that is not one TOKEN, is read without the spaces that start and end it. A request name with no hyphen is in none of the four.
+        A thread-column value is read as stored and with its percent escapes decoded once and twice, and each of those forms is also read without the spaces that start and end it. ordinary() does not exempt it. A form of spaces only is in none of the four.
         """
         index, roots, shorts = {}, set(), set()
         requests = {plain(value).strip() for value in requests if "-" in value}
@@ -971,6 +990,15 @@ class Privacy:
                     index.setdefault(low[:ANCHOR], set()).add(low)
                 else:
                     shorts.add(low)
+                value = unescaped(value)[0]
+        for value in map(plain, cells):
+            for _ in range(3):
+                low = lowered(value)
+                for form in (low, low.strip()):
+                    if form.strip() and len(form) >= ANCHOR:
+                        index.setdefault(form[:ANCHOR], set()).add(form)
+                    elif form.strip():
+                        shorts.add(form)
                 value = unescaped(value)[0]
         self.roots = frozenset(roots)
         self.index = {anchor: tuple(found) for anchor, found in index.items()}
@@ -1087,15 +1115,17 @@ class Privacy:
 def privacy_of(store, t3, paths=()):
     """The filter for one run. Its identifiers are the thread ids, sub-agent ids, and task values of the store and of T3's rows.
     Its paths are the project root the store records and the given paths.
-    Its request names are the names request_name() reads from those identifiers.
+    The non-empty values in the thread column are not identifiers.
+    Its request names are the names request_name() reads from those identifiers and from those values.
     """
     ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
         ids.update((unit.worker, unit.task, *unit.earlier_workers))
+    cells = tuple(row["thread"] for row in store.threads if row["thread"])
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
-    return Privacy(ids, places, filter(None, map(request_name, ids)))
+    return Privacy(ids, places, filter(None, map(request_name, (*ids, *cells))), cells)
 
 
 def short(text, limit):
@@ -1259,12 +1289,40 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy, key, goal_ids=()):
+def is_open(row):
+    return not row["end"]
+
+
+def attempt_rank(cell):
+    """(0, int(cell)) when cell is ASCII, its length is from 1 to 18, and every character is a digit. (1, cell) otherwise."""
+    if cell.isascii() and 1 <= len(cell) <= 18 and cell.isdigit():
+        return (0, int(cell))
+    return (1, cell)
+
+
+def lines_of(rows, dish, privacy):
+    chosen = [(index, row) for index, row in enumerate(rows) if row["dish"] == dish]
+    return tuple(
+        LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
+        for _, row in sorted(chosen, key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
+
+
+def spoken(line):
+    parts = (
+        f"attempt {clip(line.attempt, ID_BYTES)}",
+        clip(line.role, LABEL_BYTES),
+        clip(line.seat, SUMMARY_BYTES),
+        "open" if line.open else "ended",
+    )
+    return " · ".join(part for part in parts if part)
+
+
+def item_of(unit, privacy, key, goal_ids=(), lines=()):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
     kind = unit.kind if unit.kind in KINDS else ""
     goal = unit.goal if unit.goal in goal_ids else ""
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal)
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal, tuple(lines))
 
 
 def build_page(store, t3, window, privacy):
@@ -1297,7 +1355,8 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy, keys[unit], goal_ids) if unit else None, rows, len(active) - subagents, subagents))
+        item = item_of(units[unit], privacy, keys[unit], goal_ids, lines_of(store.threads, unit, privacy)) if unit else None
+        groups.append(Group(item, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1315,7 +1374,8 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids, lines_of(store.threads, unit.id, privacy))
+                  for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
     return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals, flight=flight_of(items, goals))
 
@@ -1570,6 +1630,8 @@ LEGEND_PX = (23, 43)
 AXIS_PX = 16
 GROUP_PX = 34
 ROW_PX = 30
+LEDGER_PX = 16
+LEDGER_GAP_PX = 8
 CHIP_PX = 39
 STRIP_PX = 35
 FOOT_PX = 12
@@ -1612,10 +1674,24 @@ def fixed_height(page, said):
     return STATS_PX + HEADING_PX + LEGEND_PX[len(page.legend) > 1] + AXIS_PX + (ROW_PX if page.coordinator else 0) + FOOT_PX + LINE_PX * lines
 
 
+def ledger_px(page):
+    grouped = {group.item.key for group in page.groups if group.item}
+    seen = set()
+    total = 0
+    for item in items_of(page):
+        if not item.lines or item.key in seen:
+            continue
+        seen.add(item.key)
+        total += LEDGER_GAP_PX + LEDGER_PX * len(item.lines)
+        if item.key not in grouped:
+            total += GROUP_PX
+    return total
+
+
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
-    A grouped strip adds flight_column_px.
+    A grouped strip adds flight_column_px. A page with ledger lines adds ledger_px.
     """
     rows = [row for group in page.groups for row in group.rows]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
@@ -1623,7 +1699,7 @@ def height(page):
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
         total += HEADING_PX + OPEN_PX * lines if lines else 0
     total += flight_column_px(page.flight)
-    return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
+    return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0) + ledger_px(page)
 
 
 def framed(page, limit):
@@ -1637,14 +1713,17 @@ def framed(page, limit):
     if height(page) <= limit:
         return page
     page = replace(page, name=clip(page.name, NAME_BYTES))
-    # Room for the three notes a cut can add, so the result needs no second pass.
-    worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1)
+    # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines, so the result needs no second pass.
+    has_lines = any(item.lines for item in items_of(page))
+    worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1,
+                    cut_lines=(page.hidden.cut_lines or 1) if has_lines else page.hidden.cut_lines)
     left = limit - fixed_height(page, notes(replace(page, hidden=worst), items_of(page)))
     drawn = [group.item for group in page.groups]
     listed = first(page.items, MAX_STRIP, lambda item: item in drawn)
     items = tuple(item for item, keep in zip(page.items, listed) if keep)
     flight = flight_of(items, page.goals)
     left -= (STRIP_PX + CHIP_PX * len(items) + flight_column_px(flight)) if items else 0
+    left -= ledger_px(page)
 
     def tier(row):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
@@ -1673,23 +1752,103 @@ def framed(page, limit):
     return cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
 
 
+def line_count(page):
+    seen = set()
+    total = 0
+    for item in items_of(page):
+        if item.key in seen:
+            continue
+        seen.add(item.key)
+        total += len(item.lines)
+    return total
+
+
+def limit_ledger(page, keep):
+    """The page with the first keep attempt lines in display order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
+    Display order is items_of order, each work item key once, and within a key the order of its lines.
+    """
+    seen, remaining, removed, kept = set(), keep, 0, {}
+    for item in items_of(page):
+        if item.key in seen:
+            continue
+        seen.add(item.key)
+        take = min(len(item.lines), remaining)
+        kept[item.key] = item.lines[:take]
+        removed += len(item.lines) - take
+        remaining -= take
+
+    def trimmed(item):
+        if item is None or item.key not in kept:
+            return item
+        return replace(item, lines=kept[item.key])
+
+    groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
+    items = tuple(trimmed(item) for item in page.items)
+    hidden = replace(page.hidden, cut_lines=page.hidden.cut_lines + removed)
+    return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
+
+
+def within_budget(page, budget, clean, render):
+    """The page, its render, and whether that render's UTF-8 length is at most budget.
+    A page that already fits, or a page with no attempt line, is returned as it is.
+    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, it keeps no attempt line.
+    """
+    text = render(page, clean)
+    count = line_count(page)
+    fits = len(text.encode()) <= budget
+    if fits or count == 0:
+        return page, text, fits
+    cache = {count: (page, text, False)}
+
+    def at(keep):
+        if keep not in cache:
+            trimmed = limit_ledger(page, keep)
+            body = render(trimmed, clean)
+            cache[keep] = (trimmed, body, len(body.encode()) <= budget)
+        return cache[keep]
+
+    low, high, best = 0, count - 1, None
+    while low <= high:
+        mid = (low + high) // 2
+        if at(mid)[2]:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best is None:
+        return at(0)
+    for _ in range(count + 1):
+        chosen = at(best)[2]
+        nxt = best + 1
+        if chosen and (nxt >= count or not at(nxt)[2]):
+            break
+        if not chosen:
+            if best == 0:
+                break
+            best -= 1
+        else:
+            best += 1
+    return at(best)
+
+
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it, and the cut is used when its document is at most budget bytes or when the last fold is reached.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. When that document is over budget, the cut keeps the longest prefix of its attempt lines whose document fits, and on the last fold it keeps no attempt line when no prefix fits.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
-        document = render_html(page, clean)
-        small, last = len(document.encode()) <= budget, done == len(FOLDS)
-        if not small and not last:
+        trimmed, document, fits = within_budget(page, budget, clean, render_html)
+        last = done == len(FOLDS)
+        if not fits and not last:
             continue
+        page = trimmed
         if frame is None or height(page) <= frame:
             break
         if done >= FRAME_FOLDS:
             cut = framed(page, frame)
-            document = render_html(cut, clean)
-            if len(document.encode()) <= budget or last:
-                page = cut
+            trimmed, document, fits = within_budget(cut, budget, clean, render_html)
+            if fits or last:
+                page = trimmed
                 break
     return page, document
 
@@ -1704,7 +1863,10 @@ def shortened(page):
 
 def fit_text(page, budget, clean):
     text = render_text(page, clean)
-    return text if len(text.encode()) <= budget else render_text(shortened(page), clean)
+    if len(text.encode()) <= budget:
+        return text
+    _, text, _ = within_budget(shortened(page), budget, clean, render_text)
+    return text
 
 
 def say(number, one, several, **values):
@@ -1737,6 +1899,9 @@ def notes(page, listed):
     if hidden.cut_agents:
         lines.append(say(hidden.cut_agents, "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
                          "{n} more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."))
+    if hidden.cut_lines:
+        lines.append(say(hidden.cut_lines, "1 attempt line is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+                         "{n} attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."))
     if hidden.cut_in_flight:
         lines.append(say(hidden.cut_in_flight, "1 more work item in flight is not listed.", "{n} more work items in flight are not listed."))
     if CUT in links:
@@ -1965,6 +2130,46 @@ RENDERER = squeezed("""
 """)
 
 STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
+LEDGER_CSS = ".ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
+LEDGER_HOOK = """
+    if (D && D.v === 1 && D.L && D.L.length) {
+      const children = (node) => node.kids || [...node.children];
+      const attach = (head, lines) => {
+        const block = document.createElement('div');
+        block.className = 'ldg';
+        for (const phrase of lines) {
+          const span = document.createElement('span');
+          span.textContent = phrase;
+          block.appendChild(span);
+        }
+        head.appendChild(block);
+      };
+      const lanes = root.querySelector('.tl');
+      const groups = D.G || [];
+      const heads = children(lanes).filter((node) => (node.className || '').split(' ').includes('grp'));
+      const placed = new Set();
+      if (heads.length === groups.length) {
+        groups.forEach((group, at) => {
+          const lines = D.L.find((entry) => entry[0] === group[0]);
+          if (lines) { attach(heads[at], lines[1]); placed.add(group[0]); }
+        });
+      }
+      for (const [index, lines] of D.L) {
+        if (placed.has(index)) continue;
+        const item = D.I[index];
+        const head = add(lanes, 'div', 'grp');
+        const link = (parent, text, url) => {
+          const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
+          if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+          return node;
+        };
+        link(head, item[0], item[4]).className = 'one';
+        add(head, 'span', 'sum', item[1]);
+        add(head, 'b', 'chip ' + item[3], item[2]);
+        attach(head, lines);
+      }
+    }
+"""
 STRIP_HOOK = squeezed("""
     if (D && D.v === 1 && D.F && D.F.length) {
       const link = (parent, text, url) => {
@@ -2034,6 +2239,8 @@ def wire(page):
     if grouped:
         places = {id(item): index for index, item in enumerate(items)}
         data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
+    if any(item.lines for item in items):
+        data["L"] = [[index, [spoken(line) for line in item.lines]] for index, item in enumerate(items) if item.lines]
     return data
 
 
@@ -2049,6 +2256,9 @@ def render_html(page, clean):
     data = encode(wire(page), clean)
     style = STYLE if page.flight is None else STYLE + STRIP_CSS
     script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
+    if any(item.lines for item in items_of(page)):
+        style += LEDGER_CSS
+        script += squeezed(LEDGER_HOOK)
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
         f"<title>Agent activity</title><style>{style}</style><div id=o></div>"
@@ -2096,7 +2306,16 @@ def render_text(page, clean):
     listed = [*drawn, *(item for item in page.items if item not in drawn)][:TEXT_ITEMS]
     more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
     loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
-    flat = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
+
+    def flat_block(item):
+        head = line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
+        return [head, *("    " + spoken(entry) for entry in item.lines)]
+
+    def grouped_block(item):
+        head = "  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
+        return [head, *("      " + spoken(entry) for entry in item.lines)]
+
+    flat = [part for item in listed for part in flat_block(item)]
     text_flight = flight_of(listed, page.goals)
     if text_flight is None:
         items = flat
@@ -2106,7 +2325,7 @@ def render_text(page, clean):
             items.append(line(group.heading, group.count))
             items.append("  " + group.heading)
             for item in group.items:
-                items.append("  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr))
+                items.extend(grouped_block(item))
     totals = page.totals
     lines = [
         f"Agent activity for {page.name}, last {span(page.window)}",
