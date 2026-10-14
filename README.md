@@ -92,11 +92,10 @@ The coordinator and the queue have both run on real work.
 
 ## What is frozen
 
-Three pieces are frozen. A frozen piece keeps the tests it has and gets no new work. A fix for data loss or for a broken install still lands.
+Two pieces are frozen. A frozen piece keeps the tests it has and gets no new work. A fix for data loss or for a broken install still lands.
 
 - **The executive admin.** The `brigade-admin` skill, opened with `$brigade-admin`.
 - **The `local` and `push` landing modes.** The `merge` and `human` modes are not frozen.
-- **The light-mode design and trial page.** [`docs/light-mode.md`](docs/light-mode.md) holds the design and the trial record. The `light` setting itself is not frozen.
 
 ## See it in action
 
