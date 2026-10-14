@@ -1001,6 +1001,73 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a"), "D2")
         self.assertEqual(self.label("dishes.tsv", "D2"), ("study", ""))
 
+    def test_fire_refuses_a_ticket_of_a_paused_goal_and_starts_no_dish_and_logs_no_block(self):
+        self.open()
+        self.goal("activity view")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one", "--goal", "G1")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        before = self.tables()
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix one", ok=False),
+                         "brigade: nothing fired: its goal is paused")
+        self.assertEqual(self.tables(), before)
+        self.assertEqual(self.brigade("ticket", "list"), "T1 waiting normal fix G1 [user] one")
+        self.brigade("goal", "set", "G1", "--state", "open")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix one"), "D1")
+
+    def test_fire_refuses_a_ride_along_ticket_of_a_paused_goal_and_starts_no_item(self):
+        # The lead ticket T4 has no goal and the rider T5 is under paused G1, so the fire must read both.
+        self.queue()
+        self.goal("activity view")
+        self.filed("a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a", "--paths", "a.txt")
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("ticket", "add", "--summary", "b", "--kind", "polish", "--paths", "b.txt", "--goal", "G1")
+        self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--paths", "c.txt")
+        self.brigade("ticket", "add", "--summary", "Add d", "--kind", "feature", "--paths", "d.txt", "--priority", "urgent")
+        self.brigade("ticket", "add", "--summary", "Paused rider", "--kind", "polish", "--paths", "d.txt", "--priority", "low", "--goal", "G1")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        before = self.tables()
+        self.assertEqual(self.brigade("fire", "--tickets", "T4,T5", "--ride-along", "T5", "--station", "feature", "--summary", "Add d", ok=False),
+                         "brigade: nothing fired: its goal is paused")
+        self.assertEqual(self.tables(), before)
+        self.assertEqual(self.brigade("ticket", "list", "--state", "assigned"), "T1 assigned normal fix G1 [user] a")
+
+    def test_fire_refuses_a_second_item_of_a_kind_at_its_cap(self):
+        self.open()
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix one")
+        before = self.tables()
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix two", ok=False),
+                         "brigade: nothing fired: the fix cap holds (1 of 1)")
+        self.assertEqual(self.tables(), before)
+        self.assertEqual(self.label("dishes.tsv", "D1"), ("fix", ""))
+
+    def test_fire_refuses_an_item_of_a_goal_at_its_share(self):
+        self.open()
+        self.goal("activity view", "--share", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one", "--goal", "G1")
+        self.brigade("ticket", "add", "--kind", "polish", "--summary", "two", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix one")
+        before = self.tables()
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "docs", "--summary", "Tidy two", ok=False),
+                         "brigade: nothing fired: the G1 share holds (1 of 1)")
+        self.assertEqual(self.tables(), before)
+
+    def test_a_fire_refused_by_a_spend_control_releases_no_lease_and_leaves_the_ticket_waiting(self):
+        self.queue()
+        self.brigade("set", "--cap", "fix=1")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a", "--paths", "a.txt")
+        self.filed("Fix b", "--paths", "b.txt")
+        before = self.land("lease", "list")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix b",
+                                      "--paths", "b.txt", ok=False),
+                         "brigade: nothing fired: the fix cap holds (1 of 1)")
+        self.assertEqual(self.land("lease", "list"), before)
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting"), "T2 waiting normal fix [user] Fix b")
+
     def test_goal_set_refuses_done_and_dropped_while_a_ticket_of_the_goal_rides_along_in_another_goals_item(self):
         self.two_goals()
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")

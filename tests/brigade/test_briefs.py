@@ -361,6 +361,32 @@ class BriefsTest(BrigadeTest):
         self.assertIn(self.REPEAT, text)
         self.assertNotIn("Contested:", text)
 
+    def test_a_dish_of_a_kind_whose_depth_is_full_briefs_full_from_that_kind(self):
+        self.coordinator(mode=None)
+        self.brigade("set", "--review", "fix=full")
+        self.assertEqual(self.brigade(*self.BRIEF).split("\n\n", 1)[0], self.head(
+            "Playbook: playbooks/feature.md", "Mode: full", "Mode source: brief", "Attempt: first"))
+        self.brigade("set", "--mode", "light")
+        self.assertIn("Mode: full\nMode source: brief\nAttempt: first\n", self.brigade(*self.BRIEF))
+
+    def test_a_dish_of_a_kind_whose_depth_is_light_briefs_light_from_that_kind(self):
+        self.coordinator(mode=None)
+        self.brigade("set", "--review", "fix=light")
+        self.assertEqual(self.brigade(*self.BRIEF).split("\n\n", 1)[0], self.head(
+            "Playbook: playbooks/feature.md", "Mode: light", "Mode source: brief", "Attempt: first",
+            "Waived by mode: Arena, Interrogate, Comment Sicko"))
+        self.brigade("set", "--mode", "full")
+        self.assertIn("Mode: light\nMode source: brief\nAttempt: first\n", self.brigade(*self.BRIEF))
+
+    def test_a_depth_cleared_with_review_kind_leaves_the_brief_on_the_restaurants_mode(self):
+        self.coordinator(mode="light")
+        self.brigade("set", "--review", "fix=light")
+        self.assertIn("Mode: light\nMode source: brief\nAttempt: first\n", self.brigade(*self.BRIEF))
+        self.brigade("set", "--review", "fix=")
+        self.assertIn("Mode: light\nMode source: restaurant.json\nAttempt: first\n", self.brigade(*self.BRIEF))
+        self.brigade("set", "--mode", "full")
+        self.assertIn("Mode: full\nMode source: restaurant.json\nAttempt: first\n", self.brigade(*self.BRIEF))
+
     def test_one_send_back_briefs_a_fix_attempt(self):
         self.coordinator()
         self.record("a1", "send-back")

@@ -57,15 +57,15 @@ try:
     from brigade_lib.briefs import ESCALATED, MEASURING_STATIONS, MODE_RESOLUTIONS, ModeInputs, ModeLines, SEAT_RULE, WAIT_RULE, brief, brief_dish, contract_file, mode_inputs, roles_mode, stored_contract, write_brief
     from brigade_lib.edits import BLANK, BLOB_MODES, Digest, EDITS_REFUSED, EDITS_SECTION, EDIT_FAILS, EDIT_MARKS, EDIT_TITLE, Edit, EditsRefused, FILE_LINE, HEADING, LABELS, NEEDS_COMMANDS, NESTED, NO_COMMAND, PATH_LINES, TreeEntry, UNDERLINE, UNREAD, apply_edits, commit_tree, compared_paths, digests, edit_mark, exit_code, git, head_digest, occurrences, one_edit, parse_edits, path_lines, replay, report_edits, report_parts
     from brigade_lib.items import ATTEMPT_AFTER, DocAllowed, DocRefused, PreparedDocFire, _CATALOG, _SharedDoc, _can_cover_catalog, _covers, _fixed_docs, _gate_inventory, _held_from_tracked, _is_skill_file, _lease_parts, _skill_roots, _walk_opaque, attempt_kind, attempt_starts, block_note, checked_fire_label, drop, fire, fire_label, item_escalation, latest_mode_note, menu_purpose, prepare_doc_fire, record_blocked, record_escalation, retired_worker_threads, unfireable, workers_full, write_lead_kind
-    from brigade_lib.leases import ClaimError, ENTRY_LINE, NOT_STOPPED, autofire_of, block_holds, block_inputs, blocked_waiting, changelog_fragment, claim_lease, contract_mode, entry_line, fire_command, fragment_lines, holder, holding_blocks, land_result, lease_block, lease_check, lease_states, next_owner, paths_inside, paths_overlap, recheck_blocks, refusal_kind, release_lease, renew_line, repository_cap, require_workers, running_workers, set_thread, with_fragment, worker_cap, workers_line
+    from brigade_lib.leases import ClaimError, ENTRY_LINE, NOT_STOPPED, STANDINGS, StandingText, autofire_of, block_holds, block_inputs, blocked_waiting, changelog_fragment, claim_lease, contract_mode, entry_line, fire_command, fragment_lines, holder, holding_blocks, land_result, lease_block, lease_check, lease_states, next_owner, paths_inside, paths_overlap, recheck_blocks, refusal_kind, release_lease, renew_line, repository_cap, require_workers, running_workers, set_thread, with_fragment, worker_cap, workers_line
     from brigade_lib.reporting import GROUPED_SECTIONS, REPAIR, REQUEST_NOTE, SECTIONS, _ruling_note, add_ruling, admin_requests, admin_sections, counts, display_root, end_ruling, events_since, finished_by_coordinator, goal_lines, leases_for, log_rows, log_rulings, overrule, relayed, report, republish, ruling_line, section_lines, send_request, status_label_lines, status_line, sync, tally_words, unclaimed_reports, unlogged_rulings, walk
     from brigade_lib.reports import ITEM_REPORT, NOT_A_REPORT, REVIEW_FILE, in_reports, item_report, report_entry, report_stat
     from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, THREADS_ITEM, THREADS_REFUSED, THREADS_REFUSED_LINE, THREADS_SECTION, cross_family, edits_gate, fix_round_refusal, item_verdicts, latest_verdict, pass_check, pass_json, record_pass, report_threads, report_threads_refusal, review_report, roles_family, round_count, round_debt, round_decision, send_backs, unrecorded_reviews, verify_edits, worker_report, write_threads
     from brigade_lib.spend import add_arguments, spend_text
     from brigade_lib.shared import BrigadeError, FENCE_OPEN, FENCE_OPEN_INDENTED, KEPT_CELLS, MalformedTable, age, clean, command_words, fence_close, fence_open, now, one_of, plural, same_text, slug, stored, threads_fence_open
     from brigade_lib.store import ADDED_COLUMNS, ADMIN_COMMANDS, ADMIN_DIR, ADMIN_LINES, ADMIN_MENU, ADMIN_NAME, AUTOFIRE, CHILD_ROLES, CLAIM_WAIT_SECONDS, CLOSED_GOAL_STATES, COUNTED_STATES, DISH_STATES, EDITS_VERDICT, GENERATED_ROOT, GOAL_MOVES, GOAL_STATES, HELD_LOCKS, HOUSE_RULES, IN_FLIGHT_STATES, KINDS, KIND_CHOICE, LEASED_STATES, LINE_SUFFIX, LIVE_TICKET_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MENU, MESSAGE_ONLY, MODES, NEEDS_CONTRACT, NOTHING_HANDED, OFF_MENU_TEMPLATE, OPEN_LINES, OPEN_RUN_MINUTES, OWING_STATES, PREFIX, PRIORITIES_BY_RANK, PURPOSE_TEMPLATE, REPORTING, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, RULING_KINDS, RULING_RULES, RULING_STATES, Restaurant, SNAPSHOT_CHUNK, SOURCE_PRIORITY, SOURCE_ROOT, STATION_KIND, TABLES, THREADS_WRITERS, THREAD_COMMAND_ROLES, THREAD_ROLES, TICKET_STATES, UNSENT, VERDICTS, WORKER_ROLES, WORK_COMMANDS, _read_meta, holder_prefix, intake_owner, is_admin, is_timestamp, menu_section, open_restaurant, parse_row, read_chunk, refuse_owned_intake, reporting_of, roles_script, sibling_lines, siblings, store_path, store_root, wait_for_meta, write_atomic
-    from brigade_lib.tickets import ActsOn, EVERY_ROW, Fault, FollowUps, GOALS_ONLY, Goal, Label, LabelCounts, Labels, NO_WORK, Tally, Tracked, add_goal, add_ticket, append_ticket, base_source, count_labels, file_follow_ups, finish_request, finished_requests, follow_up_kind, follow_ups, frozen_label, goal_share, goal_work, handed_count, handoff_id, in_flight_tickets, inbox_file, intake_list, is_live, label_words, move_ticket, open_goal, paths_of, pattern_directory, priority_of, quoted_paths, read_goal, read_label, read_labels, record_paths, refuse_live_ref, request_files, says_no_work, set_goal, set_intake, sibling_named, sibling_rails, take_inbox, take_tickets, taken_row, tell, ticket_paths, tracked_paths, unique_names, whole_share
-    from brigade_lib.wake import CLOSE_OCCASIONS, DRAIN_LABELS, Debt, If, NO_WORKER, OCCASION_ORDER, ROUTINE_DETAILS, Reply, Run, STANDINGS, STARTS_AFTER, See, Snapshot, Standing, StandingText, Trigger, Waiting, YES_OCCASIONS, accepted_argv, admin_sends, blocked_needs_user, budget_reached, closing_options, compile_sheet, counted_timebox, crossing_send_back, cue_line, decision_detail, decision_holds, dish_by_id, dish_progress, format_sheet, fresh_decision_ids, from_user_request, hang_attempt, held_occasions, holder_of, housekeeping, inbox_cues, inbox_ready, is_drained, land_follow, lease_refusals, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, merge_accepted, merge_why, next_text, note_unsent, occasion_yes, older_than_hour, open_for, open_item_decisions, option_key, pass_words, pause_if, plan, prefix_cues, record_hang, reply_for, report_is_current, request_text, routine_detail, startable, startable_lines, tail_cues, ticket_lines, trigger_from, waiting_ticket, wake_label, watch, worker_where
+    from brigade_lib.tickets import ActsOn, EVERY_ROW, Fault, FollowUps, GOALS_ONLY, Goal, Label, LabelCounts, Labels, NO_WORK, Tally, Tracked, add_goal, add_ticket, append_ticket, base_source, cap_pairs, count_labels, file_follow_ups, finish_request, finished_requests, follow_up_kind, follow_ups, frozen_label, goal_share, goal_work, handed_count, handoff_id, in_flight_tickets, inbox_file, intake_list, is_live, label_words, move_ticket, open_goal, paths_of, pattern_directory, priority_of, quoted_paths, read_goal, read_label, read_labels, record_paths, refuse_live_ref, request_files, review_pairs, says_no_work, set_goal, set_intake, sibling_named, sibling_rails, take_inbox, take_tickets, taken_row, tell, ticket_paths, tracked_paths, unique_names, whole_share
+    from brigade_lib.wake import CLOSE_OCCASIONS, DRAIN_LABELS, Debt, If, NO_WORKER, OCCASION_ORDER, ROUTINE_DETAILS, Reply, Run, STARTS_AFTER, See, Snapshot, Standing, Trigger, Waiting, YES_OCCASIONS, accepted_argv, admin_sends, blocked_needs_user, budget_reached, closing_options, compile_sheet, counted_timebox, crossing_send_back, cue_line, decision_detail, decision_holds, dish_by_id, dish_progress, format_sheet, fresh_decision_ids, from_user_request, hang_attempt, held_occasions, holder_of, housekeeping, inbox_cues, inbox_ready, is_drained, land_follow, lease_refusals, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, merge_accepted, merge_why, next_text, note_unsent, occasion_yes, older_than_hour, open_for, open_item_decisions, option_key, pass_words, pause_if, plan, prefix_cues, record_hang, reply_for, report_is_current, request_text, routine_detail, startable, startable_lines, tail_cues, ticket_lines, trigger_from, waiting_ticket, wake_label, watch, worker_where
     from brigade_lib import seam
     seam.bind(globals())
 finally:
@@ -117,6 +117,12 @@ def parser():
                         "the setting")
     p.add_argument("--autofire", choices=AUTOFIRE,
                    help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
+    p.add_argument("--cap", metavar="KIND=N",
+                   help="comma-separated kind=number pairs, at most that many items of the kind holding a worker "
+                        "slot; a pair with no number clears that kind's cap; an empty value clears every cap")
+    p.add_argument("--review", metavar="KIND=MODE",
+                   help="comma-separated kind=mode pairs, the default mode for a new item of that kind, full or "
+                        "light; a pair with no mode clears that kind's depth; an empty value clears every depth")
 
     p = sub.add_parser("ticket", help="add, list, update, move, take, or record paths on tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -184,11 +190,12 @@ def parser():
     a.add_argument("--done", required=True, help="one sentence that states the test that shows the goal is reached")
     a.add_argument("--share", default="",
                    help="a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, "
-                        "and it does not affect which tickets start")
+                        "and the refill holds a ticket of the goal back once that many slots hold the goal's items")
     a = t.add_parser("set", help="change a goal's state, name, purpose, done test, or share")
     a.add_argument("id")
     a.add_argument("--state", choices=GOAL_STATES,
-                   help="paused is recorded and printed. It does not affect which tickets start. "
+                   help="paused starts no ticket of the goal, whatever its priority or the auto-start level. The goal's items in flight finish "
+                        "and land. "
                         "A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is "
                         "waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting "
                         "to land, or an assigned ticket of the goal is not in an item of the goal. "
@@ -202,7 +209,8 @@ def parser():
     a.add_argument("--done", help="replaces the goal's done test; refused when it is empty or only whitespace")
     a.add_argument("--share",
                    help='a whole number of 1 or more, recorded as the goal\'s share of the worker slots; "" clears it; '
-                        "goal list prints it, and it does not affect which tickets start")
+                        "goal list prints it, and the refill holds a ticket of the goal back once that many slots "
+                        "hold the goal's items")
     a = t.add_parser("list",
                      help="the state, name, counts, purpose, and done test of each open or paused goal and of each done or "
                           "dropped goal that has a waiting ticket, an item in flight, or a ticket riding along, then the "
@@ -856,6 +864,22 @@ def command(restaurant, args, contract=None, rails=None):
                 drop.append(key)
         if args.autofire:
             changes["autofire"] = args.autofire
+        for key, pairs in (("caps", cap_pairs(args.cap) if args.cap is not None else None),
+                           ("review", review_pairs(args.review) if args.review is not None else None)):
+            if pairs is None:
+                continue
+            # An empty flag text clears the whole map. Each pair then sets or clears its own kind's entry.
+            existing = meta.get(key)
+            merged = dict(existing) if (pairs and isinstance(existing, dict)) else ({} if pairs else {})
+            for kind, value in pairs.items():
+                if value:
+                    merged[kind] = value
+                else:
+                    merged.pop(kind, None)
+            if merged:
+                changes[key] = merged
+            else:
+                drop.append(key)
         if args.reports_to is not None:
             if clean(args.reports_to):
                 changes["reportsTo"] = clean(args.reports_to)

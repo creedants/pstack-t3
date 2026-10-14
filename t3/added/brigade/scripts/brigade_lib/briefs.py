@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
+from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import HELD_LOCKS, MODES, VERDICTS, roles_script
@@ -70,6 +71,12 @@ WAIT_RULE = ("- Never end your turn while a child task you started with delegate
 
 @dataclass(frozen=True)
 class ModeInputs:
+    """The inputs to the brief's mode resolution. brief is the review depth recorded for the dish's kind, or "" when it has none.
+
+    The other fields are the project root, the station, the attempt, the leased paths, the send-back count, the
+    restaurant's recorded mode, the item's recorded escalation, the dish row, the coordinator thread, and the
+    store's generation.
+    """
     project_root: str
     station: str
     attempt: str
@@ -80,6 +87,7 @@ class ModeInputs:
     dish: dict
     thread: str
     generation: int
+    brief: str = ""
 
 
 @dataclass(frozen=True)
@@ -112,9 +120,10 @@ def mode_inputs(restaurant, dish, paths, thread):
     meta = restaurant.meta
     events = restaurant.rows("log.tsv")
     sent_back = len(send_backs(restaurant.rows("pass.tsv"), dish["id"]))
+    limits = kind_limits(meta)
     return ModeInputs(meta["projectRoot"], dish["station"], attempt_kind(events, dish["id"]), paths, sent_back,
                       meta.get("mode") if meta.get("mode") in MODES else None, latest_mode_note(events, dish["id"]),
-                      dish, thread, meta.get("generation"))
+                      dish, thread, meta.get("generation"), limits.review.get(dish["kind"]) or "")
 
 
 def roles_mode(inputs):
@@ -122,6 +131,8 @@ def roles_mode(inputs):
         raise BrigadeError(f"roles.py may run git; release {HELD_LOCKS[0]}'s store lock before resolving the mode")
     argv = [sys.executable, str(roles_script()), "mode", "--cwd", inputs.project_root, "--paths", inputs.paths,
             "--send-backs", str(inputs.send_backs)]
+    if inputs.brief:
+        argv += ["--brief-mode", inputs.brief]
     if inputs.coordinator:
         argv += ["--coordinator-mode", inputs.coordinator]
     if inputs.escalated is not None:

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.leases import ClaimError, claim_lease, holder, refusal_kind, release_lease, running_workers, with_fragment, worker_cap
+from brigade_lib.leases import ClaimError, Hold, claim_lease, holder, refusal_kind, refill_of, release_lease, running_workers, with_fragment, worker_cap
 from brigade_lib.reviews import fix_round_refusal, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug
 from brigade_lib.store import KIND_CHOICE, LEASED_STATES, STATION_KIND
@@ -143,6 +143,21 @@ def checked_fire_label(restaurant, ids, station, kind, ride_along):
     labels = read_labels(restaurant, ActsOn(tickets=tuple(ids)))
     rail = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     return fire_label(labels, rail, ids, station, kind, ride_along)
+
+
+def spend_hold(restaurant, label, ids=()):
+    """Why a spend control holds this item, or None. `label` is the kind and goal the label check gave.
+
+    `ids` are the selected tickets; a paused goal of any one of them holds the fire, so a
+    paused goal starts nothing whatever the item's label.
+    """
+    labels = read_labels(restaurant, ActsOn(items=(), tickets=()))
+    for ident in ids:
+        ticket_label = labels.tickets.get(ident, Label())
+        goal = ticket_label.goal
+        if goal and labels.goals.get(goal) is not None and labels.goals[goal].state == "paused":
+            return Hold("paused", "its goal is paused")
+    return refill_of(restaurant.meta, restaurant.rows("dishes.tsv"), labels).hold(label)
 
 
 def write_lead_kind(restaurant, ids, kind):
@@ -368,6 +383,8 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
     before the worker cap. The first run comes after the owner check and unfireable, so a fire that one of those refuses
     gets the words it got before the label check. It comes before the lease claim, so a fire it refuses claims no lease.
     The second run sees a change made while the claim ran.
+    Each run is followed by the spend controls, which come after the label check and before the worker cap. A control
+    hold fires nothing, claims no lease in the first phase, and releases a lease the second phase claimed.
     The lead ticket's kind cell takes the item's kind in a rewrite of its own, before the item row is appended. A fire
     killed between its writes leaves no item whose kind its lead ticket lacks. No other kind or goal cell
     of a ticket changes, so a ticket that rides along keeps its own.
@@ -386,9 +403,12 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
             leased = with_fragment(paths, known) if paths else ""
-            _, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+            label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if refusal:
                 raise BrigadeError(refusal)
+            held = spend_hold(restaurant, label, ids)
+            if held:
+                raise BrigadeError(f"nothing fired: {held.words}")
             full = workers_full(restaurant)
             if full:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
@@ -413,6 +433,10 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
             label = None
             if not refusal:
                 label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+            if label:
+                hold = spend_hold(restaurant, label, ids)
+                if hold:
+                    label, refusal = None, hold.words
             full = None if refusal else workers_full(restaurant)
             if label and not full and current == dish:
                 write_lead_kind(restaurant, ids, label.kind)

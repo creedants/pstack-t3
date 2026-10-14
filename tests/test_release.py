@@ -15,10 +15,12 @@ from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import release  # noqa: E402
 import test_pstack_t3  # noqa: E402
+from brigade_lib.store import KINDS as STORE_KINDS  # noqa: E402
 
 ENV = {
     **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
@@ -31,15 +33,17 @@ ENV = {
     "LC_ALL": "C",
 }
 CHANGELOG = "# Changelog\n\n## 0.2.0 (2026-10-06)\n\n- old\n\n## 0.1.0\n\nFirst.\n"
-HEADING = "## 0.3.0 (2026-10-09)\n\n"
-SECTION = HEADING + "- eta one\n  eta continued\n- eta two\n- beta\n- alpha\n- zeta again\n"
+# Every fragment of the fixture history is unlabelled, so it is upkeep and the bump is the next patch over 0.2.0.
+HEADING = "## 0.2.1 (2026-10-09)\n\n"
+UPKEEP = "### Changed\n\n"
+SECTION = HEADING + UPKEEP + "- eta one\n  eta continued\n- eta two\n- beta\n- alpha\n- zeta again\n"
 STEPS = (
     "this script never stages, commits, tags, or pushes. the remaining steps:\n"
     "  git add CHANGELOG.md changes/\n"
-    '  git commit -m "release 0.3.0"\n'
-    '  git tag -a v0.3.0 -m "pstack-t3 0.3.0"    # on the commit that lands on main\n'
-    "  git push origin v0.3.0\n"
-    "  gh release create v0.3.0 --notes-file <release notes file>\n"
+    '  git commit -m "release 0.2.1"\n'
+    '  git tag -a v0.2.1 -m "pstack-t3 0.2.1"    # on the commit that lands on main\n'
+    "  git push origin v0.2.1\n"
+    "  gh release create v0.2.1 --notes-file <release notes file>\n"
 )
 DRY_RUN = (
     SECTION
@@ -171,8 +175,8 @@ class ReleaseCase(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", message))
         self.assertEqual(state(repo), before)
 
-    def assert_section(self, repo, section):
-        result = run(repo, "0.3.0", "--dry-run")
+    def assert_section(self, repo, section, version="0.2.1"):
+        result = run(repo, version, "--dry-run")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(result.stdout[: len(section) + 1], section + "\n")
 
@@ -181,7 +185,7 @@ class RunTest(ReleaseCase):
     def test_dry_run_prints_the_section_and_changes_nothing(self):
         with history() as repo:
             before = state(repo)
-            result = run(repo, "0.3.0", "--dry-run")
+            result = run(repo, "0.2.1", "--dry-run")
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, DRY_RUN, ""))
             self.assertEqual(state(repo), before)
             self.assertEqual(before[0], "")
@@ -191,12 +195,12 @@ class RunTest(ReleaseCase):
 
     def test_dry_run_takes_the_flag_before_the_version(self):
         with history() as repo:
-            result = run(repo, "--dry-run", "0.3.0")
+            result = run(repo, "--dry-run", "0.2.1")
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, DRY_RUN, ""))
 
     def test_release_writes_the_section_above_the_latest_heading(self):
         with history() as repo:
-            result = run(repo, "0.3.0")
+            result = run(repo, "0.2.1")
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, REAL_RUN, ""))
             self.assertEqual(
                 (repo / "CHANGELOG.md").read_text(),
@@ -206,7 +210,7 @@ class RunTest(ReleaseCase):
     def test_release_deletes_the_fragments_and_leaves_git_alone(self):
         with history() as repo:
             head = git(repo, "rev-parse", "HEAD")
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
             self.assertEqual(git(repo, "status", "--porcelain"), RELEASED)
             self.assertEqual(list((repo / "changes").iterdir()), [])
             self.assertEqual(git(repo, "diff", "--cached", "--name-only"), "")
@@ -215,11 +219,11 @@ class RunTest(ReleaseCase):
 
     def test_release_prints_the_remaining_steps(self):
         with history() as repo:
-            self.assertEqual(run(repo, "0.3.0").stdout[-len(STEPS):], STEPS)
+            self.assertEqual(run(repo, "0.2.1").stdout[-len(STEPS):], STEPS)
 
     def test_printed_git_add_stages_the_release(self):
         with history() as repo:
-            printed = [line.strip() for line in run(repo, "0.3.0").stdout.splitlines()]
+            printed = [line.strip() for line in run(repo, "0.2.1").stdout.splitlines()]
             add = [line for line in printed if line.startswith("git add ")]
             self.assertEqual(add, ["git add CHANGELOG.md changes/"])
             subprocess.run(shlex.split(add[0]), cwd=repo, check=True, env=ENV)
@@ -237,32 +241,34 @@ class RunTest(ReleaseCase):
                 real = shutil.which(name) or "/bin/true"
                 (shim / name).write_text(f'#!/bin/sh\necho "{name} $1" >> "{calls}"\nexec "{real}" "$@"\n')
                 (shim / name).chmod(0o755)
-            result = run(repo, "0.3.0", env={**ENV, "PATH": f"{shim}{os.pathsep}{ENV['PATH']}"})
+            result = run(repo, "0.2.1", env={**ENV, "PATH": f"{shim}{os.pathsep}{ENV['PATH']}"})
             self.assertEqual((result.returncode, result.stdout), (0, REAL_RUN))
             self.assertEqual(calls.read_text(), "git rev-parse\ngit status\ngit log\n")
 
     def test_changelog_without_a_heading_takes_the_section_at_the_end(self):
         with repository("# Changelog\n") as repo:
             commit(repo, {"changes/a.md": "- a\n"}, day=2)
+            # A changelog with no released version takes the version as it is given.
             self.assertEqual(run(repo, "0.3.0").returncode, 0)
-            self.assertEqual((repo / "CHANGELOG.md").read_text(), "# Changelog\n\n" + HEADING + "- a\n")
+            self.assertEqual((repo / "CHANGELOG.md").read_text(),
+                             "# Changelog\n\n## 0.3.0 (2026-10-09)\n\n" + UPKEEP + "- a\n")
 
     def test_rerun_refuses_then_restore_recovers(self):
         with history() as repo:
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
-            self.assert_refuses(repo, "0.3.0", DIRTY + RELEASED)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
+            self.assert_refuses(repo, "0.2.1", DIRTY + RELEASED)
             git(repo, *shlex.split(UNDO)[1:])
             self.assertEqual(git(repo, "status", "--porcelain"), "")
             self.assert_section(repo, SECTION)
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
             git(repo, "add", "CHANGELOG.md", "changes/")
-            git(repo, "commit", "-q", "-m", "release 0.3.0")
-            self.assert_refuses(repo, "0.3.0", "CHANGELOG.md already has a ## 0.3.0 heading; pick the next version\n")
+            git(repo, "commit", "-q", "-m", "release 0.2.1")
+            self.assert_refuses(repo, "0.2.1", "CHANGELOG.md already has a ## 0.2.1 heading; pick the next version\n")
 
     def test_printed_undo_restores_a_staged_release(self):
         with history() as repo:
             before = state(repo)
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
             git(repo, "add", "CHANGELOG.md", "changes/")
             self.assertEqual(git(repo, "status", "--porcelain"), "M  CHANGELOG.md\nD  changes/alpha.md\n"
                              "D  changes/beta.md\nD  changes/eta.md\nD  changes/zeta.md\n")
@@ -272,14 +278,14 @@ class RunTest(ReleaseCase):
     def test_printed_undo_restores_an_unstaged_release(self):
         with history() as repo:
             before = state(repo)
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
             git(repo, *shlex.split(UNDO)[1:])
             self.assertEqual(state(repo), before)
 
     def test_changelog_keeps_its_file_mode(self):
         with history() as repo:
             (repo / "CHANGELOG.md").chmod(0o640)
-            self.assertEqual(run(repo, "0.3.0").returncode, 0)
+            self.assertEqual(run(repo, "0.2.1").returncode, 0)
             self.assertEqual((repo / "CHANGELOG.md").stat().st_mode & 0o777, 0o640)
             self.assertEqual([path.name for path in repo.glob(".*.tmp")], [])
 
@@ -289,7 +295,7 @@ class RunTest(ReleaseCase):
             before = state(repo)
             (repo / "changes").chmod(0o555)
             try:
-                result = run(repo, "0.3.0")
+                result = run(repo, "0.2.1")
             finally:
                 (repo / "changes").chmod(0o755)
             self.assertEqual(result.returncode, 1)
@@ -306,7 +312,7 @@ class RunTest(ReleaseCase):
             before = state(repo)
             repo.chmod(0o555)
             try:
-                result = run(repo, "0.3.0")
+                result = run(repo, "0.2.1")
             finally:
                 repo.chmod(0o755)
             self.assertEqual((result.returncode, result.stderr[:17]), (1, "stopped partway: "))
@@ -328,7 +334,7 @@ class RunTest(ReleaseCase):
             return real_write(path, data, mode)
 
         with mock.patch.object(release, "ROOT", repo):
-            cut = release.plan("0.3.0", "2026-10-09")
+            cut = release.plan("0.2.1", "2026-10-09")
             with mock.patch.object(pathlib.Path, "unlink", unlink), mock.patch.object(release, "write_file", write_file):
                 with self.assertRaises(SystemExit) as raised:
                     release.apply(cut)
@@ -364,7 +370,7 @@ class RunTest(ReleaseCase):
                 return real_unlink(path, *args, **kwargs)
 
             with mock.patch.object(release, "ROOT", repo):
-                cut = release.plan("0.3.0", "2026-10-09")
+                cut = release.plan("0.2.1", "2026-10-09")
                 with mock.patch.object(pathlib.Path, "unlink", unlink):
                     with self.assertRaises(SystemExit) as raised:
                         release.apply(cut)
@@ -394,7 +400,7 @@ class RunTest(ReleaseCase):
 
         held = {number: signal.getsignal(number) for number in release.HELD}
         with recording_handlers() as missed, mock.patch.object(release, "ROOT", repo):
-            cut = release.plan("0.3.0", "2026-10-09")
+            cut = release.plan("0.2.1", "2026-10-09")
             with mock.patch.object(os, "replace", replacing), mock.patch.object(pathlib.Path, "unlink", unlinking):
                 with self.assertRaises(SystemExit) as raised:
                     release.apply(cut)
@@ -459,7 +465,7 @@ class RunTest(ReleaseCase):
     def test_a_signal_at_any_line_of_apply_leaves_the_files_as_they_were_or_released(self):
         for fail in (None, 3):
             with self.subTest(failing_delete=fail), history() as repo, mock.patch.object(release, "ROOT", repo):
-                before, cut = state(repo), release.plan("0.3.0", "2026-10-09")
+                before, cut = state(repo), release.plan("0.2.1", "2026-10-09")
                 real_unlink = pathlib.Path.unlink
 
                 def run_traced(fire_at):
@@ -533,7 +539,7 @@ class RunTest(ReleaseCase):
 class OrderTest(ReleaseCase):
     def test_order_matches_the_documented_log(self):
         with history() as repo:
-            self.assertEqual(SECTION, HEADING + "\n".join(test_pstack_t3.release_bullets(repo)) + "\n")
+            self.assertEqual(SECTION, HEADING + UPKEEP + "\n".join(test_pstack_t3.release_bullets(repo)) + "\n")
             self.assert_section(repo, SECTION)
 
     def test_one_commit_orders_by_name_whatever_git_prints(self):
@@ -542,20 +548,20 @@ class OrderTest(ReleaseCase):
             git(repo, "config", "diff.orderFile", "order")
             commit(repo, {"changes/b.md": "- b\n", "changes/a.md": "- a\n", "changes/c.md": "- c\n"}, day=2)
             self.assertEqual(git(repo, *release.LOG), "\x01\0\nchanges/c.md\0changes/a.md\0changes/b.md\0")
-            self.assert_section(repo, HEADING + "- a\n- b\n- c\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- a\n- b\n- c\n")
 
     def test_same_second_commits_keep_commit_order(self):
         with repository() as repo:
             commit(repo, {"changes/b.md": "- b\n"}, day=2)
             commit(repo, {"changes/a.md": "- a\n"}, day=2)
-            self.assert_section(repo, HEADING + "- b\n- a\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- b\n- a\n")
 
     def test_an_earlier_dated_later_commit_keeps_commit_order(self):
         with repository() as repo:
             commit(repo, {"changes/a.md": "- a\n"}, day=9)
             commit(repo, {"changes/b.md": "- b\n"}, day=2)
             commit(repo, {"changes/c.md": "- c\n"}, day=5)
-            self.assert_section(repo, HEADING + "- a\n- b\n- c\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- a\n- b\n- c\n")
 
     def test_renamed_fragment_orders_at_the_rename(self):
         with repository() as repo:
@@ -563,20 +569,20 @@ class OrderTest(ReleaseCase):
             commit(repo, {"changes/mid.md": "- mid\n"}, day=3)
             git(repo, "mv", "changes/old.md", "changes/new.md")
             git(repo, "commit", "-q", "-m", "mv", date="2026-01-04T12:00:00+00:00")
-            self.assert_section(repo, HEADING + "- mid\n- old\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- mid\n- old\n")
 
     def test_non_ascii_fragment_name(self):
         with repository() as repo:
             commit(repo, {"changes/café.md": "- café\n"}, day=2)
             commit(repo, {"changes/a.md": "- a\n"}, day=3)
-            self.assert_section(repo, HEADING + "- café\n- a\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- café\n- a\n")
 
     def test_edited_fragment_keeps_the_order_of_its_add(self):
         with repository() as repo:
             commit(repo, {"changes/b.md": "- b\n"}, day=2)
             commit(repo, {"changes/a.md": "- a\n"}, day=3)
             commit(repo, {"changes/b.md": "- b\n- b again\n"}, day=4)
-            self.assert_section(repo, HEADING + "- b\n- b again\n- a\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- b\n- b again\n- a\n")
 
     def test_git_log_record_shape(self):
         with repository() as repo:
@@ -597,7 +603,7 @@ class OrderTest(ReleaseCase):
             commit(repo, {"changes/b.md": "- b\n"}, day=2)
             commit(repo, {"changes/a.md": "- a\n"}, day=3)
             self.assertIn("-----BEGIN SSH SIGNATURE-----", git(repo, "cat-file", "commit", "HEAD"))
-            self.assert_section(repo, HEADING + "- b\n- a\n")
+            self.assert_section(repo, HEADING + UPKEEP + "- b\n- a\n")
 
     def test_added_at(self):
         self.assertEqual(release.added_at(""), {})
@@ -694,7 +700,7 @@ class RefusalTest(ReleaseCase):
         for change, status in cases:
             with self.subTest(change.__name__), history() as repo:
                 change(repo)
-                self.assert_refuses(repo, "0.3.0", DIRTY + status)
+                self.assert_refuses(repo, "0.2.1", DIRTY + status)
 
     def test_uncommitted_changes_elsewhere_do_not_refuse(self):
         with history() as repo:
@@ -736,8 +742,8 @@ class RefusalTest(ReleaseCase):
                 repo, "0.3.0",
                 "0.3.0 is not above 0.9.0, the latest version in CHANGELOG.md; pick a higher version\n",
             )
-            result = run(repo, "0.10.0", "--dry-run")
-            self.assertEqual((result.returncode, result.stdout[:23]), (0, "## 0.10.0 (2026-10-09)\n"))
+            result = run(repo, "0.9.1", "--dry-run")
+            self.assertEqual((result.returncode, result.stdout[:22]), (0, "## 0.9.1 (2026-10-09)\n"))
 
     def test_refuses_without_fragments(self):
         message = "changes/ holds no fragments; there is nothing to release\n"
@@ -812,9 +818,79 @@ class RefusalTest(ReleaseCase):
             (repo / "changes/local.md").write_text("- local\n")
             self.assertEqual(git(repo, "status", "--porcelain", "--untracked-files=all"), "")
             self.assert_refuses(
-                repo, "0.3.0",
+                repo, "0.2.1",
                 "git log shows no commit that added changes/local.md; commit the fragment and rerun\n",
             )
+
+
+class KindTest(ReleaseCase):
+    """A fragment's kind, the group each kind's bullets go under, and the bump the kinds give."""
+
+    def assert_groups(self, fragments, section, version):
+        with repository() as repo:
+            commit(repo, {f"changes/{name}": text for name, text in fragments.items()}, day=2)
+            result = run(repo, version, "--dry-run")
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            self.assertEqual(result.stdout[: len(section) + 1], section + "\n")
+
+    def test_a_kind_marker_groups_each_kinds_bullets_and_leaves_the_marker_out(self):
+        self.assert_groups(
+            {"a.md": "- kind feature\n- a one\n  a continued\n", "b.md": "- kind fix\n- b\n", "c.md": "- kind polish\n- c\n",
+             "d.md": "- kind study\n- d\n", "e.md": "- e\n"},
+            "## 0.3.0 (2026-10-09)\n\n### New\n\n- a one\n  a continued\n\n### Fixed\n\n- b\n\n### Changed\n\n- e\n\n- c\n- d\n",
+            "0.3.0",
+        )
+
+    def test_an_unlabelled_fragment_is_upkeep_and_a_group_with_no_bullet_is_absent(self):
+        self.assert_groups({"a.md": "- a\n"}, "## 0.2.1 (2026-10-09)\n\n### Changed\n\n- a\n", "0.2.1")
+
+    def test_a_first_bullet_that_starts_with_kind_and_names_no_kind_is_refused(self):
+        for text in ("- kind\n", "- kind chore\n", "- kind feature extra\n", "- kinds\n"):
+            with self.subTest(text=text), repository() as repo:
+                commit(repo, {"changes/note.md": text + "- a\n"}, day=2)
+                self.assert_refuses(
+                    repo, "0.2.1",
+                    "changes/note.md line 1 names a kind that is not feature, fix, polish, upkeep, or study; "
+                    "fix the fragment, commit it, and rerun\n",
+                )
+
+    def test_a_fragment_whose_marker_is_its_only_line_holds_no_bullet(self):
+        with repository() as repo:
+            commit(repo, {"changes/note.md": "- kind feature\n"}, day=2)
+            self.assert_refuses(
+                repo, "0.3.0",
+                "changes/note.md holds no bullet; fix the fragment, commit it, and rerun\n",
+            )
+
+    def test_the_kind_marker_is_removed_before_the_bullet_fault_counts_lines(self):
+        with repository() as repo:
+            commit(repo, {"changes/note.md": "- kind fix\n- ok\nprose\n"}, day=2)
+            self.assert_refuses(
+                repo, "0.2.1",
+                "changes/note.md line 2 is not a bullet or a continuation line; fix the fragment, commit it, and rerun\n",
+            )
+
+    def test_a_feature_in_the_release_takes_the_next_minor_with_no_patch(self):
+        with history() as repo:
+            commit(repo, {"changes/one.md": "- kind feature\n- one\n"}, day=5)
+            self.assert_refuses(
+                repo, "0.2.1",
+                "0.2.1 is not 0.3.0, the version the kinds give; pass 0.3.0\n",
+            )
+            self.assert_section(repo, "## 0.3.0 (2026-10-09)\n\n### New\n\n- one\n\n### Changed\n\n" + SECTION[len(HEADING + UPKEEP):],
+                               "0.3.0")
+
+    def test_no_feature_takes_the_next_patch_over_the_latest(self):
+        with history() as repo:
+            commit(repo, {"changes/one.md": "- kind fix\n- one\n"}, day=5)
+            self.assert_refuses(
+                repo, "0.3.0",
+                "0.3.0 is not 0.2.1, the version the kinds give; pass 0.2.1\n",
+            )
+            self.assert_section(repo, HEADING + "### Fixed\n\n- one\n\n" + UPKEEP + SECTION[len(HEADING + UPKEEP):])
+
+    def test_the_kind_tuple_is_the_one_the_store_holds(self):
+        self.assertEqual(release.KINDS, STORE_KINDS)
 
 
 class RuleTest(unittest.TestCase):

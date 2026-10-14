@@ -28,6 +28,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
+# The kinds a fragment may name, the same five strings and the same order as brigade_lib.store.KINDS. A test
+# fails when the two differ, because this script runs from a checkout that does not import the brigade package.
+KINDS = ("feature", "fix", "polish", "upkeep", "study")
+# The changelog group of each kind, in section order. The kinds with no heading of their own come last.
+GROUPS = (("### New", ("feature",)), ("### Fixed", ("fix",)), ("### Changed", ("upkeep",)), (None, ("polish", "study")))
 # From 3.11 date.fromisoformat also takes 20261009. The pattern keeps 3.10 and 3.12 equal.
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # --staged --worktree undoes a run whether or not `git add` already staged it.
@@ -155,6 +160,23 @@ def refuse_unfinished_release() -> None:
                  f"or run {UNDO} to undo an unfinished release:\n{dirty.rstrip()}")
 
 
+def take_kind(name: str, lines: list[str]) -> tuple[str, list[str]]:
+    """The fragment's kind and its lines without the marker, as (kind, lines).
+
+    A first line whose bullet text is `kind <kind>` names that kind and is removed. A fragment whose first line
+    is no such bullet is upkeep. A first bullet whose text starts with `kind` and names no kind is refused.
+    """
+    if not lines or not lines[0].startswith("- "):
+        return "upkeep", lines
+    text = lines[0][2:].strip()
+    if text in [f"kind {kind}" for kind in KINDS]:
+        return text[len("kind "):], lines[1:]
+    if text.startswith("kind"):
+        named = ", ".join(KINDS[:-1]) + f", or {KINDS[-1]}"
+        sys.exit(f"changes/{name} line 1 names a kind that is not {named}; fix the fragment, commit it, and rerun")
+    return "upkeep", lines
+
+
 def plan(version_text: str, date_text: str | None) -> Cut:
     version = parse_version(version_text)
     if version is None:
@@ -190,13 +212,21 @@ def plan(version_text: str, date_text: str | None) -> Cut:
         if entry.is_symlink() or not entry.is_file() or not entry.name.endswith(".md"):
             sys.exit(f"changes/{entry.name} is not a fragment; changes/ holds only .md files, so move or delete it")
     originals = {entry.name: read_utf8(entry) for entry in entries}
-    bullets = {}
+    fragments = {}
     for entry in entries:
         lines = originals[entry.name].data.decode("utf-8").split("\n")
-        bullets[entry.name] = lines[:-1] if lines[-1] == "" else lines
-        fault = bullet_fault(bullets[entry.name])
+        lines = lines[:-1] if lines[-1] == "" else lines
+        kind, lines = take_kind(entry.name, lines)
+        fault = bullet_fault(lines)
         if fault:
             sys.exit(f"changes/{entry.name} {fault}; fix the fragment, commit it, and rerun")
+        fragments[entry.name] = (kind, lines)
+    if versions:
+        latest = max(versions)
+        wanted = ((latest[0], latest[1] + 1, 0) if any(fragment[0] == "feature" for fragment in fragments.values())
+                  else (latest[0], latest[1], latest[2] + 1))
+        if version != wanted:
+            sys.exit(f"{dotted(version)} is not {dotted(wanted)}, the version the kinds give; pass {dotted(wanted)}")
 
     try:
         at = added_at(git(*LOG))
@@ -208,8 +238,15 @@ def plan(version_text: str, date_text: str | None) -> Cut:
             sys.exit(f"git log shows no commit that added changes/{entry.name}; commit the fragment and rerun")
     ordered = sorted(entries, key=lambda entry: (at[entry.name], entry.name))
 
-    body = "".join(line + "\n" for entry in ordered for line in bullets[entry.name])
-    section = f"## {dotted(version)} ({day.isoformat()})\n\n{body}"
+    groups = []
+    for heading, kinds in GROUPS:
+        bullets = [line for entry in ordered if fragments[entry.name][0] in kinds for line in fragments[entry.name][1]]
+        if bullets:
+            groups.append((heading, bullets))
+    # A group with a heading is the heading, a blank line, and its bullets. The kinds with no heading are the bullets.
+    blocks = [f"## {dotted(version)} ({day.isoformat()})"]
+    blocks += [("\n".join([heading, "", *bullets]) if heading else "\n".join(bullets)) for heading, bullets in groups]
+    section = "\n\n".join(blocks) + "\n"
     return Cut(section=section, changelog=splice(changelog, section), before=before,
                fragments=tuple(originals[entry.name] for entry in ordered))
 

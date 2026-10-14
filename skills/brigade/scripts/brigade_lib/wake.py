@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import attempt_starts
-from brigade_lib.leases import autofire_of, block_inputs, entry_line, fire_command, lease_block, paths_inside, paths_overlap, recheck_blocks, renew_line, running_workers, with_fragment, worker_cap, workers_line
+from brigade_lib.leases import STANDINGS, StandingText, autofire_of, block_inputs, entry_line, fire_command, lease_block, paths_inside, paths_overlap, recheck_blocks, refill_of, renew_line, running_workers, with_fragment, worker_cap, workers_line
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, age, clean, slug
 from brigade_lib.store import LEASED_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MESSAGE_ONLY, OPEN_LINES, OPEN_RUN_MINUTES, PRIORITIES_BY_RANK, ROUND_BUDGET, ROUND_KIND, TABLES, reporting_of, store_path
@@ -30,21 +30,13 @@ from brigade_lib.tickets import EVERY_ROW, Label, handed_count, handoff_id, inbo
 
 
 
-@dataclass(frozen=True)
-class StandingText:
-    count_label: str
-    line_words: str
+def _goal_paused(goal, refill):
+    if not goal:
+        return False
+    found = refill.goals.get(goal)
+    return found is not None and found.state == "paused"
 
 
-STANDINGS = {
-    "start": StandingText("startable", "startable"),
-    "rides": StandingText("riding", "rides with {why}"),
-    "blocked": StandingText("blocked", "blocked, {why}"),
-    "unknown": StandingText("unknown", "unknown, no paths recorded"),
-    "decision": StandingText("decisions", "decision for the owner"),
-    "below": StandingText("below auto-start", "below auto-start"),
-    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle while an urgent or normal ticket waits"),
-}
 NO_WORKER = "waiting for an idle worker"
 STARTS_AFTER = "starts after {tickets}"
 DRAIN_LABELS = ("in progress", "in review", "passed review", "waiting to land")
@@ -95,7 +87,7 @@ def waiting_ticket(row, label=Label()):
     return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label)
 
 
-def plan(tickets, running, cap, level, refusals, now):
+def plan(tickets, refill, running, cap, level, refusals, now):
     allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
@@ -113,12 +105,17 @@ def plan(tickets, running, cap, level, refusals, now):
             kind = "unknown"
         elif ticket.id in refusals:
             kind, why = "blocked", refusals[ticket.id]
-        elif low and len(shared) == 1 and priorities[shared[0]] != "low" and paths_inside(ticket.paths, started[shared[0]]):
+        elif ticket.label.goal and _goal_paused(ticket.label.goal, refill):
+            kind, why = "paused", "its goal is paused"
+        elif (low and len(shared) == 1 and priorities[shared[0]] != "low"
+              and paths_inside(ticket.paths, started[shared[0]])):
             kind, why = "rides", shared[0]
         elif shared:
             kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))
         elif ticket.priority not in allowed:
             kind = "below"
+        elif (hold := refill.hold(ticket.label)):
+            kind, why = hold.standing, hold.words
         elif not idle:
             kind, why = "blocked", NO_WORKER
         elif low and higher_waits and idle <= LOW_RESERVE:
@@ -126,6 +123,7 @@ def plan(tickets, running, cap, level, refusals, now):
         else:
             idle -= 1
             started[ticket.id] = ticket.paths
+            refill = refill.started(ticket.label)
         standings.append(Standing(ticket, kind, why, low and now - ticket.filed > timedelta(days=LOW_FLAG_DAYS)))
     return standings
 
@@ -167,9 +165,10 @@ def startable(restaurant):
         meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
         tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
+        refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     refusals = lease_refusals(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
-    return startable_lines(plan(tickets, running, worker_cap(meta), autofire_of(meta), refusals, moment), meta, running, moment)
+    return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment), meta, running, moment)
 
 
 def ticket_lines(restaurant, state, held):
