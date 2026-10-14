@@ -1,0 +1,6 @@
+- kind upkeep
+- `tests/test_ops.py` pins default `--batch-size` 140 splitting 141 candidates into files of 140 and 1.
+- `tests/test_ops.py` pins `--batch-dir` with a missing parent failing with no file written.
+- `tests/test_ops.py` pins `--dry-run` with `--selection-only` printing the sorted JSON array.
+- `tests/test_ops.py` pins a direct run without `T3_CODE_MCP_AUTHORIZATION` exiting 1 with the summary on stdout and one stderr line naming the variable.
+- `tests/test_ops.py` pins an unknown flag exiting 2.
