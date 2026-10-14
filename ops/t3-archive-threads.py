@@ -26,15 +26,18 @@ passing `threadId`.
 
 What it archives. A sub-agent thread is archived only when it is not already
 archived, it has no run that is running, queued, starting, preparing, or
-waiting, it has no execution node or provider-native subagent that is pending,
-running, or waiting including a null run id, it is not named as the child of
-such a subagent, and it was last updated at least --older-than-hours ago. A
+waiting, no pending, running, or waiting execution node or provider-native
+subagent keeps it, and it was last updated at least --older-than-hours ago. A
+pending, running, or waiting execution node keeps its thread id from being
+archived unless that node's run id is a run whose status is interrupted,
+cancelled, or failed. A pending, running, or waiting provider-native subagent
+keeps its thread id and its child thread id from being archived unless that
+row's run id is a run whose status is interrupted, cancelled, or failed. A
 thread with a live ancestor is skipped unless that ancestor is archived or is
 named with --coordinator, whose finished children are archived by age like any
-other. A descendant with a run in one of those statuses, or with an execution
-node or provider-native subagent that is pending, running, or waiting,
-including a null run id, or named as the child of such a subagent, keeps every
-ancestor from being archived.
+other. A descendant with a run in one of those statuses keeps every ancestor
+from being archived. A descendant kept by that node rule or that subagent rule
+keeps every ancestor from being archived too.
 With --top-level-settled it also archives a top-level thread only when that
 thread is settled, not pinned, not the --coordinator thread, has no such live
 work, and is that old. A thread named with --keep is never archived. Archiving
@@ -156,10 +159,14 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         sys.exit(f"expected one project titled {project!r}, found {len(pids)}")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
     live = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs where status in ('running','queued','starting','preparing','waiting')") if t is not None}
-    runless = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_nodes where status in ('pending','running','waiting')") if t is not None}
-    runless |= {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')") if t is not None}
-    runless |= {t for (t,) in c.execute("select distinct child_thread_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')") if t is not None}
-    live |= runless
+    dead_runs = {run for (run,) in c.execute("select run_id from orchestration_v2_projection_runs where status in ('interrupted','cancelled','failed')") if run is not None}
+
+    def open_threads(rows):
+        return {thread for thread, run in rows if thread is not None and run not in dead_runs}
+
+    live |= open_threads(c.execute("select thread_id, run_id from orchestration_v2_projection_nodes where status in ('pending','running','waiting')"))
+    live |= open_threads(c.execute("select thread_id, run_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')"))
+    live |= open_threads(c.execute("select child_thread_id, run_id from orchestration_v2_projection_subagents where origin = 'provider_native' and status in ('pending','running','waiting')"))
     rows = c.execute("select thread_id, updated_at, archived_at, payload_json from orchestration_v2_projection_threads "
                      "where project_id = ? and deleted_at is null", (pids[0],)).fetchall()
     info = {}
