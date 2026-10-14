@@ -70,7 +70,7 @@ On T3 Code 0.0.46-nightly.20261014.3105 or later, only one server can own a T3 h
 | `--top-level-settled` | Also archive settled top-level threads. |
 | `--dry-run` | Choose and print. Archive nothing. |
 | `--selection-only` | When `--batch-dir` is absent, print the candidate thread ids as a sorted JSON array of strings on stdout. Exit without constructing the MCP client and without reading `T3_CODE_MCP_AUTHORIZATION`. |
-| `--batch-dir DIR` | With `--selection-only`, create DIR when it does not exist yet. Write each selected id on its own line into `batch-1.txt`, `batch-2.txt`, and so on in the order `--selection-only` prints. Each file holds at most `--batch-size` ids. Print each file path, a tab, and its count. Without `--selection-only`, exit 2 and create nothing. |
+| `--batch-dir DIR` | With `--selection-only`, create DIR when it does not exist yet. Its parent must exist. Write each selected id on its own line into `batch-1.txt`, `batch-2.txt`, and so on in the order `--selection-only` prints. Each file holds at most `--batch-size` ids. Print each file path, a tab, and its count. Without `--selection-only`, exit 2 and create nothing. |
 | `--batch-size N` | At most this many ids in each batch file. 140 when the flag is absent. Below 1 exits 2. |
 
 A direct run with threads to archive and the credential prints two lines.
@@ -80,7 +80,7 @@ to archive: <n>; skipped: live <n>, recent <n>, under a running thread <n>, kept
 archived <n>, failed <n>
 ```
 
-Between them it prints one `failed:` line for each of the first five threads that T3 did not archive. It carries on with the rest. With `--dry-run`, or when it chose no thread, it prints the first line only. With `--selection-only` and without `--batch-dir`, it prints the ids as a sorted JSON array of strings instead of those lines. With `--selection-only` and `--batch-dir`, it prints one line per batch file with the path, a tab, and the count instead of those lines. It prints nothing when it chose no thread. It still creates DIR. When DIR already exists, it prints nothing on stdout and one line on stderr and exits 1. With `--batch-dir` and without `--selection-only`, it prints nothing on stdout and one line on stderr and exits 2. Without `T3_CODE_MCP_AUTHORIZATION` in a direct run with threads to archive, it prints the first line on stdout and one line on stderr and exits 1.
+Between them it prints one `failed:` line for each of the first five threads that T3 did not archive. It carries on with the rest. With `--dry-run` and without `--selection-only`, or when it chose no thread in a direct run, it prints the first line only. With `--selection-only` and without `--batch-dir`, it prints the ids as a sorted JSON array of strings instead of those lines. With `--selection-only` and `--batch-dir`, it prints one line per batch file with the path, a tab, and the count instead of those lines. With `--selection-only` and `--batch-dir`, it prints nothing when it chose no thread. It still creates DIR. When DIR already exists, it prints nothing on stdout and one line on stderr and exits 1. With `--batch-dir` and without `--selection-only`, it prints nothing on stdout and one line on stderr and exits 2. Without `T3_CODE_MCP_AUTHORIZATION` in a direct run with threads to archive, it prints the first line on stdout and one line on stderr and exits 1.
 
 | Exit | Meaning |
 |---|---|
