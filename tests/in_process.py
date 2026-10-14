@@ -256,7 +256,7 @@ def _restore(saved):
 
 
 class _TypedArgv(list):
-    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so writes to index 0 are ignored."""
+    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so a plain item assignment to index 0 is ignored."""
 
     def __setitem__(self, index, value):
         if index != 0:
@@ -346,7 +346,7 @@ def _execute(saved, invocation):
         os.environ.clear()
         os.environ.update(dict(invocation.env))
     # A real interpreter resolves its script argument against the directory it starts in and
-    # runs that path, so the traceback, __file__, and sys.path[0] name it.
+    # runs that path, so the traceback and __file__ name that path.
     program = os.path.join(os.getcwd(), os.fspath(typed))
     sys.argv = _TypedArgv([os.fspath(typed), *[os.fspath(part) for part in invocation.argv]])
     if pkgutil.get_importer(program) is None:
