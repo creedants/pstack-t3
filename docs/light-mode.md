@@ -1,6 +1,6 @@
 # Light mode
 
-Light mode is one setting with the values `full` and `light`. Full mode runs every step as each skill says. Light mode keeps every check that decides whether code lands and cuts the fan-out around it. The full behavior of each spawn lives in [the runtime's Modes section](../t3/runtime.md#modes). This page describes the setting as it works today.
+Light mode is one setting with the values `full` and `light`. Full mode runs every step as each skill says. Light mode keeps every check that decides whether code lands and cuts the fan-out around it. The light behavior of each spawn lives in [the runtime's Modes section](../t3/runtime.md#modes). This page describes the setting as it works today.
 
 In this document a coordinator is one standing brigade coordinator thread and its store directory. A work item is one unit of work handed to a worker. An attempt is one worker run on a work item.
 
@@ -246,8 +246,8 @@ A queue bounce is not a send-back. Its fresh worker gets `Attempt: bounce` and t
 
 The runtime requires one executing fresh-child test per changed spawn or coordination behavior.
 
-- A leaf test runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation, such as a reply wording, a brief line, or a command the skill runs.
-- An executing workflow test runs the playbook with its real children, nested ones included. It is required once for each changed spawn or coordination behavior. One test covers one behavior. Two unrelated changed behaviors need two tests.
+- A leaf test runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation.
+- An executing workflow test runs the playbook with its real children. It is required once for each changed spawn or coordination behavior. One test covers one behavior.
 - The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5 at high, or at medium under the light mode reasoning cap. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`. A seat that resolves to Cursor is refused with `cannot launch seats`.
 
 ## Decision
