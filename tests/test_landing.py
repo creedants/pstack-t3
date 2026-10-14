@@ -132,10 +132,11 @@ def _close_live_owners(numbers):
         return
     owners = []
     for obj in gc.get_objects():
-        fileno = getattr(obj, "fileno", None)
-        if not callable(fileno):
-            continue
+        # A dead weakref proxy raises ReferenceError from the lookup, and the default does not catch it.
         try:
+            fileno = getattr(obj, "fileno", None)
+            if not callable(fileno):
+                continue
             number = fileno()
         except Exception:
             continue
@@ -149,9 +150,12 @@ def _close_live_owners(numbers):
         steps = 0
         while id(current) not in seen:
             seen.add(id(current))
-            nxt = getattr(current, "buffer", None)
-            if nxt is None:
-                nxt = getattr(current, "raw", None)
+            try:
+                nxt = getattr(current, "buffer", None)
+                if nxt is None:
+                    nxt = getattr(current, "raw", None)
+            except Exception:
+                break
             if nxt is None:
                 break
             current = nxt
