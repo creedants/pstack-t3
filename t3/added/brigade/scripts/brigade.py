@@ -588,7 +588,7 @@ def selection_from_show(payload, role):
 
 
 def catalog_refusal(path):
-    """Refusal for a directory, non-UTF-8 bytes, or JSON that is not an object. None for every other path."""
+    """Explain a nonzero exit for a directory, non-UTF-8 bytes, or JSON that is not an object. Return None for every other path. This does not guard the run."""
     if Path(path).is_dir():
         return f"{path} is a directory"
     try:
@@ -606,6 +606,31 @@ def catalog_refusal(path):
     if not isinstance(data, dict):
         return f"{path} is JSON that is not an object"
     return None
+
+
+def show_failure(catalog, code, stderr):
+    reason = ""
+    for line in stderr.splitlines():
+        if line.strip():
+            reason = line.strip()
+    if reason.startswith("error: "):
+        return "roles.py show refused the seat: " + reason.removeprefix("error: ")
+    if not reason or "Traceback" in reason or re.search(r'File ".+", line \d+, in ', reason):
+        return f"roles.py show failed on {catalog}: exit {code} with no message"
+    return f"roles.py show failed on {catalog}: {reason}"
+
+
+def show_payload(catalog, argv):
+    result = subprocess.run(argv, capture_output=True, text=True, errors="replace")
+    if result.returncode == 0:
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise BrigadeError("roles.py show printed no JSON object") from None
+        if not isinstance(payload, dict):
+            raise BrigadeError("roles.py show printed no JSON object")
+        return payload
+    raise BrigadeError(catalog_refusal(catalog) or show_failure(catalog, result.returncode, result.stderr))
 
 
 def launch_text(restaurant, args):
@@ -628,22 +653,11 @@ def launch_text(restaurant, args):
             raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
     role = launch_role(station)
     mode = brief_mode(ident, text)
-    reason = catalog_refusal(args.catalog)
-    if reason is not None:
-        raise BrigadeError(reason)
     argv = [sys.executable, str(roles_script()), "show", "--cwd", project_root, "--catalog", args.catalog,
             "--parent", args.parent, "--role", role]
     if mode is not None:
         argv += ["--brief-mode", mode]
-    result = subprocess.run(argv, capture_output=True, text=True)
-    if result.returncode:
-        raise BrigadeError(f"roles.py show refused the seat: {result.stderr.strip().removeprefix('error: ')}")
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise BrigadeError("roles.py show printed no JSON object") from None
-    if not isinstance(payload, dict):
-        raise BrigadeError("roles.py show printed no JSON object")
+    payload = show_payload(args.catalog, argv)
     return json.dumps(selection_from_show(payload, role))
 
 

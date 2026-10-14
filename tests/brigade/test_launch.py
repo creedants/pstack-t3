@@ -221,29 +221,112 @@ class LaunchTest(BrigadeTest):
         self.write_brief(b"\xff")
         self.assert_refused("brigade: briefs/D1.md is not UTF-8 text")
 
-    def test_a_catalog_of_json_that_is_not_an_object_refuses_with_the_path(self):
+    def test_roles_py_show_failures_are_one_stderr_line_and_a_valid_catalog_prints_the_bare_seat(self):
         self.fired_bug_fix()
-        path = Path(self.temporary.name) / "catalog-number.json"
-        path.write_bytes(b"42")
-        before = self.store_files()
-        self.assert_refused(f"brigade: {path} is JSON that is not an object", catalog=path)
-        self.assertEqual(self.store_files(), before)
-
-    def test_a_catalog_that_is_not_utf8_text_refuses_with_the_path(self):
-        self.fired_bug_fix()
-        path = Path(self.temporary.name) / "catalog-bytes.json"
-        path.write_bytes(b"\xff")
-        before = self.store_files()
-        self.assert_refused(f"brigade: {path} is not UTF-8 text", catalog=path)
-        self.assertEqual(self.store_files(), before)
-
-    def test_a_catalog_that_is_a_directory_refuses_with_the_path(self):
-        self.fired_bug_fix()
-        path = Path(self.temporary.name) / "catalog-dir"
-        path.mkdir()
-        before = self.store_files()
-        self.assert_refused(f"brigade: {path} is a directory", catalog=path)
-        self.assertEqual(self.store_files(), before)
+        self.write_user_roles({
+            "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
+        })
+        root = Path(self.temporary.name)
+        directory = root / "catalog-dir"
+        directory.mkdir()
+        binary = root / "catalog-bytes.json"
+        binary.write_bytes(b"\xff")
+        number = root / "catalog-number.json"
+        number.write_bytes(b"42")
+        missing = root / "missing-catalog.json"
+        truncated = root / "catalog-truncated.json"
+        truncated.write_bytes(b"{")
+        denied = root / "catalog-denied.json"
+        denied.write_bytes(b"{}")
+        denied.chmod(0)
+        providers_int = root / "providers-int.json"
+        providers_int.write_text('{"providers": 42}')
+        providers_text = root / "providers-text.json"
+        providers_text.write_text('{"providers": "stale"}')
+        providers_null = root / "providers-null.json"
+        providers_null.write_text('{"providers": [null]}')
+        script_catalog = root / "script-catalog.json"
+        script_catalog.write_text("{}")
+        trace = "\n".join([
+            "Traceback (most recent call last):",
+            '  File "roles.py", line 8, in <module>',
+            "    alpha()",
+            '  File "roles.py", line 12, in alpha',
+            "    beta()",
+            '  File "roles.py", line 16, in beta',
+            "    gamma()",
+            '  File "roles.py", line 20, in gamma',
+            "    raise ValueError('boom')",
+            "ValueError: boom",
+        ])
+        rows = [
+            {"name": "directory", "catalog": directory, "line": f"brigade: {directory} is a directory"},
+            {"name": "not utf-8", "catalog": binary, "line": f"brigade: {binary} is not UTF-8 text"},
+            {"name": "json number", "catalog": number, "line": f"brigade: {number} is JSON that is not an object"},
+            {"name": "missing", "catalog": missing,
+             "line": f"brigade: roles.py show refused the seat: {missing}: catalog not found"},
+            {"name": "truncated", "catalog": truncated,
+             "prefix": f"brigade: roles.py show refused the seat: {truncated}: invalid JSON:"},
+            {"name": "not json", "show": ("not json", 0, ""),
+             "line": "brigade: roles.py show printed no JSON object"},
+            {"name": "valid", "catalog": CATALOG, "ok": BARE},
+        ]
+        if not os.access(denied, os.R_OK):
+            rows.append({
+                "name": "unreadable",
+                "catalog": denied,
+                "prefix": f"brigade: roles.py show failed on {denied}: PermissionError:",
+            })
+        rows.extend([
+            {"name": "providers int", "catalog": providers_int,
+             "prefix": f"brigade: roles.py show failed on {providers_int}: TypeError:"},
+            {"name": "providers text", "catalog": providers_text,
+             "prefix": f"brigade: roles.py show failed on {providers_text}: TypeError:"},
+            {"name": "providers null", "catalog": providers_null,
+             "prefix": f"brigade: roles.py show failed on {providers_null}: TypeError:"},
+            {"name": "traceback", "catalog": script_catalog, "show": ("", 1, trace + "\n"),
+             "line": f"brigade: roles.py show failed on {script_catalog}: ValueError: boom"},
+            {"name": "frame", "catalog": script_catalog,
+             "show": ("", 1, '  File "roles.py", line 3, in <module>\n'),
+             "line": f"brigade: roles.py show failed on {script_catalog}: exit 1 with no message"},
+            {"name": "stderr byte", "catalog": script_catalog, "buffer": True,
+             "prefix": f"brigade: roles.py show failed on {script_catalog}:"},
+        ])
+        glob = self.entry_globals()
+        real_built, real_source = glob["BUILT_ROLES"], glob["SOURCE_ROLES"]
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                glob = self.entry_globals()
+                glob["BUILT_ROLES"] = real_built
+                glob["SOURCE_ROLES"] = real_source
+                if "show" in row:
+                    text, code, stderr = row["show"]
+                    self.install_show(text=text, code=code, stderr=stderr)
+                elif row.get("buffer"):
+                    script = root / "show-roles.py"
+                    script.write_text(
+                        "import sys\n"
+                        "sys.stderr.buffer.write(b'\\xff')\n"
+                        "raise SystemExit(1)\n"
+                    )
+                    glob["BUILT_ROLES"] = script
+                    glob["SOURCE_ROLES"] = script
+                outcome = self.launch_call(catalog=row.get("catalog", CATALOG))
+                if "ok" in row:
+                    self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+                    self.assertEqual(outcome.stdout_text(), row["ok"] + "\n")
+                    self.assertEqual(outcome.stderr_text(), "")
+                    continue
+                stderr = outcome.stderr_text()
+                self.assertEqual(outcome.code, 1, stderr)
+                self.assertEqual(outcome.stdout_text(), "")
+                self.assertEqual(len(stderr.splitlines()), 1, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertNotIn('File "', stderr)
+                if "line" in row:
+                    self.assertEqual(stderr, row["line"] + "\n")
+                if "prefix" in row:
+                    self.assertTrue(stderr.startswith(row["prefix"]), stderr)
 
     def test_inherit_seats_are_not_one_seat(self):
         self.fired_bug_fix()
@@ -303,11 +386,6 @@ class LaunchTest(BrigadeTest):
         detail = outcome.stderr_text().strip().removeprefix("brigade: roles.py show refused the seat: ")
         self.assertIn(f"{path}: unknown role 'not-a-role'", detail)
         self.assertFalse(detail.startswith("error:"), detail)
-
-    def test_roles_py_text_that_is_not_json_is_refused(self):
-        self.fired_bug_fix()
-        self.install_show(text="not json")
-        self.assert_refused("brigade: roles.py show printed no JSON object")
 
     def test_a_light_cap_info_line_stays_off_both_streams_of_a_success(self):
         self.fired_bug_fix()
