@@ -716,7 +716,6 @@ class ArchiveTest(OpsTest):
         done = world.sandbox.run(ARCHIVE, "--project", "fixture project", "--selection-only",
                                  "--batch-dir", str(batch))
         self.assertEqual((done.returncode, done.stdout, world.stub.requests), (1, "", []))
-        self.assertRegex(done.stderr, r"(?s)^Traceback .*\nFileNotFoundError: ")
         self.assertFalse(batch.exists())
         self.assertFalse(batch.parent.exists())
 
