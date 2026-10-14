@@ -78,8 +78,9 @@ class LeasesTest(BrigadeTest):
         meta = {"caps": {"polish": 1, "study": 2}, "review": {"feature": "full", "fix": "light"}}
         self.assertEqual(kind_limits(meta), KindLimits({"polish": 1, "study": 2}, {"feature": "full", "fix": "light"}))
 
-    def test_kind_limits_drops_an_entry_the_set_flags_refuse(self):
-        # set --cap and set --review refuse each of these, so an entry this drops was written by hand.
+    def test_kind_limits_drops_hand_written_entries_set_never_writes(self):
+        # `set --cap` and `set --review` never store these shapes, so every dropped entry was written by hand.
+        # `upkeep: "2"` is extra evidence, not a refused shape, because `set --cap upkeep=2` stores the integer 2.
         meta = {"caps": {"chore": 2, "polish": 0, "fix": 1.5, "study": True, "upkeep": "2"},
                 "review": {"polish": "deep", "chore": "full", "fix": "light"}}
         self.assertEqual(kind_limits(meta), KindLimits({}, {"fix": "light"}))

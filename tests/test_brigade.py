@@ -76,7 +76,7 @@ def commit(repo, files):
 class SpendControlsTest(BrigadeTest):
     """The four owner controls, driven through the commands the coordinator runs."""
 
-    def test_each_control_is_read_back_from_sets_json_and_one_kind_and_every_kind_clear(self):
+    def test_cap_and_review_controls_read_back_from_set_json_and_one_kind_and_every_kind_clear(self):
         self.open()
         meta = json.loads(self.brigade("set", "--cap", "polish=1,study=2", "--review", "feature=full,fix=light"))
         self.assertEqual((meta["caps"], meta["review"]), ({"polish": 1, "study": 2}, {"feature": "full", "fix": "light"}))
@@ -106,7 +106,7 @@ class SpendControlsTest(BrigadeTest):
                 self.assertEqual(self.brigade("set", flag, text, ok=False), f"brigade: {refusal}")
                 self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
 
-    def test_one_startable_output_gives_each_wait_reason_its_own_line_in_the_refill_order(self):
+    def test_one_startable_output_gives_a_paused_goal_and_a_kind_cap_each_its_own_line_in_the_refill_order(self):
         self.queue()
         self.goal("activity view", "--share", "1")
         self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
@@ -126,7 +126,7 @@ class SpendControlsTest(BrigadeTest):
             "T3 normal fix, 0m: the fix cap holds (1 of 1); c.txt",
         ]))
 
-    def test_a_paused_goal_starts_no_ticket_until_the_goal_is_open_again(self):
+    def test_a_paused_goal_starts_no_ticket_on_its_own_until_the_goal_is_open_again(self):
         self.queue()
         self.goal("activity view")
         self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")

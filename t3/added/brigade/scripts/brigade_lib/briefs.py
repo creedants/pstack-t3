@@ -71,7 +71,7 @@ WAIT_RULE = ("- Never end your turn while a child task you started with delegate
 
 @dataclass(frozen=True)
 class ModeInputs:
-    """What roles.py mode reads. brief is the review depth recorded for the dish's kind, or "" when it has none.
+    """The inputs to the brief's mode resolution. brief is the review depth recorded for the dish's kind, or "" when it has none.
 
     The other fields are the project root, the station, the attempt, the leased paths, the send-back count, the
     restaurant's recorded mode, the item's recorded escalation, the dish row, the coordinator thread, and the

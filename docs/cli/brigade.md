@@ -195,7 +195,7 @@ change a goal's state, name, purpose, done test, or share
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `id` | yes |  |  |  |
-| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused starts no ticket of the goal, whatever its priority or the auto-start level, and the goal's items in flight finish and land. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
+| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused starts no ticket of the goal on its own, whatever its priority or the auto-start level; a low ticket can still ride along in another goal's item. The goal's items in flight finish and land. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
 | `--evidence EVIDENCE` |  |  |  | one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; with --state done, what shows the done test is met; with --state dropped, why the goal is dropped; refused without --state done or --state dropped |
 | `--name NAME` |  |  |  | replaces the goal's name; refused when it is empty or only whitespace |
 | `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when it is empty or only whitespace |

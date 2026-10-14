@@ -1061,7 +1061,7 @@ class WakeTest(BrigadeTest, _WakeRace):
             "T3 normal polish G1, 0m: the G1 share holds (1 of 1); c.txt",
         ]))
 
-    def test_startable_gives_each_spend_control_its_own_line_in_the_order_the_refill_checks_it(self):
+    def test_startable_gives_each_spend_control_its_own_line(self):
         self.queue()
         self.goal("activity view", "--share", "1")
         self.goal("current with upstream")
