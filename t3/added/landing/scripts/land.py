@@ -2269,11 +2269,44 @@ def remember_absent(store, ident, drain):
         store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
 
 
+def tsv_field_text(field):
+    """Reverse jq @tsv escapes in one field.
+
+    A backslash, tab, line feed, or carriage return comes back as itself.
+    An unknown escape or a trailing backslash returns None.
+    """
+    out = []
+    index = 0
+    size = len(field)
+    while index < size:
+        char = field[index]
+        if char != "\\":
+            out.append(char)
+            index += 1
+            continue
+        if index + 1 >= size:
+            return None
+        nxt = field[index + 1]
+        if nxt == "\\":
+            out.append("\\")
+        elif nxt == "t":
+            out.append("\t")
+        elif nxt == "n":
+            out.append("\n")
+        elif nxt == "r":
+            out.append("\r")
+        else:
+            return None
+        index += 2
+    return "".join(out)
+
+
 def merge_blocker(store, url):
     """The check read, plus the posted names from that same rollup.
 
-    names is a tuple of non-empty strings. Field 7 of BLOCKER_QUERY is their JSON array.
-    A field count other than 7, or a field 7 that is not a JSON list of strings, raises Infrastructure.
+    names is a tuple of non-empty strings. Field 7 is the @tsv form of their JSON array.
+    tsv_field_text reverses that escaping before the array is read.
+    A field count other than 7, or a field 7 that is not a JSON list of strings after that, raises Infrastructure.
     """
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup,autoMergeRequest,headRefOid",
               "-q", BLOCKER_QUERY, cwd=store.repo)
@@ -2282,10 +2315,13 @@ def merge_blocker(store, url):
     fields = view.stdout.rstrip("\n").split("\t")
     names = None
     if len(fields) == 7:
-        try:
-            parsed = json.loads(fields[6])
-        except json.JSONDecodeError:
-            parsed = None
+        text = tsv_field_text(fields[6])
+        parsed = None
+        if text is not None:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
         if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
             names = tuple(item for item in parsed if item)
     if names is None or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
