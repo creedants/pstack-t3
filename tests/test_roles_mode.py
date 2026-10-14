@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests import in_process
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "t3/scripts"))
 sys.path.insert(0, str(ROOT / "t3/added/landing/scripts"))
@@ -58,12 +60,11 @@ def run_mode(directory, *args, env=None):
     base = {**os.environ, "XDG_CONFIG_HOME": str(directory)}
     if env:
         base.update(env)
-    return subprocess.run(
-        [sys.executable, str(ROOT / "t3/scripts/roles.py"), "mode", *args, "--cwd", str(directory)],
+    return in_process.invoke(in_process.Invocation(
+        program=ROOT / "t3/scripts/roles.py",
+        argv=("mode", *args, "--cwd", str(directory)),
         env=base,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 def escalated(path):
@@ -122,12 +123,11 @@ class GitRepo:
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     def run(self, *args, cwd=None):
-        return subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "mode", *args, "--cwd", str(cwd or self.directory)],
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=("mode", *args, "--cwd", str(cwd or self.directory)),
             env=self.env,
-            capture_output=True,
-            text=True,
-        )
+        ))
 
 
 class ModeCommandTest(unittest.TestCase):
