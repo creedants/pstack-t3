@@ -970,6 +970,125 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("ticket", "set", "T1", "--state", "done")
         self.assertEqual(self.brigade("startable"), self.NONE_RUNNING + "\nno waiting tickets")
 
+    def test_startable_lists_a_ticket_of_a_paused_goal_with_its_reason_and_it_is_not_startable(self):
+        self.queue()
+        self.goal("activity view")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("goal", "set", "G1", "--state", "paused")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, goal paused: 1",
+            "T1 normal fix G1, 0m: its goal is paused; a.txt",
+        ]))
+        self.brigade("goal", "set", "G1", "--state", "open")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, startable: 1",
+            "T1 normal fix G1, 0m: startable; a.txt",
+            "  Fix a",
+        ]))
+
+    def test_startable_lists_a_ticket_of_a_kind_at_its_cap_with_its_reason_and_it_is_not_startable(self):
+        self.queue()
+        self.brigade("set", "--cap", "fix=1")
+        self.filed("Fix a", "--paths", "a.txt")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
+        self.filed("Fix b", "--paths", "b.txt")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 1, kind cap: 1",
+            "T2 normal fix, 0m: the fix cap holds (1 of 1); b.txt",
+        ]))
+        self.brigade("set", "--cap", "fix=")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 1, startable: 1",
+            "T2 normal fix, 0m: startable; b.txt",
+            "  Fix b",
+        ]))
+
+    def test_startable_lists_a_ticket_of_a_goal_at_its_share_with_its_reason_and_it_is_not_startable(self):
+        self.queue()
+        self.goal("activity view", "--share", "1")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
+        self.filed("Fix b", "--paths", "b.txt", "--goal", "G1")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 1, goal share: 1",
+            "T2 normal fix G1, 0m: the G1 share holds (1 of 1); b.txt",
+        ]))
+        self.brigade("goal", "set", "G1", "--share", "2")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 1, startable: 1",
+            "T2 normal fix G1, 0m: startable; b.txt",
+            "  Fix b",
+        ]))
+
+    def test_startable_count_line_names_the_three_new_standings_when_they_occur(self):
+        self.queue()
+        self.goal("activity view", "--share", "1")
+        self.goal("current with upstream")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("goal", "set", "G2", "--state", "paused")
+        self.brigade("ticket", "add", "--summary", "Tidy b", "--kind", "polish", "--paths", "b.txt", "--goal", "G1")
+        self.filed("Fix c", "--paths", "c.txt", "--goal", "G2")
+        self.filed("Fix d", "--paths", "d.txt")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 3, goal paused: 1, kind cap: 1, goal share: 1",
+            "T2 normal polish G1, 0m: the G1 share holds (1 of 1); b.txt",
+            "T3 normal fix G2, 0m: its goal is paused; c.txt",
+            "T4 normal fix, 0m: the fix cap holds (1 of 1); d.txt",
+        ]))
+
+    def test_startable_counts_a_ticket_that_starts_against_the_kind_and_the_goal_it_holds_a_slot_under(self):
+        self.queue()
+        self.brigade("set", "--cap", "fix=1")
+        self.goal("activity view", "--share", "1")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.filed("Fix b", "--paths", "b.txt", "--goal", "G1")
+        self.filed("Tidy c", "--paths", "c.txt", "--goal", "G1", "--kind", "polish")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 3, startable: 1, kind cap: 1, goal share: 1",
+            "T1 normal fix G1, 0m: startable; a.txt",
+            "  Fix a",
+            "T2 normal fix G1, 0m: the fix cap holds (1 of 1); b.txt",
+            "T3 normal polish G1, 0m: the G1 share holds (1 of 1); c.txt",
+        ]))
+
+    def test_startable_gives_each_spend_control_its_own_line_in_the_order_the_refill_checks_it(self):
+        self.queue()
+        self.goal("activity view", "--share", "1")
+        self.goal("current with upstream")
+        self.filed("Fix a", "--paths", "a.txt", "--goal", "G1")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
+        self.brigade("set", "--cap", "fix=1")
+        self.brigade("goal", "set", "G2", "--state", "paused")
+        for summary, kind, goal, paths, priority in (("Start one", "study", "", "one.txt", ""),
+                                                     ("Sync two", "fix", "G2", "two.txt", ""),
+                                                     ("Fix three", "fix", "", "three.txt", ""),
+                                                     ("Tidy four", "polish", "G1", "four.txt", ""),
+                                                     ("Measure five", "study", "", "five.txt", ""),
+                                                     ("Tidy six", "polish", "", "six.txt", "low")):
+            self.brigade("ticket", "add", "--summary", summary, "--kind", kind, "--paths", paths,
+                         *(["--priority", priority] if priority else []), *(["--goal", goal] if goal else []))
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            "waiting tickets: 6, startable: 1, blocked: 1, below auto-start: 1, goal paused: 1, kind cap: 1, goal share: 1",
+            "T2 normal study, 0m: startable; one.txt",
+            "  Start one",
+            "T3 normal fix G2, 0m: its goal is paused; two.txt",
+            "T4 normal fix, 0m: the fix cap holds (1 of 1); three.txt",
+            "T5 normal polish G1, 0m: the G1 share holds (1 of 1); four.txt",
+            "T6 normal study, 0m: blocked, waiting for an idle worker; five.txt",
+            "T7 low polish, 0m: below auto-start; six.txt",
+        ]))
+
     def test_startable_orders_tickets_by_priority_then_oldest_filed_then_the_number_in_the_id(self):
         self.open()
         stamp = (datetime.now(timezone.utc) - timedelta(hours=5, minutes=1)).isoformat()
@@ -1130,10 +1249,10 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("ticket", "add", "--summary", "Add f", "--kind", "feature", "--paths", "a.txt", "--goal", "G2")
         self.brigade("goal", "set", "G2", "--state", "paused")
         lines = ["workers: 0 of 3 running, 3 idle, auto-start: normal",
-                 "waiting tickets: 6, startable: 3, blocked: 1, unknown: 1, below auto-start: 1",
-                 "T3 urgent{}, 0m: startable; c.txt", "  Sync c",
+                 "waiting tickets: 6, startable: 1, blocked: 1, unknown: 1, below auto-start: 1, goal paused: 1, goal share: 1",
+                 "T3 urgent{}, 0m: its goal is paused; c.txt",
                  "T1 normal{}, 0m: startable; a.txt", "  Fix a",
-                 "T2 normal{}, 0m: startable; b.txt", "  Add b",
+                 "T2 normal{}, 0m: the G1 share holds (1 of 1); b.txt",
                  "T5 normal{}, 0m: unknown, no paths recorded",
                  "T6 normal{}, 0m: blocked, starts after T1; a.txt",
                  "T4 low{}, 0m: below auto-start; d.txt"]
@@ -1142,7 +1261,15 @@ class WakeTest(BrigadeTest, _WakeRace):
                          [line.format(next(words)) if "{}" in line else line for line in lines])
         for number in range(1, 7):
             self.hand_edit("rail.tsv", f"T{number}", kind="", goal="")
-        self.assertEqual(self.brigade("startable").splitlines(), [line.format("") for line in lines])
+        self.assertEqual(self.brigade("startable").splitlines(), ["workers: 0 of 3 running, 3 idle, auto-start: normal",
+                                                                  "waiting tickets: 6, startable: 3, blocked: 1, unknown: 1, "
+                                                                  "below auto-start: 1",
+                                                                  "T3 urgent, 0m: startable; c.txt", "  Sync c",
+                                                                  "T1 normal, 0m: startable; a.txt", "  Fix a",
+                                                                  "T2 normal, 0m: startable; b.txt", "  Add b",
+                                                                  "T5 normal, 0m: unknown, no paths recorded",
+                                                                  "T6 normal, 0m: blocked, starts after T1; a.txt",
+                                                                  "T4 low, 0m: below auto-start; d.txt"])
 
     def test_next_readonly(self):
         self.queue()
