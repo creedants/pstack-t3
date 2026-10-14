@@ -33,8 +33,8 @@ That is NO TESTS RAN from Python 3.12 on and OK before it.
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
 are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
 verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
-shard, and each shard of the run finished cleanly. A run with no `--part` selects every test discovery
-returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
+shard, and each shard of the run finished cleanly. A run with no `--part` or `--real-process-share` selects
+every test discovery returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
 Part i of n is every test whose index in that sequence, counting from 0, leaves remainder i - 1 when divided
 by n. A run with `--part i/n` selects part i of n by the rule above and no other test. A run with
 `--real-process-share` selects every discovered test whose module starts with `brigade.test_launch` or
@@ -905,9 +905,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,
                         help=f"Seconds a worker may go without writing an event before the runner kills it. The listing of the tests gets the same number of seconds in all. The default is {DEFAULT_TIMEOUT:g}.")
     parser.add_argument("--part", type=parse_part,
-                        help="Run part i of n, written as i/n. i is an integer from 1 to n. The default is every test discovery returned.")
+                        help="Run part i of n, written as i/n. i is an integer from 1 to n. With neither this nor --real-process-share, the run selects every test discovery returned.")
     parser.add_argument("--real-process-share", action="store_true",
-                        help="Run the brigade share. Cannot be used with --part.")
+                        help="Run the launch and handoff share. Cannot be used with --part.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

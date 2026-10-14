@@ -1353,7 +1353,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(empty.returncode, 2, empty.stderr)
         self.assertIn("part 2/2 has no test", empty.stderr)
 
-    def test_real_process_share_runs_only_brigade_tests_in_discovery_order(self):
+    def test_real_process_share_runs_only_brigade_tests(self):
         # This starts a process because the check is an exit status.
         (self.tests / "brigade").mkdir()
         (self.tests / "brigade" / "__init__.py").write_text("")
@@ -1578,7 +1578,7 @@ class RunTestsTest(unittest.TestCase):
                         else:
                             self.assertNotEqual(status, 0)
 
-    def test_gate_passes_when_real_share_skipped_on_push_and_fails_when_it_failed(self):
+    def test_gate_passes_when_real_share_skipped_and_fails_when_it_failed(self):
         # This starts a process because the check is an exit status.
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         parts = ("success", "success", "success", "success")
@@ -1594,7 +1594,7 @@ class RunTestsTest(unittest.TestCase):
                     else:
                         self.assertNotEqual(status, 0)
 
-    def test_only_real_share_may_export_the_real_process_switch(self):
+    def test_switch_appears_only_at_workflow_root_and_in_real_share(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
             with self.subTest(reader=reader):
