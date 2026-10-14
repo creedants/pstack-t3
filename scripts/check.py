@@ -21,7 +21,7 @@ except ImportError:  # the build still runs; frontmatter gets the shallow check 
     yaml = None
 from pathlib import Path
 
-# Patterns a scanned tree must not match. The second string is the reason in the finding.
+# Each pair is a pattern and the reason in the finding.
 FORBIDDEN = [
     (r"subagent_type", "Cursor Task schema; use delegate_task with role and target"),
     (r"environment: ?\"(?:cloud|local)\"", "Cursor cloud agents; T3 children run locally"),
@@ -41,7 +41,7 @@ FORBIDDEN = [
         r"(?:(?![.!?]).){0,180}?"
         r"(?:reasoning level|effort level|fast or standard speed|fast mode|standard speed)"
         r"|\b(?:pick|choose|select)\b(?:(?![.!?]).){0,60}?\beffort\b",
-        "instructs a reasoning level, an effort level, effort, fast or standard speed, fast mode, or standard speed; "
+        "pick, choose, select, raise, lower, change, use, or set comes before a reasoning level, an effort level, effort, fast or standard speed, fast mode, or standard speed; "
         "point at the Subagents section through an override",
     ),
 ]

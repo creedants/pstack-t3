@@ -1019,7 +1019,7 @@ class RenderedTreeCheckTest(unittest.TestCase):
 class EffortSpeedTest(unittest.TestCase):
     def test_an_instruction_to_choose_a_dial_is_named(self):
         reason = (
-            "instructs a reasoning level, an effort level, effort, fast or standard speed, fast mode, or standard speed; "
+            "pick, choose, select, raise, lower, change, use, or set comes before a reasoning level, an effort level, effort, fast or standard speed, fast mode, or standard speed; "
             "point at the Subagents section through an override"
         )
         body = (
