@@ -4720,6 +4720,12 @@ os.execv({real!r}, [{real!r}, *args])
                     self.assertEqual(seen(), ("worker", "worker-0"))
                 self.assertEqual(seen(), ("worker", "worker-0"))
             self.assertEqual(seen(), (None, None))
+            with land.slot("worker", count=2):
+                self.assertEqual(seen(), ("worker", "worker-0 worker-1"))
+                with land.slot("worker", count=2):
+                    self.assertEqual(seen(), ("worker", "worker-0 worker-1"))
+                self.assertEqual(seen(), ("worker", "worker-0 worker-1"))
+            self.assertEqual(seen(), (None, None))
             with land.slot("landing"):
                 self.assertEqual(seen(), ("landing", "landing-0"))
             with land.exclusive_slot():
@@ -4792,6 +4798,66 @@ os.execv({real!r}, [{real!r}, *args])
         slots.release(holder)
         self.assertEqual(slots.step(exclusive), "started")
         slots.release(exclusive)
+
+    def test_a_two_slot_caller_behind_one_busy_slot_holds_nothing(self):
+        slots = SlotCallers(self, 2)
+        holder = slots.enter(slots.start("holder"))
+        wide = slots.start("wide", "--slots", "2", stepped=True)
+        self.assertEqual(slots.settle(wide), "waiting")
+        free = []
+        for name in ("landing-0", "worker-0", "worker-1"):
+            with open(slots.governor / name, "a") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                free.append(name)
+        self.assertEqual(free, ["landing-0", "worker-1"])
+        self.assertEqual(os.listdir(slots.governor / "tickets"), ["1-worker"])
+        slots.release(holder)
+        self.assertEqual(slots.step(wide), "started")
+        slots.release(wide)
+
+    def test_a_later_one_slot_caller_does_not_pass_an_earlier_two_slot_ticket(self):
+        slots = SlotCallers(self, 2)
+        holder = slots.enter(slots.start("holder"))
+        wide = slots.start("wide", "--slots", "2", stepped=True)
+        self.assertEqual(slots.settle(wide), "waiting")
+        narrow = slots.start("narrow", stepped=True)
+        self.assertEqual(slots.settle(narrow), "waiting")
+        slots.release(holder)
+        self.assertEqual(slots.step(wide), "started")
+        self.assertIn(("enter", "wide", "worker-0", "worker-1"), slots.events())
+        self.assertEqual(slots.step(narrow), "waiting")
+        slots.release(wide)
+        self.assertEqual(slots.step(narrow), "started")
+        slots.release(narrow)
+        self.assertEqual(slots.entries(), ["holder", "wide", "narrow"])
+
+    def test_slots_over_the_governor_are_refused_and_the_command_does_not_run(self):
+        directory = self.governor(2)
+        marker = self.base / "ran"
+
+        def slot_status(*flags):
+            stderr = io.StringIO()
+            with mock.patch.dict(os.environ), contextlib.redirect_stderr(stderr):
+                os.environ.pop("LAND_SLOT", None)
+                return land.main(["slot", *flags, "--", "touch", str(marker)]), stderr.getvalue()
+
+        integer = "land: --slots must be a positive integer\n"
+        self.assertEqual(slot_status("--slots", "3"),
+                         (1, "land: --slots 3 is more than the 2 worker slots this governor has\n"))
+        self.assertEqual(slot_status("--slots", "0"), (1, integer))
+        self.assertEqual(slot_status("--slots", "-1"), (1, integer))
+        self.assertEqual(slot_status("--slots", "nope"), (1, integer))
+        self.assertEqual(slot_status("--slots", "2", "--exclusive"),
+                         (1, "land: --slots cannot be combined with --exclusive\n"))
+        self.assertFalse(marker.exists())
+        self.assertFalse((directory / "worker-0").exists())
+        with mock.patch.dict(os.environ, {"LAND_SLOT": "worker", "LAND_SLOT_FILES": "worker-0"}):
+            with land.slot("worker", count=3):
+                self.assertEqual(os.environ["LAND_SLOT_FILES"], "worker-0")
+        self.assertFalse((directory / "worker-0").exists())
 
     def test_a_waiter_killed_with_sigkill_does_not_block_a_later_caller(self):
         slots = SlotCallers(self, 1)
@@ -5048,6 +5114,23 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertEqual(worker.process.wait(timeout=120), 0, worker.name)
         self.assertEqual(len(slots.entries()), 8)
         self.assertEqual(slots.peak(), 2)
+
+    def test_an_ofd_caller_sees_every_file_of_a_two_slot_hold(self):
+        if not self.ofd_locks_exist():
+            self.skipTest("this platform does not provide OFD locks")
+        ofd = self.base / "ofd/land.py"
+        ofd.parent.mkdir()
+        ofd.write_text(OFD_SLOT_SCRIPT)
+        slots = SlotCallers(self, 2)
+        wide = slots.enter(slots.start("wide", "--slots", "2"))
+        narrow = slots.start("ofd-narrow", script=ofd, stepped=True)
+        self.assertEqual(slots.settle(narrow), "waiting")
+        self.assertEqual(slots.step(narrow), "waiting")
+        slots.release(wide)
+        self.assertEqual(slots.step(narrow), "started")
+        slots.release(narrow)
+        self.assertEqual(slots.entries(), ["wide", "ofd-narrow"])
+        self.assertEqual(slots.peak(), 1)
 
     def test_an_old_slot_holder_blocks_a_new_caller_and_the_reverse(self):
         slots = SlotCallers(self, 1)

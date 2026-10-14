@@ -162,6 +162,9 @@ def verify_rule(land):
     return (
         "While working, run only the affected test modules. "
         f"Run all builds and tests through `python3 {land} slot -- <command>`. "
+        f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
+        "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. "
+        "An affected-module run stays one slot. "
         "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. "
         "Run the claims check before the final verification. "
         "Run the full verification chain once, after the last commit. "

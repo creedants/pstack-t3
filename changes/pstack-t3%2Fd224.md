@@ -1,0 +1,1 @@
+- `land.py slot --slots N` locks N worker slot files in one admission or locks none. The waiter's ticket stays `<number>-worker`, and a later one-slot caller does not take a free worker file ahead of that ticket. A count above the governor's worker slots is refused before the command runs. `--slots` with `--exclusive` is refused.

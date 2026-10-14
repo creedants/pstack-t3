@@ -255,7 +255,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
 ## land.py slot
 
 ```text
-land.py [flags] slot [--exclusive] [--for SECONDS] [--reason TEXT] [--repo REPO] ...
+land.py [flags] slot [--exclusive] [--slots N] [--for SECONDS] [--reason TEXT] [--repo REPO] ...
 ```
 
 run a heavy command under a governor slot
@@ -263,6 +263,7 @@ run a heavy command under a governor slot
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--exclusive` |  |  |  | hold every slot: for benchmarks that need a quiet machine |
+| `--slots N` |  |  |  | take N worker slots in one admission. The default is 1. A value above the governor's worker slots is refused |
 | `--for SECONDS` |  |  |  | cap this exclusive hold at SECONDS. The default is 600. The maximum is 7200. A value over the default needs --reason |
 | `--reason TEXT` |  |  |  | why this exclusive hold may pass the default cap. Waiters see it |
 | `--repo REPO` |  |  |  | the repository to name in the holder record (default: current directory) |
