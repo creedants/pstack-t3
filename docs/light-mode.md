@@ -42,7 +42,7 @@ A coordinator set to `light` over a project set to `full` writes `Mode: light` i
 
 When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` and `review backups` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats. `full` with `small` keeps the `medium` cap it already has. Under budget `small` an `inherit` seat already becomes an explicit target with the capped option. A light child cannot pass its parent xhigh through. That conversion needs a catalog and the right parent. Without a catalog `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped but an `inherit` seat either stays `inherit` or converts against the catalog saved parent. Under `light` with budget `default`, `show` without a catalog or without `--parent` prints an `info` line that the `inherit` cap can be wrong, unless every role the call resolves is `verifiers` or `review backups`. [The runtime's Modes section](../t3/runtime.md#modes) already requires both.
 
-The cap is the only option light mode changes. Light mode never sets `fastMode` to true. In both modes a Grok seat on a model that declares `fastMode` comes back from `show` with `fastMode` set to false. That includes a seat that falls back to the built-in Grok default. [Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
+The cap is the only option light mode changes. Light mode never sets `fastMode` to true. With a catalog, a Grok seat on a model that declares `fastMode` comes back from `show` with `fastMode` set to false. That includes a seat that falls back to the built-in Grok default. [Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
 
 An escalated item resolves as `full`. It keeps its full reasoning level.
 
@@ -87,7 +87,7 @@ The worker report repeats the brief `Mode:` and `Waived by mode:` lines under it
 
 ## What light mode changes
 
-Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" means the same step on a lower reasoning level. No light fan-out wave has more than 3 children in flight. A wave with more slices batches them into groups of 3 and keeps every slice covered. The normative list lives in [Light behavior](../t3/runtime.md#light-behavior).
+Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" means the same step on a lower reasoning level. No light fan-out wave has more than 3 children in flight. A wave with more slices batches them into 3 briefs and keeps every slice covered. The normative list lives in [Light behavior](../t3/runtime.md#light-behavior).
 
 | Spawn | Full | Light | Kind |
 | --- | --- | --- | --- |
