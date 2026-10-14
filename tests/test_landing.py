@@ -132,13 +132,16 @@ def _close_live_owners(numbers):
         return
     owners = []
     for obj in gc.get_objects():
-        # A dead weakref proxy raises ReferenceError from the lookup, and the default does not catch it.
+        # A dead weakref proxy raises ReferenceError from the lookup. An unrelated object can raise a
+        # BaseException such as SystemExit. Both are skipped. KeyboardInterrupt is raised on.
         try:
             fileno = getattr(obj, "fileno", None)
             if not callable(fileno):
                 continue
             number = fileno()
-        except Exception:
+        except KeyboardInterrupt:
+            raise
+        except BaseException:
             continue
         if type(number) is not int or number not in stale:
             continue
@@ -154,7 +157,9 @@ def _close_live_owners(numbers):
                 nxt = getattr(current, "buffer", None)
                 if nxt is None:
                     nxt = getattr(current, "raw", None)
-            except Exception:
+            except KeyboardInterrupt:
+                raise
+            except BaseException:
                 break
             if nxt is None:
                 break
@@ -1840,6 +1845,66 @@ exit 0
             gc.collect()
             self.assertEqual(os.fstat(matched).st_size, 6)
             self.assertEqual(os.write(matched, b"after"), 5)
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+            for fd in opened:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def test_an_unrelated_objects_systemexit_cannot_stop_interrupted_descriptor_cleanup(self):
+        """Pin review finding D240-review-3 R1. The object is gc tracked and owns no descriptor."""
+        self.init()
+
+        class UnrelatedObject:
+            @property
+            def fileno(self):
+                raise SystemExit("unrelated attribute lookup")
+
+        unrelated = UnrelatedObject()
+        self.assertTrue(gc.is_tracked(unrelated))
+
+        target = next(
+            number
+            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
+            if line == "    out = Outcome([], [], [], [], [])"
+        )
+        captured = []
+        opened = []
+
+        def trace(frame, event, arg):
+            if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
+                return trace
+            if not frame.f_code.co_filename.endswith("land.py"):
+                return trace
+            captured.append(frame.f_locals["handle"].fileno())
+            raise KeyboardInterrupt
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        retained = None
+        propagated = None
+        sys.settrace(trace)
+        try:
+            try:
+                drive(SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            except BaseException as error:
+                propagated = error
+            sys.settrace(None)
+            self.assertIsInstance(propagated, KeyboardInterrupt)
+            retained = propagated
+            self.assertEqual(len(captured), 1)
+            database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+            probe = os.open(database.parent / ".queue.lock", os.O_RDWR)
+            opened.append(probe)
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            retained.__traceback__ = None
+            retained = None
         finally:
             sys.settrace(None)
             if previous is None:
@@ -5063,6 +5128,77 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertNotIn("Queued by", " ".join(create))
         self.assertNotIn("Reviewed by", " ".join(create))
 
+    def store_item(self, branch, kind, goal):
+        store = self.base / "state/pstack-t3/brigade/proj/store"
+        store.mkdir(parents=True, exist_ok=True)
+        (store / "restaurant.json").write_text(json.dumps({"projectRoot": str(self.work)}))
+        (store / "goals.tsv").write_text("id\tname\nG2\trules in the tool\n")
+        (store / "dishes.tsv").write_text(
+            "id\tat\tstate\tstation\ttickets\ttask\tthread\tbranch\tpr\tsha\tsummary\ttimebox\tlease\tpaths\t"
+            f"reported\tkind\tgoal\nD255\t2026-10-14T13:29:20.318522+00:00\tin-progress\tbug-fix\tT606\t\t\t{branch}\t\t\t"
+            f"batch\t90\tL293\t\t\t{kind}\t{goal}\n")
+
+    def test_the_pr_body_carries_the_kind_and_the_goal_of_the_items_row(self):
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            cases = (
+                ("polish", "G2", "Kind: polish. Goal: rules in the tool"),
+                ("polish", "", "Kind: polish"),
+                ("", "G2", "Goal: rules in the tool"),
+                ("", "", ""),
+            )
+            for index, (kind, goal, expected) in enumerate(cases, 1):
+                with self.subTest(kind=kind, goal=goal):
+                    branch = f"w{index}"
+                    self.store_item(branch, kind, goal)
+                    sh("git", "checkout", "-q", "-b", branch, "origin/main", cwd=self.work)
+                    (self.work / "a.txt").write_text(f"agent {index}\n")
+                    sha = self.commit(branch)
+                    lease = self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+                    self.land("submit", "--holder", "r/D1", "--branch", branch, "--sha", sha, "--lease",
+                              lease, "--reviewer", REVIEWER)
+                    self.land("land")
+                    self.assertTrue(log.exists(), "the queue opened no pull request")
+                    create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
+                    self.assertEqual(create[create.index("--body") + 1], expected)
+                    log.unlink()
+
+    def test_a_sole_store_without_a_matching_record_leaves_the_submitted_body_alone(self):
+        """Pin review finding D255-review-1 R1. A sole foreign store must not lend its kind and goal."""
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            body_file = self.base / "submitted.md"
+            body_file.write_text("Reviewed body")
+            cases = ("missing", "foreign")
+            for index, case in enumerate(cases, 1):
+                with self.subTest(record=case):
+                    branch = f"v{index}"
+                    self.store_item(branch, "polish", "G2")
+                    store = self.base / "state/pstack-t3/brigade/proj/store"
+                    if case == "missing":
+                        (store / "restaurant.json").unlink()
+                    else:
+                        (store / "restaurant.json").write_text(json.dumps({"projectRoot": "/foreign/root"}))
+                    sh("git", "checkout", "-q", "-b", branch, "origin/main", cwd=self.work)
+                    (self.work / "a.txt").write_text(f"agent {index}\n")
+                    sha = self.commit(branch)
+                    lease = self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+                    self.land("submit", "--holder", "r/D1", "--branch", branch, "--sha", sha, "--lease",
+                              lease, "--reviewer", REVIEWER, "--body-file", str(body_file))
+                    self.land("land")
+                    self.assertTrue(log.exists(), "the queue opened no pull request")
+                    create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
+                    self.assertEqual(create[create.index("--body") + 1], "Reviewed body")
+                    log.unlink()
+
     def test_a_store_from_before_pr_text_columns_is_migrated(self):
         self.init()
         store = land.Store.for_repo(self.work)
@@ -7077,6 +7213,169 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assertIsNone(record.reason)
                 self.assertTrue(land._hold_path("worker-0").exists())
             self.assertFalse(land._hold_path("worker-0").exists())
+
+    def test_a_failing_wrapped_command_clears_the_holders_record(self):
+        self.governor(1)
+        with self.no_slot():
+            result = real_process(
+                ProcessReason.GOVERNOR, SCRIPT,
+                ["slot", "--", "sh", "-c", "exit 3"],
+                env=self.slot_env(), cwd=self.base, timeout=20)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertFalse(land._hold_path("worker-0").exists())
+
+    def temporary_hold(self, pid, locked):
+        """Create governor/holds/worker-0.<pid>.tmp, and lock it when locked. Returns its path and descriptor."""
+        holds = self.base / "state/pstack-t3/governor/holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        path = holds / f"worker-0.{pid}.tmp"
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        if locked:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return path, descriptor
+
+    def dead_pid(self):
+        return int(sh(sys.executable, "-c", "import os; print(os.getpid())", cwd=self.base))
+
+    def test_a_crashed_holders_temporary_record_file_is_cleaned(self):
+        self.governor(1)
+        pid = self.dead_pid()
+        stale, descriptor = self.temporary_hold(pid, locked=False)
+        os.close(descriptor)
+        with self.no_slot():
+            with land.slot("worker", repo=str(self.work), command="make test"):
+                pass
+        self.assertFalse(stale.exists())
+
+    def test_a_locked_temporary_record_file_is_kept(self):
+        self.governor(1)
+        # The pid comes from a process that has exited, so the name cannot collide with the pid this
+        # process publishes its own temporary file under.
+        pid = self.dead_pid()
+        live, descriptor = self.temporary_hold(pid, locked=True)
+        try:
+            with self.no_slot():
+                with land.slot("worker", repo=str(self.work), command="make test"):
+                    pass
+            self.assertTrue(live.exists())
+        finally:
+            os.close(descriptor)
+
+    def test_a_live_temporary_record_that_locks_before_the_unlink_is_kept_for_a_race(self):
+        """Pin review finding D255-review-1 R2. Starts a live writer process for a race. Orders the writer and the cleanup with FIFOs and no sleep."""
+        import select
+        self.governor(1)
+        holds = self.base / "state/pstack-t3/governor/holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        fifo_dir = self.base / "r2-fifos"
+        fifo_dir.mkdir()
+        c2p = fifo_dir / "c2p"
+        p2c = fifo_dir / "p2c"
+        os.mkfifo(c2p)
+        os.mkfifo(p2c)
+        c2p_fd = os.open(c2p, os.O_RDWR)
+        self.addCleanup(os.close, c2p_fd)
+        p2c_fd = os.open(p2c, os.O_RDWR)
+        self.addCleanup(os.close, p2c_fd)
+        child_code = (
+            "import os, fcntl\n"
+            f"c2p = os.open({str(c2p)!r}, os.O_RDWR)\n"
+            f"p2c = os.open({str(p2c)!r}, os.O_RDWR)\n"
+            f"holds = {str(holds)!r}\n"
+            "tmp = os.path.join(holds, 'worker-0.%d.tmp' % os.getpid())\n"
+            "tmp_fd = os.open(tmp, os.O_RDWR | os.O_CREAT, 0o666)\n"
+            "os.write(c2p, b'O')\n"
+            "assert os.read(p2c, 1) == b'P'\n"
+            "try:\n"
+            "    fcntl.flock(tmp_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "except OSError:\n"
+            "    os.write(c2p, b'F')\n"
+            "    raise SystemExit(1)\n"
+            "os.pwrite(tmp_fd, str(os.getpid()).encode(), 0)\n"
+            "os.write(c2p, b'L')\n"
+            "assert os.read(p2c, 1) == b'D'\n"
+            "fcntl.flock(tmp_fd, fcntl.LOCK_UN)\n"
+            "os.close(tmp_fd)\n"
+            "os.close(c2p)\n"
+            "os.close(p2c)\n"
+        )
+        child = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, "-c", child_code],
+            env=self.slot_env(), cwd=self.base, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop():
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=20)
+
+        self.addCleanup(stop)
+        ready, _, _ = select.select([c2p_fd], [], [], 20)
+        self.assertTrue(ready, "live writer did not open its record")
+        self.assertEqual(os.read(c2p_fd, 1), b"O")
+        found = sorted(holds.glob("worker-0.*.tmp"))
+        self.assertEqual(len(found), 1)
+        target = found[0]
+        original_flock = land.fcntl.flock
+        coordinated = []
+
+        def coordinating_flock(fd, op):
+            if op == fcntl.LOCK_UN and not coordinated:
+                try:
+                    number = fd.fileno() if hasattr(fd, "fileno") else fd
+                    held = os.fstat(number)
+                    named = os.stat(target)
+                except (OSError, ValueError):
+                    return original_flock(fd, op)
+                if (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino):
+                    result = original_flock(fd, op)
+                    os.write(p2c_fd, b"P")
+                    waiting, _, _ = select.select([c2p_fd], [], [], 20)
+                    self.assertTrue(waiting, "live writer did not lock its record")
+                    self.assertEqual(os.read(c2p_fd, 1), b"L")
+                    coordinated.append(True)
+                    return result
+            return original_flock(fd, op)
+
+        try:
+            with mock.patch.object(land.fcntl, "flock", coordinating_flock):
+                with self.no_slot():
+                    with land.slot("worker", repo=str(self.work), command="make test"):
+                        pass
+            self.assertTrue(coordinated, "cleanup did not probe the live record")
+            self.assertTrue(target.exists(), "cleanup removed a live record that locked before the unlink")
+            self.assertEqual(target.read_bytes().decode(), str(child.pid))
+        finally:
+            try:
+                os.write(p2c_fd, b"D")
+            except OSError:
+                pass
+        self.assertEqual(child.wait(timeout=20), 0)
+        self.assertTrue(target.exists())
+
+    def test_a_store_directory_that_cannot_be_searched_leaves_the_body_alone(self):
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            self.store_item("w1", "polish", "G2")
+            sha = self.worker("w1", {"a.txt": "agent\n"})
+            self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1",
+                      "--reviewer", REVIEWER)
+            # Read the store's tables with no search permission on the store itself, so a stat inside it fails.
+            store = self.base / "state/pstack-t3/brigade/proj/store"
+            os.chmod(store, 0o444)
+            try:
+                self.land("land")
+            finally:
+                os.chmod(store, 0o755)
+            self.assertTrue(log.exists(), "the queue opened no pull request")
+            create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][0])
+            self.assertEqual(create[create.index("--body") + 1], "")
 
     def test_a_nested_slot_yields_without_a_second_record(self):
         self.governor(1)
