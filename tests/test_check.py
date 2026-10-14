@@ -1015,5 +1015,51 @@ class RenderedTreeCheckTest(unittest.TestCase):
             ["demo/SKILL.md: missing frontmatter"],
         )
 
+
+class EffortSpeedTest(unittest.TestCase):
+    def test_an_instruction_to_choose_a_dial_is_named(self):
+        reason = (
+            "pick, choose, select, raise, lower, change, use, or set has at most 180 intervening characters before reasoning level, effort level, fast or standard speed, fast mode, or standard speed, "
+            "or pick, choose, or select has at most 60 intervening characters before effort; both matches are case-insensitive, stay on one line, and have no '.', '!', or '?' between the verb and dial; "
+            "point at the Subagents section through an override"
+        )
+        body = (
+            "---\nname: demo\ndescription: d\n---\n\n"
+            "Pick each subagent's reasoning level and fast or standard speed for the job, per the Subagents section.\n"
+            "Before each spawn, start from the role's line or default and pick the reasoning level and speed the job needs.\n"
+            "Choose the effort level before the spawn.\n"
+            "Choose the effort before the spawn.\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(body)
+            findings = check.check_tree(directory)
+        lines = body.splitlines()
+        expected = [
+            f"demo/SKILL.md:{number}: {reason}: {lines[number - 1]}"
+            for number in (6, 7, 8, 9)
+        ]
+        self.assertEqual(findings, expected)
+
+    def test_a_subagents_pointer_and_a_described_reasoning_level_are_not_named(self):
+        body = (
+            "---\nname: demo\ndescription: d\n---\n\n"
+            "Follow the Subagents section.\n"
+            "Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.\n"
+            "A seat that names its own reasoning level keeps it when it is at or below the budget level.\n"
+            "Before each spawn, start from the role the step names and pass that seat unchanged.\n"
+            "When no roles file exists and it matters, ask whether the user wants to pick a model for each role and a reasoning budget now.\n"
+            "A large or cross-cutting effort routes to figure-it-out.\n"
+            'Use `--set "judgment and prose=claudeAgent/claude-opus-5-5?effort=xhigh"` for that seat.\n'
+            "The reasoning level to pick is xhigh.\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory) / "demo"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(body)
+            self.assertEqual(check.check_tree(directory), [])
+
+
 if __name__ == "__main__":
     unittest.main()

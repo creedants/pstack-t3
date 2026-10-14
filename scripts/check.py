@@ -21,7 +21,7 @@ except ImportError:  # the build still runs; frontmatter gets the shallow check 
     yaml = None
 from pathlib import Path
 
-# Each pattern names a Cursor-only mechanism and its T3 replacement.
+# Each pair is a pattern and the reason in the finding.
 FORBIDDEN = [
     (r"subagent_type", "Cursor Task schema; use delegate_task with role and target"),
     (r"environment: ?\"(?:cloud|local)\"", "Cursor cloud agents; T3 children run locally"),
@@ -36,6 +36,15 @@ FORBIDDEN = [
     (r"inherit-parent", "Cursor alias; use inherit"),
     (r"\b(?:claude-opus-5-5-max|claude-opus-5-5-xhigh|claude-fable-5-1-thinking-\w+|gpt-5\.6-sol-max|grok-4\.7-xhigh-fast|claude-opus-5-thinking-\w+)\b", "hard-coded Cursor model slug; resolve a role"),
     (r"cursor\.com/agents|cloud agent", "Cursor cloud agents; T3 child tasks or threads"),
+    (
+        r"(?i)\b(?:pick|choose|select|raise|lower|change|use|set)\b"
+        r"(?:(?![.!?]).){0,180}?"
+        r"(?:reasoning level|effort level|fast or standard speed|fast mode|standard speed)"
+        r"|\b(?:pick|choose|select)\b(?:(?![.!?]).){0,60}?\beffort\b",
+        "pick, choose, select, raise, lower, change, use, or set has at most 180 intervening characters before reasoning level, effort level, fast or standard speed, fast mode, or standard speed, "
+        "or pick, choose, or select has at most 60 intervening characters before effort; both matches are case-insensitive, stay on one line, and have no '.', '!', or '?' between the verb and dial; "
+        "point at the Subagents section through an override",
+    ),
 ]
 FRONTMATTER_REQUIRED = ("name", "description")
 # Generated files that teach a PR wait must name T3's watch tools. Absent files are not checked.
