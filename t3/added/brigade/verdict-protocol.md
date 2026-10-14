@@ -1,6 +1,6 @@
 # Verdict protocol for gate reviews
 
-Read-only review. Change no file in the repository. Run no git write and no GitHub write. Work in a detached temporary worktree or scratch copy of the reviewed SHA when you need to run or edit anything, and remove it afterwards. Your only lasting write is the review report.
+Read-only review. Change no tracked file in the repository. Run no git commit, push, or GitHub write. Work in a detached temporary worktree or scratch copy of the reviewed SHA when you need to run or edit anything, and remove it afterwards. Your only lasting write is the review report.
 
 Scratch copies. Never change the repository's git configuration, in any checkout or worktree: no `git config`, no `core.worktree`, no `--work-tree` against the shared git directory, no `git init` inside it. To get a scratch copy of a commit, use `git archive <sha> | tar -x -C <tmp dir>` (no git metadata), or `git worktree add --detach <tmp dir> <sha>` followed by `git worktree remove --force <tmp dir>` when you finish. Before you write the report, run `git -C <the reviewed worktree> status --short` and it must run without error.
 

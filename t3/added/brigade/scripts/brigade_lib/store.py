@@ -170,9 +170,9 @@ def store_root(flag=None):
 
 
 def scratch_parent_text(value):
-    """The parent directory briefs pass to mktemp -d -p, or "" when the setting is unset.
+    """The parent directory briefs pass to mktemp -d -p, or empty string when the setting is unset.
 
-    None and "" mean unset. Any other value must be an absolute directory outside /tmp.
+    None, empty string, and whitespace-only mean unset. Any other value must be an absolute directory outside /tmp.
     """
     if value is None:
         return ""
