@@ -256,11 +256,17 @@ def _restore(saved):
 
 
 class _TypedArgv(list):
-    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so an item assignment with the integer index 0 is ignored. A negative index, a slice, or a list method can still change element 0."""
+    """sys.argv for one run. runpy.run_path writes the path it ran into argv[0] before the script's code runs, and a real interpreter keeps argv[0] as the program was typed, so the first item assignment with the integer index 0 is dropped. Every assignment after that one lands, a script's own write to argv[0] included."""
+
+    def __init__(self, typed):
+        super().__init__(typed)
+        self._drop_runpy_write = True
 
     def __setitem__(self, index, value):
-        if index != 0:
-            super().__setitem__(index, value)
+        if index == 0 and self._drop_runpy_write:
+            self._drop_runpy_write = False
+            return
+        super().__setitem__(index, value)
 
 
 def _command(invocation):
