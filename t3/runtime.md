@@ -458,7 +458,7 @@ A rendered page is a reply the user reads, even with no reply text. Render none 
 ## History
 
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
-- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`.
+- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. On T3 Code nightlies 20261012.3010 through 20261013.3042, Claude 5.1 or later can have pre-tool thinking stored as an assistant message, so the messages view can contain working notes as well as replies. On T3 Code nightly 20261013.3053, new native Claude thinking stays a reasoning item and is absent from the messages view. Older threads can still contain assistant messages promoted before the upgrade. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
 - Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text. Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
