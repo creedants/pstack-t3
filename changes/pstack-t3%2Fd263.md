@@ -1,5 +1,6 @@
 - kind fix
 - `_table_rows` drops bytes after the last newline before decoding, so a non-UTF-8 unfinished tail leaves finished rows.
-- `_publish` retries a `FileNotFoundError` from `_dump_holder` up to three attempts per slot, closing the failed descriptor first and holding slot flocks throughout.
-- The exclusive cap test uses a 2s cap and a 2.5s ticket wait exceeding the cap via polling, showing the cap does not run while waiting. The cap starts at acquire in code.
-- The signal test waits up to 30s for the exclusive land.py to exit after the signal, keeping its kill proof.
+- `_publish` retries a `FileNotFoundError` from `_dump_holder` up to three attempts per slot, closing the failed descriptor first and keeping earlier record locks and slot flocks held.
+- The exclusive cap test drives a file backed clock past the 2s cap while the waiter holds a ticket, proving the deadline starts at acquire.
+- The exclusive supervisor touches a ready file inside its protected wait, and the signal test waits for it before the signal, keeping the kill proof.
+- The armed kill path has no unbounded loop, `waitid` uses `WNOHANG` and `WNOWAIT`, both grace loops check a monotonic deadline, then `SIGKILL` runs and the leader is reaped.

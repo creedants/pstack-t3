@@ -550,6 +550,29 @@ EXCLUSIVE_MAIN = (
 # EXCLUSIVE_MAIN after os.waitid is removed, so the grace uses the fallback.
 EXCLUSIVE_MAIN_WITHOUT_WAITID = "import os\nvars(os).pop('waitid', None)\n" + EXCLUSIVE_MAIN
 
+# EXCLUSIVE_MAIN with the cap clock driven by a file. The test writes the file to advance time.
+CAP_CLOCK_MAIN = (
+    "import os, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "from pathlib import Path\n"
+    "cap, grace, cap_max = sys.argv[2:5]\n"
+    "if cap:\n"
+    "    land.EXCLUSIVE_CAP = float(cap)\n"
+    "if grace:\n"
+    "    land.EXCLUSIVE_CAP_GRACE = float(grace)\n"
+    "if cap_max:\n"
+    "    land.EXCLUSIVE_CAP_MAX = float(cap_max)\n"
+    "clock = Path(os.environ['LAND_CAP_CLOCK'])\n"
+    "def file_clock():\n"
+    "    try:\n"
+    "        return float(clock.read_text().strip())\n"
+    "    except (OSError, ValueError):\n"
+    "        return 1000.0\n"
+    "land._cap_monotonic = file_clock\n"
+    "sys.exit(land.main(sys.argv[5:]))\n"
+)
+
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
     "import os, sys, time\n"
@@ -6392,41 +6415,42 @@ os.execv({real!r}, [{real!r}, *args])
         self.governor(1)
         holder = self.start_holder(kind="worker", command="make test")
         release = self.base / "holder-worker" / "release"
-        process = self.popen_exclusive(
-            ["slot", "--exclusive", "--for", "2", "--", sys.executable, "-c",
-             "import time; time.sleep(0.2); print('ok', flush=True)"])
-        try:
-            tickets = self.base / "state/pstack-t3/governor/tickets"
-            deadline = time.monotonic() + 20
-            seen = None
-            while time.monotonic() < deadline:
-                try:
-                    names = os.listdir(tickets)
-                except OSError:
-                    names = []
-                if any(name.endswith("-exclusive") for name in names):
-                    seen = time.monotonic()
-                    break
-                if process.poll() is not None:
-                    break
-                time.sleep(0.02)
-            self.assertIsNotNone(seen, "the exclusive waiter took no ticket")
-            while time.monotonic() - seen < 2.5:
-                if process.poll() is not None:
-                    break
-                time.sleep(0.02)
-            self.assertIsNone(process.poll(), "the exclusive caller exited while the slots were still busy")
-            with open(release, "w") as handle:
-                handle.write("x")
-            stdout, stderr = process.communicate(timeout=20)
-        finally:
-            if process.poll() is None:
-                os.kill(process.pid, signal.SIGKILL)
-                process.wait(timeout=20)
-            process.stdout.close()
-            process.stderr.close()
-            if holder.poll() is None:
-                holder.wait(timeout=20)
+        clock = self.base / "cap-clock"
+        clock.write_text("1000")
+        with mock.patch.dict(os.environ, {"LAND_CAP_CLOCK": str(clock)}):
+            process = self.popen_exclusive(
+                ["slot", "--exclusive", "--for", "2", "--", sys.executable, "-c",
+                 "import time; time.sleep(0.2); print('ok', flush=True)"],
+                main=CAP_CLOCK_MAIN)
+            try:
+                tickets = self.base / "state/pstack-t3/governor/tickets"
+                deadline = time.monotonic() + 20
+                seen = False
+                while time.monotonic() < deadline:
+                    try:
+                        names = os.listdir(tickets)
+                    except OSError:
+                        names = []
+                    if any(name.endswith("-exclusive") for name in names):
+                        seen = True
+                        break
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(seen, "the exclusive waiter took no ticket")
+                self.assertIsNone(process.poll(), "the exclusive caller exited while the slots were still busy")
+                clock.write_text("1010")
+                with open(release, "w") as handle:
+                    handle.write("x")
+                stdout, stderr = process.communicate(timeout=20)
+            finally:
+                if process.poll() is None:
+                    os.kill(process.pid, signal.SIGKILL)
+                    process.wait(timeout=20)
+                process.stdout.close()
+                process.stderr.close()
+                if holder.poll() is None:
+                    holder.wait(timeout=20)
         self.assertEqual(process.returncode, 0, stderr)
         self.assertEqual(stdout, "ok\n")
         self.assertNotIn("exclusive cap", stderr)
@@ -6506,26 +6530,38 @@ os.execv({real!r}, [{real!r}, *args])
     def signal_exclusive_ignoring_child(self, signum):
         parent_path = self.base / f"signal-{signum}-parent.pid"
         child_path = self.base / f"signal-{signum}-child.pid"
-        process = self.popen_exclusive(
-            ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
-             str(parent_path), str(child_path)],
-            cap=30, grace=0.2)
+        ready_path = self.base / f"signal-{signum}-ready"
         try:
-            child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
-            self.assertEqual(child_group, int(parent_path.read_text()))
-            os.kill(process.pid, signum)
-            code = process.wait(timeout=30)
-            self.assert_dead(child_pid)
-            self.assert_slots_free()
-            stderr = process.stderr.read()
-            return code, stderr
-        finally:
-            if process.poll() is None:
-                os.kill(process.pid, signal.SIGKILL)
-                process.wait(timeout=30)
-            process.stdout.close()
-            process.stderr.close()
-            self.release_recorded_group(parent_path, child_path)
+            ready_path.unlink()
+        except OSError:
+            pass
+        with mock.patch.dict(os.environ, {"LAND_EXCLUSIVE_READY": str(ready_path)}):
+            process = self.popen_exclusive(
+                ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
+                 str(parent_path), str(child_path)],
+                cap=30, grace=0.2)
+            try:
+                child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+                self.assertEqual(child_group, int(parent_path.read_text()))
+                deadline = time.monotonic() + 20
+                while not ready_path.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(ready_path.exists(), "the supervisor did not enter its protected wait")
+                os.kill(process.pid, signum)
+                code = process.wait(timeout=30)
+                self.assert_dead(child_pid)
+                self.assert_slots_free()
+                stderr = process.stderr.read()
+                return code, stderr
+            finally:
+                if process.poll() is None:
+                    os.kill(process.pid, signal.SIGKILL)
+                    process.wait(timeout=30)
+                process.stdout.close()
+                process.stderr.close()
+                self.release_recorded_group(parent_path, child_path)
 
     def test_cap_cases_without_os_waitid(self):
         self.governor(1)
