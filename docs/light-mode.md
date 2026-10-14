@@ -40,7 +40,7 @@ A coordinator set to `light` over a project set to `full` writes `Mode: light` i
 
 ### The reasoning cap
 
-When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` and `review backups` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats. `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat becomes an explicit target with the capped option when the catalog names the parent, the parent provider can run children, and the parent model has an effort option. Otherwise it stays `inherit`. A light child cannot pass its parent xhigh through. That conversion needs a catalog and the right parent. Without a catalog `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped but an `inherit` seat either stays `inherit` or converts against the catalog saved parent. Under `light` with budget `default`, `show` without a catalog prints an `info` line that no seat was capped. With a catalog but without `--parent`, it prints an `info` line that an `inherit` seat can keep the parent reasoning. Neither line prints when every role the call resolves is `verifiers` or `review backups`. [The runtime's Modes section](../t3/runtime.md#modes) already requires both.
+When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` and `review backups` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats. `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat becomes an explicit target with a budgeted effort option when the catalog names the parent, the parent provider can run children, and the parent model has an effort option. The budget chooses the highest offered reasoning level at or below `medium`, or the lowest offered level when every level is above it. That budget conversion needs a catalog and the right parent. Without a catalog `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped but an `inherit` seat either stays `inherit` or converts against the catalog saved parent. Under `light` with budget `default`, `show` without a catalog prints an `info` line that no seat was capped. With a catalog but without `--parent`, it prints an `info` line that an `inherit` seat can keep the parent reasoning. Neither line prints when every role the call resolves is `verifiers` or `review backups`. [The runtime's Modes section](../t3/runtime.md#modes) already requires both.
 
 The cap is the only option light mode changes. Light mode never sets `fastMode` to true. With a catalog, a Grok seat on a model that declares `fastMode` comes back from `show` with `fastMode` set to false. That includes a seat that falls back to the built-in Grok default. [Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
 
@@ -52,7 +52,7 @@ An escalated item resolves as `full`. It keeps its full reasoning level.
 
 1. A high-risk path. The project file `escalate` key lists path patterns. There is no built-in default. `setup-pstack --project` suggests `**/migrations/**` and the project own lock and installer scripts. For pstack-t3 those scripts are `t3/added/landing/scripts/land.py`, `t3/added/brigade/scripts/brigade.py`, and `scripts/install.py`.
 2. A second send-back. `roles.py mode --send-backs <n>` escalates at 2. Brigade counts `n` from the item `send-back` rows in `pass.tsv`. It never counts from the attempt number. A replacement worker or a queue bounce adds an attempt without a send-back.
-3. A contested design. A light worker that finds its design contested does not run `interrogate` because its brief waives it. It stops at a verifiable point and reports `Contested: <reason>` under its status. The coordinator then records the escalation and launches a fresh worker in `full` with that report. The new attempt is a replacement, not a send-back. The gate never sees a contested design that skipped interrogate. The coordinator records it with `brigade.py --owner <thread>@<generation> dish <item> --mode full --reason "<text>"`. It does this at fire time when the tickets name a lock, a lease, a race, a migration, or history rewriting, or after a worker report says `Contested: <reason>`. `fire --mode full --reason "<text>"` is the same record at creation.
+3. A contested design. A light worker that finds its design contested does not run `interrogate` because light mode forbids it. It stops at a verifiable point and reports `Contested: <reason>` under its status. The coordinator then records the escalation and launches a fresh worker in `full` with that report. The new attempt is a replacement, not a send-back. The gate does not review the stopped light attempt. The coordinator records it with `brigade.py --owner <thread>@<generation> dish <item> --mode full --reason "<text>"` after a worker report says `Contested: <reason>`. At fire time it uses `fire --mode full --reason "<text>"` when the tickets name a lock, a lease, a race, a migration, or history rewriting.
 
 The path rule has exact semantics.
 
@@ -138,7 +138,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 - Tests and the build gate. The worker runs the project test command and build before the gate. The queue runs its configured checks.
 - The landing queue checks. `land.py` spends no model usage. Light mode has nothing to gain there.
 - One review by another model family at every head SHA. [The gate review](#the-gate-review) defines it for brigade and for standalone playbooks.
-- Re-review of every fix attempt over its whole diff. A fix attempt review reads the full diff against trunk, not only the delta.
+- Re-review of every fix attempt over its whole diff. A fix attempt review reads the full diff against its base, not only the delta.
 - Owner fences. Leases, the `--owner` generation, worktrees, and the pass-at-head gate are code, and they cost nothing.
 - A fresh worker for every send-back. See [The fresh-worker rule](#the-fresh-worker-rule).
 - The code delegate. The persona and `Playbook:` line still apply, and `roles.py check-brief` still gates the brief.
@@ -146,7 +146,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 
 ### The gate review
 
-Light mode has one gate review per head SHA before merge. It is one read-only child on a `verifiers` seat whose model family differs from the author. The author is the code delegate model, or the worker when it wrote code itself. The gate reads the whole diff against its base. Its brief adds three checks that folded children used to run.
+Light mode has one gate review per head SHA before merge. It is one read-only child on the first runnable `verifiers` seat whose model family differs from every model that wrote the diff. Authors include code delegates, workers that wrote code, and authors from earlier attempts on the branch. When no runnable seat qualifies, the verdict is `blocked`. The gate reads the whole diff against its base. Its brief adds three checks that folded children used to run.
 
 - The no-comments rules from `agents/comment-sicko.md`, applied to the diff.
 - The chosen design, when the light architect step picked one of two sketches.
@@ -219,7 +219,7 @@ Gate: brigade
 - `Waived by mode:` lists the waivers, comma-separated, in table order.
 - `Gate:` holds `brigade` in a brigade brief.
 
-`roles.py mode` prints the `Playbook:`, `Mode:`, `Mode source:`, `Attempt:`, and `Waived by mode:` lines for an item. `brigade.py brief` writes them unchanged and then adds `Gate: brigade` and the seat rule.
+`roles.py mode` always prints `Mode:` and `Mode source:`. With `--playbook` and `--attempt`, it also prints `Playbook:` and `Attempt:`. It prints `Waived by mode:` only when that mode, playbook, and attempt have waivers. `brigade.py brief` writes the printed lines unchanged and then adds `Gate: brigade` and the seat rule.
 
 ### `roles.py check-brief`
 
@@ -252,4 +252,4 @@ The runtime requires one executing fresh-child test per changed spawn or coordin
 
 ## Decision
 
-The gate review keeps its full level in light mode. A paired trial ran each reviewed head at `medium` and at full level. The `medium` review missed a blocking finding at 3 of 8 heads. The worker-side cuts remain.
+The gate review keeps its full level in light mode. A trial paired reviews at `medium` and at full level on 8 heads. The `medium` review missed a blocking finding at 3 of 8 heads. The worker-side cuts remain.
