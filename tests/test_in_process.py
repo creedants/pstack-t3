@@ -24,6 +24,13 @@ SCRIPT_WITH_PATHS = (
     + SCRIPT
 )
 
+SCRIPT_WRITES_ARGV_0 = (
+    "import sys\n"
+    "sys.argv[0] = 'written-by-script'\n"
+    "print(sys.argv[0])\n"
+    "sys.exit(0 if sys.argv[0] == 'written-by-script' else 7)\n"
+)
+
 
 def fence_git_environment():
     """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
@@ -83,3 +90,9 @@ class UncaughtExceptionTest(unittest.TestCase):
             program.parent.mkdir()
             program.write_text(SCRIPT_WITH_PATHS)
             self.assert_same_as_real_interpreter("scripts/runpy.py", cwd=directory)
+
+    def test_a_script_that_writes_argv_0_matches_a_real_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / "writes.py"
+            program.write_text(SCRIPT_WRITES_ARGV_0)
+            self.assert_same_as_real_interpreter(program)
