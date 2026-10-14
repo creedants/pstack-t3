@@ -42,7 +42,14 @@ class CallTest(unittest.TestCase):
     def _captured(self, directory, name, source, argv):
         path = self._write(directory, name, source)
         outcome = call(self, path, argv)
-        real = subprocess.run([sys.executable, str(path), *argv], capture_output=True)
+        env = dict(os.environ)
+        if os.environ.get("PSTACK_TEST_REAL_PROCESS") != "1":
+            env.pop("PYTHONUNBUFFERED", None)
+        real = subprocess.run(
+            [sys.executable, str(path), *argv],
+            capture_output=True,
+            env=env,
+        )
         return outcome, real
 
     def test_capture_and_exit_match_a_real_process(self):
