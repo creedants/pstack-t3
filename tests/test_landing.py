@@ -139,7 +139,7 @@ def _close_new_fds(before):
             continue
 
 
-def _restore(saved, *, close_fds=True):
+def _restore(saved):
     """Each step runs even when an earlier step raises. Then the first error is raised."""
     first = None
 
@@ -191,21 +191,39 @@ def _restore(saved, *, close_fds=True):
     step(lambda: setattr(sys, "dont_write_bytecode", saved.dont_write_bytecode))
     # Collect unreachable connections so their descriptors close before os.close.
     step(gc.collect)
-    if close_fds:
-        step(lambda: _close_new_fds(saved.fds))
+    step(lambda: _close_new_fds(saved.fds))
     if first is not None:
         raise first
 
 
-def _capture_stream(line_buffering):
+def _child_codecs(env):
+    """Return ((stdout encoding, stdout errors), (stderr encoding, stderr errors)).
+
+    env None means os.environ. Read PYTHONIOENCODING from that mapping.
+    Absent, empty, and ':' keep sys.stdout.encoding and sys.stdout.errors.
+    'name' and 'name:' use that encoding with strict. ':handler' keeps the
+    process encoding and uses the handler. 'name:handler' uses both.
+    Stderr uses the same encoding and backslashreplace.
+    """
+    mapping = os.environ if env is None else env
+    encoding = sys.stdout.encoding
+    errors = sys.stdout.errors
+    raw = mapping.get("PYTHONIOENCODING")
+    if raw:
+        name, _, handler = raw.partition(":")
+        if name:
+            encoding = name
+        if handler:
+            errors = handler
+        elif name:
+            errors = "strict"
+    return (encoding, errors), (encoding, "backslashreplace")
+
+
+def _capture_stream(line_buffering, encoding, errors):
     raw = io.BytesIO()
     wrapper = io.TextIOWrapper(
-        raw,
-        encoding=_pipe_encoding(),
-        errors="strict",
-        newline=None,
-        line_buffering=line_buffering,
-    )
+        raw, encoding=encoding, errors=errors, newline=None, line_buffering=line_buffering)
     return raw, wrapper
 
 
@@ -269,8 +287,9 @@ def drive(script, argv, *, env, cwd=None):
     """Run one land.py command and return its exit code, stdout, and stderr.
 
     PSTACK_TEST_REAL_PROCESS is read from the process environment on entry, before env is installed and before the script loads. The value 1 starts a real process. Any other value runs in this process.
-    After an in-process call, including when main raises, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored.
-    An in-process call closes unreachable file objects before the script loads and again before the call returns. On an in-process return, os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
+    After an in-process call, including when main raises or KeyboardInterrupt leaves the call, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored.
+    An in-process call closes unreachable file objects before the script loads. When the call ends, it closes each connection opened through sqlite3.connect during the call, then os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
+    Stdout and stderr use the codecs _child_codecs reads from env before that env is installed.
     Each in-process call loads the script again. The imported land module is not the module that runs.
     """
     arguments = [str(arg) for arg in argv]
@@ -278,12 +297,20 @@ def drive(script, argv, *, env, cwd=None):
         result = _run([sys.executable, str(script), *arguments], env=env, cwd=cwd)
         return result.returncode, result.stdout, result.stderr
     saved = _save()
-    raised = True
+    stdout_codec, stderr_codec = _child_codecs(env)
+    connections = []
+    previous_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = previous_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
     try:
         # Collect cyclic garbage before this run opens land.db.
         gc.collect()
-        out_raw, out = _capture_stream(False)
-        err_raw, err = _capture_stream(True)
+        out_raw, out = _capture_stream(False, *stdout_codec)
+        err_raw, err = _capture_stream(True, *stderr_codec)
         sys.stdout = out
         sys.stderr = err
         if cwd is not None:
@@ -292,13 +319,21 @@ def drive(script, argv, *, env, cwd=None):
             os.environ.clear()
             os.environ.update(dict(env))
         sys.argv = [str(script), *arguments]
+        sqlite3.connect = connect
         code = _status(lambda: _load(script)(list(arguments)))
         out.flush()
         err.flush()
-        raised = False
         return code, _text_from_pipe(out_raw.getvalue()), _text_from_pipe(err_raw.getvalue())
     finally:
-        _restore(saved, close_fds=not raised)
+        sqlite3.connect = previous_connect
+        try:
+            for connection in connections:
+                try:
+                    connection.close()
+                except sqlite3.ProgrammingError:
+                    pass
+        finally:
+            _restore(saved)
 
 
 def real_process(reason, script, argv, *, env, cwd=None, timeout=None):
@@ -6713,6 +6748,7 @@ os.execv({real!r}, [{real!r}, *args])
         os.mkfifo(release)
         # Keep both ends open so the write that resumes the probe never waits for a reader.
         gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, gate)
         reporter = real_popen(
             ProcessReason.GOVERNOR,
             [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "worker-0",
