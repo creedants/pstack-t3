@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` that disagrees with the number of skills in the tree. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -184,6 +184,12 @@ def badge_findings(readme, upstream):
 
 # `doctor` prints `{installed}/{expected} pstack-t3` for one harness.
 _QUOTED_COUNT = re.compile(r"(\d+)/(\d+) pstack-t3")
+# README states how many skills its link to docs/skills.md covers.
+_STATED_COUNT = re.compile(r"\ball (\d+) skills\b")
+
+
+def _shipped_skill_count(root):
+    return sum(1 for _skill in root.glob("*/SKILL.md"))
 
 
 def guide_count_findings(guide, root):
@@ -203,7 +209,7 @@ def guide_count_findings(guide, root):
         text = guide.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         return [f"docs/guide.md: could not be read, so its doctor count was not checked: {type(error).__name__}"]
-    shipped = sum(1 for _skill in root.glob("*/SKILL.md"))
+    shipped = _shipped_skill_count(root)
     findings = []
     quoted = False
     for number, line in enumerate(text.splitlines(), 1):
@@ -216,6 +222,38 @@ def guide_count_findings(guide, root):
                 )
     if not quoted:
         findings.append(f"docs/guide.md: quotes no doctor count, and the shipped skill count is {shipped}")
+    return findings
+
+
+def readme_count_findings(readme, root):
+    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
+
+    The shipped count is the set skill_names in scripts/install.py reads,
+    every directory directly in the tree that holds a SKILL.md. A stated
+    count is the digits between `all ` and ` skills` when both of those
+    words stand alone on a line, the phrase the link to docs/skills.md in
+    README.md uses. A line whose stated count differs from the shipped count
+    is a finding that names README.md, the line, the stated count, and the
+    shipped count. A README that states no skill count is one finding. A
+    README that cannot be read is one finding and no line is read. An empty
+    list means every stated count agrees with the shipped count.
+    """
+    try:
+        text = readme.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"README.md: could not be read, so its skill count was not checked: {type(error).__name__}"]
+    shipped = _shipped_skill_count(root)
+    findings = []
+    stated = False
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in _STATED_COUNT.finditer(line):
+            stated = True
+            if int(match.group(1)) != shipped:
+                findings.append(
+                    f"README.md:{number}: states all {match.group(1)} skills, and the shipped skill count is {shipped}"
+                )
+    if not stated:
+        findings.append(f"README.md: states no skill count, and the shipped skill count is {shipped}")
     return findings
 
 
@@ -353,6 +391,7 @@ def check_tree(root, guide=True):
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
         if guide:
             findings.extend(guide_count_findings(GUIDE_PATH, root))
+            findings.extend(readme_count_findings(README_PATH, root))
     return findings
 
 
