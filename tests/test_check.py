@@ -657,6 +657,55 @@ class BadgeCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+class GuideCountCheckTest(unittest.TestCase):
+    def _tree(self, guide, skills=()):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "pstack-runtime/scripts").mkdir(parents=True)
+        (root / "pstack-runtime/scripts/roles.py").write_text("")
+        for name in skills:
+            skill = root / name
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n\nbody\n")
+        document = root / "docs/guide.md"
+        document.parent.mkdir()
+        document.write_text(guide)
+        patcher = mock.patch.object(check, "GUIDE_PATH", document)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return root
+
+    def test_a_guide_that_quotes_the_shipped_count_is_quiet(self):
+        root = self._tree("`doctor` should show `3/3 pstack-t3` for each provider you use.\n", ("a", "b", "c"))
+        self.assertEqual(check.check_tree(root), [])
+
+    def test_a_stale_count_is_named_with_the_line_the_quote_and_the_shipped_count(self):
+        root = self._tree("intro\n`doctor` should show `2/2 pstack-t3` for each provider you use.\n", ("a", "b", "c"))
+        self.assertEqual(check.check_tree(root), [
+            "docs/guide.md:2: quotes the doctor count 2/2, and the shipped skill count is 3",
+        ])
+
+    def test_a_quote_whose_two_numbers_differ_is_named(self):
+        root = self._tree("`doctor` should show `3/4 pstack-t3` for each provider you use.\n", ("a", "b", "c"))
+        self.assertEqual(check.check_tree(root), [
+            "docs/guide.md:1: quotes the doctor count 3/4, and the shipped skill count is 3",
+        ])
+
+    def test_a_guide_that_quotes_no_count_is_named(self):
+        root = self._tree("no count here\n", ("a",))
+        self.assertEqual(check.check_tree(root), [
+            "docs/guide.md: quotes no doctor count, and the shipped skill count is 1",
+        ])
+
+    def test_a_guide_that_cannot_be_read_is_named(self):
+        root = self._tree("`doctor` should show `1/1 pstack-t3` for each provider you use.\n", ("a",))
+        (root / "docs/guide.md").unlink()
+        self.assertEqual(check.check_tree(root), [
+            "docs/guide.md: could not be read, so its doctor count was not checked: FileNotFoundError",
+        ])
+
+
 class CheckoutRuleTest(unittest.TestCase):
     def _directory(self):
         temporary = tempfile.TemporaryDirectory()
@@ -985,8 +1034,20 @@ class RenderedTreeCheckTest(unittest.TestCase):
             (root / "demo/SKILL.md").write_text(demo)
         return root
 
+    def _guide_agrees(self, root):
+        """Point GUIDE_PATH at a guide that quotes the count this tree ships."""
+        document = root / "docs/guide.md"
+        document.parent.mkdir()
+        shipped = len(list(root.glob("*/SKILL.md")))
+        document.write_text(f"`doctor` should show `{shipped}/{shipped} pstack-t3` for each provider you use.\n")
+        patcher = mock.patch.object(check, "GUIDE_PATH", document)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_a_tree_with_both_witness_skills_and_roles_py_has_no_roles_finding(self):
-        self.assertEqual(check.check_tree(self._root(roles=True)), [])
+        root = self._root(roles=True)
+        self._guide_agrees(root)
+        self.assertEqual(check.check_tree(root), [])
 
     def test_a_tree_with_both_witness_skills_and_no_roles_py_names_that_file(self):
         self.assertEqual(check.check_tree(self._root()), ["pstack-runtime/scripts/roles.py: is missing"])
@@ -996,22 +1057,28 @@ class RenderedTreeCheckTest(unittest.TestCase):
             "---\nname: demo\ndescription: d\n---\n\n"
             "The build strips disable-model-invocation.\n"
         )
-        self.assertEqual(check.check_tree(self._root(roles=True, demo=demo)), [])
+        root = self._root(roles=True, demo=demo)
+        self._guide_agrees(root)
+        self.assertEqual(check.check_tree(root), [])
 
     def test_disable_model_invocation_in_frontmatter_is_named(self):
         demo = (
             "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n\n"
             "body\n"
         )
+        root = self._root(roles=True, demo=demo)
+        self._guide_agrees(root)
         self.assertEqual(
-            check.check_tree(self._root(roles=True, demo=demo)),
+            check.check_tree(root),
             ["demo/SKILL.md: frontmatter contains disable-model-invocation"],
         )
 
     def test_disable_model_invocation_after_one_mark_is_only_missing_frontmatter(self):
         demo = "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n"
+        root = self._root(roles=True, demo=demo)
+        self._guide_agrees(root)
         self.assertEqual(
-            check.check_tree(self._root(roles=True, demo=demo)),
+            check.check_tree(root),
             ["demo/SKILL.md: missing frontmatter"],
         )
 
