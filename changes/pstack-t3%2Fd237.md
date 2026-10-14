@@ -1,0 +1,5 @@
+- A plain merge whose stderr contains `the base branch policy prohibits the merge` leaves the entry awaiting merge with the note `waiting for required checks before merging` and does not pause the queue when branch protection returns a tuple of contexts and at least one of those contexts is absent from the posted check names.
+- Posted check names are the non-empty `(.name // .context)` strings from the rollup. A check with no name stays out of that tuple and still counts in the posted total.
+- An empty rollup takes the absent pre-wait before the merge and does not read branch protection. A blocker of `absent` on the policy refusal waits and does not read branch protection.
+- An unreadable protection body does not wait, and the queue pauses. An empty `contexts` list does not wait, and the queue pauses. A failed or pending posted check returns before any merge call. A review decision pauses the queue.
+- A plain-merge stderr without that phrase does not wait. A merge conflict pauses the queue. Disabled auto-merge text in that stderr pauses the queue. When the plain merge exits 0, that run merges and does not read branch protection.
