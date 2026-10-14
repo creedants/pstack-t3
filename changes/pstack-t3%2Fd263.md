@@ -2,5 +2,5 @@
 - `_table_rows` drops bytes after the last newline before decoding, so a non-UTF-8 unfinished tail leaves finished rows.
 - `_publish` retries a `FileNotFoundError` from `_dump_holder` up to three attempts per slot, closing the failed descriptor first and keeping earlier record locks and slot flocks held.
 - The exclusive cap test drives a file backed clock past the 2s cap while the waiter holds a ticket, proving the deadline starts at acquire.
-- The exclusive supervisor touches a ready file inside its protected wait, and the signal test waits for it before the signal, keeping the kill proof.
+- The exclusive supervisor calls the no-op `_exclusive_ready_ack` hook inside its protected wait, production never reads `LAND_EXCLUSIVE_READY`, and the test launcher overrides the hook to touch a ready file before the signal test sends its signal.
 - The armed kill path has no unbounded loop, `waitid` uses `WNOHANG` and `WNOWAIT`, both grace loops check a monotonic deadline, then `SIGKILL` runs and the leader is reaped.

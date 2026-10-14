@@ -939,6 +939,12 @@ _cap_monotonic = time.monotonic
 _real_sleep = time.sleep
 
 
+def _exclusive_ready_ack():
+    """Run once the command starts, after the slots are locked and the holder records are written.
+    Production does nothing. A test swaps in a function that marks a ready file, so the signal test can prove the supervisor reached its protected wait before it signals."""
+    return None
+
+
 def _pid_reserved(pid):
     """True when pid is still in the process table, including a zombie. Does not reap."""
     try:
@@ -1033,12 +1039,7 @@ def exclusive_command(command, repo, for_text, reason_text):
             return EXCLUSIVE_CAP_STATUS
         process = subprocess.Popen(command, start_new_session=True)
         try:
-            ready = os.environ.get("LAND_EXCLUSIVE_READY")
-            if ready:
-                try:
-                    Path(ready).touch()
-                except OSError:
-                    pass
+            _exclusive_ready_ack()
             if hasattr(process, "_sigint_wait_secs"):
                 process._sigint_wait_secs = 0  # CPython waits 0.25s on SIGINT after setsid, and the child did not see that signal.
             remaining = seconds - (_cap_monotonic() - acquired)

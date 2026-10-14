@@ -573,6 +573,30 @@ CAP_CLOCK_MAIN = (
     "sys.exit(land.main(sys.argv[5:]))\n"
 )
 
+# EXCLUSIVE_MAIN with the ready acknowledgement swapped for a touch of the path in LAND_EXCLUSIVE_READY.
+# Production leaves the hook a no-op, so the signal test overrides it here to observe the protected wait.
+READY_MAIN = (
+    "import os, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "from pathlib import Path\n"
+    "cap, grace, cap_max = sys.argv[2:5]\n"
+    "if cap:\n"
+    "    land.EXCLUSIVE_CAP = float(cap)\n"
+    "if grace:\n"
+    "    land.EXCLUSIVE_CAP_GRACE = float(grace)\n"
+    "if cap_max:\n"
+    "    land.EXCLUSIVE_CAP_MAX = float(cap_max)\n"
+    "ready = Path(os.environ['LAND_EXCLUSIVE_READY'])\n"
+    "def ack():\n"
+    "    try:\n"
+    "        ready.touch()\n"
+    "    except OSError:\n"
+    "        pass\n"
+    "land._exclusive_ready_ack = ack\n"
+    "sys.exit(land.main(sys.argv[5:]))\n"
+)
+
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
     "import os, sys, time\n"
@@ -6411,6 +6435,19 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(result.stderr, "err\n")
         self.assert_slots_free()
 
+    def test_an_ordinary_ready_symlink_leaves_its_destination_absent(self):
+        self.governor(1)
+        link = self.base / "ready-link"
+        destination = self.base / "ready-destination"
+        link.symlink_to(destination)
+        with mock.patch.dict(os.environ, {"LAND_EXCLUSIVE_READY": str(link)}):
+            result = self.run_exclusive(
+                ["slot", "--exclusive", "--", sys.executable, "-c", "pass"],
+                cap=5, grace=0.05, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(destination.exists(), "an ordinary ready symlink created its destination")
+        self.assertNotIn("LAND_EXCLUSIVE_READY", SCRIPT.read_text())
+
     def test_an_exclusive_cap_starts_when_the_hold_takes_the_slots(self):
         self.governor(1)
         holder = self.start_holder(kind="worker", command="make test")
@@ -6539,7 +6576,7 @@ os.execv({real!r}, [{real!r}, *args])
             process = self.popen_exclusive(
                 ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
                  str(parent_path), str(child_path)],
-                cap=30, grace=0.2)
+                cap=30, grace=0.2, main=READY_MAIN)
             try:
                 child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
                 self.assertEqual(child_group, int(parent_path.read_text()))
