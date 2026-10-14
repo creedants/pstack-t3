@@ -1202,3 +1202,37 @@ class EffortSpeedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class ThreadOrganizeLintTest(unittest.TestCase):
+    def _skill(self, body):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        skill = root / "demo"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\n" + body + "\n")
+        return root
+
+    def test_a_threadids_key_in_shipped_text_is_reported(self):
+        root = self._skill("Archive with `t3_thread_organize`, `threadIds`: [t1, t2].")
+        self.assertEqual(
+            check.check_tree(root),
+            [
+                "demo/SKILL.md:6: shipped text uses a plural threadIds key. "
+                "Pass one explicit threadId per t3_thread_organize call: Archive with `t3_thread_organize`, `threadIds`: [t1, t2]."
+            ],
+        )
+    def test_a_thread_organize_archive_step_without_threadid_is_reported(self):
+        root = self._skill("t3_thread_organize archive this thread.")
+        self.assertEqual(
+            check.check_tree(root),
+            [
+                "demo/SKILL.md:6: t3_thread_organize archive/settle/snooze step must name threadId. "
+                "Add the one explicit threadId: t3_thread_organize archive this thread."
+            ],
+        )
+
+    def test_a_thread_organize_step_that_names_threadid_passes(self):
+        root = self._skill("t3_thread_organize archive this thread by threadId.")
+        self.assertEqual(check.check_tree(root), [])

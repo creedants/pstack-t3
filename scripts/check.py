@@ -366,6 +366,18 @@ def check_tree(root, guide=True):
             for pattern, why in patterns:
                 if re.search(pattern, line):
                     findings.append(f"{rel}:{number}: {why}: {line.strip()[:120]}")
+            if "threadIds" in line:
+                findings.append(
+                    f"{rel}:{number}: shipped text uses a plural threadIds key. "
+                    f"Pass one explicit threadId per t3_thread_organize call: {line.strip()[:120]}"
+                )
+            if "t3_thread_organize" in line:
+                lowered = line.lower()
+                if any(verb in lowered for verb in ("archive", "settle", "snooze")) and "threadId" not in line:
+                    findings.append(
+                        f"{rel}:{number}: t3_thread_organize archive/settle/snooze step must name threadId. "
+                        f"Add the one explicit threadId: {line.strip()[:120]}"
+                    )
         findings.extend(catalog_heredoc_findings(rel, text))
         if file.suffix == ".md":
             if rel_s != "pstack-runtime/SKILL.md":

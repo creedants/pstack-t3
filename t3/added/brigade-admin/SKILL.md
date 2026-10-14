@@ -36,7 +36,7 @@ When the user asks the admin to open a coordinator, it runs [Open a restaurant](
 
 ## Admin first service
 
-1. `t3_thread_organize` with `action: "pin"` and no `threadId`.
+1. `t3_thread_organize` with `action: "pin"` and no `threadId`, acting on the caller on purpose.
 2. Create three schedules with `schedule_task`, bound to this thread, and record each under the name its bullet gives with `$B set --schedule <name>=<id>`. Each prompt says "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Reporting level: `<level>`. Run a service."
    - `intake`: `{"type": "interval", "everyMs": 3600000}`. Each service also runs the idle check, which must run well inside the 6-hour lease expiry.
    - `morning`: `{"type": "fixed_time", "timeOfDay": "09:00"}`, for routing and checks.
