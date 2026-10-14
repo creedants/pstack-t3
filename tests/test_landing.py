@@ -545,6 +545,339 @@ EXCLUSIVE_MAIN = (
 # EXCLUSIVE_MAIN after os.waitid is removed, so the grace uses the fallback.
 EXCLUSIVE_MAIN_WITHOUT_WAITID = "import os\nvars(os).pop('waitid', None)\n" + EXCLUSIVE_MAIN
 
+# os.killpg raises PermissionError once our unreaped leader has exited. macOS does
+# that for a zombie leader. These mains force Darwin and leave the permission
+# decision to land.py. While the leader is alive the wrapper delivers the real
+# signal and returns. Once the leader has exited the wrapper raises and does not
+# signal. land.py swallows that error only when it observed this leader as a
+# permitted signal target before the call, so a swallowed cap records one SIGTERM
+# and one SIGKILL.
+# ZOMBIE_KILLPG_MARK receives one "<signal> <monotonic>" line for each killpg call.
+EPERM_AFTER_LEADER_EXITS = """\
+import errno, os, signal, subprocess, time
+_real_killpg = os.killpg
+
+def _proc_zombie(pid):
+    try:
+        handle = open("/proc/%s/stat" % pid)
+    except OSError:
+        return None
+    try:
+        text = handle.read()
+    finally:
+        handle.close()
+    fields = text.rpartition(")")[2].split()
+    if not fields:
+        return None
+    return fields[0].startswith("Z")
+
+def _leader_exited(pid):
+    waitid = getattr(os, "waitid", None)
+    if waitid is not None:
+        try:
+            exited = waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except OSError:
+            return False
+        return exited is not None
+    proc = _proc_zombie(pid)
+    if proc is not None:
+        return proc
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=1, check=False, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and (result.stdout or "").strip().startswith("Z")
+
+def _note(sig):
+    path = os.environ.get("ZOMBIE_KILLPG_MARK")
+    if not path:
+        return
+    handle = open(path, "a")
+    try:
+        handle.write("%d %.6f\\n" % (int(sig), time.monotonic()))
+    finally:
+        handle.close()
+
+def _killpg(pid, sig):
+    if not _leader_exited(pid):
+        _real_killpg(pid, sig)
+        _note(sig)
+        return
+    _note(sig)
+    raise PermissionError(errno.EPERM, "Operation not permitted")
+
+os.killpg = _killpg
+"""
+
+# The child reports a uid that matches neither its real nor its effective uid.
+# Root skips this probe, so the cap test that uses it is skipped for euid 0.
+FOREIGN_LEADER_PS = """\
+import os, subprocess
+_credential_run = subprocess.run
+_foreign_uid = 1 if os.getuid() != 1 and os.geteuid() != 1 else 2
+_foreign_line = "%d %d %d\\n" % (_foreign_uid, _foreign_uid, _foreign_uid)
+
+def _credential_ps(*args, **kwargs):
+    command = args[0] if args else kwargs.get("args")
+    text = " ".join(str(part) for part in command) if isinstance(command, (list, tuple)) else ""
+    if text.startswith("ps ") and "uid=" in text:
+        return subprocess.CompletedProcess(list(command), 0, stdout=_foreign_line)
+    return _credential_run(*args, **kwargs)
+
+subprocess.run = _credential_ps
+"""
+
+
+def _exclusive_main_forcing_darwin(preamble, after_import="land.sys.platform = 'darwin'\n"):
+    return preamble + EXCLUSIVE_MAIN.replace("import land\n", "import land\n" + after_import, 1)
+
+
+# Linux images used in CI have os.waitid and no ps. The Darwin-forced children
+# answer ps in this process. A stat query reads the leader's /proc state. A uid
+# query reads /proc status and prints effective, real, and saved uids. A host
+# with no /proc entry delegates to ps.
+PS_LEADER_STAT = """\
+import os, subprocess
+_ps_run = subprocess.run
+
+def _leader_ps(*args, **kwargs):
+    command = args[0] if args else kwargs.get("args")
+    argv = list(command) if isinstance(command, (list, tuple)) else None
+    if argv and argv[:1] == ["ps"]:
+        pid = None
+        fmt = ""
+        for index, arg in enumerate(argv):
+            if arg == "-p" and index + 1 < len(argv):
+                pid = argv[index + 1]
+            elif arg == "-o" and index + 1 < len(argv):
+                fmt = argv[index + 1]
+        if pid and "uid=" in fmt:
+            status = "/proc/%s/status" % pid
+            if os.path.isfile(status):
+                handle = open(status)
+                try:
+                    text = handle.read()
+                finally:
+                    handle.close()
+                for line in text.splitlines():
+                    if not line.startswith("Uid:"):
+                        continue
+                    parts = line.split()
+                    if len(parts) == 5:
+                        stdout = "%s %s %s\\n" % (parts[2], parts[1], parts[3])
+                        return subprocess.CompletedProcess(argv, 0, stdout=stdout)
+                    break
+        elif pid:
+            proc = "/proc/%s/stat" % pid
+            if os.path.isfile(proc):
+                handle = open(proc)
+                try:
+                    text = handle.read()
+                finally:
+                    handle.close()
+                fields = text.rpartition(")")[2].split()
+                if fields:
+                    return subprocess.CompletedProcess(argv, 0, stdout=fields[0] + "\\n")
+    return _ps_run(*args, **kwargs)
+
+subprocess.run = _leader_ps
+"""
+
+EXCLUSIVE_MAIN_DARWIN_EPERM = _exclusive_main_forcing_darwin(PS_LEADER_STAT + EPERM_AFTER_LEADER_EXITS)
+EXCLUSIVE_MAIN_DARWIN_EPERM_NO_WAITID = _exclusive_main_forcing_darwin(
+    "import os\nvars(os).pop('waitid', None)\n" + PS_LEADER_STAT + EPERM_AFTER_LEADER_EXITS)
+EXCLUSIVE_MAIN_DARWIN_EPERM_FOREIGN = _exclusive_main_forcing_darwin(
+    PS_LEADER_STAT + FOREIGN_LEADER_PS + EPERM_AFTER_LEADER_EXITS)
+EXCLUSIVE_MAIN_DARWIN_EPERM_FOREIGN_NO_WAITID = _exclusive_main_forcing_darwin(
+    "import os\nvars(os).pop('waitid', None)\n" + PS_LEADER_STAT + FOREIGN_LEADER_PS + EPERM_AFTER_LEADER_EXITS)
+EXCLUSIVE_MAIN_DARWIN_EPERM_INTERRUPT = _exclusive_main_forcing_darwin(
+    PS_LEADER_STAT + EPERM_AFTER_LEADER_EXITS,
+    "land.sys.platform = 'darwin'\n"
+    "def _interrupt_grace(seconds):\n"
+    "    raise KeyboardInterrupt()\n"
+    "land._real_sleep = _interrupt_grace\n",
+)
+
+
+@contextlib.contextmanager
+def _without_land_waitid():
+    present = hasattr(land.os, "waitid")
+    saved = getattr(land.os, "waitid", None)
+    if present:
+        delattr(land.os, "waitid")
+    try:
+        yield
+    finally:
+        if present:
+            land.os.waitid = saved
+
+
+def _raise_eperm(pid, sig):
+    raise PermissionError(errno.EPERM, "Operation not permitted")
+
+
+def _fail_if_the_kill_waits(signum, frame):
+    raise AssertionError("killpg handling waited instead of returning")
+
+
+@contextlib.contextmanager
+def _arm_kill_alarm(seconds=4):
+    previous = signal.signal(signal.SIGALRM, _fail_if_the_kill_waits)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _ps_run(stdout="Z\n", code=0, error=None, uids=None, uid_error=None, uid_code=0):
+    """Answer land's ps queries.
+
+    A stat query returns stdout or raises error. A uid query returns uids, or
+    this process's ids when uids is omitted. uid_error and uid_code apply to
+    the uid query only.
+    """
+    real_run = subprocess.run
+
+    def run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        if isinstance(command, (list, tuple)) and command[:1] == ["ps"]:
+            if any("uid=" in str(part) for part in command):
+                if uid_error is not None:
+                    raise uid_error
+                if uids is None:
+                    text = "%d %d %d\n" % (os.geteuid(), os.getuid(), os.getuid())
+                else:
+                    text = uids
+                return subprocess.CompletedProcess(list(command), uid_code, stdout=text)
+            if error is not None:
+                raise error
+            return subprocess.CompletedProcess(list(command), code, stdout=stdout)
+        return real_run(*args, **kwargs)
+
+    return run
+
+
+class _MockLeader:
+    def __init__(self, pid=424242):
+        self.pid = pid
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+def _spawn_leader(script):
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _leader_stat(pid):
+    """The ps state of pid, or "" when ps cannot say. Does not reap."""
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=2, check=False, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
+def _child_has_exited(pid, ps_only=False):
+    """True when pid is an unreaped exited child. Does not reap.
+
+    ps_only skips os.waitid so a caller can see the ps fallback on a host that has both.
+    """
+    if not ps_only:
+        waitid = getattr(os, "waitid", None)
+        if waitid is not None:
+            try:
+                return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+            except OSError:
+                return False
+    return _leader_stat(pid).startswith("Z")
+
+
+_WAITID_OMIT = object()
+
+
+@contextlib.contextmanager
+def _darwin_eperm(ps=None, getuid=1000, geteuid=1000, hide_waitid=False, killpg=None,
+                  waitid=_WAITID_OMIT, platform="darwin", patch_ids=True):
+    """Force a killpg path and yield the killpg mock.
+
+    ps is patched only when given. waitid is omitted, a return value, or a
+    callable or exception used as the side effect. Uids are patched when
+    patch_ids is set.
+    """
+    effect = _raise_eperm if killpg is None else killpg
+    with _arm_kill_alarm():
+        patches = [
+            mock.patch.object(land.sys, "platform", platform),
+            mock.patch.object(land.os, "killpg", side_effect=effect),
+        ]
+        if patch_ids:
+            patches.append(mock.patch.object(land.os, "getuid", return_value=getuid))
+            patches.append(mock.patch.object(land.os, "geteuid", return_value=geteuid))
+        if ps is not None:
+            patches.append(mock.patch.object(land.subprocess, "run", side_effect=ps))
+        if waitid is not _WAITID_OMIT:
+            if isinstance(waitid, BaseException) or callable(waitid):
+                patches.append(mock.patch.object(land.os, "waitid", side_effect=waitid, create=True))
+            else:
+                patches.append(mock.patch.object(land.os, "waitid", return_value=waitid, create=True))
+        with contextlib.ExitStack() as stack:
+            entered = [stack.enter_context(item) for item in patches]
+            if hide_waitid:
+                with _without_land_waitid():
+                    yield entered[1]
+            else:
+                yield entered[1]
+
+
+def _wait_until_child_exited(pid, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _child_has_exited(pid):
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"pid {pid} did not exit")
+
+
+def _eperm_mark(path):
+    rows = []
+    for line in Path(path).read_text().splitlines():
+        sig_text, at_text = line.split()
+        rows.append((int(sig_text), float(at_text)))
+    return rows
+
+
+def _cap_stderr(cap):
+    return (f"land: stopped the command at the {cap}s exclusive cap. "
+            f"--for sets a longer cap and needs --reason past {cap}s.\n")
+
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
     "import os, sys, time\n"
@@ -554,6 +887,30 @@ GROUP_SLEEP = (
     "    Path(sys.argv[2]).write_text(str(os.getpid()))\n"
     "    time.sleep(3600)\n"
     "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+    "time.sleep(3600)\n"
+)
+
+# The parent keeps the default SIGTERM handler. The child ignores SIGTERM, records its pid, and
+# closes the standard streams so a surviving child does not hold the capture pipes. It then
+# rewrites a heartbeat file so a later read can show the child is alive, not a zombie.
+MEMBER_IGNORES_TERM = (
+    "import os, signal, sys, time\n"
+    "from pathlib import Path\n"
+    "parent_path, child_path = sys.argv[1], sys.argv[2]\n"
+    "Path(parent_path).write_text(str(os.getpid()))\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    os.close(0)\n"
+    "    os.close(1)\n"
+    "    os.close(2)\n"
+    "    beat = Path(child_path + '.beat')\n"
+    "    n = 0\n"
+    "    while True:\n"
+    "        n += 1\n"
+    "        beat.write_text(str(n))\n"
+    "        time.sleep(0.05)\n"
     "time.sleep(3600)\n"
 )
 
@@ -6410,6 +6767,620 @@ os.execv({real!r}, [{real!r}, *args])
             process.stdout.close()
             process.stderr.close()
             self.release_recorded_group(parent_path, child_path)
+
+    def test_an_exclusive_cap_stops_when_darwin_eperm_follows_an_exited_leader(self):
+        self.governor(1)
+        self.addCleanup(os.environ.pop, "ZOMBIE_KILLPG_MARK", None)
+        grace = 0.4
+        modes = (
+            ("waitid", EXCLUSIVE_MAIN_DARWIN_EPERM),
+            ("no-waitid", EXCLUSIVE_MAIN_DARWIN_EPERM_NO_WAITID),
+        )
+        for label, main in modes:
+            with self.subTest(os=label):
+                mark = self.base / f"zombie-killpg-{label}"
+                mark.unlink(missing_ok=True)
+                os.environ["ZOMBIE_KILLPG_MARK"] = str(mark)
+                result = self.run_exclusive(
+                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                    cap=0.4, grace=grace, timeout=20, main=main)
+                self.assertEqual(result.returncode, 124, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, _cap_stderr("0.4"))
+                self.assert_slots_free()
+                rows = _eperm_mark(mark)
+                self.assertEqual(
+                    [sig for sig, _at in rows],
+                    [signal.SIGTERM, signal.SIGKILL],
+                    rows)
+                gap = rows[1][1] - rows[0][1]
+                self.assertGreaterEqual(gap, grace - 0.05, rows)
+                self.assertLess(gap, grace + 1.5, rows)
+
+    def test_an_exclusive_cap_leaves_a_live_member_after_darwin_eperm_for_a_zombie_leader(self):
+        self.governor(1)
+        self.addCleanup(os.environ.pop, "ZOMBIE_KILLPG_MARK", None)
+        grace = 0.4
+        modes = (
+            ("waitid", EXCLUSIVE_MAIN_DARWIN_EPERM),
+            ("no-waitid", EXCLUSIVE_MAIN_DARWIN_EPERM_NO_WAITID),
+        )
+        for label, main in modes:
+            with self.subTest(os=label):
+                mark = self.base / f"member-killpg-{label}"
+                mark.unlink(missing_ok=True)
+                os.environ["ZOMBIE_KILLPG_MARK"] = str(mark)
+                parent_path = self.base / f"member-{label}-parent.pid"
+                child_path = self.base / f"member-{label}-child.pid"
+                process = self.popen_exclusive(
+                    ["slot", "--exclusive", "--", sys.executable, "-c", MEMBER_IGNORES_TERM,
+                     str(parent_path), str(child_path)],
+                    cap=1, grace=grace, main=main)
+                child_pid = None
+                try:
+                    child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+                    code = process.wait(timeout=20)
+                    parent_pid = int(parent_path.read_text())
+                    stderr = process.stderr.read()
+                    self.assertEqual(child_group, parent_pid)
+                    self.assertEqual(code, 124, stderr)
+                    self.assertEqual(stderr, _cap_stderr("1"))
+                    self.assert_slots_free()
+                    rows = _eperm_mark(mark)
+                    self.assertEqual(
+                        [sig for sig, _at in rows],
+                        [signal.SIGTERM, signal.SIGKILL],
+                        rows)
+                    gap = rows[1][1] - rows[0][1]
+                    self.assertGreaterEqual(gap, grace - 0.05, rows)
+                    self.assertLess(gap, grace + 1.5, rows)
+                    beat = Path(str(child_path) + ".beat")
+                    deadline = time.monotonic() + 2
+                    while not beat.exists():
+                        if time.monotonic() > deadline:
+                            self.fail(f"member {child_pid} wrote no heartbeat")
+                        time.sleep(0.05)
+                    first = beat.read_text()
+                    deadline = time.monotonic() + 2
+                    while beat.read_text() == first:
+                        if time.monotonic() > deadline:
+                            self.fail(f"member {child_pid} heartbeat did not advance")
+                        time.sleep(0.05)
+                finally:
+                    if process.poll() is None:
+                        os.kill(process.pid, signal.SIGKILL)
+                        process.wait(timeout=10)
+                    process.stdout.close()
+                    process.stderr.close()
+                    if child_pid is None and child_path.exists():
+                        parts = child_path.read_text().split()
+                        if parts:
+                            try:
+                                child_pid = int(parts[0])
+                            except ValueError:
+                                child_pid = None
+                    if child_pid is not None:
+                        try:
+                            os.kill(child_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        deadline = time.monotonic() + 2
+                        while time.monotonic() < deadline:
+                            try:
+                                os.kill(child_pid, 0)
+                            except ProcessLookupError:
+                                break
+                            time.sleep(0.02)
+
+    @unittest.skipUnless(os.geteuid() != 0, "root may signal a leader with any uid")
+    def test_an_exclusive_cap_reraises_darwin_eperm_when_the_zombie_leader_is_not_ours(self):
+        self.governor(1)
+        modes = (
+            ("waitid", EXCLUSIVE_MAIN_DARWIN_EPERM_FOREIGN),
+            ("no-waitid", EXCLUSIVE_MAIN_DARWIN_EPERM_FOREIGN_NO_WAITID),
+        )
+        for label, main in modes:
+            with self.subTest(os=label):
+                result = self.run_exclusive(
+                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                    cap=0.4, grace=0.2, timeout=20, main=main)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(result.returncode, 124, result.stderr)
+                self.assertIn("PermissionError", result.stderr)
+                self.assertNotIn("exclusive cap", result.stderr)
+                self.assert_slots_free()
+
+    def test_an_exclusive_interrupt_during_grace_still_signals_after_darwin_eperm(self):
+        self.governor(1)
+        self.addCleanup(os.environ.pop, "ZOMBIE_KILLPG_MARK", None)
+        mark = self.base / "interrupt-killpg"
+        os.environ["ZOMBIE_KILLPG_MARK"] = str(mark)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=30, grace=5, timeout=15, main=EXCLUSIVE_MAIN_DARWIN_EPERM_INTERRUPT)
+        self.assertNotEqual(result.returncode, 124, result.stderr)
+        self.assertIn("KeyboardInterrupt", result.stderr)
+        self.assertNotIn("PermissionError", result.stderr)
+        self.assert_slots_free()
+        rows = _eperm_mark(mark)
+        self.assertEqual(
+            [sig for sig, _at in rows],
+            [signal.SIGTERM, signal.SIGKILL],
+            rows)
+
+    def test_an_exclusive_darwin_eperm_is_swallowed_for_an_exited_leader(self):
+        process = _spawn_leader("import os; os._exit(0)")
+        try:
+            _wait_until_child_exited(process.pid)
+            modes = [("native", False, _ps_run("Z\n"))]
+            if hasattr(os, "waitid") and _child_has_exited(process.pid, ps_only=True):
+                modes.append(("ps", True, None))
+            for label, hide_waitid, ps in modes:
+                with self.subTest(check=label), _darwin_eperm(
+                        ps=ps, hide_waitid=hide_waitid, patch_ids=False) as kill:
+                    started = time.monotonic()
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                    self.assertLess(time.monotonic() - started, 1.5)
+                    self.assertIsNone(process.returncode)
+                    self.assertEqual(kill.call_count, 1)
+            for state in ("Z\n", "Z   \n", "Z+\n"):
+                with self.subTest(ps=state), _darwin_eperm(
+                        ps=_ps_run(state), hide_waitid=True, patch_ids=False) as kill:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                    self.assertIsNone(process.returncode)
+                    self.assertEqual(kill.call_count, 1)
+        finally:
+            process.wait(timeout=10)
+
+    def test_an_exclusive_darwin_eperm_is_reraised_for_a_live_leader(self):
+        process = _MockLeader()
+        zombie_ps_calls = {"n": 0}
+
+        def zombie_ps(*args, **kwargs):
+            zombie_ps_calls["n"] += 1
+            return _ps_run("Z\n")(*args, **kwargs)
+
+        modes = (
+            ("waitid", {"waitid": None, "ps": zombie_ps}),
+            ("ps", {"hide_waitid": True, "ps": _ps_run("S\n")}),
+            ("ps-padded", {"hide_waitid": True, "ps": _ps_run("S   \n")}),
+        )
+        for label, options in modes:
+            with self.subTest(check=label), _darwin_eperm(patch_ids=False, **options) as kill:
+                with self.assertRaises(PermissionError) as caught:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(caught.exception.errno, errno.EPERM)
+                self.assertIsNone(process.returncode)
+                self.assertEqual(kill.call_count, 1)
+        self.assertEqual(zombie_ps_calls["n"], 0)
+
+    def test_an_exclusive_darwin_eperm_is_reraised_when_the_leader_state_is_unknown(self):
+        process = _MockLeader()
+        for error in (
+            ChildProcessError(errno.ECHILD, "no child"),
+            OSError(errno.EINVAL, "waitid"),
+        ):
+            ps_calls = {"n": 0}
+
+            def counting_ps(*args, _calls=ps_calls, **kwargs):
+                _calls["n"] += 1
+                return _ps_run("Z\n")(*args, **kwargs)
+
+            with self.subTest(check="waitid", error=type(error).__name__), _darwin_eperm(
+                    ps=counting_ps, waitid=error, patch_ids=False) as kill:
+                with self.assertRaises(PermissionError) as caught:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(caught.exception.errno, errno.EPERM)
+                self.assertIsNone(process.returncode)
+                self.assertEqual(kill.call_count, 1)
+                self.assertEqual(ps_calls["n"], 0)
+        ps_cases = (
+            ("oserror", "", 0, OSError("ps unavailable")),
+            ("timeout", "", 0, subprocess.TimeoutExpired(["ps"], 1)),
+            ("status", "", 1, None),
+            ("empty", "\n", 0, None),
+            ("running", "S\n", 0, None),
+            ("padded-running", "S   \n", 0, None),
+            ("unicode", "", 0, UnicodeError("bad")),
+        )
+        for label, stdout, code, error in ps_cases:
+            with self.subTest(check="ps", ps=label), _darwin_eperm(
+                    ps=_ps_run(stdout, code, error), hide_waitid=True, patch_ids=False) as kill:
+                with self.assertRaises(PermissionError) as caught:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(caught.exception.errno, errno.EPERM)
+                self.assertIsNone(process.returncode)
+                self.assertEqual(kill.call_count, 1)
+
+    def test_an_exclusive_linux_eperm_is_reraised(self):
+        process = _MockLeader()
+        for label in ("exited", "live"):
+            counts = {"waitid": 0, "ps": 0, "kill": 0}
+
+            def waitid(*args, _counts=counts, **kwargs):
+                _counts["waitid"] += 1
+                return object()
+
+            def run(*args, _counts=counts, **kwargs):
+                command = args[0] if args else kwargs.get("args")
+                if isinstance(command, (list, tuple)) and command[:1] == ["ps"]:
+                    _counts["ps"] += 1
+                    return subprocess.CompletedProcess(list(command), 0, stdout="Z\n")
+                return subprocess.run(*args, **kwargs)
+
+            def killpg(pid, sig, _counts=counts):
+                _counts["kill"] += 1
+                raise PermissionError(errno.EPERM, "Operation not permitted")
+
+            with self.subTest(leader=label), _darwin_eperm(
+                    ps=run, killpg=killpg, waitid=waitid, platform="linux", patch_ids=False):
+                with self.assertRaises(PermissionError) as caught:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(caught.exception.errno, errno.EPERM)
+                self.assertEqual(counts["kill"], 1)
+                self.assertEqual(counts["waitid"], 0)
+                self.assertEqual(counts["ps"], 0)
+                self.assertIsNone(process.returncode)
+
+    def test_an_exclusive_killpg_success_does_not_retry(self):
+        class _Pid:
+            pid = 7
+
+        def forbid_probe(*args, **kwargs):
+            raise AssertionError("probe ran")
+
+        waitid_calls = {"n": 0}
+
+        def waitid_alive(*args, **kwargs):
+            waitid_calls["n"] += 1
+            return None
+
+        with self.subTest(platform="linux"), _darwin_eperm(
+                ps=forbid_probe, killpg=lambda pid, sig: None, waitid=forbid_probe,
+                platform="linux", patch_ids=False) as kill:
+            land._killpg_like_linux(_Pid(), signal.SIGTERM)
+            self.assertEqual(kill.call_count, 1)
+        with self.subTest(platform="darwin"), _darwin_eperm(
+                ps=forbid_probe, killpg=lambda pid, sig: None, waitid=waitid_alive,
+                platform="darwin", patch_ids=False) as kill:
+            land._killpg_like_linux(_Pid(), signal.SIGTERM)
+            self.assertEqual(kill.call_count, 1)
+            self.assertEqual(waitid_calls["n"], 1)
+
+    def test_an_exclusive_killpg_process_lookup_error_still_propagates(self):
+        class _Pid:
+            pid = 1
+
+        with _arm_kill_alarm(), mock.patch.object(land.os, "killpg", side_effect=ProcessLookupError):
+            with self.assertRaises(ProcessLookupError):
+                land._killpg_like_linux(_Pid(), signal.SIGTERM)
+
+    def test_an_exclusive_darwin_eperm_uses_only_a_permitted_zombie_seen_before_the_attempt(self):
+        """EPERM is swallowed only when the permitted zombie already existed. A later one does not."""
+        # label, exited, line, hide_waitid, platform, effect, outcome, probes
+        cases = (
+            ("swallow-waitid", True, "1000 1000 1000\n", False, "darwin", "eperm", "swallow", {"exit": 1, "uid": 1}),
+            ("swallow-ps", True, "1000 1000 1000\n", True, "darwin", "eperm", "swallow", {"exit": 1, "uid": 1}),
+            ("transition-waitid", False, "1001 1001 0\n", False, "darwin", "become", "raise", {"exit": 1, "uid": 0}),
+            ("transition-ps", False, "1001 1001 0\n", True, "darwin", "become", "raise", {"exit": 1, "uid": 0}),
+            ("live", False, "1001 1001 0\n", False, "darwin", "eperm", "raise", {"exit": 1, "uid": 0}),
+            ("live-ps", False, "1001 1001 0\n", True, "darwin", "eperm", "raise", {"exit": 1, "uid": 0}),
+            ("foreign-zombie", True, "1001 1001 1001\n", False, "darwin", "eperm", "raise", {"exit": 1, "uid": 1}),
+            ("foreign-ps", True, "1001 1001 1001\n", True, "darwin", "eperm", "raise", {"exit": 1, "uid": 1}),
+            ("signalled", True, "1000 1000 1000\n", False, "darwin", "ok", "ok", {"exit": 1, "uid": 1}),
+            ("gone", True, "1000 1000 1000\n", False, "darwin", "esrch", "esrch", {"exit": 1, "uid": 1}),
+            ("linux", True, "1000 1000 1000\n", False, "linux", "eperm", "raise", {"exit": 0, "uid": 0}),
+        )
+        for label, exited, line, hide_waitid, platform, effect, outcome, expected in cases:
+            with self.subTest(order=label):
+                state = {"exited": exited, "line": line}
+                seen = []
+                probes = {"exit": 0, "uid": 0}
+                process = _MockLeader()
+                blown = PermissionError(errno.EPERM, "Operation not permitted")
+
+                def killpg(pid, sig, _state=state, _seen=seen, _probes=probes, _effect=effect, _blown=blown):
+                    _seen.append((_state["exited"], _state["line"], dict(_probes)))
+                    if _effect == "become":
+                        _state["exited"] = True
+                        _state["line"] = "1000 1000 1000\n"
+                        raise _blown
+                    if _effect == "eperm":
+                        raise _blown
+                    if _effect == "esrch":
+                        raise ProcessLookupError(errno.ESRCH, "No such process")
+                    if _effect != "ok":
+                        raise AssertionError(_effect)
+
+                def waitid(*args, _state=state, _probes=probes, **kwargs):
+                    _probes["exit"] += 1
+                    return object() if _state["exited"] else None
+
+                def ps(*args, _state=state, _probes=probes, **kwargs):
+                    command = args[0] if args else kwargs.get("args")
+                    if not (isinstance(command, (list, tuple)) and command[:1] == ["ps"]):
+                        raise AssertionError(command)
+                    if any("uid=" in str(part) for part in command):
+                        _probes["uid"] += 1
+                        return subprocess.CompletedProcess(list(command), 0, stdout=_state["line"])
+                    _probes["exit"] += 1
+                    text = "Z\n" if _state["exited"] else "S\n"
+                    return subprocess.CompletedProcess(list(command), 0, stdout=text)
+
+                options = dict(
+                    ps=ps, getuid=1000, geteuid=1000, killpg=killpg,
+                    platform=platform, hide_waitid=hide_waitid)
+                if not hide_waitid:
+                    options["waitid"] = waitid
+                with _darwin_eperm(**options):
+                    if outcome == "raise":
+                        with self.assertRaises(PermissionError) as caught:
+                            land._killpg_like_linux(process, signal.SIGTERM)
+                        self.assertIs(caught.exception, blown)
+                    elif outcome == "esrch":
+                        with self.assertRaises(ProcessLookupError) as caught:
+                            land._killpg_like_linux(process, signal.SIGTERM)
+                        self.assertEqual(caught.exception.errno, errno.ESRCH)
+                        self.assertIsNone(caught.exception.__context__)
+                    else:
+                        land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertIsNone(process.returncode)
+                self.assertEqual(len(seen), 1)
+                self.assertEqual(seen[0][2], expected)
+                self.assertEqual(probes, expected)
+                self.assertEqual(seen[0][0], exited)
+                self.assertEqual(seen[0][1], line)
+
+    def test_an_exclusive_darwin_eperm_follows_cansignal_for_an_exited_leader(self):
+        """A zombie os.kill would accept is swallowed only when its real or saved uid is ours."""
+        process = _MockLeader()
+
+        def expect(swallow, kill):
+            if swallow:
+                land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(kill.call_count, 1)
+            else:
+                with self.assertRaises(PermissionError) as caught:
+                    land._killpg_like_linux(process, signal.SIGTERM)
+                self.assertEqual(caught.exception.strerror, "Operation not permitted")
+                self.assertNotIn("probe refused", str(caught.exception))
+                self.assertEqual(kill.call_count, 1)
+            self.assertIsNone(process.returncode)
+
+        cases = (
+            ("foreign", 1000, 1000, "1001 1001 1001\n", False),
+            ("saved-root", 1000, 1000, "1001 1001 0\n", False),
+            ("target-euid-only", 1000, 1000, "1000 1001 1001\n", False),
+            ("caller-ruid-target-ruid", 1000, 1002, "9 1000 9\n", True),
+            ("caller-ruid-target-svuid", 1000, 1002, "9 9 1000\n", True),
+            ("caller-euid-target-ruid", 1000, 1002, "9 1002 9\n", True),
+            ("caller-euid-target-svuid", 1000, 1002, "9 9 1002\n", True),
+            ("short", 1000, 1000, "1000 1000\n", False),
+            ("extra", 1000, 1000, "1000 1000 1000 1\n", False),
+            ("blank", 1000, 1000, "\n", False),
+            ("words", 1000, 1000, "a b c\n", False),
+        )
+        for label, uid, euid, line, swallow in cases:
+            with self.subTest(ids=label), _darwin_eperm(
+                    _ps_run("Z\n", uids=line), uid, euid, waitid=object()) as kill:
+                expect(swallow, kill)
+        with self.subTest(ids="foreign-ps"), _darwin_eperm(
+                _ps_run("Z\n", uids="1001 1001 1001\n"), hide_waitid=True) as kill:
+            expect(False, kill)
+        with self.subTest(ids="saved-ps"), _darwin_eperm(
+                _ps_run("Z\n", uids="9 9 1000\n"), 1000, 1002, hide_waitid=True) as kill:
+            expect(True, kill)
+        probe_errors = (
+            ("permission", PermissionError(errno.EPERM, "probe refused")),
+            ("missing", FileNotFoundError("ps")),
+            ("oserror", OSError("ps unavailable")),
+            ("timeout", subprocess.TimeoutExpired(["ps"], 1)),
+            ("unicode", UnicodeError("bad")),
+        )
+        for label, error in probe_errors:
+            with self.subTest(probe=label), _darwin_eperm(
+                    _ps_run(uid_error=error), waitid=object()) as kill:
+                expect(False, kill)
+        with self.subTest(probe="status"), _darwin_eperm(
+                _ps_run(uids="1000 1000 1000\n", uid_code=1), waitid=object()) as kill:
+            expect(False, kill)
+
+        refused = AssertionError("credential ps ran for root")
+        with self.subTest(ids="root"), _darwin_eperm(
+                _ps_run(uid_error=refused), getuid=1000, geteuid=0, waitid=object()) as kill:
+            expect(True, kill)
+        with self.subTest(ids="root-ps"), _darwin_eperm(
+                _ps_run("Z\n", uid_error=refused), getuid=1000, geteuid=0, hide_waitid=True) as kill:
+            expect(True, kill)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS killpg raises EPERM for a zombie leader")
+    def test_macos_exclusive_zombie_leader_eperm_is_swallowed(self):
+        process = _spawn_leader("import os; os._exit(0)")
+        try:
+            _wait_until_child_exited(process.pid)
+            os.kill(process.pid, 0)
+            self.assertTrue(land._permitted_zombie(process.pid))
+            calls = []
+            real_killpg = os.killpg
+
+            def counting(pid, sig):
+                calls.append((pid, sig))
+                return real_killpg(pid, sig)
+
+            with _darwin_eperm(killpg=counting, patch_ids=False):
+                started = time.monotonic()
+                land._killpg_like_linux(process, signal.SIGTERM)
+                land._killpg_like_linux(process, signal.SIGKILL)
+                elapsed = time.monotonic() - started
+            self.assertEqual(calls, [
+                (process.pid, signal.SIGTERM),
+                (process.pid, signal.SIGKILL),
+            ])
+            self.assertLess(elapsed, 1.0)
+            self.assertIsNone(process.returncode)
+            self.assertTrue(_child_has_exited(process.pid))
+        finally:
+            process.wait(timeout=10)
+
+    def test_supervised_treats_darwin_zombie_leader_eperm_like_a_successful_killpg(self):
+        class _TimedOut:
+            def __init__(self):
+                self.pid = 424242
+                self.returncode = None
+                self.stdout = mock.Mock()
+                self.calls = 0
+
+            def communicate(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise subprocess.TimeoutExpired("sh", 0 if timeout is None else timeout)
+                return (b"out", None)
+
+            def wait(self):
+                self.returncode = -9
+                return self.returncode
+
+        def run_supervised(proc):
+            with mock.patch.object(land.subprocess, "Popen", return_value=proc):
+                return land.supervised("sleep 30", self.base, 1)
+
+        cases = (
+            ("waitid", {"waitid": object(), "ps": _ps_run("Z\n", uids="1000 1000 1000\n")}, True),
+            ("ps", {"hide_waitid": True, "ps": _ps_run("Z   \n", uids="1000 1000 1000\n")}, True),
+            ("foreign-waitid", {"waitid": object(), "ps": _ps_run("Z\n", uids="1001 1001 1001\n")}, False),
+            ("foreign-ps", {"hide_waitid": True, "ps": _ps_run("Z\n", uids="1001 1001 1001\n")}, False),
+        )
+        for label, options, swallow in cases:
+            with self.subTest(check=label):
+                proc = _TimedOut()
+                with _darwin_eperm(getuid=1000, geteuid=1000, **options) as kill:
+                    if swallow:
+                        code, output = run_supervised(proc)
+                        self.assertIsNone(code)
+                        self.assertEqual(output, "out")
+                        self.assertEqual(proc.calls, 2)
+                        self.assertEqual(
+                            [call.args for call in kill.call_args_list],
+                            [(424242, signal.SIGKILL)])
+                    else:
+                        with self.assertRaises(PermissionError) as caught:
+                            run_supervised(proc)
+                        self.assertEqual(caught.exception.strerror, "Operation not permitted")
+                        self.assertEqual(proc.calls, 1)
+                        self.assertEqual(
+                            [call.args for call in kill.call_args_list],
+                            [(424242, signal.SIGKILL)])
+
+    def test_supervised_reraises_darwin_eperm_when_a_permitted_zombie_appears_after_the_attempt(self):
+        """The witness sees a live leader. killpg then makes that leader a permitted zombie."""
+        for label, hide_waitid in (("waitid", False), ("ps", True)):
+            with self.subTest(check=label):
+                state = {"exited": False, "line": "1001 1001 0\n"}
+                probes = {"exit": 0, "uid": 0}
+                seen = []
+                blown = PermissionError(errno.EPERM, "Operation not permitted")
+
+                class _TimedOut:
+                    def __init__(self):
+                        self.pid = 424242
+                        self.returncode = None
+                        self.stdout = mock.Mock()
+                        self.calls = 0
+
+                    def communicate(self, timeout=None):
+                        self.calls += 1
+                        if self.calls == 1:
+                            raise subprocess.TimeoutExpired("sh", 0 if timeout is None else timeout)
+                        return (b"out", None)
+
+                    def wait(self):
+                        self.returncode = -9
+                        return self.returncode
+
+                proc = _TimedOut()
+
+                def killpg(pid, sig, _state=state, _seen=seen, _probes=probes, _blown=blown):
+                    _seen.append((_state["exited"], dict(_probes), sig))
+                    _state["exited"] = True
+                    _state["line"] = "1000 1000 1000\n"
+                    raise _blown
+
+                def waitid(*args, _state=state, _probes=probes, **kwargs):
+                    _probes["exit"] += 1
+                    return object() if _state["exited"] else None
+
+                def ps(*args, _state=state, _probes=probes, **kwargs):
+                    command = args[0] if args else kwargs.get("args")
+                    if not (isinstance(command, (list, tuple)) and command[:1] == ["ps"]):
+                        raise AssertionError(command)
+                    if any("uid=" in str(part) for part in command):
+                        _probes["uid"] += 1
+                        return subprocess.CompletedProcess(list(command), 0, stdout=_state["line"])
+                    _probes["exit"] += 1
+                    text = "Z\n" if _state["exited"] else "S\n"
+                    return subprocess.CompletedProcess(list(command), 0, stdout=text)
+
+                options = dict(
+                    ps=ps, getuid=1000, geteuid=1000, killpg=killpg, hide_waitid=hide_waitid)
+                if not hide_waitid:
+                    options["waitid"] = waitid
+                with _darwin_eperm(**options), mock.patch.object(land.subprocess, "Popen", return_value=proc):
+                    with self.assertRaises(PermissionError) as caught:
+                        land.supervised("sleep 30", self.base, 1)
+                self.assertIs(caught.exception, blown)
+                self.assertEqual(proc.calls, 1)
+                self.assertEqual(seen, [(False, {"exit": 1, "uid": 0}, signal.SIGKILL)])
+                self.assertEqual(probes, {"exit": 1, "uid": 0})
+
+    def test_exclusive_command_reraises_darwin_eperm_when_a_permitted_zombie_appears_after_the_attempt(self):
+        """A live leader's EPERM is the original error. The cap does not return 124."""
+        self.governor(1)
+        state = {"exited": False, "line": "1001 1001 0\n"}
+        probes = {"exit": 0, "uid": 0}
+        seen = []
+        blown = PermissionError(errno.EPERM, "Operation not permitted")
+
+        class _CapProc:
+            def __init__(self):
+                self.pid = 424242
+                self.returncode = None
+                self.waits = 0
+
+            def wait(self, timeout=None):
+                self.waits += 1
+                raise subprocess.TimeoutExpired("sleep", 0.1)
+
+        proc = _CapProc()
+
+        def killpg(pid, sig, _state=state, _seen=seen, _probes=probes, _blown=blown, _proc=proc):
+            _seen.append((_state["exited"], dict(_probes), sig))
+            _proc.returncode = -15
+            self.assertEqual(len(_seen), 1)
+            self.assertFalse(_state["exited"])
+            self.assertEqual(_probes, {"exit": 1, "uid": 0})
+            _state["exited"] = True
+            _state["line"] = "1000 1000 1000\n"
+            raise _blown
+
+        def waitid(*args, _state=state, _probes=probes, **kwargs):
+            _probes["exit"] += 1
+            return object() if _state["exited"] else None
+
+        def ps(*args, **kwargs):
+            raise AssertionError("ps ran before the signal")
+
+        with self.no_slot(), _darwin_eperm(
+                ps=ps, getuid=1000, geteuid=1000, killpg=killpg, waitid=waitid), mock.patch.object(
+                    land.subprocess, "Popen", return_value=proc):
+            with self.assertRaises(PermissionError) as caught:
+                status = land.exclusive_command(["sleep", "30"], str(self.work), "1", None)
+                self.fail(f"exclusive_command returned {status}")
+        self.assertIs(caught.exception, blown)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][2], signal.SIGTERM)
+        self.assertEqual(probes, {"exit": 1, "uid": 0})
+        self.assertTrue(state["exited"])
+        self.assert_slots_free()
 
     @unittest.skipUnless(os.path.isdir("/proc"), "the test reads a zombie state from /proc")
     def test_a_signal_during_grace_after_the_leader_exits_kills_the_group(self):

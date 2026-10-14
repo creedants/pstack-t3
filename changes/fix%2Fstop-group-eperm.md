@@ -1,0 +1,1 @@
+- landing: on macOS, `slot --exclusive` treats killpg EPERM like Linux's successful killpg only when the exited unreaped leader was observed as a permitted signal target before the signal attempt, so a cap still stops the command and frees the slots.
