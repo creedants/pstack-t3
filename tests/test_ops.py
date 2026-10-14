@@ -1663,12 +1663,14 @@ class ArchiveTest(OpsTest):
                           "archived 2, failed 0\n", ""))
         self.assertEqual(done.archived, ("mid", "kid"))
 
-    def test_a_settled_thread_whose_latest_run_is_interrupted_cancelled_or_failed_is_selected_when_a_child_of_that_run_is_pending_running_or_waiting(self):
+    def test_a_settled_thread_whose_run_is_interrupted_cancelled_failed_or_rolled_back_is_selected_when_a_child_of_that_run_is_pending_running_or_waiting(self):
         cases = (
             ("interrupted", "pending", "node"),
             ("interrupted", "pending", "subagent"),
             ("cancelled", "running", "node"),
             ("failed", "waiting", "subagent"),
+            ("rolled_back", "pending", "node"),
+            ("rolled_back", "running", "subagent"),
         )
         for run_status, child_status, kind in cases:
             with self.subTest(run_status=run_status, child_status=child_status, kind=kind):

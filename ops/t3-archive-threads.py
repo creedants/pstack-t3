@@ -30,10 +30,11 @@ waiting, no pending, running, or waiting execution node or provider-native
 subagent keeps it, and it was last updated at least --older-than-hours ago. A
 pending, running, or waiting execution node keeps its thread id from being
 archived unless that node's run id is a run whose status is interrupted,
-cancelled, or failed. A pending, running, or waiting provider-native subagent
-keeps its thread id and its child thread id from being archived unless that
-row's run id is a run whose status is interrupted, cancelled, or failed. A
-thread with a live ancestor is skipped unless that ancestor is archived or is
+cancelled, failed, or rolled back. A pending, running, or waiting
+provider-native subagent keeps its thread id and its child thread id from
+being archived unless that row's run id is a run whose status is interrupted,
+cancelled, failed, or rolled back. A thread with a live ancestor is skipped
+unless that ancestor is archived or is
 named with --coordinator, whose finished children are archived by age like any
 other. A descendant with a run in one of those statuses keeps every ancestor
 from being archived. A descendant kept by that node rule or that subagent rule
@@ -159,7 +160,7 @@ def choose(db, project, hours, keep, coordinator, top_level_settled):
         sys.exit(f"expected one project titled {project!r}, found {len(pids)}")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
     live = {t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs where status in ('running','queued','starting','preparing','waiting')") if t is not None}
-    dead_runs = {run for (run,) in c.execute("select run_id from orchestration_v2_projection_runs where status in ('interrupted','cancelled','failed')") if run is not None}
+    dead_runs = {run for (run,) in c.execute("select run_id from orchestration_v2_projection_runs where status in ('interrupted','cancelled','failed','rolled_back')") if run is not None}
 
     def open_threads(rows):
         return {thread for thread, run in rows if thread is not None and run not in dead_runs}
