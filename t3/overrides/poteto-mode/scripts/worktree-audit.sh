@@ -355,15 +355,30 @@ else
 fi
 [ -n "$base" ] && echo "# base: $base"
 
-# PR state by branch, fetched once. Empty if gh or jq is unavailable.
+# PR state by branch, fetched once as [{number, state, head}] with a lowercase
+# state. Origin when its CLI can read this repo's PRs, otherwise gh.
 prs=$(mktemp)
 trap 'rm -f "$prs"' EXIT
-if command -v gh >/dev/null && command -v jq >/dev/null; then
-	gh pr list --author "@me" --state all --limit 1000 \
-		--json number,state,headRefName 2>/dev/null > "$prs" || echo "[]" > "$prs"
-else
+if ! command -v jq >/dev/null 2>&1 || { ! command -v origin >/dev/null 2>&1 && ! command -v gh >/dev/null 2>&1; }; then
 	echo "warn: gh or jq missing; PR shows -" >&2
 	echo "[]" > "$prs"
+else
+	if command -v origin >/dev/null 2>&1 \
+		&& raw=$(origin pr list --author "@me" --state all --limit 1000 \
+			--json number,status,headRef 2>/dev/null) \
+		&& printf '%s' "$raw" | jq '[.[] | {number, state: .status, head: .headRef}]' > "$prs" 2>/dev/null \
+		&& [ -s "$prs" ]; then
+		:
+	elif command -v gh >/dev/null 2>&1 \
+		&& raw=$(gh pr list --author "@me" --state all --limit 1000 \
+			--json number,state,headRefName 2>/dev/null) \
+		&& printf '%s' "$raw" | jq '[.[] | {number, state: (.state | ascii_downcase), head: .headRefName}]' > "$prs" 2>/dev/null \
+		&& [ -s "$prs" ]; then
+		:
+	else
+		echo "warn: gh or jq missing; PR shows -" >&2
+		echo "[]" > "$prs"
+	fi
 fi
 
 printf "SIZE\tAGE\tACTIVE\tMERGED\tDIRTY\tREMOTE\tPR\tT3\tBUCKET\tWORKTREE\n"
@@ -434,11 +449,11 @@ EOF
 
 	pr=""
 	[ -n "$branch" ] && pr=$(jq -r --arg b "$branch" \
-		'.[] | select(.headRefName==$b) | "#\(.number)/\(.state)"' "$prs" 2>/dev/null | head -1)
+		'.[] | select(.head==$b) | "#\(.number)/\(.state)"' "$prs" 2>/dev/null | head -1)
 	[ -z "$pr" ] && pr="-"
 
 	case "$dirty" in wip:*) bucket=hold-wip ;; *)
-		case "$pr" in *OPEN*) bucket=hold-open-pr ;; *)
+		case "$pr" in */open|*/draft) bucket=hold-open-pr ;; *)
 			if [ "$recent" = yes ]; then bucket=verify-recent
 			elif [ "$merged" = YES ] || [ "$pr" != "-" ]; then bucket=safe
 			else bucket=review; fi ;;

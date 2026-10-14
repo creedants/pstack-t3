@@ -42,7 +42,7 @@ Each reviewer gets `mode: "async"`, `role: "review"`, a `task` that is the fille
 
 Retain every returned `taskId`. If `delegate_task` rejects a target, apply the runtime's fallback, spawn on the fallback seat, and say which reviewer changed and why. Do not block the review on a target issue. Never silently drop a seat.
 
-Read `references/reviewer-prompt.md` and fill in the same template for every reviewer with the stated intent, the diff or file contents, the rubric from `references/rubric.md`, and the code-quality lens from `references/code-quality-review.md`.
+Read `references/reviewer-prompt.md` and fill in the same template for every reviewer with the stated intent, the diff or file contents, the rubric from `references/rubric.md`, and the code-quality lens from `references/code-quality-review.md`. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
 
 Collect each reviewer's result per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation). If a reviewer fails or returns nothing usable, proceed with N-1 and record the dropout.
 

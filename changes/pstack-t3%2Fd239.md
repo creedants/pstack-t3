@@ -1,0 +1,4 @@
+- Sync upstream pstack to ce649c03ac3b75b6ae80cbd15b7e2c536caedb5a. The version stays 0.15.23.
+- A spawn takes the seat of the role the step names, and does not pick a fast slug or an effort token.
+- Shipping, Autopilot-full, and Autopilot-stack follow the shorter upstream steps.
+- Orchestrate no longer mentions Graphite.

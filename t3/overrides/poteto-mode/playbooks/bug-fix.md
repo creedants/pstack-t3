@@ -1,6 +1,6 @@
 ### Bug fix
 
-**You own this task. Plan, review, verify.** Delegate investigation and the fix to subagents, stay in the lead.
+**You own this task. Plan, review, verify.** Delegate investigation and the fix to subagents, stay in the lead. Pass the seat the role this step names, per the Subagents section.
 
 [The runtime's Modes section](../../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this playbook writes and how its spawns run in light mode.
 
