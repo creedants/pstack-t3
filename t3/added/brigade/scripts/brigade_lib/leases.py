@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.shared import BrigadeError, slug
-from brigade_lib.store import COUNTED_STATES, holder_prefix, is_admin
+from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
 
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 
@@ -44,6 +44,148 @@ def worker_cap(meta):
 
 def autofire_of(meta):
     return meta.get("autofire") or "normal"
+
+
+@dataclass(frozen=True)
+class KindLimits:
+    """The per-kind settings restaurant.json holds. caps is {kind: cap} and review is {kind: mode}.
+
+    A kind that is absent has no cap, or no review depth.
+    """
+    caps: dict
+    review: dict
+
+
+@dataclass(frozen=True)
+class Flight:
+    """How many items hold a worker slot, by kind and by goal. A kind or a goal with none is absent."""
+    by_kind: dict
+    by_goal: dict
+
+
+@dataclass(frozen=True)
+class Hold:
+    """Why a spend control holds an item, as the standing's kind and the words both doors print."""
+    standing: str
+    words: str
+
+
+def kind_limits(meta):
+    """The caps and review depths restaurant.json holds, as a KindLimits.
+
+    set --cap and set --review are the boundary that refuses bad text, so an entry this drops was written by
+    hand. A cap is a whole number of 1 or more and a depth is full or light. A non-object value reads as no
+    setting.
+    """
+    caps, review = {}, {}
+    for key, found in (("caps", caps), ("review", review)):
+        stored = meta.get(key)
+        if not isinstance(stored, dict):
+            continue
+        for kind, value in stored.items():
+            if kind not in KINDS:
+                continue
+            if key == "review":
+                if value in MODES:
+                    review[kind] = value
+            elif isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+                caps[kind] = value
+    return KindLimits(caps, review)
+
+
+def counted_pairs(dishes, labels):
+    """(kind, goal) per row of dishes.tsv that holds a worker slot, as read_labels reads the two cells."""
+    return tuple((labels.items[row["id"]].kind, labels.items[row["id"]].goal)
+                 for row in dishes if row["state"] in COUNTED_STATES)
+
+
+def flight_of(pairs):
+    """The Flight these pairs give. An empty kind or goal is not counted."""
+    by_kind, by_goal = {}, {}
+    for kind, goal in pairs:
+        if kind:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        if goal:
+            by_goal[goal] = by_goal.get(goal, 0) + 1
+    return Flight(by_kind, by_goal)
+
+
+def with_item(flight, label):
+    """The Flight one more item of this label gives."""
+    by_kind, by_goal = dict(flight.by_kind), dict(flight.by_goal)
+    if label.kind:
+        by_kind[label.kind] = by_kind.get(label.kind, 0) + 1
+    if label.goal:
+        by_goal[label.goal] = by_goal.get(label.goal, 0) + 1
+    return Flight(by_kind, by_goal)
+
+
+@dataclass(frozen=True)
+class StandingText:
+    count_label: str
+    line_words: str
+
+
+STANDINGS = {
+    "start": StandingText("startable", "startable"),
+    "rides": StandingText("riding", "rides with {why}"),
+    "blocked": StandingText("blocked", "blocked, {why}"),
+    "unknown": StandingText("unknown", "unknown, no paths recorded"),
+    "decision": StandingText("decisions", "decision for the owner"),
+    "below": StandingText("below auto-start", "below auto-start"),
+    "paused": StandingText("goal paused", "{why}"),
+    "cap": StandingText("kind cap", "{why}"),
+    "share": StandingText("goal share", "{why}"),
+    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle while an urgent or normal ticket waits"),
+}
+
+
+def admit(label, goal, flight, limits):
+    """Why a spend control holds an item of this kind under this goal, or None.
+
+    `goal` is the Goal the ticket's goal names, or None for unassigned work. A paused goal comes first, then a
+    kind cap, then a goal share. Each compares what is in flight with the setting.
+    """
+    if goal is not None and goal.state == "paused":
+        return Hold("paused", "its goal is paused")
+    held = flight.by_kind.get(label.kind, 0)
+    cap = limits.caps.get(label.kind)
+    if cap is not None and held >= cap:
+        return Hold("cap", f"the {label.kind} cap holds ({held} of {cap})")
+    if goal is not None and goal.share and flight.by_goal.get(goal.id, 0) >= int(goal.share):
+        at = flight.by_goal.get(goal.id, 0)
+        return Hold("share", f"the {goal.id} share holds ({at} of {goal.share})")
+    return None
+
+
+def review_mode(limits, kind):
+    """The review depth recorded for this kind, or None when the kind has none."""
+    return limits.review.get(kind)
+
+
+@dataclass(frozen=True)
+class Refill:
+    """What the spend controls hold now and what is in flight under them, as the refill and fire read them.
+
+    limits is what kind_limits read, goals is {goal id: Goal} from goals.tsv, and flight counts the dishes that
+    hold a worker slot by kind and by goal.
+    """
+    limits: KindLimits
+    goals: dict
+    flight: Flight
+
+    def hold(self, label):
+        """Why a spend control holds an item of this label, or None."""
+        return admit(label, self.goals.get(label.goal), self.flight, self.limits)
+
+    def started(self, label):
+        """The Refill one more item of this label gives, for the next ticket in the same pass."""
+        return Refill(self.limits, self.goals, with_item(self.flight, label))
+
+
+def refill_of(meta, dishes, labels):
+    """The Refill of this store, read under the caller's store lock."""
+    return Refill(kind_limits(meta), labels.goals, flight_of(counted_pairs(dishes, labels)))
 
 
 def workers_line(meta, running):

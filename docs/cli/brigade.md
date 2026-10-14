@@ -41,7 +41,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -61,6 +61,8 @@ record the head chef thread, a schedule id, or the reporting level
 | `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none records that the project has no build, and "" removes the setting |
 | `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none records that the project has no check, and "" removes the setting |
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
+| `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
+| `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 
 ## brigade.py ticket
 
@@ -180,7 +182,7 @@ record a new open goal and print its id; refused when an open or paused goal has
 | `--name NAME` | yes |  |  | what the goal is called, such as "activity view" |
 | `--purpose PURPOSE` | yes |  |  | one sentence that says why this line of work exists |
 | `--done DONE` | yes |  |  | one sentence that states the test that shows the goal is reached |
-| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, and it does not affect which tickets start |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; goal list prints it, and the refill holds a ticket of the goal back once that many slots hold the goal's items |
 
 ## brigade.py goal set
 
@@ -193,12 +195,12 @@ change a goal's state, name, purpose, done test, or share
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `id` | yes |  |  |  |
-| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused is recorded and printed. It does not affect which tickets start. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
+| `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused starts no ticket of the goal, whatever its priority or the auto-start level, and the goal's items in flight finish and land. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
 | `--evidence EVIDENCE` |  |  |  | one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; with --state done, what shows the done test is met; with --state dropped, why the goal is dropped; refused without --state done or --state dropped |
 | `--name NAME` |  |  |  | replaces the goal's name; refused when it is empty or only whitespace |
 | `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when it is empty or only whitespace |
 | `--done DONE` |  |  |  | replaces the goal's done test; refused when it is empty or only whitespace |
-| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; "" clears it; goal list prints it, and it does not affect which tickets start |
+| `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; "" clears it; goal list prints it, and the refill holds a ticket of the goal back once that many slots hold the goal's items |
 
 ## brigade.py goal list
 
