@@ -1639,6 +1639,104 @@ exit 0
         self.assertEqual(self.owner_state(), before)
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "3"), "docs/ at generation 3")
 
+    def test_an_interrupted_in_process_status_cannot_leave_land_db_open(self):
+        self.init()
+        database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+        argv = ["--repo", str(self.work), "status"]
+        env = os.environ.copy()
+        fired = {"done": False}
+
+        def _open_land_db(database):
+            prefix = os.fspath(database)
+            found = []
+            probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                names = os.listdir(probe)
+            finally:
+                os.close(probe)
+            for name in names:
+                if not name.isdigit():
+                    continue
+                try:
+                    target = os.readlink(f"/proc/self/fd/{name}")
+                except OSError:
+                    continue
+                if target.startswith(prefix):
+                    found.append(target)
+            for obj in gc.get_objects():
+                if not isinstance(obj, sqlite3.Connection):
+                    continue
+                try:
+                    rows = obj.execute("PRAGMA database_list").fetchall()
+                except sqlite3.ProgrammingError:
+                    continue
+                for row in rows:
+                    path = row[2]
+                    if path and str(path).startswith(prefix):
+                        found.append(str(path))
+            return found
+
+        def trace(frame, event, arg):
+            if fired["done"] or event != "call":
+                return trace
+            filename = frame.f_globals.get("__file__", "")
+            if frame.f_code.co_name == "status" and filename.endswith("land.py"):
+                fired["done"] = True
+                raise KeyboardInterrupt
+            return trace
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        sys.settrace(trace)
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                drive(SCRIPT, argv, env=env)
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+        self.assertTrue(fired["done"])
+        self.assertEqual(_open_land_db(database), [])
+        code, out, err = drive(SCRIPT, argv, env=env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(_open_land_db(database), [])
+
+    def test_an_in_process_owner_line_cannot_ignore_pythonioencoding(self):
+        self.init()
+        prefix = "caf\u00e9/"
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        try:
+            for generation, encoding, expected in (
+                ("1", "ascii", (1, "")),
+                ("2", "ascii:replace", (0, "caf?/ at generation 2\n")),
+            ):
+                with self.subTest(encoding=encoding):
+                    argv = ["--repo", str(self.work), "owner", "--prefix", prefix,
+                            "--generation", generation]
+                    env = os.environ.copy()
+                    env["PYTHONIOENCODING"] = encoding
+                    code, out, _err = drive(SCRIPT, argv, env=env)
+                    child = real_process(ProcessReason.INHERITED_ENV, SCRIPT, argv, env=env)
+                    self.assertEqual((code, out), (child.returncode, child.stdout))
+                    self.assertEqual((code, out), expected)
+        finally:
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+
+    def test_a_fresh_interpreter_prints_the_owner_line_when_pythonutf8_overrides_locale_c(self):
+        self.init()
+        argv = ["--repo", str(self.work), "owner", "--prefix", "caf\u00e9/", "--generation", "2"]
+        env = os.environ.copy()
+        env.pop("PYTHONIOENCODING", None)
+        env.update({"LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "1", "PYTHONCOERCECLOCALE": "0"})
+        child = real_process(ProcessReason.INHERITED_ENV, SCRIPT, argv, env=env)
+        self.assertEqual((child.returncode, child.stdout), (0, "caf\u00e9/ at generation 2\n"))
+
     def test_lease_writes_refuse_an_owner_below_the_floor_and_change_nothing(self):
         self.init()
         self.assertEqual(self.claim("docs/D3", "a.txt", "--owner", "docs/@1"), "L1")
@@ -5125,6 +5223,70 @@ os.execv({real!r}, [{real!r}, *args])
         self.assertEqual(slots.step(waiter), "started")
         slots.release(waiter)
         self.assertEqual(slots.entries(), ["holder", "waiter"])
+
+    def test_a_displaced_exclusive_that_retries_while_the_slot_is_busy_keeps_later_callers_waiting(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        exclusive = slots.start("exclusive", "--exclusive", stepped=True)
+        self.assertEqual(slots.settle(exclusive), "waiting")
+        tickets = slots.governor / "tickets"
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["1-exclusive"])
+        (tickets / "1-exclusive").unlink()
+        self.assertEqual(slots.step(exclusive), "waiting")
+        self.assertEqual([path.stat().st_nlink for path in tickets.iterdir()], [1])
+        ordinary = slots.start("ordinary", stepped=True)
+        self.assertEqual(slots.settle(ordinary), "waiting")
+        slots.release(holder)
+        self.assertEqual(slots.step(ordinary), "waiting")
+        self.assertEqual(slots.step(exclusive), "started")
+        slots.release(exclusive)
+        self.assertEqual(slots.step(ordinary), "started")
+        slots.release(ordinary)
+        self.assertEqual(slots.entries(), ["holder", "exclusive", "ordinary"])
+        self.assertEqual(slots.peak(), 1)
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
+
+    def test_a_number_2_retry_with_a_number_3_alias_cannot_keep_a_landing_caller_waiting(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        first = slots.start("first", stepped=True)
+        second = slots.start("second", stepped=True)
+        self.assertEqual(slots.settle(first), "waiting")
+        self.assertEqual(slots.settle(second), "waiting")
+        tickets = slots.governor / "tickets"
+        os.link(tickets / "1-worker", tickets / "3-exclusive")
+        self.assertEqual(slots.step(second), "waiting")
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["2-worker"])
+        self.assertEqual((tickets / "2-worker").stat().st_nlink, 1)
+        slots.release(holder)
+        landing = slots.start("landing", pool="landing", stepped=True)
+        self.assertEqual(slots.settle(landing), "started")
+        self.assertFalse(first.started)
+        self.assertFalse(second.started)
+        slots.release(landing)
+        self.assertEqual(slots.step(second), "started")
+        slots.release(second)
+        self.assertEqual(slots.step(first), "started")
+        slots.release(first)
+        self.assertEqual(slots.entries(), ["holder", "landing", "second", "first"])
+        self.assertEqual(slots.peak(), 1)
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
 
     def test_a_filesystem_that_refuses_the_turn_mutex_flock_does_not_run_the_command(self):
         self.governor(1)
