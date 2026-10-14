@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.leases import ClaimError, Hold, claim_lease, holder, refusal_kind, refill_of, release_lease, running_workers, with_fragment, worker_cap
+from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, refusal_kind, refill_of, release_lease, running_workers, worker_cap
 from brigade_lib.reviews import fix_round_refusal, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug
 from brigade_lib.store import KIND_CHOICE, LEASED_STATES, STATION_KIND
@@ -402,7 +402,9 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 raise BrigadeError(gate.line)
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
-            leased = with_fragment(paths, known) if paths else ""
+            claimed = claim_paths(project_root, paths, known) if paths else Claim("", ())
+            leased = claimed.text
+            added = claimed.added
             label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
             if refusal:
                 raise BrigadeError(refusal)
@@ -457,7 +459,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 for row in rows:
                     if row["id"] in ids:
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
-                return f"{dish} (lease {lease} held by {holder(restaurant, dish)})" if lease else dish
+                return fired_line(dish, lease, holder(restaurant, dish), added)
             if full and not refusal:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
                                doc_item)

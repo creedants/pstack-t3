@@ -1,0 +1,4 @@
+- kind feature
+- fire leases the generated copies and doc pages the build layout maps from each path it is given.
+- launch turns catalog and child parse exceptions into one stderr line.
+- frame filter applies after one error prefix strip.
