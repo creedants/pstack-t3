@@ -29,7 +29,7 @@
 - When `atexit._ncallbacks()` grows by the number of handlers recorded through `atexit.register` during an in-process call, those handlers run against the captured stderr before the buffers are read. Handlers that predate the call are not run. Recorded handlers are not left registered.
 - A non-empty `PYTHONDONTWRITEBYTECODE` in the call environment sets `sys.dont_write_bytecode` true for that call. An absent or empty value sets it false for the call. The saved flag returns after the call.
 - An in-process call builds captured stdout and stderr from `PYTHONIOENCODING` in the environment the program sees, before the program runs. A non-empty name before the first colon is the encoding. A non-empty handler after that colon is the error mode. An absent or empty value uses the locale encoding and strict errors.
-- When `cwd` is set, an in-process call changes to that directory before it runs `program`. The program path is the path the caller passed.
+- When `cwd` is set, an in-process call changes to that directory before it runs `program`. The program path is the path the caller passed. Changed in 0.6.0: the helper joins the invocation's working directory with the program as typed before calling `runpy.run_path`. `sys.argv[0]` stays the program as typed.
 - An in-process call sets `warnings.filters` to the entries recorded when `tests.in_process` was imported. The previous filters list and its entries return after the call.
 - Sync upstream pstack to ce649c03ac3b75b6ae80cbd15b7e2c536caedb5a. The version stays 0.15.23.
 - A spawn takes the seat of the role the step names, and does not pick a fast slug or an effort token.
