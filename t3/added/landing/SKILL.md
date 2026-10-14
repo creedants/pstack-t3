@@ -42,6 +42,7 @@ $L status --holder <restaurant>/<dish>   # that holder's entries with their SHAs
 $L status --holder <restaurant>/<dish> --sha <sha>   # only its entries at exactly that commit
 $L slot -- npm test          # run a heavy command under a governor slot
 $L slot --exclusive -- npm run bench   # hold every slot: nothing else heavy runs while it measures
+$L slot --slots 2 -- npm test   # take 2 worker slots in one admission
 ```
 
 Every command takes `--help`.
@@ -172,5 +173,7 @@ Every command except `slot` stops with `land: <config path> sets core.worktree t
 ## Capacity
 
 The governor defaults to one slot per four cores, at most four. Set it in `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/governor/governor.json` as `{"slots": N}`. Landing checks use their own slot, so workers never starve the queue. A command already inside a slot runs nested commands without taking another. Dev servers do not take slots. Start them with the preview tools.
+
+A command that itself runs several heavy processes, such as a whole test suite, takes that many worker slots with `slot --slots N` in one admission, unless it is already inside a slot. With no `--slots` and no `--exclusive`, the count is one. Except for a command already inside a slot, a count above the governor's worker slots is refused and the command does not run. Without `--exclusive`, a count that is not a positive integer is refused before the command runs, and `--slots` with `--exclusive` is refused before the command runs.
 
 A measurement taken while other work loads the machine is wrong, not noisy. `slot --exclusive` takes the landing slot and every worker slot in a fixed order, waits for running heavy commands to finish, and holds them until the measurement ends. It must be the outermost slot. Nested inside another slot it refuses. An exclusive hold ends 600 seconds after it takes every slot. land.py stops that command's process group and releases the slots. The group gets SIGTERM, then SIGKILL 5 seconds later. land.py prints one stderr line and exits 124. `--for SECONDS` sets the cap for that hold. A value over 600 needs `--reason TEXT`. Waiters see the reason. The maximum is 7200 seconds. There is no way to turn the cap off. A worker slot and the landing slot have no cap. A command waiting 15 seconds for a slot prints on stderr who holds the busy slots of its kind, and names unknown when no record proves a holder.
