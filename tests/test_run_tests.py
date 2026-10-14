@@ -1390,6 +1390,8 @@ class RunTestsTest(unittest.TestCase):
                     with open(PROJECT / "ran", "a") as out:
                         out.write("sibling\\n")
         """)
+        for name in [name for name in sys.modules if name == "brigade" or name.startswith("brigade.") or name == "test_sibling"]:
+            del sys.modules[name]
         plan = self.plan_of(self.tests)
         for name in [name for name in sys.modules if name == "brigade" or name.startswith("brigade.") or name == "test_sibling"]:
             del sys.modules[name]
