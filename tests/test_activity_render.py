@@ -193,17 +193,12 @@ def measure(browser, document, directory):
 class RenderHeightTest(unittest.TestCase):
     def setUp(self):
         in_ci = os.environ.get("CI") == "true"
-        probe = getattr(self.__class__, "_probe", None)
-        if probe is None:
-            directory = tempfile.TemporaryDirectory()
-            self.addClassCleanup(directory.cleanup)
-            root = Path(directory.name)
-            browser, unavailable = select_browser(root)
-            if browser is None and in_ci:
-                browser, unavailable = select_browser(root)
-            probe = (root, browser, unavailable)
-            self.__class__._probe = probe
-        self.root, self.browser, unavailable = probe
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.browser, unavailable = select_browser(self.root)
+        if self.browser is None and in_ci:
+            self.browser, unavailable = select_browser(self.root)
         if self.browser is None:
             reason = f"no working headless browser: {'; '.join(unavailable)}"
             if in_ci:
@@ -369,10 +364,9 @@ class ProbeContractTest(unittest.TestCase):
     def test_ci_miss_fails_after_two_tries_and_a_local_miss_skips_after_one(self):
         calls = []
         miss = lambda _directory: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
-        self.addCleanup(setattr, RenderHeightTest, "_probe", None)
         with mock.patch(f"{__name__}.select_browser", miss):
             for ci, n in (("", 1), ("true", 2)):
-                calls.clear(); RenderHeightTest._probe = None
+                calls.clear()
                 with mock.patch.dict(os.environ, {"CI": ci}):
                     result = unittest.TextTestRunner(stream=io.StringIO()).run(RenderHeightTest("test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"))
                 self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * n, True, ci == "true", ci != "true"))
@@ -398,6 +392,7 @@ class ProbeContractTest(unittest.TestCase):
         if "_probe" in RenderHeightTest.__dict__:
             del RenderHeightTest._probe
         RenderHeightTest.doClassCleanups()
+        before = set(RenderHeightTest.__dict__)
         with mock.patch.object(RenderHeightTest, height, body), mock.patch(
             f"{__name__}.select_browser", return_value=("/bin/true", [])
         ), mock.patch.dict(os.environ, {"CI": "true"}):
@@ -405,7 +400,7 @@ class ProbeContractTest(unittest.TestCase):
                 result = unittest.TextTestRunner(stream=io.StringIO()).run(unittest.TestSuite([RenderHeightTest(height)]))
                 self.assertEqual((result.testsRun, result.failures, result.errors, result.skipped), (1, [], [], []))
         self.assertEqual([root.exists() for root in roots], [False, False])
-        self.assertNotIn("_probe", RenderHeightTest.__dict__)
+        self.assertEqual(set(RenderHeightTest.__dict__), before)
         self.assertEqual(RenderHeightTest._class_cleanups, [])
 
     def test_ci_miss_contract_leaves_the_class_and_its_directories_as_it_found_them(self):
@@ -437,21 +432,24 @@ class ProbeContractTest(unittest.TestCase):
             del RenderHeightTest._probe
         RenderHeightTest.doClassCleanups()
         with self.subTest("no class attribute"):
-            before = len(made)
+            before_made = len(made)
+            before = set(RenderHeightTest.__dict__)
             result = run_contract()
-            created = made[before:]
+            created = made[before_made:]
             self.assertEqual(result.errors, [])
-            self.assertNotIn("_probe", RenderHeightTest.__dict__)
+            self.assertEqual(set(RenderHeightTest.__dict__), before)
             self.assertEqual(RenderHeightTest._class_cleanups, [])
             self.assertEqual(len(created), 2)
             self.assertEqual([path.exists() for path in created], [False, False])
         with self.subTest("existing class attribute"):
             sentinel = ("sentinel-root", "/bin/true", ["sentinel"])
             RenderHeightTest._probe = sentinel
-            before = len(made)
+            before_made = len(made)
+            before = set(RenderHeightTest.__dict__)
             result = run_contract()
-            created = made[before:]
+            created = made[before_made:]
             self.assertEqual(result.errors, [])
+            self.assertEqual(set(RenderHeightTest.__dict__), before)
             self.assertIs(RenderHeightTest._probe, sentinel)
             self.assertEqual(RenderHeightTest._class_cleanups, [])
             self.assertEqual(len(created), 2)
