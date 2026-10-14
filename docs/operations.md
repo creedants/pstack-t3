@@ -109,7 +109,7 @@ A run in progress is a run whose status is running, queued, starting, preparing,
 - A value outside its key's characters is refused, so a path with a space in it cannot be configured.
 - `--help` and the usage text need a valid config, like every other call.
 - A thread row with no update time ends the archive script with a traceback and exit 1 when its age is compared.
-- A missing database ends the archive script with a traceback and exit 1. So does a missing `server-runtime.json` when there is a thread to archive and the run is not a dry run. A missing `T3_CODE_MCP_AUTHORIZATION` in that case prints one line on standard error and exits 1.
+- A missing database ends the archive script with a traceback and exit 1. So does a missing `server-runtime.json` when there is a thread to archive, the run is neither `--dry-run` nor `--selection-only`, and `T3_CODE_MCP_AUTHORIZATION` is set. With that variable not set, the script prints one line on standard error and exits 1 before it reads the file.
 
 `tests/test_ops.py` runs the script against a stand-in. No test covers the following.
 
