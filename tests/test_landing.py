@@ -162,7 +162,7 @@ def _close_live_owners(numbers):
             steps += 1
         return steps
 
-    # Close the wrapper before the raw file so the wrapper cannot close a reused number from its finalizer.
+    # Deepest first, so the wrapper flushes its buffer before the raw file closes.
     owners.sort(key=depth, reverse=True)
     for obj in owners:
         try:
