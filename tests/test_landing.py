@@ -80,18 +80,37 @@ class _Saved:
     fds: dict
 
 
-def _descriptors():
-    probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+def _listed_descriptors():
+    """Return the descriptor directory and every descriptor number except the probe.
+
+    The directory is /proc/self/fd when that path exists, and /dev/fd otherwise.
+    The probe is the descriptor opened to read the directory, and its number is left out.
+    """
+    directory = "/proc/self/fd" if os.path.exists("/proc/self/fd") else "/dev/fd"
+    probe = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         names = os.listdir(probe)
     finally:
         os.close(probe)
-    found = {}
     probe_name = str(probe)
-    for name in names:
-        if name == probe_name or not name.isdigit():
-            continue
-        number = int(name)
+    numbers = [int(name) for name in names if name != probe_name and name.isdigit()]
+    return directory, numbers
+
+
+def _descriptor_path(directory, number):
+    """Return the path that descriptor number refers to.
+
+    An entry under /proc/self/fd is a symlink. An entry under /dev/fd is not, and its path comes from F_GETPATH.
+    """
+    if directory == "/proc/self/fd":
+        return os.readlink(f"/proc/self/fd/{number}")
+    return fcntl.fcntl(number, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode()
+
+
+def _descriptors():
+    _, numbers = _listed_descriptors()
+    found = {}
+    for number in numbers:
         if number < 3:
             continue
         try:
@@ -1732,18 +1751,12 @@ exit 0
         fired = {"done": False}
 
         def _open_land_db(database):
-            prefix = os.fspath(database)
+            directory, numbers = _listed_descriptors()
+            prefix = os.fspath(database) if directory == "/proc/self/fd" else os.path.realpath(database)
             found = []
-            probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                names = os.listdir(probe)
-            finally:
-                os.close(probe)
-            for name in names:
-                if not name.isdigit():
-                    continue
+            for number in numbers:
                 try:
-                    target = os.readlink(f"/proc/self/fd/{name}")
+                    target = _descriptor_path(directory, number)
                 except OSError:
                     continue
                 if target.startswith(prefix):
@@ -7918,7 +7931,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def identity_pause(self, now, before="Owner <owner@example.com>"):
         return (f"the configured git identity is now {now} and the queue last ran as {before}; "
-                f"check git config --show-origin user.email in {self.work}, then run land.py resume")
+                f"check git config --show-origin user.email in {os.path.realpath(self.work)}, then run land.py resume")
 
     UNSET = "unset (user.name and user.email do not both have a non-empty value)"
 
