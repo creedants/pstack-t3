@@ -25,7 +25,7 @@ For each candidate, call `t3_thread_read` with `view: "messages"` and `limit: 1`
 
 One message, three `delegate_task` calls with `mode: "async"` and `role: "review"`. Reviewers need MCP access to look up the tickets, chat threads, and observability traces the thread references, so keep the child's tools and let the brief carry the read-only constraint.
 
-Each reviewer and the synthesizer name a role. Set `target` to the target resolved from that role per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles). Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed. Pass the seat the role this step names, per the Subagents section.
+Each reviewer and the synthesizer name a role. Set `target` to the target resolved from that role per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles). Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
 
 | Lens | Role | Prompt template |
 |---|---|---|
