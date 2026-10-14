@@ -1,0 +1,2 @@
+- kind polish
+- step 4.1 of the brigade skill says fire claims a landing lease on those paths plus the generated copies and doc pages the build layout maps from them when the project has one.
