@@ -654,7 +654,6 @@ EXEMPT_FUNCTION = "assert_refused_choice"
 EXEMPT_FILE = "test_check.py"
 EXEMPT_METHOD_PREFIX = "test_library_wording"
 REQUIRED_SCAN = (
-    "ops/t3-nightly-update.sh",
     "ops/t3-archive-threads.py",
     "ops/config.example",
     "docs/operations.md",

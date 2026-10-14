@@ -773,6 +773,10 @@ class SkillCountCheckTest(unittest.TestCase):
         self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+def planted_entry():
+    return next(label for label in check.REQUIRED_SCAN if label.endswith("t3-archive-threads.py"))
+
+
 class CheckoutRuleTest(unittest.TestCase):
     def _directory(self):
         temporary = tempfile.TemporaryDirectory()
@@ -836,14 +840,13 @@ class CheckoutRuleTest(unittest.TestCase):
             "tests/test_check.py:6: contains the argparse phrase 'unrecognized arguments'. Assert the exit status and the words this project wrote, or call assert_refused_choice",
         ])
 
-    def _ops_repo(self, nightly, doc):
+    def _ops_repo(self, planted, doc):
         root = self._directory()
         ops = root / "ops"
         ops.mkdir()
-        (ops / "t3-nightly-update.sh").write_text(nightly)
-        (ops / "t3-archive-threads.py").write_text("echo ok\n")
-        (ops / "config.example").write_text("echo ok\n")
-        (ops / "notes.txt").write_text("hello from the build\n")
+        for label in check.REQUIRED_SCAN:
+            if label.startswith("ops/"):
+                (ops / Path(label).name).write_text(planted if label.endswith("t3-archive-threads.py") else "echo ok\n")
         document = root / "docs" / "operations.md"
         document.parent.mkdir()
         document.write_text(doc)
@@ -858,7 +861,7 @@ class CheckoutRuleTest(unittest.TestCase):
         who = check.Identity("/opt/plant-home", "planter", "plantbox")
         ops, document = self._ops_repo("APPS=/opt/plant-home/apps\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's home directory",
+            f"{planted_entry()}:1: holds this machine's home directory",
         ])
 
     def test_dev_null_does_not_report_the_user_dev(self):
@@ -870,14 +873,14 @@ class CheckoutRuleTest(unittest.TestCase):
         who = check.Identity("/home/dev", "dev", "docs")
         ops, document = self._ops_repo("see ~dev/notes\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's user name",
+            f"{planted_entry()}:1: holds this machine's user name",
         ])
 
     def test_a_longer_root_path_reports_the_home_and_not_the_user(self):
         who = check.Identity("/root", "root", "x")
         ops, document = self._ops_repo("cd /root/foo\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's home directory",
+            f"{planted_entry()}:1: holds this machine's home directory",
         ])
 
     def test_a_quoted_ops_conf_does_not_report_the_host(self):
@@ -889,7 +892,7 @@ class CheckoutRuleTest(unittest.TestCase):
         who = check.Identity("/home/alice", "alice", "ops")
         ops, document = self._ops_repo("ping ops.lan\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+            f"{planted_entry()}:1: holds this machine's host name",
         ])
 
     def test_config_example_after_one_slash_does_not_report_the_host(self):
@@ -901,7 +904,7 @@ class CheckoutRuleTest(unittest.TestCase):
         who = check.Identity("/home/alice", "alice", "config")
         ops, document = self._ops_repo("open //config/share\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+            f"{planted_entry()}:1: holds this machine's host name",
         ])
 
     def test_dollar_app_prev_does_not_report_the_host(self):
@@ -913,14 +916,14 @@ class CheckoutRuleTest(unittest.TestCase):
         who = check.Identity("/home/alice", "alice", "app")
         ops, document = self._ops_repo("curl app:3773/x\n", "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's host name",
+            f"{planted_entry()}:1: holds this machine's host name",
         ])
 
     def test_a_quoted_dotted_host_reports_the_host(self):
         who = check.Identity("/home/zed", "zed", "box7.lan")
         text = 'ssh "box7.lan"\nHOST="box7.lan"\nserver = "box7.lan"\nssh "BOX7.LAN"\nssh "box7.lan:2222"\n'
         ops, document = self._ops_repo(text, "ok\n")
-        hit = "ops/t3-nightly-update.sh:%d: holds this machine's host name"
+        hit = f"{planted_entry()}:%d: holds this machine's host name"
         self.assertEqual(check.machine_value_findings(ops, document, who), [hit % n for n in range(1, 6)])
 
     def test_a_dotted_host_in_a_slash_path_reports_the_host(self):
@@ -928,8 +931,8 @@ class CheckoutRuleTest(unittest.TestCase):
         text = "export BACKUPS=/mnt/box7.lan/archives\nscp backup:/box7.lan/data dest\n"
         ops, document = self._ops_repo(text, "ok\n")
         self.assertEqual(check.machine_value_findings(ops, document, who), [
-            "ops/t3-nightly-update.sh:1: holds this machine's host name",
-            "ops/t3-nightly-update.sh:2: holds this machine's host name",
+            f"{planted_entry()}:1: holds this machine's host name",
+            f"{planted_entry()}:2: holds this machine's host name",
         ])
 
     def _pair(self, roles, install):
