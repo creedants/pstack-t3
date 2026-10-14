@@ -331,21 +331,38 @@ def _discard_ticket(path):
         pass
 
 
-def _unlink_ticket(path):
-    """Remove this directory entry. Leave any other link to the inode."""
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+def _drop_aliased(tickets):
+    """Unlink every regular-file ticket-shaped name in this directory whose link count is not 1.
+
+    Names that fail TICKET are ignored. An lstat or unlink failure skips that name.
+    A name that is not a regular file stays for _open_ticket.
+    """
+    stale = []
+    for name in os.listdir(tickets):
+        if TICKET.fullmatch(name) is None:
+            continue
+        path = tickets / name
+        try:
+            info = os.lstat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink == 1:
+            continue
+        stale.append(path)
+    for path in stale:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
-def _open_ticket(path, aliased):
-    """Return a read-only file opened for a shared probe, or None when path is not a ticket.
+def _open_ticket(path):
+    """Return a read-only file opened for a shared probe, or None when path is not a live ticket.
 
     O_NONBLOCK keeps a fifo from blocking the open, and O_NOFOLLOW keeps a symlink from being followed.
-    lstat reads the link count before that open. A regular file with another link is unlinked here, and so is
-    a later name of an inode this scan already recorded. Any link outside this directory stays.
     An entry whose lstat or open fails is not a live waiter and does not stop the scan.
+    After a successful open, an fstat whose link count is not 1 closes the descriptor, calls _drop_aliased on the parent, and returns None.
+    An unreadable single-link open returns None and leaves the name.
     """
     try:
         info = os.lstat(path)
@@ -353,12 +370,6 @@ def _open_ticket(path, aliased):
         return None
     if not stat.S_ISREG(info.st_mode):
         _discard_ticket(path)
-        return None
-    key = (info.st_dev, info.st_ino)
-    if info.st_nlink != 1:
-        aliased.add(key)
-    if key in aliased:
-        _unlink_ticket(path)
         return None
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
@@ -373,34 +384,31 @@ def _open_ticket(path, aliased):
     except OSError:
         os.close(descriptor)
         return None
-    key = (info.st_dev, info.st_ino)
     if info.st_nlink != 1:
-        aliased.add(key)
-    if stat.S_ISREG(info.st_mode) and key not in aliased:
-        return os.fdopen(descriptor, "r")
-    os.close(descriptor)
+        os.close(descriptor)
+        _drop_aliased(path.parent)
+        return None
     if not stat.S_ISREG(info.st_mode):
+        os.close(descriptor)
         _discard_ticket(path)
         return None
-    _unlink_ticket(path)
-    return None
+    return os.fdopen(descriptor, "r")
 
 
 def _waiting(tickets, before):
     """Return (number, kind) for each live ticket below before, in ticket order. before None means every ticket.
 
-    A ticket is live while its waiter holds the exclusive flock on its file, so the shared probe fails.
+    _drop_aliased runs first. A ticket is live while its waiter holds the exclusive flock on its file, so the shared probe fails.
     Each scanned ticket whose shared probe succeeds is deleted. An unreadable single-link entry is skipped and stays in place. Runs under the turn mutex.
     The probe is a shared lock because an exclusive flock on a read-only open fails with EBADF where flock is a POSIX lock.
     The caller passes its own number, because its own ticket would probe free where flock is per process.
-    An inode seen with more than one link in this scan is not a live ticket under any of its names.
     """
+    _drop_aliased(tickets)
     found = sorted((int(match[1]), match[2], match[0]) for match in map(TICKET.fullmatch, os.listdir(tickets))
                    if match and (before is None or int(match[1]) < before))
     live = []
-    aliased = set()
     for number, kind, name in found:
-        probe = _open_ticket(tickets / name, aliased)
+        probe = _open_ticket(tickets / name)
         if probe is None:
             continue
         with probe:
@@ -729,6 +737,50 @@ def _held(demand, repo, command, cap=None, reason=None):
         _release_records(admission.records)
 
 
+def _ticket_named(ticket):
+    """True when this open file is still the sole regular-file name of its inode."""
+    if ticket is None:
+        return False
+    try:
+        info = os.fstat(ticket.fileno())
+        named = os.lstat(ticket.name)
+    except OSError:
+        return False
+    return (stat.S_ISREG(named.st_mode) and named.st_nlink == 1
+            and (named.st_dev, named.st_ino) == (info.st_dev, info.st_ino))
+
+
+def _mint_ticket(tickets, kind, waiting):
+    """Create one exclusively locked ticket and return its number and file."""
+    number = max((live for live, _ in waiting), default=0) + 1
+    while os.path.lexists(tickets / f"{number}-{kind}"):
+        number += 1
+    ticket = open(tickets / f"{number}-{kind}", "x")
+    try:
+        # open creates the file as 0o666 masked by the umask. fchmod sets 0o600 anyway.
+        os.fchmod(ticket.fileno(), 0o600)
+        fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        ticket.close()
+        raise
+    return number, ticket
+
+
+def _unlink_our_name(ticket):
+    """Unlink ticket.name when lstat still names this open file. A missing path or a different inode stays."""
+    try:
+        info = os.lstat(ticket.name)
+        held = os.fstat(ticket.fileno())
+    except OSError:
+        return
+    if (info.st_dev, info.st_ino) != (held.st_dev, held.st_ino):
+        return
+    try:
+        os.unlink(ticket.name)
+    except FileNotFoundError:
+        pass
+
+
 def _admit(demand, repo=None, command=None, cap=None, reason=None):
     """Take the slots demand needs, or wait for them behind a ticket named with demand.kind. Returns an _Admission.
 
@@ -753,10 +805,7 @@ def _admit(demand, repo=None, command=None, cap=None, reason=None):
                 _demand(kind, demand.count, governor_slots())
             except LandError:
                 if ticket is not None:
-                    try:
-                        os.unlink(ticket.name)
-                    except FileNotFoundError:
-                        pass
+                    _unlink_our_name(ticket)
                 raise
             waiting = _waiting(tickets, number)
             earlier = {waiter for _, waiter in waiting if _conflicts(waiter, kind)}
@@ -765,23 +814,17 @@ def _admit(demand, repo=None, command=None, cap=None, reason=None):
                 taken = _try_take(demand, handles, slots)
             if taken is not None:
                 acquired = time.monotonic()
-            if taken is None and ticket is None:
-                number = max((live for live, _ in waiting), default=0) + 1
-                while os.path.lexists(tickets / f"{number}-{kind}"):
-                    number += 1
-                ticket = open(tickets / f"{number}-{kind}", "x")
-                # open creates the file as 0o666 masked by the umask. fchmod sets 0o600 anyway.
-                os.fchmod(ticket.fileno(), 0o600)
-                fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if taken is None and not _ticket_named(ticket):
+                if ticket is not None:
+                    ticket.close()
+                    ticket = None
+                number, ticket = _mint_ticket(tickets, kind, waiting)
             if taken is None:
                 busy = _busy_names(handles, _slot_names(kind, slots))
             else:
                 records = _publish(kind, handles, taken, repo, command, cap, reason)
             if taken is not None and ticket is not None:
-                try:
-                    os.unlink(ticket.name)
-                except FileNotFoundError:
-                    pass
+                _unlink_our_name(ticket)
             fcntl.flock(mutex, fcntl.LOCK_UN)
             if taken is not None:
                 names = [name for name, handle in handles.items() if handle in taken]

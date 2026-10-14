@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 import unittest
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -125,21 +126,70 @@ def _save():
     )
 
 
+def _close_live_owners(numbers):
+    stale = set(numbers)
+    if not stale:
+        return
+    owners = []
+    for obj in gc.get_objects():
+        # A dead weakref proxy raises ReferenceError from the lookup, and the default does not catch it.
+        try:
+            fileno = getattr(obj, "fileno", None)
+            if not callable(fileno):
+                continue
+            number = fileno()
+        except Exception:
+            continue
+        if type(number) is not int or number not in stale:
+            continue
+        owners.append(obj)
+
+    def depth(obj):
+        seen = set()
+        current = obj
+        steps = 0
+        while id(current) not in seen:
+            seen.add(id(current))
+            try:
+                nxt = getattr(current, "buffer", None)
+                if nxt is None:
+                    nxt = getattr(current, "raw", None)
+            except Exception:
+                break
+            if nxt is None:
+                break
+            current = nxt
+            steps += 1
+        return steps
+
+    # Deepest first, so the wrapper flushes its buffer before the raw file closes.
+    owners.sort(key=depth, reverse=True)
+    for obj in owners:
+        try:
+            obj.close()
+        except (OSError, ValueError):
+            pass
+
+
 def _close_new_fds(before):
     first = _descriptors()
     second = _descriptors()
+    stale = []
     for number in first.keys() & second.keys():
         if first[number] != second[number]:
             continue
         if before.get(number) == first[number]:
             continue
+        stale.append(number)
+    _close_live_owners(stale)
+    for number in stale:
         try:
             os.close(number)
         except OSError:
             continue
 
 
-def _restore(saved, *, close_fds=True):
+def _restore(saved):
     """Each step runs even when an earlier step raises. Then the first error is raised."""
     first = None
 
@@ -191,21 +241,39 @@ def _restore(saved, *, close_fds=True):
     step(lambda: setattr(sys, "dont_write_bytecode", saved.dont_write_bytecode))
     # Collect unreachable connections so their descriptors close before os.close.
     step(gc.collect)
-    if close_fds:
-        step(lambda: _close_new_fds(saved.fds))
+    step(lambda: _close_new_fds(saved.fds))
     if first is not None:
         raise first
 
 
-def _capture_stream(line_buffering):
+def _child_codecs(env):
+    """Return ((stdout encoding, stdout errors), (stderr encoding, stderr errors)).
+
+    env None means os.environ. Read PYTHONIOENCODING from that mapping.
+    Absent, empty, and ':' keep sys.stdout.encoding and sys.stdout.errors.
+    'name' and 'name:' use that encoding with strict. ':handler' keeps the
+    process encoding and uses the handler. 'name:handler' uses both.
+    Stderr uses the same encoding and backslashreplace.
+    """
+    mapping = os.environ if env is None else env
+    encoding = sys.stdout.encoding
+    errors = sys.stdout.errors
+    raw = mapping.get("PYTHONIOENCODING")
+    if raw:
+        name, _, handler = raw.partition(":")
+        if name:
+            encoding = name
+        if handler:
+            errors = handler
+        elif name:
+            errors = "strict"
+    return (encoding, errors), (encoding, "backslashreplace")
+
+
+def _capture_stream(line_buffering, encoding, errors):
     raw = io.BytesIO()
     wrapper = io.TextIOWrapper(
-        raw,
-        encoding=_pipe_encoding(),
-        errors="strict",
-        newline=None,
-        line_buffering=line_buffering,
-    )
+        raw, encoding=encoding, errors=errors, newline=None, line_buffering=line_buffering)
     return raw, wrapper
 
 
@@ -269,8 +337,9 @@ def drive(script, argv, *, env, cwd=None):
     """Run one land.py command and return its exit code, stdout, and stderr.
 
     PSTACK_TEST_REAL_PROCESS is read from the process environment on entry, before env is installed and before the script loads. The value 1 starts a real process. Any other value runs in this process.
-    After an in-process call, including when main raises, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored.
-    An in-process call closes unreachable file objects before the script loads and again before the call returns. On an in-process return, os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
+    After an in-process call, including when main raises or KeyboardInterrupt leaves the call, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored.
+    An in-process call closes unreachable file objects before the script loads. When the call ends, it closes each connection opened through sqlite3.connect during the call, then os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
+    Stdout and stderr use the codecs _child_codecs reads from env before that env is installed.
     Each in-process call loads the script again. The imported land module is not the module that runs.
     """
     arguments = [str(arg) for arg in argv]
@@ -278,12 +347,20 @@ def drive(script, argv, *, env, cwd=None):
         result = _run([sys.executable, str(script), *arguments], env=env, cwd=cwd)
         return result.returncode, result.stdout, result.stderr
     saved = _save()
-    raised = True
+    stdout_codec, stderr_codec = _child_codecs(env)
+    connections = []
+    previous_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = previous_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
     try:
         # Collect cyclic garbage before this run opens land.db.
         gc.collect()
-        out_raw, out = _capture_stream(False)
-        err_raw, err = _capture_stream(True)
+        out_raw, out = _capture_stream(False, *stdout_codec)
+        err_raw, err = _capture_stream(True, *stderr_codec)
         sys.stdout = out
         sys.stderr = err
         if cwd is not None:
@@ -292,13 +369,21 @@ def drive(script, argv, *, env, cwd=None):
             os.environ.clear()
             os.environ.update(dict(env))
         sys.argv = [str(script), *arguments]
+        sqlite3.connect = connect
         code = _status(lambda: _load(script)(list(arguments)))
         out.flush()
         err.flush()
-        raised = False
         return code, _text_from_pipe(out_raw.getvalue()), _text_from_pipe(err_raw.getvalue())
     finally:
-        _restore(saved, close_fds=not raised)
+        sqlite3.connect = previous_connect
+        try:
+            for connection in connections:
+                try:
+                    connection.close()
+                except sqlite3.ProgrammingError:
+                    pass
+        finally:
+            _restore(saved)
 
 
 def real_process(reason, script, argv, *, env, cwd=None, timeout=None):
@@ -1638,6 +1723,225 @@ exit 0
                          "land: docs/ is at generation 2; a floor never lowers")
         self.assertEqual(self.owner_state(), before)
         self.assertEqual(self.land("owner", "--prefix", "docs/", "--generation", "3"), "docs/ at generation 3")
+
+    def test_an_interrupted_in_process_status_cannot_leave_land_db_open(self):
+        self.init()
+        database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+        argv = ["--repo", str(self.work), "status"]
+        env = os.environ.copy()
+        fired = {"done": False}
+
+        def _open_land_db(database):
+            prefix = os.fspath(database)
+            found = []
+            probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                names = os.listdir(probe)
+            finally:
+                os.close(probe)
+            for name in names:
+                if not name.isdigit():
+                    continue
+                try:
+                    target = os.readlink(f"/proc/self/fd/{name}")
+                except OSError:
+                    continue
+                if target.startswith(prefix):
+                    found.append(target)
+            for obj in gc.get_objects():
+                if not isinstance(obj, sqlite3.Connection):
+                    continue
+                try:
+                    rows = obj.execute("PRAGMA database_list").fetchall()
+                except sqlite3.ProgrammingError:
+                    continue
+                for row in rows:
+                    path = row[2]
+                    if path and str(path).startswith(prefix):
+                        found.append(str(path))
+            return found
+
+        def trace(frame, event, arg):
+            if fired["done"] or event != "call":
+                return trace
+            filename = frame.f_globals.get("__file__", "")
+            if frame.f_code.co_name == "status" and filename.endswith("land.py"):
+                fired["done"] = True
+                raise KeyboardInterrupt
+            return trace
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        sys.settrace(trace)
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                drive(SCRIPT, argv, env=env)
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+        self.assertTrue(fired["done"])
+        self.assertEqual(_open_land_db(database), [])
+        code, out, err = drive(SCRIPT, argv, env=env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(_open_land_db(database), [])
+
+    def test_a_retained_interrupt_cannot_close_a_descriptor_a_later_open_reused(self):
+        self.init()
+        target = next(
+            number
+            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
+            if line == "    out = Outcome([], [], [], [], [])"
+        )
+        captured = []
+        opened = []
+
+        def trace(frame, event, arg):
+            if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
+                return trace
+            if not frame.f_code.co_filename.endswith("land.py"):
+                return trace
+            captured.append(frame.f_locals["handle"].fileno())
+            raise KeyboardInterrupt
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        retained = None
+        sys.settrace(trace)
+        try:
+            try:
+                drive(SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            except KeyboardInterrupt as error:
+                retained = error
+            sys.settrace(None)
+            self.assertEqual(len(captured), 1)
+            self.assertIsNotNone(retained)
+            self.assertIsNotNone(retained.__traceback__)
+            number = captured[0]
+            database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+            probe = os.open(database.parent / ".queue.lock", os.O_RDWR)
+            opened.append(probe)
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.close(probe)
+            matched = None
+            while matched is None:
+                fd = os.open(self.base / "later-file", os.O_CREAT | os.O_RDWR, 0o600)
+                opened.append(fd)
+                if fd == number:
+                    matched = fd
+                elif fd > number:
+                    break
+            self.assertEqual(matched, number, opened)
+            self.assertEqual(os.write(matched, b"before"), 6)
+            retained.__traceback__ = None
+            retained = None
+            gc.collect()
+            self.assertEqual(os.fstat(matched).st_size, 6)
+            self.assertEqual(os.write(matched, b"after"), 5)
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+            for fd in opened:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def test_a_dead_weakref_proxy_cannot_stop_interrupted_descriptor_cleanup(self):
+        self.init()
+
+        class Referent:
+            pass
+
+        referent = Referent()
+        proxy = weakref.proxy(referent)
+        del referent
+
+        target = next(
+            number
+            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
+            if line == "    out = Outcome([], [], [], [], [])"
+        )
+        captured = []
+        opened = []
+
+        def trace(frame, event, arg):
+            if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
+                return trace
+            if not frame.f_code.co_filename.endswith("land.py"):
+                return trace
+            captured.append(frame.f_locals["handle"])
+            raise KeyboardInterrupt
+
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        retained = None
+        sys.settrace(trace)
+        try:
+            try:
+                drive(SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            except KeyboardInterrupt as error:
+                retained = error
+            sys.settrace(None)
+            self.assertEqual(len(captured), 1)
+            self.assertIsInstance(retained, KeyboardInterrupt)
+            self.assertTrue(captured[0].closed)
+            database = next((self.base / "state").glob("pstack-t3/landing/*/land.db"))
+            probe = os.open(database.parent / ".queue.lock", os.O_RDWR)
+            opened.append(probe)
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            retained.__traceback__ = None
+            retained = None
+        finally:
+            sys.settrace(None)
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+            for fd in opened:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def test_an_in_process_owner_line_cannot_ignore_pythonioencoding(self):
+        self.init()
+        prefix = "caf\u00e9/"
+        previous = os.environ.get("PSTACK_TEST_REAL_PROCESS")
+        os.environ["PSTACK_TEST_REAL_PROCESS"] = "0"
+        try:
+            for generation, encoding, expected in (
+                ("1", "ascii", (1, "")),
+                ("2", "ascii:replace", (0, "caf?/ at generation 2\n")),
+            ):
+                with self.subTest(encoding=encoding):
+                    argv = ["--repo", str(self.work), "owner", "--prefix", prefix,
+                            "--generation", generation]
+                    env = os.environ.copy()
+                    env["PYTHONIOENCODING"] = encoding
+                    code, out, _err = drive(SCRIPT, argv, env=env)
+                    child = real_process(ProcessReason.INHERITED_ENV, SCRIPT, argv, env=env)
+                    self.assertEqual((code, out), (child.returncode, child.stdout))
+                    self.assertEqual((code, out), expected)
+        finally:
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+
+    def test_a_fresh_interpreter_prints_the_owner_line_when_pythonutf8_overrides_locale_c(self):
+        self.init()
+        argv = ["--repo", str(self.work), "owner", "--prefix", "caf\u00e9/", "--generation", "2"]
+        env = os.environ.copy()
+        env.pop("PYTHONIOENCODING", None)
+        env.update({"LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "1", "PYTHONCOERCECLOCALE": "0"})
+        child = real_process(ProcessReason.INHERITED_ENV, SCRIPT, argv, env=env)
+        self.assertEqual((child.returncode, child.stdout), (0, "caf\u00e9/ at generation 2\n"))
 
     def test_lease_writes_refuse_an_owner_below_the_floor_and_change_nothing(self):
         self.init()
@@ -5126,6 +5430,71 @@ os.execv({real!r}, [{real!r}, *args])
         slots.release(waiter)
         self.assertEqual(slots.entries(), ["holder", "waiter"])
 
+    def test_a_displaced_exclusive_that_retries_while_the_slot_is_busy_keeps_later_callers_waiting(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        exclusive = slots.start("exclusive", "--exclusive", stepped=True)
+        self.assertEqual(slots.settle(exclusive), "waiting")
+        tickets = slots.governor / "tickets"
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["1-exclusive"])
+        (tickets / "1-exclusive").unlink()
+        self.assertEqual(slots.step(exclusive), "waiting")
+        self.assertEqual([path.stat().st_nlink for path in tickets.iterdir()], [1])
+        ordinary = slots.start("ordinary", stepped=True)
+        self.assertEqual(slots.settle(ordinary), "waiting")
+        slots.release(holder)
+        self.assertEqual(slots.step(ordinary), "waiting")
+        self.assertEqual(slots.step(exclusive), "started")
+        slots.release(exclusive)
+        self.assertEqual(slots.step(ordinary), "started")
+        slots.release(ordinary)
+        self.assertEqual(slots.entries(), ["holder", "exclusive", "ordinary"])
+        self.assertEqual(slots.peak(), 1)
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
+
+    def test_a_number_2_retry_with_a_number_3_alias_cannot_keep_a_landing_caller_waiting(self):
+        slots = SlotCallers(self, 1)
+        holder = slots.enter(slots.start("holder"))
+        first = slots.start("first", stepped=True)
+        self.assertEqual(slots.settle(first), "waiting")
+        second = slots.start("second", stepped=True)
+        self.assertEqual(slots.settle(second), "waiting")
+        tickets = slots.governor / "tickets"
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["1-worker", "2-worker"])
+        os.link(tickets / "1-worker", tickets / "3-exclusive")
+        self.assertEqual(slots.step(second), "waiting")
+        self.assertEqual(sorted(path.name for path in tickets.iterdir()), ["2-worker"])
+        self.assertEqual((tickets / "2-worker").stat().st_nlink, 1)
+        slots.release(holder)
+        landing = slots.start("landing", pool="landing", stepped=True)
+        self.assertEqual(slots.settle(landing), "started")
+        self.assertFalse(first.started)
+        self.assertFalse(second.started)
+        slots.release(landing)
+        self.assertEqual(slots.step(second), "started")
+        slots.release(second)
+        self.assertEqual(slots.step(first), "started")
+        slots.release(first)
+        self.assertEqual(slots.entries(), ["holder", "landing", "second", "first"])
+        self.assertEqual(slots.peak(), 1)
+        held = {}
+        for word, name, *files in slots.events():
+            if word == "exit":
+                held.pop(name, None)
+                continue
+            own = set(files)
+            for other, theirs in held.items():
+                self.assertEqual(own & theirs, set(), f"{name} and {other}")
+            held[name] = own
+
     def test_a_filesystem_that_refuses_the_turn_mutex_flock_does_not_run_the_command(self):
         self.governor(1)
         marker = self.base / "ran"
@@ -6551,6 +6920,7 @@ os.execv({real!r}, [{real!r}, *args])
         os.mkfifo(release)
         # Keep both ends open so the write that resumes the probe never waits for a reader.
         gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, gate)
         reporter = real_popen(
             ProcessReason.GOVERNOR,
             [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "worker-0",
