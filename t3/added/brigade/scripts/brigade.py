@@ -447,7 +447,7 @@ def parser():
         help=(
             "print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.\n"
             "\n"
-            "The object names instanceId and model. It names options when the seat has an options object. "
+            "The object always names instanceId, model, and options. A seat with no options object prints an empty options object. "
             "providerInstanceId is renamed to instanceId. "
             "A brief with one Mode line of full or light is passed as --brief-mode. "
             "bug-fix, perf-issue, and hillclimb use that role name. "
@@ -579,12 +579,33 @@ def selection_from_show(payload, role):
     model = seat.get("model") if isinstance(seat, dict) else None
     if not isinstance(provider, str) or not isinstance(model, str):
         raise BrigadeError(f"{role} seat lacks providerInstanceId or model")
-    selected = {"instanceId": provider, "model": model}
+    selected = {"instanceId": provider, "model": model, "options": {}}
     if "options" in seat:
         if not isinstance(seat["options"], dict):
             raise BrigadeError(f"{role} seat options are not an object")
         selected["options"] = seat["options"]
     return selected
+
+
+def catalog_refusal(path):
+    """Refusal for a directory, non-UTF-8 bytes, or JSON that is not an object. None for every other path."""
+    if Path(path).is_dir():
+        return f"{path} is a directory"
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return f"{path} is not UTF-8 text"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return f"{path} is JSON that is not an object"
+    return None
 
 
 def launch_text(restaurant, args):
@@ -607,6 +628,9 @@ def launch_text(restaurant, args):
             raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
     role = launch_role(station)
     mode = brief_mode(ident, text)
+    reason = catalog_refusal(args.catalog)
+    if reason is not None:
+        raise BrigadeError(reason)
     argv = [sys.executable, str(roles_script()), "show", "--cwd", project_root, "--catalog", args.catalog,
             "--parent", args.parent, "--role", role]
     if mode is not None:
