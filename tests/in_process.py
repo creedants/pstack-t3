@@ -62,16 +62,7 @@ class _State:
     signals: tuple
     atexit_count: int
     atexit_register: object
-    os_module: object
-    os_dict: dict | None
-    fcntl_module: object
-    fcntl_dict: dict | None
-    shutil_module: object
-    shutil_dict: dict | None
-    tempfile_module: object
-    tempfile_dict: dict | None
-    secrets_module: object
-    secrets_dict: dict | None
+    namespaces: tuple
     platform: str
     filters: list
     filters_contents: list
@@ -121,11 +112,18 @@ def _stdin(text, encoding, errors):
     return io.TextIOWrapper(raw, encoding=encoding, errors=errors, newline="\n")
 
 
-def _loaded(name):
-    module = sys.modules.get(name)
-    if module is None:
-        return None, None
-    return module, dict(module.__dict__)
+def _namespaces():
+    saved = []
+    seen = set()
+    for module in tuple(sys.modules.values()):
+        if module is None or id(module) in seen:
+            continue
+        namespace = getattr(module, "__dict__", None)
+        if not isinstance(namespace, dict):
+            continue
+        seen.add(id(module))
+        saved.append((module, dict(namespace)))
+    return tuple(saved)
 
 
 def _save():
@@ -137,11 +135,6 @@ def _save():
             handlers.append((signum, signal.getsignal(signum)))
         except (OSError, ValueError):
             continue
-    os_module, os_dict = _loaded("os")
-    fcntl_module, fcntl_dict = _loaded("fcntl")
-    shutil_module, shutil_dict = _loaded("shutil")
-    tempfile_module, tempfile_dict = _loaded("tempfile")
-    secrets_module, secrets_dict = _loaded("secrets")
     return _State(
         cwd=os.getcwd(),
         environ=dict(os.environ),
@@ -160,16 +153,7 @@ def _save():
         signals=tuple(handlers),
         atexit_count=atexit._ncallbacks(),
         atexit_register=atexit.register,
-        os_module=os_module,
-        os_dict=os_dict,
-        fcntl_module=fcntl_module,
-        fcntl_dict=fcntl_dict,
-        shutil_module=shutil_module,
-        shutil_dict=shutil_dict,
-        tempfile_module=tempfile_module,
-        tempfile_dict=tempfile_dict,
-        secrets_module=secrets_module,
-        secrets_dict=secrets_dict,
+        namespaces=_namespaces(),
         platform=sys.platform,
         filters=warnings.filters,
         filters_contents=list(warnings.filters),
@@ -198,11 +182,8 @@ def _restore(saved):
             if first is None:
                 first = error
 
-    step(lambda: _restore_namespace(saved.os_module, saved.os_dict))
-    step(lambda: _restore_namespace(saved.fcntl_module, saved.fcntl_dict))
-    step(lambda: _restore_namespace(saved.shutil_module, saved.shutil_dict))
-    step(lambda: _restore_namespace(saved.tempfile_module, saved.tempfile_dict))
-    step(lambda: _restore_namespace(saved.secrets_module, saved.secrets_dict))
+    for module, namespace in saved.namespaces:
+        step(lambda module=module, namespace=namespace: _restore_namespace(module, namespace))
     step(lambda: os.chdir(saved.cwd))
 
     def environ():
