@@ -367,13 +367,12 @@ def _execute(saved, invocation):
             code = _code_from_exit(exit_error.code)
         except Exception:
             kind, value, tb = sys.exc_info()
+            helper = os.path.realpath(__file__)
+            runpy_file = os.path.realpath(runpy.__file__)
             while tb is not None:
                 filename = tb.tb_frame.f_code.co_filename
-                if (
-                    filename != __file__
-                    and os.path.basename(filename) != "runpy.py"
-                    and filename != "<frozen runpy>"
-                ):
+                real = os.path.realpath(filename)
+                if real != helper and real != runpy_file and filename != "<frozen runpy>":
                     break
                 tb = tb.tb_next
             traceback.print_exception(kind, value, tb)
