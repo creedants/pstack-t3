@@ -9,7 +9,7 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 Investigate the motivation and intent behind code. The companion `how` skill answers what the code does and how it works. `why` answers what forces led to its shape.
 
-Each spawn below names a role. Resolve its seat per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles) and spawn with `delegate_task`. Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed.
+Each spawn below names a role. Resolve its seat per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles) and spawn with `delegate_task`. Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
 
