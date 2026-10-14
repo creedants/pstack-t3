@@ -1,0 +1,3 @@
+- `LandingTest.land`, `lease_check`, and `run_land` run `land.py` in the test process unless `PSTACK_TEST_REAL_PROCESS` is `1`.
+- `land_in_another_process` runs `land.py` in a separate process while `leave_awaiting_merge_without_a_pr`, `test_a_crash_after_the_push_is_recovered_as_landed_without_pushing_again`, or `test_push_mode_settles_a_missing_branch_only_from_gits_absent_line` holds `land.db` open.
+- A call with reason `GOVERNOR`, `HELP`, `INHERITED_ENV`, `KILLED_CALLER`, `RACE`, or `LOCK` starts a real process.

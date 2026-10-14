@@ -1,13 +1,17 @@
 import ast
 import contextlib
+import enum
 import errno
 import fcntl
+import gc
 import hashlib
 import inspect
 import io
 import json
+import locale
 import os
 import re
+import runpy
 import shlex
 import shutil
 import signal
@@ -17,7 +21,9 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -30,6 +36,282 @@ import land  # noqa: E402
 
 REVIEWER = "codex/gpt-6.1-sol"
 ADMIN = ("--owner", ".admin/@1")
+
+
+class ProcessReason(enum.Enum):
+    """Why this call is a separate interpreter."""
+
+    GOVERNOR = "slot governor used across processes"
+    KILLED_CALLER = "killing a caller"
+    LOCK = "process-level lock held across calls"
+    HELP = "-h output"
+    INHERITED_ENV = "inherited environment"
+    RACE = "race between processes"
+
+
+def _pipe_encoding():
+    getencoding = getattr(locale, "getencoding", None)
+    if getencoding is None:
+        return locale.getpreferredencoding(False)
+    return getencoding()
+
+
+def _text_from_pipe(data):
+    """Decode the way subprocess text mode decodes a pipe."""
+    return data.decode(_pipe_encoding(), "strict").replace("\r\n", "\n").replace("\r", "\n")
+
+
+@dataclass(frozen=True)
+class _Saved:
+    cwd: str
+    environ: dict
+    argv: list
+    argv_contents: list
+    stdin: object
+    stdout: object
+    stderr: object
+    umask: int
+    signals: tuple
+    dont_write_bytecode: bool
+    fds: dict
+
+
+def _descriptors():
+    probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        names = os.listdir(probe)
+    finally:
+        os.close(probe)
+    found = {}
+    probe_name = str(probe)
+    for name in names:
+        if name == probe_name or not name.isdigit():
+            continue
+        number = int(name)
+        if number < 3:
+            continue
+        try:
+            info = os.fstat(number)
+        except OSError:
+            continue
+        found[number] = (info.st_dev, info.st_ino)
+    return found
+
+
+def _save():
+    umask = os.umask(0)
+    os.umask(umask)
+    handlers = []
+    for signum in range(1, signal.NSIG):
+        try:
+            handlers.append((signum, signal.getsignal(signum)))
+        except (OSError, ValueError):
+            continue
+    return _Saved(
+        cwd=os.getcwd(),
+        environ=dict(os.environ),
+        argv=sys.argv,
+        argv_contents=list(sys.argv),
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        umask=umask,
+        signals=tuple(handlers),
+        dont_write_bytecode=sys.dont_write_bytecode,
+        fds=_descriptors(),
+    )
+
+
+def _close_new_fds(before):
+    first = _descriptors()
+    second = _descriptors()
+    for number in first.keys() & second.keys():
+        if first[number] != second[number]:
+            continue
+        if before.get(number) == first[number]:
+            continue
+        try:
+            os.close(number)
+        except OSError:
+            continue
+
+
+def _restore(saved, *, close_fds=True):
+    """Each step runs even when an earlier step raises. Then the first error is raised."""
+    first = None
+
+    def step(action):
+        nonlocal first
+        try:
+            action()
+        except Exception as error:
+            if first is None:
+                first = error
+
+    step(lambda: os.chdir(saved.cwd))
+
+    def environ():
+        os.environ.clear()
+        os.environ.update(saved.environ)
+
+    step(environ)
+
+    def argv():
+        if sys.argv is not saved.argv:
+            sys.argv = saved.argv
+        saved.argv[:] = saved.argv_contents
+
+    step(argv)
+
+    def stdio():
+        sys.stdin = saved.stdin
+        sys.stdout = saved.stdout
+        sys.stderr = saved.stderr
+
+    step(stdio)
+    step(lambda: os.umask(saved.umask))
+
+    def signals():
+        for signum, handler in saved.signals:
+            try:
+                current = signal.getsignal(signum)
+            except (OSError, ValueError):
+                continue
+            if current == handler:
+                continue
+            try:
+                signal.signal(signum, handler)
+            except (OSError, ValueError):
+                continue
+
+    step(signals)
+    step(lambda: setattr(sys, "dont_write_bytecode", saved.dont_write_bytecode))
+    # Collect unreachable connections so their descriptors close before os.close.
+    step(gc.collect)
+    if close_fds:
+        step(lambda: _close_new_fds(saved.fds))
+    if first is not None:
+        raise first
+
+
+def _capture_stream(line_buffering):
+    raw = io.BytesIO()
+    wrapper = io.TextIOWrapper(
+        raw,
+        encoding=_pipe_encoding(),
+        errors="strict",
+        newline=None,
+        line_buffering=line_buffering,
+    )
+    return raw, wrapper
+
+
+def _status(action):
+    try:
+        result = action()
+    except SystemExit as exit_error:
+        status = exit_error.code
+        if status is None:
+            return 0
+        if isinstance(status, int):
+            return status & 0xFF
+        print(status, file=sys.stderr)
+        return 1
+    except Exception as error:
+        traceback.print_exception(error)
+        return 1
+    if result is None:
+        return 0
+    if isinstance(result, int):
+        return result & 0xFF
+    print(result, file=sys.stderr)
+    return 1
+
+
+def _load(script):
+    namespace = runpy.run_path(str(script))
+    sys.modules.pop("<run_path>", None)
+    return namespace["main"]
+
+
+def _run(command, *, env, cwd=None, timeout=None, reason=None):
+    if reason is not None and not isinstance(reason, ProcessReason):
+        raise TypeError(type(reason).__name__)
+    return subprocess.run(
+        list(command),
+        capture_output=True,
+        text=True,
+        cwd=None if cwd is None else os.fspath(cwd),
+        env=None if env is None else dict(env),
+        timeout=timeout,
+    )
+
+
+def _popen(reason, command, *, env, cwd=None, stdout=subprocess.PIPE,
+           stderr=subprocess.PIPE, text=True, start_new_session=False):
+    if not isinstance(reason, ProcessReason):
+        raise TypeError(type(reason).__name__)
+    return subprocess.Popen(
+        list(command),
+        stdout=stdout,
+        stderr=stderr,
+        cwd=None if cwd is None else os.fspath(cwd),
+        env=None if env is None else dict(env),
+        text=text,
+        start_new_session=start_new_session,
+    )
+
+
+def drive(script, argv, *, env, cwd=None):
+    """Run one land.py command and return its exit code, stdout, and stderr.
+
+    PSTACK_TEST_REAL_PROCESS is read from the process environment on entry, before env is installed and before the script loads. The value 1 starts a real process. Any other value runs in this process.
+    After an in-process call, including when main raises, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored. A later restore step still runs when an earlier step raises, and the first restore error is raised after those steps.
+    An in-process call closes unreachable file objects before the script loads and again before the call returns. On an in-process return, os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
+    Each in-process call loads the script again. The imported land module is not the module that runs.
+    """
+    arguments = [str(arg) for arg in argv]
+    if os.environ.get("PSTACK_TEST_REAL_PROCESS") == "1":
+        result = _run([sys.executable, str(script), *arguments], env=env, cwd=cwd)
+        return result.returncode, result.stdout, result.stderr
+    saved = _save()
+    raised = True
+    try:
+        # Collect cyclic garbage before this run opens land.db.
+        gc.collect()
+        out_raw, out = _capture_stream(False)
+        err_raw, err = _capture_stream(True)
+        sys.stdout = out
+        sys.stderr = err
+        if cwd is not None:
+            os.chdir(cwd)
+        if env is not None:
+            os.environ.clear()
+            os.environ.update(dict(env))
+        sys.argv = [str(script), *arguments]
+        code = _status(lambda: _load(script)(list(arguments)))
+        out.flush()
+        err.flush()
+        raised = False
+        return code, _text_from_pipe(out_raw.getvalue()), _text_from_pipe(err_raw.getvalue())
+    finally:
+        _restore(saved, close_fds=not raised)
+
+
+def real_process(reason, script, argv, *, env, cwd=None, timeout=None):
+    """Start a real interpreter and return its text CompletedProcess."""
+    if not isinstance(reason, ProcessReason):
+        raise TypeError(type(reason).__name__)
+    command = [sys.executable, str(script), *(str(arg) for arg in argv)]
+    return _run(command, env=env, cwd=cwd, timeout=timeout, reason=reason)
+
+
+def real_popen(reason, command, *, env, cwd=None, stdout=subprocess.PIPE,
+               stderr=subprocess.PIPE, text=True, start_new_session=False):
+    """Return a Popen for command."""
+    return _popen(
+        reason, command, env=env, cwd=cwd, stdout=stdout, stderr=stderr,
+        text=text, start_new_session=start_new_session)
 
 
 def fence_git_environment():
@@ -985,8 +1267,9 @@ class SlotCallers:
                     mode, pool, *(command if pool == "worker" else command[1:])]
         else:
             argv = [sys.executable, str(script), "slot", *command]
-        process = subprocess.Popen(argv, cwd=directory, env=self.env, start_new_session=True,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = real_popen(
+            ProcessReason.GOVERNOR, argv, env=self.env, cwd=directory, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.callers.append(SlotCaller(name, process, directory, release, retry))
         return self.callers[-1]
 
@@ -1102,10 +1385,32 @@ class LandingTest(unittest.TestCase):
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, env=git_env())
 
     def land(self, *args, ok=True):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), *args],
-                                capture_output=True, text=True, env=os.environ.copy())
+        code, out, err = drive(SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
+        self.assertEqual(code == 0, ok, out + err)
+        return (out if ok else err).strip()
+
+    def land_in_another_process(self, *args, ok=True):
+        """Run land.py in a separate process. After the exit check, return stripped stdout when the exit code is 0 and stripped stderr otherwise."""
+        result = real_process(
+            ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
-        return (result.stdout if ok else result.stderr).strip()
+        return (result.stdout if result.returncode == 0 else result.stderr).strip()
+
+    def test_a_refused_command_leaves_cwd_environment_and_argv(self):
+        self.init()
+        cwd = os.getcwd()
+        argv = sys.argv
+        contents = list(sys.argv)
+        before = dict(os.environ)
+        widened = dict(before)
+        widened["D231_LEAK_MARK"] = "set"
+        code, out, err = drive(
+            SCRIPT, ["--repo", str(self.work), "status", "E9"], env=widened, cwd=self.base)
+        self.assertEqual((code, out, err), (1, "", "land: no E9\n"))
+        self.assertEqual(os.getcwd(), cwd)
+        self.assertEqual(dict(os.environ), before)
+        self.assertIs(sys.argv, argv)
+        self.assertEqual(list(sys.argv), contents)
 
     def init(self, mode="auto", batch=1, **extra):
         args = ["init", "--trunk", extra.get("trunk", "main"), "--mode", mode, "--check", "./check.sh", "--batch", str(batch)]
@@ -1239,10 +1544,12 @@ exit 0
     def test_ten_concurrent_claims_under_a_cap_of_three_make_exactly_three_leases(self):
         self.init()
         self.land("cap", "3")
-        claims = [subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "claim",
-                                    "--holder", f"r/D{n}", "--paths", f"p{n}.txt"],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
-                  for n in range(10)]
+        claims = [real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "claim",
+             "--holder", f"r/D{n}", "--paths", f"p{n}.txt"],
+            env=os.environ.copy())
+            for n in range(10)]
         results = [(claim.wait(), *claim.communicate()) for claim in claims]
         self.assertEqual(sorted(out.strip() for code, out, _ in results if code == 0), ["L1", "L2", "L3"])
         refused = [err for code, _, err in results if code != 0]
@@ -1364,9 +1671,11 @@ exit 0
         self.assertEqual(self.land(*submit, "--owner", "docs/@2"), "E1")
 
     def lease_check(self, holder, paths):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "lease", "check", "--holder", holder, "--paths", paths],
-                                capture_output=True, text=True, env=os.environ.copy())
-        return result.returncode, result.stdout.strip()
+        code, out, _err = drive(
+            SCRIPT,
+            ["--repo", str(self.work), "lease", "check", "--holder", holder, "--paths", paths],
+            env=os.environ.copy())
+        return code, out.strip()
 
     def test_lease_check_runs_admission_without_claiming(self):
         self.init()
@@ -1700,10 +2009,10 @@ exit 0
 
         with mock.patch.object(land, "publish", publish_then_crash), self.assertRaises(KeyboardInterrupt):
             land.land(store)
-        self.assertEqual(self.land("status", "E1").split(" (")[0], "E1 landing")
-        self.assertEqual(self.land("land"), "nothing to land")
-        self.assertIn("E1 landed", self.land("status", "E1"))
-        self.assertIn("recovered after an interrupted run", self.land("status", "E1"))
+        self.assertEqual(self.land_in_another_process("status", "E1").split(" (")[0], "E1 landing")
+        self.assertEqual(self.land_in_another_process("land"), "nothing to land")
+        self.assertIn("E1 landed", self.land_in_another_process("status", "E1"))
+        self.assertIn("recovered after an interrupted run", self.land_in_another_process("status", "E1"))
         self.assertEqual(self.origin_log(), ["w1", "init"])
 
     def subprocesses_during_land(self):
@@ -1773,7 +2082,10 @@ exit 0
         import fcntl
         with open(store.dir / ".queue.lock", "a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            self.assertIn("queue busy", self.land("land"))
+            result = real_process(
+                ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("queue busy", result.stdout)
 
     def test_local_mode_lands_on_a_queue_owned_ref_and_never_moves_a_branch(self):
         self.init(mode="local", trunk="perf", base="main")
@@ -2208,8 +2520,8 @@ os.execv(real, [real, *args])
         self.land("land")
 
     def killed_land(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
-                                capture_output=True, text=True, env=os.environ.copy())
+        result = real_process(
+            ProcessReason.KILLED_CALLER, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
         self.assertEqual(result.returncode, -signal.SIGKILL, result.stdout + result.stderr)
 
     @contextlib.contextmanager
@@ -2388,9 +2700,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="human")
             self.queue_one()
             (self.base / "crash-on-create").write_text("")
-            crashed = subprocess.run(
-                [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
-                capture_output=True, text=True, env=os.environ.copy())
+            crashed = real_process(
+                ProcessReason.KILLED_CALLER, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
             self.assertEqual(crashed.returncode, -9, crashed.stdout + crashed.stderr)
             self.restore_land_script(previous)
             previous = None
@@ -2604,7 +2915,7 @@ os.execv({real!r}, [{real!r}, *args])
         with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 land.land(store)
-        status = self.land("status", "E1")
+        status = self.land_in_another_process("status", "E1")
         self.assertIn("awaiting-merge", status)
         self.assertNotIn("pull/", status)
         self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
@@ -3141,8 +3452,8 @@ os.execv({real!r}, [{real!r}, *args])
                 ["push --no-follow-tags origin --delete landing/e1"])
             self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
             self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
-            self.assertEqual(self.land("status", "E1").splitlines()[0].split(". ")[0], "E1 landed (r/D1, w1)")
-            self.assertEqual(self.land("lease", "list"), "no leases held")
+            self.assertEqual(self.land_in_another_process("status", "E1").splitlines()[0].split(". ")[0], "E1 landed (r/D1, w1)")
+            self.assertEqual(self.land_in_another_process("lease", "list"), "no leases held")
 
     def test_merge_mode_lands_in_the_run_whose_plain_merge_succeeds(self):
         with self.fake_gh():
@@ -4044,10 +4355,11 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="merge")
             self.pause_repo_view()
             (self.base / "pause-repo-view").write_text("")
-            child = subprocess.Popen(
+            child = real_popen(
+                ProcessReason.RACE,
                 [sys.executable, str(SCRIPT), "--repo", str(self.work),
                  "mode", "merge", "--merge-method", "squash"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+                env=os.environ.copy())
             try:
                 deadline = time.monotonic() + 10
                 while not (self.base / "repo-view-waiting").exists():
@@ -4074,8 +4386,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queued: 1", status)
 
     def test_mode_help_separates_a_switch_from_a_method_change(self):
-        top = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
-        mode = subprocess.run([sys.executable, str(SCRIPT), "mode", "--help"], capture_output=True, text=True)
+        top = real_process(ProcessReason.HELP, SCRIPT, ["--help"], env=None)
+        mode = real_process(ProcessReason.HELP, SCRIPT, ["mode", "--help"], env=None)
         self.assertEqual(top.returncode, 0, top.stderr)
         self.assertEqual(mode.returncode, 0, mode.stderr)
         for text in (top.stdout, mode.stdout):
@@ -4123,7 +4435,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="human")
             self.queue_one()
             (self.base / "crash-on-create").write_text("")
-            result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "land"], capture_output=True, text=True, env=os.environ.copy())
+            result = real_process(
+                ProcessReason.KILLED_CALLER, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
             self.assertEqual(result.returncode, -9)
             self.assertEqual(self.land("land"), "adopted E1 (r/D1) https://github.com/o/r/pull/9")
             self.assertIn("awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9", self.land("status", "E1"))
@@ -4211,7 +4524,8 @@ os.execv({real!r}, [{real!r}, *args])
         empty.mkdir()
         bare_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         bare_env.update({"HOME": str(empty), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"})
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "land"], capture_output=True, text=True, env=bare_env)
+        result = real_process(
+            ProcessReason.INHERITED_ENV, SCRIPT, ["--repo", str(self.work), "land"], env=bare_env)
         self.assertEqual(result.stdout.strip(), "landed E1 (r/D1)", result.stderr)
 
     def test_fingerprint_sees_whitespace_and_ignores_line_numbers(self):
@@ -4241,9 +4555,8 @@ os.execv({real!r}, [{real!r}, *args])
         self.init()
         self.assertIn("already sets trunk='main'", self.land("init", "--trunk", "dev", "--mode", "auto", ok=False))
         sh("git", "clone", "-q", "origin.git", "other", cwd=self.base)
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.base / "other"), "status"],
-                                capture_output=True, text=True, env=os.environ.copy())
-        self.assertIn("has no landing contract", result.stderr)
+        _code, _out, err = self.run_land(self.base / "other", "status")
+        self.assertIn("has no landing contract", err)
 
     def test_an_exclusive_slot_waits_for_every_other_slot_and_refuses_nesting(self):
         import time
@@ -4254,16 +4567,22 @@ os.execv({real!r}, [{real!r}, *args])
         # land.py's slot gate reads LAND_SLOT. The queue sets it around this suite, so the
         # subprocesses under test must not inherit it. The nested command still sets it itself.
         env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
-        worker = subprocess.Popen([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", f"echo worker-start >> {marks}; sleep 2; echo worker-end >> {marks}"],
-                                  env=env)
+        worker = real_popen(
+            ProcessReason.GOVERNOR,
+            [sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", f"echo worker-start >> {marks}; sleep 2; echo worker-end >> {marks}"],
+            env=env, stdout=None, stderr=None)
         time.sleep(0.5)
-        bench = subprocess.run([sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "sh", "-c", f"echo bench >> {marks}"],
-                               capture_output=True, text=True, timeout=30, env=env)
+        bench = real_process(
+            ProcessReason.GOVERNOR, SCRIPT,
+            ["slot", "--exclusive", "--", "sh", "-c", f"echo bench >> {marks}"],
+            env=env, timeout=30)
         worker.wait(timeout=30)
         self.assertEqual(bench.returncode, 0, bench.stderr)
         self.assertEqual(marks.read_text().split(), ["worker-start", "worker-end", "bench"])
-        nested = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "true"],
-                                capture_output=True, text=True, timeout=30, env=env)
+        nested = real_process(
+            ProcessReason.GOVERNOR, SCRIPT,
+            ["slot", "--", sys.executable, str(SCRIPT), "slot", "--exclusive", "--", "true"],
+            env=env, timeout=30)
         self.assertNotEqual(nested.returncode, 0)
         self.assertIn("must be the outermost slot", nested.stderr)
 
@@ -4345,8 +4664,10 @@ os.execv({real!r}, [{real!r}, *args])
         governor = self.base / "state/pstack-t3/governor"
         governor.mkdir(parents=True)
         (governor / "governor.json").write_text(json.dumps({"slots": 1}))
-        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", sys.executable, str(SCRIPT), "slot", "--", "true"],
-                                capture_output=True, text=True, timeout=20, env=os.environ.copy())
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT,
+            ["slot", "--", sys.executable, str(SCRIPT), "slot", "--", "true"],
+            env=os.environ.copy(), timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_worker_slots_span_directories_and_leave_landing_capacity(self):
@@ -4402,16 +4723,18 @@ os.execv({real!r}, [{real!r}, *args])
             for directory in directories:
                 directory.mkdir()
             for index in range(2):
-                processes.append(subprocess.Popen(
+                processes.append(real_popen(
+                    ProcessReason.GOVERNOR,
                     [sys.executable, str(SCRIPT), "slot", "--",
                      sys.executable, "-c", command, str(releases[index])],
-                    cwd=directories[index], env=env, start_new_session=True,
+                    env=env, cwd=directories[index], start_new_session=True,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
                 wait_for(directories[index] / "started")
-            processes.append(subprocess.Popen(
+            processes.append(real_popen(
+                ProcessReason.GOVERNOR,
                 [sys.executable, "-c", third, str(retry), "slot", "--",
                  sys.executable, "-c", command, str(releases[2])],
-                cwd=directories[2], env=env, start_new_session=True,
+                env=env, cwd=directories[2], start_new_session=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             wait_for(directories[2] / "waiting-1")
             self.assertFalse((directories[2] / "started").exists())
@@ -4429,8 +4752,8 @@ os.execv({real!r}, [{real!r}, *args])
                 "with land.slot('landing'):\n"
                 f"    Path({str(landing_mark)!r}).touch()\n"
             )
-            result = subprocess.run([sys.executable, "-c", probe],
-                                    env=env, capture_output=True, text=True, timeout=20)
+            result = _run(
+                [sys.executable, "-c", probe], env=env, timeout=20, reason=ProcessReason.GOVERNOR)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(landing_mark.exists())
             self.assertFalse((directories[2] / "started").exists())
@@ -4457,8 +4780,8 @@ os.execv({real!r}, [{real!r}, *args])
         env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
 
         def slot(*arguments):
-            result = subprocess.run([sys.executable, str(SCRIPT), "slot", *arguments],
-                                    capture_output=True, text=True, timeout=20, env=env)
+            result = real_process(
+                ProcessReason.GOVERNOR, SCRIPT, ["slot", *arguments], env=env, timeout=20)
             return result.returncode, result.stdout, result.stderr
 
         self.assertEqual(slot("--", "sh", "-c", "exit 7"), (7, "", ""))
@@ -4469,8 +4792,8 @@ os.execv({real!r}, [{real!r}, *args])
         tickets = self.base / "state/pstack-t3/governor/tickets"
         tickets.mkdir(parents=True)
         (tickets / ".DS_Store").write_bytes(b"\0Bud1")
-        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "true"],
-                                capture_output=True, text=True, timeout=20, env=self.slot_env())
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"], env=self.slot_env(), timeout=20)
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(sorted(path.name for path in tickets.iterdir()), [".DS_Store"])
 
@@ -4486,9 +4809,8 @@ os.execv({real!r}, [{real!r}, *args])
             setup(tickets)
             env = {**self.slot_env(), "XDG_STATE_HOME": str(home)}
             try:
-                result = subprocess.run(
-                    [sys.executable, str(SCRIPT), "slot", "--", "true"],
-                    capture_output=True, text=True, timeout=20, env=env)
+                result = real_process(
+                    ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"], env=env, timeout=20)
             except subprocess.TimeoutExpired:
                 failures.append(f"{name} timed out")
                 return
@@ -4527,7 +4849,8 @@ os.execv({real!r}, [{real!r}, *args])
         free_path = tickets / "2-worker"
         held_path.write_bytes(b"")
         free_path.write_bytes(b"")
-        holder = subprocess.Popen(
+        holder = real_popen(
+            ProcessReason.LOCK,
             [sys.executable, "-c",
              "import fcntl, os, sys, time\n"
              "fd = os.open(sys.argv[1], os.O_RDWR)\n"
@@ -4536,7 +4859,7 @@ os.execv({real!r}, [{real!r}, *args])
              "sys.stdout.flush()\n"
              "time.sleep(60)\n",
              str(held_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+            env=None, start_new_session=True)
 
         def stop():
             if holder.poll() is None:
@@ -4573,9 +4896,9 @@ os.execv({real!r}, [{real!r}, *args])
         lock = governor / "tickets.lock"
         lock.write_bytes(b"")
         os.link(lock, tickets / "1-worker")
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "slot", "--", "true"],
-            capture_output=True, text=True, timeout=20, env=self.slot_env())
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"],
+            env=self.slot_env(), timeout=20)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
         self.assertEqual([path.name for path in tickets.iterdir()], [])
         self.assertEqual(lock.stat().st_nlink, 1)
@@ -4584,7 +4907,8 @@ os.execv({real!r}, [{real!r}, *args])
         """The waiter is its own process so the test can set that process's umask and kill it with SIGKILL."""
         slots = SlotCallers(self, 1)
         holder = slots.enter(slots.start("holder"))
-        waiter = subprocess.Popen(
+        waiter = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c",
              "import os, sys\n"
              "sys.path.insert(0, sys.argv[1])\n"
@@ -4592,7 +4916,7 @@ os.execv({real!r}, [{real!r}, *args])
              "os.umask(0o444)\n"
              "sys.exit(land.main(['slot', '--', 'true']))\n",
              str(SCRIPT.parent)],
-            env=slots.env, stderr=subprocess.PIPE, start_new_session=True)
+            env=slots.env, stdout=None, stderr=subprocess.PIPE, start_new_session=True)
 
         def stop():
             if waiter.poll() is None:
@@ -4609,9 +4933,9 @@ os.execv({real!r}, [{real!r}, *args])
         slots.release(holder)
         statuses = []
         for _ in range(2):
-            result = subprocess.run(
-                [sys.executable, str(SCRIPT), "slot", "--", "true"],
-                env=slots.env, capture_output=True, text=True, timeout=20)
+            result = real_process(
+                ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"],
+                env=slots.env, timeout=20)
             statuses.append(result.returncode)
         self.assertEqual((bool(mode & 0o400), statuses), (True, [0, 0]), oct(mode))
 
@@ -4623,9 +4947,9 @@ os.execv({real!r}, [{real!r}, *args])
         outside.write_bytes(b"keep")
         outside.chmod(0)
         os.link(outside, tickets / "1-worker")
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "slot", "--", "true"],
-            capture_output=True, text=True, timeout=20, env=self.slot_env())
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"],
+            env=self.slot_env(), timeout=20)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
         self.assertEqual([path.name for path in tickets.iterdir()], [])
         self.assertEqual(outside.stat().st_nlink, 1)
@@ -5183,10 +5507,11 @@ os.execv({real!r}, [{real!r}, *args])
         directory.mkdir()
         ready, release = directory / "ready", directory / "release"
         os.mkfifo(release)
-        process = subprocess.Popen(
+        process = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c", HOLD_SCRIPT, str(SCRIPT.parent), kind, repo or str(self.work), command,
              str(ready), str(release)],
-            cwd=directory, env=self.slot_env(), start_new_session=True,
+            env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop():
@@ -5221,15 +5546,14 @@ os.execv({real!r}, [{real!r}, *args])
                 *argv]
 
     def run_exclusive(self, argv, cap=None, grace=None, cap_max=None, timeout=20, main=EXCLUSIVE_MAIN):
-        return subprocess.run(
+        return _run(
             self.exclusive_args(argv, cap, grace, cap_max, main),
-            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=timeout)
+            env=self.slot_env(), cwd=self.base, timeout=timeout, reason=ProcessReason.GOVERNOR)
 
     def popen_exclusive(self, argv, cap=None, grace=None, cap_max=None, main=EXCLUSIVE_MAIN):
-        return subprocess.Popen(
-            self.exclusive_args(argv, cap, grace, cap_max, main),
-            cwd=self.base, env=self.slot_env(), start_new_session=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return real_popen(
+            ProcessReason.GOVERNOR, self.exclusive_args(argv, cap, grace, cap_max, main),
+            env=self.slot_env(), cwd=self.base, start_new_session=True)
 
     def assert_slots_free(self):
         directory = self.base / "state/pstack-t3/governor"
@@ -5275,10 +5599,11 @@ os.execv({real!r}, [{real!r}, *args])
     def run_waiter(self, script, release, repo=None, command="npm run build", after="0.2", every="60", kind="worker"):
         out, err = self.base / "waiter.out", self.base / "waiter.err"
         handles = [open(out, "w"), open(err, "w")]
-        process = subprocess.Popen(
+        process = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c", script, str(SCRIPT.parent), after, every, kind, repo or str(self.work), command],
-            cwd=self.base, env=self.slot_env(), start_new_session=True,
-            stdout=handles[0], stderr=handles[1])
+            env=self.slot_env(), cwd=self.base, start_new_session=True,
+            stdout=handles[0], stderr=handles[1], text=False)
         line = self.wait_for_line(err)
         if release is not None:
             os.write(release, b"x")
@@ -5303,9 +5628,9 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_a_waiter_that_gets_a_slot_at_once_prints_nothing(self):
         self.governor(1)
-        result = subprocess.run(
+        result = _run(
             [sys.executable, "-c", WAIT_SCRIPT, str(SCRIPT.parent), "0.2", "60", "worker", str(self.work), "make"],
-            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+            env=self.slot_env(), cwd=self.base, timeout=20, reason=ProcessReason.GOVERNOR)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "ran\n")
         self.assertEqual(result.stderr, "")
@@ -5672,11 +5997,11 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_an_exclusive_deadline_is_when_every_slot_is_locked(self):
         self.governor(1)
-        result = subprocess.run(
+        result = _run(
             [sys.executable, "-c", SLOW_PUBLISH_MAIN, str(SCRIPT.parent),
              "slot", "--exclusive", "--for", "0.2", "--",
              sys.executable, "-c", "print('command-finished', flush=True)"],
-            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=10)
+            env=self.slot_env(), cwd=self.base, timeout=10, reason=ProcessReason.GOVERNOR)
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertIn("all-slots-taken", result.stdout)
         self.assertNotIn("command-finished", result.stdout)
@@ -6030,9 +6355,10 @@ os.execv({real!r}, [{real!r}, *args])
             "Path(sys.argv[2]).touch()\n"
             "os.read(os.open(sys.argv[1], os.O_RDONLY), 1)\n"
         )
-        previous = subprocess.Popen(
+        previous = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, str(old), "slot", "--", sys.executable, "-c", read_byte, str(release), str(took)],
-            cwd=directory, env=self.slot_env(), start_new_session=True,
+            env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop_previous():
@@ -6057,10 +6383,10 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_the_wrapped_command_exit_status_and_output_are_unchanged(self):
         self.governor(1)
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "slot", "--repo", str(self.work), "--",
-             "sh", "-c", "echo out; echo err >&2; exit 7"],
-            cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT,
+            ["slot", "--repo", str(self.work), "--", "sh", "-c", "echo out; echo err >&2; exit 7"],
+            env=self.slot_env(), cwd=self.base, timeout=20)
         self.assertEqual(result.returncode, 7)
         self.assertEqual(result.stdout, "out\n")
         self.assertEqual(result.stderr, "err\n")
@@ -6101,10 +6427,11 @@ os.execv({real!r}, [{real!r}, *args])
         os.mkfifo(release)
         # Keep both ends open so the write that resumes the probe never waits for a reader.
         gate = os.open(release, os.O_RDWR | os.O_NONBLOCK)
-        reporter = subprocess.Popen(
+        reporter = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "worker-0",
              "0.2", "0.2", str(self.work), "make test"],
-            cwd=directory, env=self.slot_env(), start_new_session=True,
+            env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop_reporter():
@@ -6173,11 +6500,12 @@ os.execv({real!r}, [{real!r}, *args])
         self.addCleanup(os.close, gate)
         err = directory / "err"
         err_handle = open(err, "w")
-        reporter = subprocess.Popen(
+        reporter = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "landing-0",
              "0.2", "60", str(self.work), "make test"],
-            cwd=directory, env=self.slot_env(), start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=err_handle)
+            env=self.slot_env(), cwd=directory, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=err_handle, text=False)
 
         def stop_reporter():
             if reporter.poll() is None:
@@ -6218,9 +6546,10 @@ os.execv({real!r}, [{real!r}, *args])
             "    Path(sys.argv[2]).touch()\n"
             "    os.read(os.open(sys.argv[3], os.O_RDONLY), 1)\n"
         )
-        caller = subprocess.Popen(
+        caller = real_popen(
+            ProcessReason.GOVERNOR,
             [sys.executable, "-c", driver, str(old), str(entered), str(old_release)],
-            cwd=directory, env=self.slot_env(), start_new_session=True,
+            env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop_caller():
@@ -6286,11 +6615,12 @@ os.execv({real!r}, [{real!r}, *args])
         for position in ("before", "after"):
             with self.subTest(position=position):
                 chosen_flag = ["--repo", str(chosen)] if position == "before" else []
-                result = subprocess.run(
-                    [sys.executable, str(SCRIPT), *chosen_flag, "slot",
+                result = real_process(
+                    ProcessReason.GOVERNOR, SCRIPT,
+                    [*chosen_flag, "slot",
                      *([] if position == "before" else ["--repo", str(chosen)]), "--",
                      sys.executable, "-c", RECORD_REPO_SCRIPT],
-                    cwd=self.base, env=self.slot_env(), capture_output=True, text=True, timeout=20)
+                    env=self.slot_env(), cwd=self.base, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), str(chosen))
 
@@ -6323,9 +6653,11 @@ os.execv({real!r}, [{real!r}, *args])
         return [re.sub(r" until \S+:", ":", line) for line in self.land("lease", "list").splitlines()]
 
     def concurrent(self, *commands):
-        procs = [subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), *command],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
-                 for command in commands]
+        procs = [real_popen(
+            ProcessReason.RACE,
+            [sys.executable, str(SCRIPT), "--repo", str(self.work), *command],
+            env=os.environ.copy())
+            for command in commands]
         return [(proc.wait(), *(part.strip() for part in proc.communicate())) for proc in procs]
 
     def test_a_reservation_refuses_another_holders_claim_and_admits_the_winner(self):
@@ -6778,8 +7110,10 @@ os.execv({real!r}, [{real!r}, *args])
         store = land.Store.for_repo(self.work)
         with open(store.dir / ".queue.lock", "a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            proc = subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+            proc = real_popen(
+                ProcessReason.LOCK,
+                [sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
+                env=os.environ.copy())
             time.sleep(1)
             self.assertIsNone(proc.poll())
             self.assertEqual(self.ruling_rows("contest"), [])
@@ -6810,8 +7144,10 @@ os.execv({real!r}, [{real!r}, *args])
         for number, args in enumerate(commands):
             case = self.base / f"paused{number}"
             case.mkdir()
-            proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--paused-child", str(case), "--repo", str(self.work), *args],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+            proc = real_popen(
+                ProcessReason.RACE,
+                [sys.executable, str(Path(__file__).resolve()), "--paused-child", str(case), "--repo", str(self.work), *args],
+                env=os.environ.copy())
             running.append((case, proc))
         for case, proc in running:
             deadline = time.monotonic() + 20
@@ -6872,8 +7208,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="human", merge_method="squash")
             self.pause_repo_view()
             (self.base / "pause-repo-view").write_text("")
-            child = subprocess.Popen([sys.executable, str(SCRIPT), "--repo", str(self.work), "mode", "merge"],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+            child = real_popen(
+                ProcessReason.RACE,
+                [sys.executable, str(SCRIPT), "--repo", str(self.work), "mode", "merge"],
+                env=os.environ.copy())
             try:
                 deadline = time.monotonic() + 10
                 while not (self.base / "repo-view-waiting").exists():
@@ -7377,11 +7715,9 @@ os.execv({real!r}, [{real!r}, *args])
         return (f"land: {shown or config} sets core.worktree to {value}, where git does not find this repository; "
                 f"remove it with git --work-tree=. config --file {quoted or config} --unset-all core.worktree\n")
 
-    def run_land(self, repo, *args):
+    def run_land(self, repo, *args, cwd=None):
         """Run land.py with --repo set to repo. Returns its exit status, stdout, and stderr."""
-        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), *args],
-                                capture_output=True, text=True, env=os.environ.copy())
-        return result.returncode, result.stdout, result.stderr
+        return drive(SCRIPT, ["--repo", str(repo), *args], env=os.environ.copy(), cwd=cwd)
 
     def test_a_core_worktree_that_names_a_missing_directory_stops_status_land_resume_lease_init_and_submit(self):
         self.init()
@@ -7424,9 +7760,7 @@ os.execv({real!r}, [{real!r}, *args])
         sh("git", "config", "core.worktree", "../gone", cwd=self.work)
         for repo in (self.work, self.base):
             with self.subTest(cwd=repo.name):
-                result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.work), "status"], cwd=repo,
-                                        capture_output=True, text=True, env=os.environ.copy())
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", self.stray_worktree_line("../gone")))
+                self.assertEqual(self.run_land(self.work, "status", cwd=repo), (1, "", self.stray_worktree_line("../gone")))
 
     def test_the_printed_command_run_in_the_checkout_removes_a_relative_core_worktree(self):
         self.init()
@@ -7514,8 +7848,9 @@ os.execv({real!r}, [{real!r}, *args])
         self.init()
         sh("git", "config", "core.worktree", str(self.base / "gone"), cwd=self.work)
         env = {key: value for key, value in os.environ.items() if key != "LAND_SLOT"}
-        result = subprocess.run([sys.executable, str(SCRIPT), "slot", "--", "sh", "-c", "echo ran"],
-                                cwd=self.work, capture_output=True, text=True, timeout=30, env=env)
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "sh", "-c", "echo ran"],
+            env=env, cwd=self.work, timeout=30)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "ran\n", ""))
 
 
@@ -7536,9 +7871,10 @@ class GitEnvironmentFenceTest(unittest.TestCase):
                                cwd=victim, check=True)
                 before = repository_state(victim)
                 leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
-                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "LandingTest.test_a_conflict_rerere_resolved_to_trunk_bounces"],
-                                       env={**os.environ, **{name: leaked[name] for name in names}},
-                                       capture_output=True, text=True, timeout=300)
+                child = _run(
+                    [sys.executable, str(Path(__file__).resolve()), "LandingTest.test_a_conflict_rerere_resolved_to_trunk_bounces"],
+                    env={**os.environ, **{name: leaked[name] for name in names}},
+                    timeout=300, reason=ProcessReason.INHERITED_ENV)
                 self.assertEqual(repository_state(victim), before)
                 self.assertEqual(child.returncode, 0, child.stderr)
 
