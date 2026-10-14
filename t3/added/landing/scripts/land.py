@@ -593,8 +593,8 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     """Write one holder record for each slot just taken, before the turn mutex unlocks.
 
     Returns the locked record descriptors, one per slot whose write succeeded.
-    Stores cap and reason only when kind is exclusive. When cleanup removed the temporary name
-    before the writer locked it, the rename fails and the write retries with a fresh temporary
+    Stores cap and reason only when kind is exclusive. When the rename fails with FileNotFoundError,
+    the write retries with a fresh temporary
     record, up to three attempts per slot. The failed descriptor closes before the retry,
     releasing its record lock. Previously published record locks and slot flocks stay held.
     """
