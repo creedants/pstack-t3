@@ -20,7 +20,8 @@ The identifiers are the thread ids, the sub-agent ids, and the work items' task 
 An identifier that reads as ordinary words is not private text.
 That is at most 48 characters of letters and digits in runs joined by single spaces, dots, or hyphens, where a run with both letters and digits is at most 8 characters.
 A form of spaces only is not private text either. Neither is an identifier form of fewer than 4 characters.
-A non-empty thread-column value is private text whatever its form, read as stored and with its percent escapes decoded once and twice, and also without the spaces that start and end each of those forms.
+A non-empty thread-column value is read as stored and with its percent escapes decoded once and twice, and each of those forms is also read without the spaces that start and end it.
+A reading that holds a character other than a space is private text even when it reads as ordinary words.
 A form of 4 or more characters is private text anywhere in a word.
 A shorter form is private text only where no letter, digit, underscore, or hyphen stands directly before or after it.
 The paths are the store's directory, the project root the store records, T3 Code's base directory and database, the home directory, and the --out file.
