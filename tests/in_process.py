@@ -263,7 +263,7 @@ class _TypedArgv(list):
         self._drop_runpy_write = True
 
     def __setitem__(self, index, value):
-        if index == 0 and self._drop_runpy_write:
+        if self._drop_runpy_write and type(index) is int and index == 0:
             self._drop_runpy_write = False
             return
         super().__setitem__(index, value)
