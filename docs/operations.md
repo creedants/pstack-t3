@@ -73,7 +73,7 @@ On T3 Code 0.0.46-nightly.20261014.3105 or later, only one server can own a T3 h
 | `--batch-dir DIR` | With `--selection-only`, create DIR when it does not exist yet. Its parent must exist. Write each selected id on its own line into `batch-1.txt`, `batch-2.txt`, and so on in the order `--selection-only` prints. Each file holds at most `--batch-size` ids. Print each file path, a tab, and its count. Without `--selection-only`, exit 2 and create nothing. |
 | `--batch-size N` | At most this many ids in each batch file. 140 when the flag is absent. Below 1 exits 2. |
 
-A direct run with threads to archive and the credential prints two lines.
+A direct run means a run without `--selection-only` or `--dry-run`. With threads to archive and the credential, it prints two summary lines.
 
 ```text
 to archive: <n>; skipped: live <n>, recent <n>, under a running thread <n>, kept <n>
