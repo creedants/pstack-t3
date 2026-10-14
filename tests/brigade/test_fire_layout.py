@@ -69,7 +69,7 @@ class FireLayoutTest(BrigadeTest):
         self.assertEqual(self.dish_paths(), f"{given},{copy},{frag}")
         self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, skills/brigade/scripts/brigade_lib/store.py, t3/added/brigade/scripts/brigade_lib/store.py"])
 
-    def test_project_with_no_build_layout_leases_exactly_the_given_paths(self):
+    def test_project_with_no_build_layout_leases_only_the_given_paths_and_fragment(self):
         self.git_project()
         self.init_landing()
         self.landing_env()

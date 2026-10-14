@@ -230,7 +230,7 @@ def parser():
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
-    p.add_argument("--paths", default="", help="paths the dish will change. Fire claims a landing lease on them plus generated copies and doc pages read from the build layout")
+    p.add_argument("--paths", default="", help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
     p.add_argument("--kind", choices=KINDS,
@@ -596,7 +596,7 @@ def selection_from_show(payload, role):
 
 
 def catalog_refusal(path):
-    """Explain a nonzero exit for a directory, non-UTF-8 bytes, or JSON that is not an object. Return None for every other path. This does not guard the run."""
+    """Explain a nonzero exit for a directory, a stat error, non-UTF-8 bytes, JSON that raises RecursionError or ValueError when parsed, or JSON that is not an object. Return None for any other path."""
     try:
         if Path(path).is_dir():
             return f"{path} is a directory"
