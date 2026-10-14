@@ -807,7 +807,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(result.stderr.splitlines()[-1], "FAILED (failures=1)")
         self.assertEqual(self.serial().stderr.splitlines()[-1], "FAILED (failures=1)")
 
-    def test_25_tests_with_one_id_run_once_each_in_3_shards(self):
+    def test_25_tests_with_one_id_run_once_each_in_2_shards(self):
         self.write("test_probe.py", """
             import unittest
             from pathlib import Path
@@ -826,7 +826,7 @@ class RunTestsTest(unittest.TestCase):
         """)
         result = self.runner()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 25 tests, 3 shards, 2 at a time")
+        self.assertEqual(result.stderr.splitlines()[0], "run_tests: 25 tests, 2 shards, 2 at a time")
         self.assertEqual(sorted(map(int, (self.proj / "ran").read_text().split())), list(range(25)))
         self.assertEqual(RAN.search(result.stderr).group(1), "25")
 
@@ -1777,7 +1777,7 @@ def gate_script_status(script: str, prefix: str, results: tuple[str, ...]) -> in
 
 
 class BuildShardsTest(unittest.TestCase):
-    def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_10_seqs_of_one_module_in_ascending_order(self):
+    def test_every_seq_is_in_exactly_one_shard_and_each_shard_holds_1_to_20_seqs_of_one_module_in_ascending_order(self):
         for sizes in ([1], [10], [11], [25, 3], [100, 1, 10, 7, 31]):
             with self.subTest(sizes=sizes):
                 # Round-robin, so the tests of different modules interleave in the plan while each has tests left.
@@ -1787,7 +1787,7 @@ class BuildShardsTest(unittest.TestCase):
                 self.assertEqual(sorted(seq for shard in shards for seq in shard.seqs), list(range(len(plan))))
                 self.assertEqual([shard.number for shard in shards], list(range(1, len(shards) + 1)))
                 for shard in shards:
-                    self.assertIn(len(shard.seqs), range(1, 11))
+                    self.assertIn(len(shard.seqs), range(1, 21))
                     self.assertEqual({plan[seq].module for seq in shard.seqs}, {shard.module})
                     self.assertEqual(list(shard.seqs), sorted(shard.seqs))
                     self.assertEqual(shard.classes, tuple(plan[seq].cls for seq in shard.seqs))
@@ -1803,11 +1803,11 @@ class BuildShardsTest(unittest.TestCase):
                 plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
                 seq += 1
         shards = run_tests.build_shards(tuple(plan))
-        self.assertEqual([shard.module for shard in shards], ["big", "big", "early", "late"])
+        self.assertEqual([shard.module for shard in shards], ["big", "early", "late"])
         self.assertEqual(run_tests.launch_order(shards, False), tuple(shards))
         front = run_tests.launch_order(shards, True)
-        self.assertEqual([shard.number for shard in front], [3, 4, 1, 2])
-        self.assertEqual([len(shard.seqs) for shard in front], [1, 1, 6, 5])
+        self.assertEqual([shard.number for shard in front], [2, 3, 1])
+        self.assertEqual([len(shard.seqs) for shard in front], [1, 1, 11])
 
     def test_a_part_run_passes_one_test_shards_to_the_pool_ahead_of_larger_shards(self):
         plan = []
@@ -1850,7 +1850,7 @@ class BuildShardsTest(unittest.TestCase):
             run_tests.run(Path(directory), 1, 30, (1, 1))
         self.assertEqual(
             [(shard.number, len(shard.seqs)) for batch in received for shard in batch],
-            [(3, 1), (4, 1), (1, 6), (2, 5)],
+            [(2, 1), (3, 1), (1, 11)],
         )
 
 

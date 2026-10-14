@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARD_SIZE = 10
+SHARD_SIZE = 20
 # land.py's governor defaults to one slot per four cores, with at least 1 slot and at most 4.
 MAX_DEFAULT_JOBS = 4
 DEFAULT_TIMEOUT = 300.0
