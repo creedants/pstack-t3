@@ -10,7 +10,7 @@ The setting is on `main`.
 
 ### Where it lives
 
-The setting is one key named `mode` with the values `full` and `light`. It lives in the files that already hold `budget`. A missing key reads as `full`.
+The setting is one key named `mode` with the values `full` and `light`. The user and project levels live in the files that already hold `budget`. The coordinator level lives in `restaurant.json`. A missing key reads as `full`.
 
 | Level | Where | Written by |
 | --- | --- | --- |
@@ -30,7 +30,7 @@ A brief `Mode:` line is the frozen decision. A child copies that line bare value
 
 A parent writes `Mode: <effective mode>` into every brief whose child resolves seats or spawns. That covers brigade workers, code delegates, Autopilot and Orchestrate owners, sub-coordinators, unit workers, visual-parity owners, and landing writers. Read-only leaves such as a `how` explainer get no line because they resolve nothing.
 
-A session in light mode passes `--session-mode light` to every `roles.py` call it makes. It writes `Mode: light` into its children briefs.
+A session in light mode passes `--session-mode light` to every `roles.py` call with no brief value, except an explicit reflect, which passes `--session-mode full`. It writes `Mode: light` into its children briefs.
 
 The brief has to carry the decision because a child can miss the project file. `.gitignore` lists `/.pstack/`. A new worktree has no `.pstack/t3-roles.json`. `project_config_path` in `t3/scripts/roles.py` stops at the worktree `.git` file. A worker that ran `show --cwd` in its worktree would read only the user file. For the same reason `roles.py mode` runs in the coordinator checkout where the project `escalate` list lives.
 
@@ -104,7 +104,7 @@ Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" m
 | Comment Sicko follow-ups | `how`, `why`, rerun, `architect` | None. A finding that needs them goes into the gate verdict as a send-back | Cut |
 | `interrogate` | 1 per seat | Not run. A contested design escalates to `full`. Outside brigade, the gate review replaces the PR-opening child run | Cut |
 | Fresh-child test | 1 per test, plus one on another provider | See [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) | Cheaper seat |
-| Description eval | 5 children | Only when the change edits a `description` | Cut |
+| Description eval | 5 children, one per prompt | Only when the change edits a `description` | Cut |
 | `swarm` | N workers | At most 3 workers | Cut |
 | Trail reviewer | 1 child | Folded into the gate review when one runs at that head. Otherwise kept as the gate | Merged |
 | `reflect` | 3 and 1 | A scheduled reflect does not run. A user explicit reflect runs in full | Cut |
@@ -135,7 +135,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 
 ### Never cut
 
-- Tests and the build gate. The worker runs `python3 scripts/run_tests.py` and `python3 scripts/build.py` through `land.py slot --`. The queue runs its configured checks.
+- Tests and the build gate. The worker runs the project test command and build before the gate. The queue runs its configured checks.
 - The landing queue checks. `land.py` spends no model usage. Light mode has nothing to gain there.
 - One review by another model family at every head SHA. [The gate review](#the-gate-review) defines it for brigade and for standalone playbooks.
 - Re-review of every fix attempt over its whole diff. A fix attempt review reads the full diff against trunk, not only the delta.
@@ -156,11 +156,11 @@ The gate verdict is `pass`, `send-back`, or `blocked`, with the head SHA, the au
 
 In brigade the gate is the existing verifier. The coordinator records it with `pass record`, and `dish --state queued` refuses a SHA without a pass. A brigade worker brief carries `Gate: brigade`, and the worker runs no gate of its own.
 
-In a standalone playbook, Opening a PR runs the gate before it opens or marks the PR ready. Full mode has no such gate today. Feature, Bug fix, Refactoring, and Perf issue end with the parent own read of the diff, and Opening a PR seats no `verifiers`. Light mode adds the gate because it removes the panels that gave full mode its diversity.
+In a standalone playbook, Opening a PR runs the gate before it opens or marks the PR ready. Full mode has no such gate today. Opening a PR seats no `verifiers`. Light mode adds the gate because it removes the panels that gave full mode its diversity.
 
 The standalone gate reuses a current qualifying pass instead of launching a duplicate. Reuse is by exact head SHA only.
 
-- Current. The verdict is the latest one for that item at that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier pass, as it does in `pass_check` in `brigade.py`.
+- Current. The verdict is the latest one for that item at that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier pass, as it does in `pass_check`, which `dish --state queued` already uses.
 - Qualifying. The verdict is `pass`, and its author and verifier are of different families.
 
 Two sources can show both today.
@@ -244,11 +244,11 @@ A queue bounce is not a send-back. Its fresh worker gets `Attempt: bounce` and t
 
 ### Fresh-child tests in light mode
 
-House rule 7 requires a fresh-child test for every change to a skill behavior. Light mode keeps that rule.
+The runtime requires one executing fresh-child test per changed spawn or coordination behavior.
 
 - A leaf test runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation, such as a reply wording, a brief line, or a command the skill runs.
 - An executing workflow test runs the playbook with its real children, nested ones included. It is required once for each changed spawn or coordination behavior. One test covers one behavior. Two unrelated changed behaviors need two tests.
-- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5 at high, or at medium under the light mode reasoning cap. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`, which never returns a Cursor seat.
+- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5 at high, or at medium under the light mode reasoning cap. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`. A seat that resolves to Cursor is refused with `cannot launch seats`.
 
 ## Decision
 
