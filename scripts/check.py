@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. In that same case it reports a doctor count quoted in that checkout's `docs/guide.md` that disagrees with the number of skills in the tree. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` that disagrees with the number of skills in the tree. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -187,7 +187,7 @@ _QUOTED_COUNT = re.compile(r"(\d+)/(\d+) pstack-t3")
 
 
 def guide_count_findings(guide, root):
-    """Report a doctor count quoted in the guide that disagrees with the tree's skill count.
+    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
 
     The shipped count is the set skill_names in scripts/install.py reads,
     every directory directly in the tree that holds a SKILL.md. A quote is
@@ -284,7 +284,7 @@ def _witness_skills_are_files(root):
     return (root / "pstack-runtime/SKILL.md").is_file() and (root / "setup-pstack/SKILL.md").is_file()
 
 
-def check_tree(root):
+def check_tree(root, guide=True):
     root = Path(root)
     findings = []
     cells = light_waiver_cells()
@@ -351,7 +351,8 @@ def check_tree(root):
         findings.extend(library_wording_findings(repo / "tests"))
         findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
-        findings.extend(guide_count_findings(GUIDE_PATH, root))
+        if guide:
+            findings.extend(guide_count_findings(GUIDE_PATH, root))
     return findings
 
 
@@ -945,7 +946,7 @@ def _machine_identity():
 
 def main(argv):
     tree = Path(argv[0]) if argv else Path(__file__).resolve().parents[1] / "skills"
-    problems = check_tree(tree) + fence_findings(TESTS_DIR)
+    problems = check_tree(tree, guide=not argv) + fence_findings(TESTS_DIR)
     if not argv:
         problems += badge_findings(README_PATH, UPSTREAM_PATH)
     print("\n".join(problems) or "ok")
