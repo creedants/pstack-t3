@@ -1,156 +1,29 @@
-import base64
 import dataclasses
-import hashlib
 import http.server
 import json
 import os
 import re
 import shutil
 import sqlite3
-import stat
-import subprocess
 import sys
 import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Literal, NamedTuple, Optional, Union
+from typing import NamedTuple, Optional, Union
 
 from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from check import Identity, machine_value_findings  # noqa: E402
-NIGHTLY = ROOT / "ops/t3-nightly-update.sh"
+from check import Identity, REQUIRED_SCAN, machine_value_findings  # noqa: E402
 ARCHIVE = ROOT / "ops/t3-archive-threads.py"
 EXAMPLE = ROOT / "ops/config.example"
 DOC = ROOT / "docs/operations.md"
 
-REAL_TOOLS = ("env", "date", "tee", "cat", "sed", "grep", "sort", "tail", "head", "awk",
-              "rm", "chmod", "seq", "base64", "openssl")
-STUBBED = ("gh", "mise", "pacman", "yay", "pgrep", "pkill", "setsid", "notify-send", "sleep", "kill", "mv", "strings")
-FORBIDDEN = ("gh", "mise", "pgrep", "pkill", "yay", "pacman", "setsid", "notify-send", "strings")
-
-HAVE = "0.0.7-nightly.20000101.1"
-WANT = "0.0.8-nightly.20000102.1"
-REPO = "pingdotgg/t3code"
-LATEST_FILTER = r'[.[]|select(.tagName|test("-nightly\\."))]|sort_by(.publishedAt)|last|.tagName'
-ISO_TIME = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d"
 CREDENTIAL = "test-credential"
 SESSION = "session-1"
-
-STUB = r'''
-import json, os, re, shutil, sys
-from pathlib import Path
-
-STATE = Path(os.environ["OPS_STUB_STATE"])
-NAME, ARGS = Path(sys.argv[0]).name, sys.argv[1:]
-# Linux gives no process an ID above 4194304, so a signal sent to this one reaches no process.
-UNSIGNALABLE_PID = 2**31 - 1
-CAPTURED = ("MISE_MINIMUM_RELEASE_AGE", "OPS_RESTART_MARK")
-scenario = json.loads((STATE / "scenario.json").read_text())
-model = json.loads((STATE / "model.json").read_text())
-calls = STATE / "calls.jsonl"
-earlier = calls.read_text().splitlines() if calls.exists() else []
-with open(calls, "a") as log:
-    log.write(json.dumps({"name": NAME, "argv": ARGS, "clock": model["clock"],
-                          "env": {k: os.environ[k] for k in CAPTURED if k in os.environ}}) + "\n")
-
-
-def save():
-    (STATE / "model.json").write_text(json.dumps(model))
-
-
-def alive(p):
-    return p["from"] <= model["clock"] and (p["until"] is None or model["clock"] < p["until"])
-
-
-def after(flag):
-    return ARGS[ARGS.index(flag) + 1]
-
-
-status = 0
-if NAME == "sleep":
-    model["clock"] += int(ARGS[0])
-    save()
-elif NAME == "pgrep":
-    if any(alive(p) and re.search(ARGS[-1], p["cmd"]) for p in model["procs"]):
-        print(UNSIGNALABLE_PID)
-    else:
-        status = 1
-elif NAME == "pkill":
-    hit = [p for p in model["procs"] if re.search(ARGS[-1], p["cmd"])]
-    status = 0 if any(alive(p) for p in hit) else 1
-    model["procs"] = [p for p in model["procs"] if p not in hit]
-    save()
-elif NAME == "kill":
-    if scenario["on_term"] is not None:
-        for p in model["procs"]:
-            if alive(p):
-                p["until"] = model["clock"] + scenario["on_term"]
-        save()
-elif NAME == "setsid":
-    words = Path(ARGS[-1]).read_text().split()
-    if words[0] == "up":
-        p = {"cmd": ARGS[-1], "from": model["clock"], "until": None}
-        if words[1:2] == ["for"]:
-            p["until"] = model["clock"] + int(words[2])
-        if words[1:2] == ["after"]:
-            p["from"] = model["clock"] + int(words[2])
-        model["procs"].append(p)
-        save()
-elif NAME == "gh":
-    if ARGS[:2] == ["release", "list"]:
-        sys.stdout.write(scenario["latest_tag"] + "\n" if scenario["latest_tag"] else "")
-    else:
-        asset = STATE / "release" / ARGS[ARGS.index("download") + 1] / after("-p")
-        if asset.exists() and after("-O") == "-":
-            sys.stdout.write(asset.read_text())
-        elif asset.exists():
-            shutil.copyfile(asset, after("-O"))
-        else:
-            if after("-O") != "-":
-                Path(after("-O")).write_text("partial")
-            status = 1
-elif NAME == "mise":
-    sys.stdout.write(scenario["mise_output"])
-    status = scenario["mise_status"]
-elif NAME == "pacman":
-    if scenario["cursor_cli"]:
-        print("cursor-cli", scenario["cursor_cli"])
-    else:
-        status = 1
-elif NAME == "yay":
-    status = scenario["yay_status"]
-elif NAME == "mv":
-    if 1 + sum(json.loads(line)["name"] == "mv" for line in earlier) in scenario["fail_mv"]:
-        status = 1
-    else:
-        os.execv(scenario["real_mv"], ["mv", *ARGS])
-elif NAME == "strings":
-    try:
-        data = Path(ARGS[-1]).read_bytes()
-    except OSError:
-        status = 1
-    else:
-        for run in re.findall(rb"[ -~\t]{%d,}" % int(after("-n")), data):
-            print(run.decode())
-elif NAME != "notify-send":
-    print(NAME, "1.0.0")
-sys.exit(status)
-'''
-
-APPIMAGE = r'''
-import os, sys
-if sys.argv[1:] != ["--appimage-extract"] or MODE == "fail":
-    sys.exit(1)
-os.mkdir("squashfs-root", 0o700)
-if MODE == "ok":
-    with open("squashfs-root/t3code", "w") as out:
-        out.write(BEHAVIOR + "\n")
-    os.chmod("squashfs-root/t3code", 0o755)
-'''
 
 
 def fence_git_environment():
@@ -175,86 +48,31 @@ def setUpModule():
     fence_git_environment()
 
 
-UP, DOWN = "up", "down"
-IGNORES_TERM = None
-STUB_SCENARIO = {"latest_tag": "", "on_term": 0, "mise_status": 0, "mise_output": "", "cursor_cli": "",
-                 "yay_status": 0, "fail_mv": []}
-
-
-def up_for(seconds):
-    return f"up for {seconds}"
-
-
-def up_after(seconds):
-    return f"up after {seconds}"
 
 
 @dataclasses.dataclass(frozen=True)
 class Layout:
-    apps: str = "apps"
-    app_name: str = "t3code"
-    restart_env: str = "apps/restart.env"
     t3_home: str = "t3-home"
-    mise_tools: tuple = ("alpha", "npm:@scope/beta")
-    version_commands: tuple = ("alpha", "beta", "gamma")
-
-
-def asset_name(version):
-    return f"T3-Code-{version}-x86_64.AppImage"
-
-
-def sha512_base64(data):
-    return base64.b64encode(hashlib.sha512(data).digest()).decode()
 
 
 class Sandbox:
-    def __init__(self, cleanup, layout=Layout(), *, yay=True, missing_commands=(), skip=None):
-        def real(tool):
-            found = shutil.which(tool)
-            if found is None:
-                if skip is None:
-                    raise RuntimeError(f"{tool} is not installed")
-                skip(f"{tool} is not installed")
-            return found
-
-        tools = {tool: real(tool) for tool in ("bash", "mv", *REAL_TOOLS)}
+    def __init__(self, cleanup, layout=Layout()):
         self.layout = layout
         self.root = Path(tempfile.mkdtemp(prefix="ops-"))
         cleanup(shutil.rmtree, self.root, True)
-        self.home, self.bin, self.state = self.root / "home", self.root / "bin", self.root / "stub"
-        self.apps = self.home / layout.apps
-        self.app = self.apps / layout.app_name
-        self.new = self.apps / (layout.app_name + ".new")
+        self.home = self.root / "home"
+        self.home.mkdir(parents=True, exist_ok=True)
         self.config = self.root / "ops.conf"
-        self.bash = tools["bash"]
-        restart_env = self.home / layout.restart_env
-        for directory in (self.bin, self.state / "release", self.root / "tmp", self.apps, restart_env.parent):
-            directory.mkdir(parents=True, exist_ok=True)
-        restart_env.write_text("export OPS_RESTART_MARK=sourced\n")
-        for tool in REAL_TOOLS:
-            (self.bin / tool).symlink_to(tools[tool])
-        stub = self.state / "stub"
-        stub.write_text("#!" + sys.executable + " -IS" + STUB)
-        stub.chmod(0o755)
-        commands = [name for name in layout.version_commands if name not in missing_commands]
-        for name in dict.fromkeys([*(name for name in STUBBED if yay or name != "yay"), *commands]):
-            (self.bin / name).symlink_to(stub)
-        (self.state / "model.json").write_text(json.dumps({"clock": 0, "procs": []}))
-        (self.state / "scenario.json").write_text(json.dumps({**STUB_SCENARIO, "real_mv": tools["mv"]}))
+        (self.root / "tmp").mkdir(parents=True, exist_ok=True)
 
     def env(self, **extra):
-        return {"PATH": str(self.bin), "HOME": str(self.home), "TMPDIR": str(self.root / "tmp"), "LC_ALL": "C",
-                "OPS_STUB_STATE": str(self.state), "OPS_STUB_BIN": str(self.bin),
-                # kill is a bash builtin, so no PATH entry can replace it. bash imports this function and finds it first.
-                "BASH_FUNC_kill%%": '() { "$OPS_STUB_BIN/kill" "$@"\n}', **extra}
+        return {"PATH": os.environ.get("PATH", ""), "HOME": str(self.home),
+                "TMPDIR": str(self.root / "tmp"), "LC_ALL": "C", **extra}
 
     def config_text(self, drop=(), **overrides):
-        values = {"NIGHTLY_APPS_DIR": str(self.apps), "NIGHTLY_APP_NAME": self.layout.app_name,
-                  "NIGHTLY_RESTART_ENV": str(self.home / self.layout.restart_env),
-                  "NIGHTLY_MISE_TOOLS": " ".join(self.layout.mise_tools),
-                  "NIGHTLY_VERSION_COMMANDS": " ".join(self.layout.version_commands),
-                  "ARCHIVE_T3_HOME": str(self.home / self.layout.t3_home), **overrides}
-        return "".join(f"{key}={value}\n" for key, value in values.items() if key not in drop)
+        if "ARCHIVE_T3_HOME" in drop:
+            return ""
+        return f"ARCHIVE_T3_HOME={overrides.get('ARCHIVE_T3_HOME', str(self.home / self.layout.t3_home))}\n"
 
     def write_config(self, path=None, *, text=None, drop=(), **overrides):
         path = Path(path or self.config)
@@ -270,16 +88,6 @@ class Sandbox:
         if config is not False:
             flag = ["--config", str(self.config if config is True else config)]
         env = self.env(**extra_env)
-        if Path(script).suffix == ".sh":
-            return subprocess.run(
-                [self.bash, str(script), *flag, *args],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                env=env,
-                cwd=self.root,
-                timeout=120,
-            )
         return in_process.invoke(in_process.Invocation(
             program=script,
             argv=(*flag, *args),
@@ -287,176 +95,6 @@ class Sandbox:
             cwd=self.root,
             stdin="",
         ))
-
-    def _build(self, where, version, behavior):
-        where.mkdir(parents=True)
-        (where / "t3code").write_text(behavior + "\n")
-        (where / "t3code").chmod(0o755)
-        if version is not None:
-            (where / ".nightly-version").write_text(version + "\n")
-
-    def _update(self, name, change):
-        data = json.loads((self.state / name).read_text())
-        change(data)
-        (self.state / name).write_text(json.dumps(data))
-
-    def install(self, version, behavior=UP, *, running=True):
-        self._build(self.app, version, behavior)
-        if running:
-            self._update("model.json", lambda model: model["procs"].append(
-                {"cmd": str(self.app / "t3code"), "from": 0, "until": None}))
-
-    def install_without_version_file(self, version_in_app_asar):
-        self.install(None)
-        (self.app / "resources").mkdir()
-        (self.app / "resources/app.asar").write_bytes(
-            b"\x00\x010.0.0-nightly.19980101.1\x00\xfe" + version_in_app_asar.encode() + b"\x00\xff0.0.1-nightly.19990101.1\x00short\x00")
-
-    def stage(self, version, behavior=UP):
-        self._build(self.new, version, behavior)
-
-    def publish(self, version, behavior=UP, *, unpack: Literal["ok", "fail", "empty"] = "ok",
-                checksum: Literal["right", "wrong"] = "right", asset=True):
-        release = self.state / "release" / ("v" + version)
-        release.mkdir(parents=True)
-        image = ("#!" + sys.executable + " -IS\n" + f"MODE, BEHAVIOR = {unpack!r}, {behavior!r}" + APPIMAGE).encode()
-        if asset:
-            (release / asset_name(version)).write_bytes(image)
-        listed = sha512_base64(image if checksum == "right" else b"another file")
-        (release / "nightly-linux.yml").write_text(
-            f"version: {version}\nfiles:\n  - url: {asset_name(version)}\n    sha512: {listed}\n    size: {len(image)}\n")
-        self.scenario(latest_tag="v" + version)
-
-    def scenario(self, **changes):
-        unknown = sorted(set(changes) - set(STUB_SCENARIO))
-        if unknown:
-            raise TypeError(f"no stub scenario key {unknown}")
-        self._update("scenario.json", lambda scenario: scenario.update(changes))
-
-    def calls(self, name=None):
-        log = self.state / "calls.jsonl"
-        calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-        return [call for call in calls if name is None or call["name"] == name]
-
-    def trace(self, *names):
-        return [" ".join([str(call["clock"]), call["name"], *call["argv"]]).replace(str(self.app), "APP")
-                for call in self.calls() if not names or call["name"] in names]
-
-    def clock(self):
-        return json.loads((self.state / "model.json").read_text())["clock"]
-
-    def mask(self, text):
-        text = re.sub(ISO_TIME, "<time>", text.replace(str(self.root), "<root>"))
-        return re.sub(r"(\.prev-\d+\.\d+)\.\d{6}(?!\d)", r"\1.<hhmmss>", text)
-
-    def tree(self, masked=False):
-        mask = self.mask if masked else (lambda text: text)
-        tree = {}
-        for path in sorted(self.home.rglob("*")):
-            mode = stat.S_IMODE(path.lstat().st_mode)
-            if path.is_symlink():
-                entry = ("link", mode, mask(os.readlink(path)))
-            elif path.is_dir():
-                entry = ("dir", mode, "")
-            else:
-                entry = ("file", mode, hashlib.sha256(mask(path.read_bytes().decode("latin-1")).encode("latin-1")).hexdigest())
-            tree[mask(path.relative_to(self.home).as_posix())] = entry
-        return tree
-
-    def log_lines(self):
-        log = self.apps / "t3-nightly-update.log"
-        return [re.sub(f"^{ISO_TIME} ", "", line) for line in log.read_text().splitlines()] if log.exists() else []
-
-    def state_file(self):
-        state = self.apps / "t3-nightly-update.state"
-        return dict(line.split("=", 1) for line in state.read_text().splitlines()) if state.exists() else None
-
-    def observed(self, completed):
-        return {"returncode": completed.returncode, "stdout": self.mask(completed.stdout),
-                "stderr": self.mask(completed.stderr), "calls": json.loads(self.mask(json.dumps(self.calls()))),
-                "tree": self.tree(masked=True), "clock": self.clock()}
-
-
-@dataclasses.dataclass(frozen=True)
-class Scenario:
-    step: str
-    prepare: Callable[[Sandbox], None]
-    options: dict = dataclasses.field(default_factory=dict)
-
-
-def _with(method, *args, **kwargs):
-    return lambda box: getattr(box, method)(*args, **kwargs)
-
-
-def _do(*steps):
-    return lambda box: [step(box) for step in steps] and None
-
-
-def _stale_trees(box):
-    (box.new / "stale").write_text("stale\n")
-    (box.apps / "squashfs-root").mkdir()
-    (box.apps / "squashfs-root/stale").write_text("stale\n")
-
-
-def _cached_download(box):
-    shutil.copyfile(box.state / "release" / ("v" + WANT) / asset_name(WANT), box.apps / asset_name(WANT))
-
-
-_INSTALLED = _with("install", HAVE)
-_PUBLISHED = _do(_INSTALLED, _with("publish", WANT))
-_STAGED = _do(_INSTALLED, _with("stage", WANT))
-_OUTDATED = _do(_PUBLISHED, _with("scenario", mise_output="alpha 1.0.0 1.1.0\n", cursor_cli="3.2.1"))
-
-NIGHTLY_SCENARIOS = {
-    "check": Scenario("check", _OUTDATED),
-    "check-staged": Scenario("check", _do(_OUTDATED, _with("stage", WANT))),
-    "check-asar": Scenario("check", _do(_with("install_without_version_file", HAVE), _with("publish", WANT))),
-    "check-staged-unmarked": Scenario("check", _do(_OUTDATED, _with("stage", None))),
-    "clis": Scenario("clis", _with("scenario", mise_output="upgraded alpha\n")),
-    "clis-upgrade-fails": Scenario("clis", _with("scenario", mise_output="no such tool\n", mise_status=1)),
-    "clis-cursor": Scenario("clis", _with("scenario", cursor_cli="3.2.1")),
-    "clis-cursor-fails": Scenario("clis", _with("scenario", cursor_cli="3.2.1", yay_status=1)),
-    "clis-no-yay": Scenario("clis", _with("scenario", cursor_cli="3.2.1"), {"yay": False}),
-    "clis-last-missing": Scenario("clis", _do(), {"missing_commands": ("gamma",)}),
-    "clis-middle-missing": Scenario("clis", _do(), {"missing_commands": ("beta",)}),
-    "stage": Scenario("stage", _PUBLISHED),
-    "stage-current": Scenario("stage", _do(_INSTALLED, _with("publish", HAVE))),
-    "stage-unreadable": Scenario("stage", _INSTALLED),
-    "stage-cached": Scenario("stage", _do(_PUBLISHED, _cached_download)),
-    "stage-wrong-checksum": Scenario("stage", _do(_INSTALLED, _with("publish", WANT, checksum="wrong"))),
-    "stage-no-manifest": Scenario("stage", _do(_PUBLISHED, lambda box: (box.state / "release" / ("v" + WANT) / "nightly-linux.yml").unlink())),
-    "stage-download-fails": Scenario("stage", _do(_INSTALLED, _with("publish", WANT, asset=False))),
-    "stage-unpack-fails": Scenario("stage", _do(_INSTALLED, _with("publish", WANT, unpack="fail"))),
-    "stage-no-t3code": Scenario("stage", _do(_INSTALLED, _with("publish", WANT, unpack="empty"))),
-    "stage-stale": Scenario("stage", _do(_PUBLISHED, _with("stage", "0.0.6-nightly.19991231.1", DOWN), _stale_trees)),
-    "stage-move-fails": Scenario("stage", _do(_PUBLISHED, _with("scenario", fail_mv=[2]))),
-    "restart": Scenario("restart", _STAGED),
-    "restart-nothing-staged": Scenario("restart", _INSTALLED),
-    "restart-staged-not-executable": Scenario("restart", _do(_STAGED, lambda box: (box.new / "t3code").chmod(0o644))),
-    "restart-ignores-term": Scenario("restart", _do(_STAGED, _with("scenario", on_term=IGNORES_TERM))),
-    "restart-not-running": Scenario("restart", _do(_with("install", HAVE, running=False), _with("stage", WANT))),
-    "restart-slow-start": Scenario("restart", _do(_INSTALLED, _with("stage", WANT, up_after(3)))),
-    "restart-no-start": Scenario("restart", _do(_INSTALLED, _with("stage", WANT, DOWN))),
-    "restart-dies": Scenario("restart", _do(_INSTALLED, _with("stage", WANT, up_for(10)))),
-    "restart-down": Scenario("restart", _do(_with("install", HAVE, DOWN), _with("stage", WANT, DOWN))),
-    "restart-rollback-move-fails": Scenario("restart", _do(_INSTALLED, _with("stage", WANT, DOWN), _with("scenario", fail_mv=[3]))),
-    "restart-no-env": Scenario("restart", _do(_STAGED, lambda box: (box.home / box.layout.restart_env).unlink())),
-    "restart-prev-taken": Scenario("restart", _do(_STAGED, lambda box: Path(f"{box.app}.prev-20000101.1").mkdir())),
-    "restart-move-fails": Scenario("restart", _do(_STAGED, _with("scenario", fail_mv=[1]))),
-    "restart-swap-fails": Scenario("restart", _do(_STAGED, _with("scenario", fail_mv=[2]))),
-}
-
-
-def arrange(cleanup, name, layout=Layout(), skip=None):
-    scenario = NIGHTLY_SCENARIOS[name]
-    box = Sandbox(cleanup, layout, skip=skip, **scenario.options)
-    scenario.prepare(box)
-    return box
-
-
-def play(cleanup, name, script=NIGHTLY, layout=Layout(), config=True, skip=None):
-    box = arrange(cleanup, name, layout, skip)
-    return box, box.run(script, NIGHTLY_SCENARIOS[name].step, config=config)
 
 
 TOOL_ERROR, RPC_ERROR, NO_REPLY = "tool error", "rpc error", "no reply"
@@ -652,8 +290,8 @@ class ArchiveRun:
 
 
 class ArchiveWorld:
-    def __init__(self, cleanup, layout=Layout(), projects=PROJECTS, threads=THREADS, nodes=(), subagents=(), skip=None):
-        self.sandbox = Sandbox(cleanup, layout, skip=skip)
+    def __init__(self, cleanup, layout=Layout(), projects=PROJECTS, threads=THREADS, nodes=(), subagents=()):
+        self.sandbox = Sandbox(cleanup, layout)
         self.stub = McpStub(cleanup)
         userdata = self.sandbox.home / layout.t3_home / "userdata"
         self.database = userdata / "statev2.sqlite"
@@ -669,23 +307,12 @@ class ArchiveWorld:
 class OpsTest(unittest.TestCase):
     maxDiff = None
 
-    def arrange(self, name):
-        return arrange(self.addCleanup, name, skip=self.skipTest)
-
-    def play(self, name):
-        return play(self.addCleanup, name, skip=self.skipTest)
-
     def world(self, **fixture):
-        return ArchiveWorld(self.addCleanup, skip=self.skipTest, **fixture)
+        return ArchiveWorld(self.addCleanup, **fixture)
 
     def assertRefused(self, done, script, problem):
         self.assertEqual((done.returncode, done.stdout, done.stderr), (78, "", f"{script.name}: {problem}\n"))
 
-
-PROBE = {NIGHTLY: ("check",), ARCHIVE: ("--project", "fixture project", "--dry-run")}
-RAN = {NIGHTLY: "t3 installed: \nt3 latest:    \n", ARCHIVE: ARCHIVE_CASES[0][1] + "\n"}
-PREFIX = {NIGHTLY: "NIGHTLY_", ARCHIVE: "ARCHIVE_"}
-FIRST_KEY = {NIGHTLY: "NIGHTLY_APPS_DIR", ARCHIVE: "ARCHIVE_T3_HOME"}
 
 ACCEPTED, NO_OWN_KEY = object(), object()
 READER_CASES = (
@@ -693,190 +320,132 @@ READER_CASES = (
     ("crlf", lambda base: base.replace("\n", "\r\n"), ACCEPTED),
     ("no final newline", lambda base: base.rstrip("\n"), ACCEPTED),
     ("comment and blank", lambda base: "# c\n\n   \t\n  # d\n" + base, ACCEPTED),
-    ("leading blanks", lambda base: base.replace("NIGHTLY_APP_NAME", "  \tNIGHTLY_APP_NAME").replace("ARCHIVE_T3_HOME", " \tARCHIVE_T3_HOME"), ACCEPTED),
+    ("leading blanks", lambda base: base.replace("ARCHIVE_T3_HOME", " \tARCHIVE_T3_HOME"), ACCEPTED),
     ("other key", lambda base: base + "SOMETHING_ELSE=1 2 = 3\n", ACCEPTED),
     ("empty other value", lambda base: base + "X=\n", ACCEPTED),
     ("number sign inside a value", lambda base: base + "X=1 # not a comment\n", ACCEPTED),
     ("lone carriage return inside", lambda base: base + "X=1\rY=2\n", ACCEPTED),
     ("comment that is not UTF-8", lambda base: base.encode() + b"# \xff\xfe\n", ACCEPTED),
-    ("space before equals", lambda base: base + "X =1\n", "line 7 is not KEY=value"),
-    ("no equals", lambda base: base + "just words\n", "line 7 is not KEY=value"),
-    ("lowercase key", lambda base: base + "x=1\n", "line 7 is not KEY=value"),
-    ("digit first", lambda base: base + "1X=1\n", "line 7 is not KEY=value"),
-    ("empty key", lambda base: base + "=1\n", "line 7 is not KEY=value"),
-    ("export prefix", lambda base: base + "export X=1\n", "line 7 is not KEY=value"),
-    ("key that is not UTF-8", lambda base: base.encode() + b"K\xff=1\n", "line 7 is not KEY=value"),
-    ("other key twice", lambda base: base + "X=1\nX=1\n", "line 8 sets X a second time"),
-    ("archive key twice", lambda base: base + "ARCHIVE_T3_HOME=/a/t3\n", "line 7 sets ARCHIVE_T3_HOME a second time"),
-    ("nightly key twice", lambda base: base + "NIGHTLY_APP_NAME=t3code\n", "line 7 sets NIGHTLY_APP_NAME a second time"),
+    ("space before equals", lambda base: base + "X =1\n", "line 2 is not KEY=value"),
+    ("no equals", lambda base: base + "just words\n", "line 2 is not KEY=value"),
+    ("lowercase key", lambda base: base + "x=1\n", "line 2 is not KEY=value"),
+    ("digit first", lambda base: base + "1X=1\n", "line 2 is not KEY=value"),
+    ("empty key", lambda base: base + "=1\n", "line 2 is not KEY=value"),
+    ("export prefix", lambda base: base + "export X=1\n", "line 2 is not KEY=value"),
+    ("key that is not UTF-8", lambda base: base.encode() + b"K\xff=1\n", "line 2 is not KEY=value"),
+    ("other key twice", lambda base: base + "X=1\nX=1\n", "line 3 sets X a second time"),
+    ("archive key twice", lambda base: base + "ARCHIVE_T3_HOME=/a/t3\n", "line 2 sets ARCHIVE_T3_HOME a second time"),
     ("empty file", lambda base: "", NO_OWN_KEY),
 )
 
 
 class ConfigTest(OpsTest):
-    def probe(self, world, script, config=True, **env):
-        return world.sandbox.run(script, *PROBE[script], config=config, **env)
+    def probe(self, world, config=True, **env):
+        return world.sandbox.run(ARCHIVE, "--project", "fixture project", "--dry-run", config=config, **env)
 
-    def assertRan(self, done, script):
-        self.assertEqual((done.returncode, done.stdout[:len(RAN[script])], done.stderr), (0, RAN[script], ""))
+    def assertRan(self, done):
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, ARCHIVE_CASES[0][1] + "\n", ""))
 
     def test_no_config_prints_one_line_naming_the_file_and_changes_nothing(self):
-        invocations = {
-            NIGHTLY: ((), ("check",), ("clis",), ("stage",), ("restart",), ("no-such-step",)),
-            ARCHIVE: ((), ("--help",), ("--project", "fixture project"), ("--project", "fixture project", "--top-level-settled")),
-        }
         world = self.world()
         box = world.sandbox
-        box.install(HAVE)
-        box.stage(WANT)
-        box.publish(WANT)
-        before = box.tree()
-        for script, argument_lists in invocations.items():
-            for arguments in argument_lists:
-                with self.subTest(script=script.name, arguments=arguments):
-                    done = box.run(script, *arguments, config=False, T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
-                    self.assertRefused(done, script, f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
-                                                     "Copy ops/config.example to that path and set every key.")
-                    self.assertEqual(box.tree(), before)
-                    self.assertEqual(box.calls(), [])
-                    self.assertEqual(world.stub.requests, [])
+        before = sorted(path.relative_to(box.root).as_posix() for path in box.root.rglob("*"))
+        for arguments in ((), ("--help",), ("--project", "fixture project"),
+                          ("--project", "fixture project", "--top-level-settled")):
+            with self.subTest(arguments=arguments):
+                done = box.run(ARCHIVE, *arguments, config=False, T3_CODE_MCP_AUTHORIZATION=CREDENTIAL)
+                self.assertRefused(done, ARCHIVE, f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
+                                                  "Copy ops/config.example to that path and set every key.")
+                self.assertEqual(sorted(path.relative_to(box.root).as_posix() for path in box.root.rglob("*")), before)
+                self.assertEqual(world.stub.requests, [])
 
     def test_xdg_config_home_is_used_only_when_it_is_absolute(self):
-        for script in PROBE:
-            with self.subTest(script=script.name):
-                world = self.world()
-                box = world.sandbox
-                box.write_config(box.root / "xdg/pstack-t3/ops.conf")
-                self.assertRan(self.probe(world, script, config=False, XDG_CONFIG_HOME=str(box.root / "xdg")), script)
-                self.assertRefused(self.probe(world, script, config=False, XDG_CONFIG_HOME="xdg"), script,
-                                   f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
-                                   "Copy ops/config.example to that path and set every key.")
+        world = self.world()
+        box = world.sandbox
+        box.write_config(box.root / "xdg/pstack-t3/ops.conf")
+        self.assertRan(self.probe(world, config=False, XDG_CONFIG_HOME=str(box.root / "xdg")))
+        self.assertRefused(self.probe(world, config=False, XDG_CONFIG_HOME="xdg"),
+                           ARCHIVE, f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
+                           "Copy ops/config.example to that path and set every key.")
 
     def test_environment_variable_names_the_file(self):
-        for script in PROBE:
-            with self.subTest(script=script.name):
-                world = self.world()
-                box = world.sandbox
-                named = box.root / "named.conf"
-                self.assertRefused(self.probe(world, script, config=False, PSTACK_T3_OPS_CONFIG=""), script,
-                                   f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
-                                   "Copy ops/config.example to that path and set every key.")
-                box.write_config(box.home / ".config/pstack-t3/ops.conf")
-                self.assertRan(self.probe(world, script, config=False, PSTACK_T3_OPS_CONFIG=""), script)
-                self.assertRefused(self.probe(world, script, config=False, PSTACK_T3_OPS_CONFIG=str(named)), script,
-                                   f"no config file at {named}. Copy ops/config.example to that path and set every key.")
-                box.write_config(named)
-                (box.home / ".config/pstack-t3/ops.conf").unlink()
-                self.assertRan(self.probe(world, script, config=False, PSTACK_T3_OPS_CONFIG=str(named)), script)
+        world = self.world()
+        box = world.sandbox
+        named = box.root / "named.conf"
+        self.assertRefused(self.probe(world, config=False, PSTACK_T3_OPS_CONFIG=""),
+                           ARCHIVE, f"no config file at {box.home}/.config/pstack-t3/ops.conf. "
+                           "Copy ops/config.example to that path and set every key.")
+        box.write_config(box.home / ".config/pstack-t3/ops.conf")
+        self.assertRan(self.probe(world, config=False, PSTACK_T3_OPS_CONFIG=""))
+        self.assertRefused(self.probe(world, config=False, PSTACK_T3_OPS_CONFIG=str(named)),
+                           ARCHIVE, f"no config file at {named}. Copy ops/config.example to that path and set every key.")
+        box.write_config(named)
+        (box.home / ".config/pstack-t3/ops.conf").unlink()
+        self.assertRan(self.probe(world, config=False, PSTACK_T3_OPS_CONFIG=str(named)))
 
     def test_flag_wins_and_a_missing_flag_file_is_not_replaced(self):
-        for script in PROBE:
-            with self.subTest(script=script.name):
-                world = self.world()
-                box = world.sandbox
-                box.write_config(box.home / ".config/pstack-t3/ops.conf")
-                named = box.write_config(box.root / "named.conf")
-                flagged = box.root / "flagged.conf"
-                self.assertRefused(self.probe(world, script, config=flagged, PSTACK_T3_OPS_CONFIG=str(named)), script,
-                                   f"no config file at {flagged}. Copy ops/config.example to that path and set every key.")
-                box.write_config(flagged)
-                named.write_text("not a config\n")
-                (box.home / ".config/pstack-t3/ops.conf").write_text("not a config\n")
-                self.assertRan(self.probe(world, script, config=flagged, PSTACK_T3_OPS_CONFIG=str(named)), script)
+        world = self.world()
+        box = world.sandbox
+        box.write_config(box.home / ".config/pstack-t3/ops.conf")
+        named = box.write_config(box.root / "named.conf")
+        flagged = box.root / "flagged.conf"
+        self.assertRefused(self.probe(world, config=flagged, PSTACK_T3_OPS_CONFIG=str(named)),
+                           ARCHIVE, f"no config file at {flagged}. Copy ops/config.example to that path and set every key.")
+        box.write_config(flagged)
+        named.write_text("not a config\n")
+        (box.home / ".config/pstack-t3/ops.conf").write_text("not a config\n")
+        self.assertRan(self.probe(world, config=flagged, PSTACK_T3_OPS_CONFIG=str(named)))
 
     def test_config_flag_with_no_file_exits_2(self):
         world = self.world()
-        for script in PROBE:
-            with self.subTest(script=script.name):
-                done = world.sandbox.run(script, "--config", config=False)
-                self.assertEqual((done.returncode, done.stdout, done.stderr), (2, "", f"{script.name}: --config needs a file\n"))
+        done = world.sandbox.run(ARCHIVE, "--config", config=False)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (2, "", f"{ARCHIVE.name}: --config needs a file\n"))
 
     def test_a_config_path_that_is_a_directory_is_refused_and_a_dangling_link_is_no_config(self):
         world = self.world()
         link = world.sandbox.root / "link.conf"
         link.symlink_to(world.sandbox.root / "absent.conf")
-        for script in PROBE:
-            with self.subTest(script=script.name):
-                self.assertRefused(self.probe(world, script, config=world.sandbox.home), script,
-                                   f"config file {world.sandbox.home} is not a readable file")
-                self.assertRefused(self.probe(world, script, config=link), script,
-                                   f"no config file at {link}. Copy ops/config.example to that path and set every key.")
+        self.assertRefused(self.probe(world, config=world.sandbox.home),
+                           ARCHIVE, f"config file {world.sandbox.home} is not a readable file")
+        self.assertRefused(self.probe(world, config=link),
+                           ARCHIVE, f"no config file at {link}. Copy ops/config.example to that path and set every key.")
 
-    def test_both_readers_accept_and_refuse_the_same_files(self):
+    def test_the_reader_accepts_and_refuses_each_file(self):
         world = self.world()
         box = world.sandbox
         for name, build, expected in READER_CASES:
-            file = box.write_config(text=build(box.config_text()))
-            for script in PROBE:
-                with self.subTest(case=name, script=script.name):
-                    done = self.probe(world, script)
-                    if expected is ACCEPTED:
-                        self.assertRan(done, script)
-                    else:
-                        problem = "does not set " + FIRST_KEY[script] if expected is NO_OWN_KEY else expected
-                        self.assertRefused(done, script, f"config file {file} {problem}")
+            with self.subTest(case=name):
+                file = box.write_config(text=build(box.config_text()))
+                done = self.probe(world)
+                if expected is ACCEPTED:
+                    self.assertRan(done)
+                else:
+                    problem = "does not set ARCHIVE_T3_HOME" if expected is NO_OWN_KEY else expected
+                    self.assertRefused(done, ARCHIVE, f"config file {file} {problem}")
 
     def test_a_script_refuses_an_unknown_key_with_its_prefix_and_ignores_other_keys(self):
         world = self.world()
         box = world.sandbox
-        for line, refuser in (("NIGHTLY_LOG=/x", NIGHTLY), ("ARCHIVE_DB=/x", ARCHIVE), ("OTHER=1", None)):
-            file = box.write_config(text=box.config_text() + line + "\n")
-            for script in PROBE:
-                with self.subTest(line=line, script=script.name):
-                    done = self.probe(world, script)
-                    if script == refuser:
-                        key = line.split("=")[0]
-                        self.assertRefused(done, script, f"config file {file} line 7 sets {key}, and this script has no such key")
-                    else:
-                        self.assertRan(done, script)
+        file = box.write_config(text=box.config_text() + "ARCHIVE_DB=/x\n")
+        with self.subTest(line="ARCHIVE_DB=/x"):
+            self.assertRefused(self.probe(world),
+                               ARCHIVE, f"config file {file} line 2 sets ARCHIVE_DB, and this script has no such key")
+        for line in ("NIGHTLY_LOG=/x", "OTHER=1"):
+            with self.subTest(line=line):
+                box.write_config(text=box.config_text() + line + "\n")
+                self.assertRan(self.probe(world))
 
-    def test_the_example_is_read_by_both_scripts_and_each_of_its_keys_is_required_by_one_script(self):
+    def test_the_example_holds_the_one_required_key(self):
         box = self.world().sandbox
         example = EXAMPLE.read_text()
         keys = re.findall(r"^([A-Z][A-Z0-9_]*)=", example, re.MULTILINE)
-        self.assertEqual(len(keys), 6)
-        nightly = box.run(NIGHTLY, "check", config=EXAMPLE)
-        self.assertEqual((nightly.returncode, nightly.stdout[:len(RAN[NIGHTLY])], nightly.stderr), (0, RAN[NIGHTLY], ""))
-        self.assertEqual(box.calls("mise")[0]["argv"], ["outdated", "first-tool", "second-tool", "npm:@scope/third-tool"])
-        archive = box.run(ARCHIVE, *PROBE[ARCHIVE], config=EXAMPLE)
+        self.assertEqual(keys, ["ARCHIVE_T3_HOME"])
+        archive = box.run(ARCHIVE, "--project", "fixture project", "--dry-run", config=EXAMPLE)
         self.assertEqual((archive.returncode, archive.stdout), (1, ""))
         self.assertIn("sqlite3.OperationalError", archive.stderr)
-        with_every_key = {NIGHTLY: nightly.returncode, ARCHIVE: archive.returncode}
-        for key in keys:
-            file = box.write_config(text="".join(line for line in example.splitlines(True) if not line.startswith(key + "=")))
-            for script in PROBE:
-                with self.subTest(key=key, script=script.name):
-                    done = box.run(script, *PROBE[script], config=file)
-                    if key.startswith(PREFIX[script]):
-                        self.assertRefused(done, script, f"config file {file} does not set {key}")
-                    else:
-                        self.assertEqual(done.returncode, with_every_key[script])
-
-    def test_nightly_refuses_a_value_outside_its_characters(self):
-        path = "It must start with / and use only the characters A-Za-z0-9._/-."
-        word = "It must start with [A-Za-z0-9] and use only the characters "
-        cases = (
-            ("NIGHTLY_APPS_DIR", "a/apps", "puts 'a/apps' in NIGHTLY_APPS_DIR. " + path),
-            ("NIGHTLY_APPS_DIR", '"/a/apps"', "puts '\"/a/apps\"' in NIGHTLY_APPS_DIR. " + path),
-            ("NIGHTLY_APPS_DIR", "/a/my apps", "puts '/a/my apps' in NIGHTLY_APPS_DIR. " + path),
-            ("NIGHTLY_RESTART_ENV", "$HOME/restart.env", "puts '$HOME/restart.env' in NIGHTLY_RESTART_ENV. " + path),
-            ("NIGHTLY_APP_NAME", "..", "puts '..' in NIGHTLY_APP_NAME. " + word + "A-Za-z0-9._-."),
-            ("NIGHTLY_APP_NAME", "a/b", "puts 'a/b' in NIGHTLY_APP_NAME. " + word + "A-Za-z0-9._-."),
-            ("NIGHTLY_MISE_TOOLS", "alpha -rf", "puts '-rf' in NIGHTLY_MISE_TOOLS. " + word + "A-Za-z0-9._:@/+-."),
-            ("NIGHTLY_MISE_TOOLS", "alpha *", "puts '*' in NIGHTLY_MISE_TOOLS. " + word + "A-Za-z0-9._:@/+-."),
-            ("NIGHTLY_VERSION_COMMANDS", "alpha /bin/beta", "puts '/bin/beta' in NIGHTLY_VERSION_COMMANDS. " + word + "A-Za-z0-9._+-."),
-            ("NIGHTLY_MISE_TOOLS", "", "gives NIGHTLY_MISE_TOOLS no value"),
-            ("NIGHTLY_VERSION_COMMANDS", " \t", "gives NIGHTLY_VERSION_COMMANDS no value"),
-        )
-        box = self.arrange("restart")
-        before = box.tree()
-        for key, value, problem in cases:
-            with self.subTest(key=key, value=value):
-                file = box.write_config(**{key: value})
-                for step in ("check", "restart"):
-                    self.assertRefused(box.run(NIGHTLY, step), NIGHTLY, f"config file {file} {problem}")
-                self.assertEqual(box.calls(), [])
-                self.assertEqual(box.tree(), before)
+        file = box.write_config(text="".join(line for line in example.splitlines(True) if not line.startswith("ARCHIVE_T3_HOME=")))
+        self.assertRefused(box.run(ARCHIVE, "--project", "fixture project", "--dry-run", config=file),
+                           ARCHIVE, f"config file {file} does not set ARCHIVE_T3_HOME")
 
     def test_archive_refuses_a_t3_home_that_is_relative_or_holds_a_uri_character(self):
         world = self.world()
@@ -888,416 +457,12 @@ class ConfigTest(OpsTest):
                                    "It must start with / and use only the characters A-Za-z0-9._/-.")
                 self.assertEqual(world.stub.requests, [])
 
-    def test_blanks_around_a_value_and_between_list_words_are_dropped(self):
+    def test_blanks_around_the_value_are_dropped(self):
         world = self.world()
         box = world.sandbox
-        box.install(HAVE)
-        box.write_config(NIGHTLY_APPS_DIR=f" \t{box.apps} \t", NIGHTLY_MISE_TOOLS="\talpha \t  npm:@scope/beta  ")
-        done = box.run(NIGHTLY, "check")
-        self.assertEqual((done.returncode, done.stdout.splitlines()[0]), (0, "t3 installed: " + HAVE))
-        self.assertEqual(box.calls("mise")[0]["argv"], ["outdated", "alpha", "npm:@scope/beta"])
         box.write_config(text=box.config_text(ARCHIVE_T3_HOME=f"  {box.home}/t3-home \t").replace("\n", "\r\n"))
-        self.assertRan(self.probe(world, ARCHIVE), ARCHIVE)
+        self.assertRan(self.probe(world))
 
-
-class NightlyTest(OpsTest):
-    def test_no_step_and_an_unknown_step_print_the_header_comment_and_exit_2(self):
-        lines = NIGHTLY.read_text().splitlines()
-        end = next(number for number, line in enumerate(lines) if number and not line.startswith("#"))
-        box = self.arrange("restart")
-        before = box.tree()
-        for arguments in ((), ("no-such-step",)):
-            with self.subTest(arguments=arguments):
-                done = box.run(NIGHTLY, *arguments)
-                self.assertEqual((done.returncode, done.stdout, done.stderr), (2, "\n".join(lines[1:end]) + "\n", ""))
-        self.assertEqual(box.calls(), [])
-        self.assertEqual(box.tree(), before)
-
-    def test_check_prints_versions_and_changes_nothing(self):
-        box = self.arrange("check")
-        before = box.tree()
-        done = box.run(NIGHTLY, "check")
-        self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual(done.stdout.splitlines(), [
-            "t3 installed: " + HAVE, "t3 latest:    " + WANT, "clis outdated:", "  alpha 1.0.0 1.1.0", "cursor-cli: 3.2.1"])
-        self.assertEqual([(call["name"], call["argv"], call["env"]) for call in box.calls()], [
-            ("gh", ["release", "list", "-R", REPO, "--limit", "40", "--json", "tagName,publishedAt", "-q", LATEST_FILTER], {}),
-            ("mise", ["outdated", "alpha", "npm:@scope/beta"], {"MISE_MINIMUM_RELEASE_AGE": "0"}),
-            ("pacman", ["-Q", "cursor-cli"], {})])
-        self.assertEqual(box.tree(), before)
-
-    def test_check_prints_the_staged_version_when_a_build_is_staged(self):
-        _, done = self.play("check-staged")
-        self.assertEqual(done.stdout.splitlines(), [
-            "t3 installed: " + HAVE, "t3 latest:    " + WANT, "t3 staged:    " + WANT,
-            "clis outdated:", "  alpha 1.0.0 1.1.0", "cursor-cli: 3.2.1"])
-
-    def test_check_prints_unknown_for_a_staged_build_with_no_version_file(self):
-        _, done = self.play("check-staged-unmarked")
-        self.assertEqual((done.returncode, done.stderr, done.stdout.splitlines()[2]), (0, "", "t3 staged:    unknown"))
-
-    def test_installed_version_falls_back_to_the_last_sorted_version_string_in_app_asar(self):
-        box, done = self.play("check-asar")
-        self.assertEqual(done.stdout.splitlines()[0], "t3 installed: " + HAVE)
-        self.assertEqual(box.trace("strings"), ["0 strings -n 20 APP/resources/app.asar"])
-
-    def test_clis_upgrades_the_configured_tools_with_no_hold_and_logs_each_version(self):
-        box, done = self.play("clis")
-        self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual([(call["argv"], call["env"]) for call in box.calls("mise")],
-                         [(["upgrade", "alpha", "npm:@scope/beta"], {"MISE_MINIMUM_RELEASE_AGE": "0"})])
-        self.assertEqual(box.log_lines(), [
-            "clis: upgrading alpha npm:@scope/beta", "upgraded alpha", "clis: mise upgrade ok",
-            "clis: alpha alpha 1.0.0", "clis: beta beta 1.0.0", "clis: gamma gamma 1.0.0"])
-        self.assertEqual(box.trace("alpha", "beta", "gamma"), ["0 alpha --version", "0 beta --version", "0 gamma --version"])
-
-    def test_clis_logs_a_failed_upgrade_and_still_logs_versions(self):
-        box, done = self.play("clis-upgrade-fails")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.log_lines(), [
-            "clis: upgrading alpha npm:@scope/beta", "no such tool", "clis: mise upgrade FAILED, see log",
-            "clis: alpha alpha 1.0.0", "clis: beta beta 1.0.0", "clis: gamma gamma 1.0.0"])
-
-    def test_clis_runs_yay_only_when_yay_exists_and_pacman_has_cursor_cli(self):
-        for name, traced, logged in (
-            ("clis-cursor", ["0 pacman -Q cursor-cli", "0 yay -S --needed --noconfirm cursor-cli"], ["clis: cursor-cli ok"]),
-            ("clis-no-yay", [], []),
-            ("clis", ["0 pacman -Q cursor-cli"], []),
-        ):
-            with self.subTest(scenario=name):
-                box, done = self.play(name)
-                self.assertEqual(done.returncode, 0)
-                self.assertEqual(box.trace("pacman", "yay"), traced)
-                self.assertEqual([line for line in box.log_lines() if "cursor-cli" in line], logged)
-
-    def test_clis_logs_a_failed_cursor_cli_upgrade(self):
-        box, done = self.play("clis-cursor-fails")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.log_lines()[2:4], ["clis: cursor-cli FAILED, see log", "clis: alpha alpha 1.0.0"])
-
-    def test_clis_exits_1_when_the_last_listed_command_is_missing(self):
-        box, done = self.play("clis-last-missing")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.log_lines()[-2:], ["clis: alpha alpha 1.0.0", "clis: beta beta 1.0.0"])
-        box, done = self.play("clis-middle-missing")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.log_lines()[-2:], ["clis: alpha alpha 1.0.0", "clis: gamma gamma 1.0.0"])
-
-    def test_stage_exits_3_and_removes_the_state_file_when_already_on_the_latest(self):
-        box = self.arrange("stage-current")
-        (box.apps / "t3-nightly-update.state").write_text("from=a\nto=b\n")
-        done = box.run(NIGHTLY, "stage")
-        self.assertEqual(done.returncode, 3)
-        self.assertEqual(box.log_lines(), ["stage: already on " + HAVE])
-        self.assertIsNone(box.state_file())
-        self.assertEqual([call["argv"][:2] for call in box.calls("gh")], [["release", "list"]])
-        self.assertFalse(box.new.exists())
-
-    def test_stage_exits_1_when_the_latest_nightly_cannot_be_read(self):
-        box = self.arrange("stage-unreadable")
-        before = box.tree()
-        done = box.run(NIGHTLY, "stage")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.log_lines(), ["stage: cannot read the latest nightly"])
-        after = box.tree()
-        self.assertEqual(after.pop("apps/t3-nightly-update.log")[0], "file")
-        self.assertEqual(after, before)
-
-    def test_stage_downloads_verifies_and_unpacks_beside_the_installed_build(self):
-        box = self.arrange("stage")
-        before = box.tree()
-        done = box.run(NIGHTLY, "stage")
-        file = asset_name(WANT)
-        self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual([call["argv"] for call in box.calls("gh")], [
-            ["release", "list", "-R", REPO, "--limit", "40", "--json", "tagName,publishedAt", "-q", LATEST_FILTER],
-            ["release", "download", "v" + WANT, "-R", REPO, "-p", file, "-O", file + ".part"],
-            ["release", "download", "v" + WANT, "-R", REPO, "-p", "nightly-linux.yml", "-O", "-"]])
-        self.assertEqual(box.trace("mv"), [f"0 mv -f {file}.part {file}", f"0 mv -T {box.apps}/squashfs-root APP.new"])
-        after = box.tree()
-        self.assertEqual({path: entry for path, entry in after.items() if path in before}, before)
-        self.assertEqual(sorted(set(after) - set(before)), [
-            "apps/" + file, "apps/t3-nightly-update.log", "apps/t3-nightly-update.state",
-            "apps/t3code.new", "apps/t3code.new/.nightly-version", "apps/t3code.new/t3code"])
-        self.assertEqual(after["apps/t3code.new"][:2], ("dir", 0o755))
-        self.assertEqual(after["apps/t3code.new/t3code"][:2], ("file", 0o755))
-        self.assertEqual(after["apps/" + file][1] & 0o111, 0o111)
-        self.assertEqual(((box.new / "t3code").read_text(), (box.new / ".nightly-version").read_text()), ("up\n", WANT + "\n"))
-        state = box.state_file()
-        self.assertRegex(state.pop("staged"), f"^{ISO_TIME}$")
-        self.assertEqual(state, {"from": HAVE, "to": WANT})
-        self.assertEqual(box.log_lines(), [f"stage: {HAVE} -> {WANT}", f"stage: ready at {box.new}"])
-
-    def test_stage_reuses_a_file_it_already_downloaded(self):
-        box, done = self.play("stage-cached")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual([call["argv"] for call in box.calls("gh")][1:], [
-            ["release", "download", "v" + WANT, "-R", REPO, "-p", "nightly-linux.yml", "-O", "-"]])
-        self.assertEqual((box.new / ".nightly-version").read_text(), WANT + "\n")
-
-    def test_stage_renames_a_file_with_a_wrong_or_unlisted_checksum_and_stages_nothing(self):
-        for name, want in (("stage-wrong-checksum", sha512_base64(b"another file")[:16]), ("stage-no-manifest", "")):
-            with self.subTest(scenario=name):
-                box, done = self.play(name)
-                file = box.apps / asset_name(WANT)
-                self.assertEqual(done.returncode, 1)
-                self.assertEqual(sorted(path.name for path in box.apps.iterdir()),
-                                 sorted([file.name + ".bad", "restart.env", "t3-nightly-update.log", "t3code"]))
-                got = sha512_base64(Path(str(file) + ".bad").read_bytes())[:16]
-                self.assertEqual(box.log_lines(), [f"stage: {HAVE} -> {WANT}",
-                                                   f"stage: checksum mismatch for {file.name} (want '{want}', got '{got}')"])
-                self.assertIsNone(box.state_file())
-
-    def test_stage_removes_the_partial_file_when_the_download_fails(self):
-        box, done = self.play("stage-download-fails")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.log_lines(), [f"stage: {HAVE} -> {WANT}", "stage: download FAILED"])
-        self.assertEqual(sorted(path.name for path in box.apps.iterdir()), ["restart.env", "t3-nightly-update.log", "t3code"])
-        self.assertEqual(len(box.calls("gh")), 2)
-
-    def test_stage_fails_when_the_unpack_fails_or_holds_no_t3code(self):
-        for name, line in (("stage-unpack-fails", "stage: unpack FAILED"), ("stage-no-t3code", "stage: unpacked tree has no t3code")):
-            with self.subTest(scenario=name):
-                box, done = self.play(name)
-                self.assertEqual(done.returncode, 1)
-                self.assertEqual(box.log_lines(), [f"stage: {HAVE} -> {WANT}", line])
-                self.assertEqual(sorted(path.name for path in box.apps.iterdir()),
-                                 sorted([asset_name(WANT), "restart.env", "t3-nightly-update.log", "t3code"]))
-
-    def test_stage_exits_1_and_writes_no_state_when_the_unpacked_tree_cannot_be_moved(self):
-        box, done = self.play("stage-move-fails")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.log_lines(), [f"stage: {HAVE} -> {WANT}"])
-        self.assertEqual(sorted(path.name for path in box.apps.iterdir()),
-                         sorted([asset_name(WANT), "restart.env", "squashfs-root", "t3-nightly-update.log", "t3code"]))
-
-    def test_stage_exits_1_when_the_apps_directory_does_not_exist(self):
-        box = self.arrange("stage")
-        before = box.tree()
-        box.write_config(NIGHTLY_APPS_DIR=str(box.root / "absent"))
-        done = box.run(NIGHTLY, "stage")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual([call["argv"][:2] for call in box.calls("gh")], [["release", "list"]])
-        self.assertEqual(box.tree(), before)
-        self.assertFalse((box.root / "absent").exists())
-
-    def test_stage_replaces_a_stale_staged_build_and_a_stale_unpack(self):
-        box, done = self.play("stage-stale")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(sorted(path.name for path in box.new.iterdir()), [".nightly-version", "t3code"])
-        self.assertEqual(((box.new / "t3code").read_text(), (box.new / ".nightly-version").read_text()), ("up\n", WANT + "\n"))
-        self.assertFalse((box.apps / "squashfs-root").exists())
-
-    def test_restart_refuses_when_nothing_is_staged_or_the_staged_t3code_is_not_executable(self):
-        for name in ("restart-nothing-staged", "restart-staged-not-executable"):
-            with self.subTest(scenario=name):
-                box = self.arrange(name)
-                before = box.tree()
-                done = box.run(NIGHTLY, "restart")
-                self.assertEqual(done.returncode, 1)
-                self.assertEqual(box.log_lines(), ["restart: nothing staged"])
-                self.assertEqual(box.calls(), [])
-                after = box.tree()
-                del after["apps/t3-nightly-update.log"]
-                self.assertEqual(after, before)
-
-    def test_restart_swaps_the_staged_build_in_and_keeps_the_previous_one(self):
-        box, done = self.play("restart")
-        self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual(box.trace(), [
-            "0 sleep 5",
-            "5 pgrep -o -f ^APP/t3code$",
-            "5 kill -TERM 2147483647",
-            "5 pgrep -f APP/t3code",
-            "5 pkill -KILL -f APP/t3code",
-            "5 sleep 1",
-            "6 mv -T APP APP.prev-20000101.1",
-            "6 mv -T APP.new APP",
-            "6 setsid -f APP/t3code",
-            "6 sleep 1",
-            "7 pgrep -f ^APP/t3code$",
-            "7 sleep 15",
-            "22 pgrep -f ^APP/t3code$"])
-        self.assertEqual(box.calls("setsid")[0]["env"], {"OPS_RESTART_MARK": "sourced"})
-        self.assertEqual((box.app / ".nightly-version").read_text(), WANT + "\n")
-        self.assertEqual(Path(f"{box.app}.prev-20000101.1/.nightly-version").read_text(), HAVE + "\n")
-        self.assertFalse(box.new.exists())
-        state = box.state_file()
-        self.assertRegex(state.pop("restarted"), f"^{ISO_TIME}$")
-        self.assertEqual(state, {"from": HAVE, "to": WANT, "result": "ok", "prev": f"{box.app}.prev-20000101.1"})
-        self.assertEqual(list(state), ["from", "to", "result", "prev"])
-        self.assertEqual(box.log_lines(), [f"restart: {HAVE} -> {WANT}", f"restart: running {WANT}"])
-
-    def test_restart_kills_after_60_seconds_when_the_old_build_ignores_term(self):
-        box, done = self.play("restart-ignores-term")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.trace("kill", "pkill", "mv"), [
-            "5 kill -TERM 2147483647", "65 pkill -KILL -f APP/t3code",
-            "66 mv -T APP APP.prev-20000101.1", "66 mv -T APP.new APP"])
-        self.assertEqual(box.trace("pgrep", "sleep")[2:122], [
-            line for second in range(5, 65) for line in (f"{second} pgrep -f APP/t3code", f"{second} sleep 1")])
-        self.assertEqual(box.state_file()["result"], "ok")
-
-    def test_restart_sends_no_signal_when_t3_was_not_running(self):
-        box, done = self.play("restart-not-running")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.trace()[:6], [
-            "0 sleep 5", "5 pgrep -o -f ^APP/t3code$", "5 pgrep -f APP/t3code", "5 pkill -KILL -f APP/t3code",
-            "5 sleep 1", "6 mv -T APP APP.prev-20000101.1"])
-        self.assertEqual(box.trace("kill"), [])
-        self.assertEqual(box.trace("setsid"), ["6 setsid -f APP/t3code"])
-        self.assertEqual(box.state_file()["result"], "ok")
-
-    def test_restart_waits_for_a_build_that_takes_seconds_to_start(self):
-        box, done = self.play("restart-slow-start")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(box.trace()[8:], [
-            "6 setsid -f APP/t3code",
-            "6 sleep 1", "7 pgrep -f ^APP/t3code$", "7 sleep 1", "8 pgrep -f ^APP/t3code$", "8 sleep 1", "9 pgrep -f ^APP/t3code$",
-            "9 sleep 15", "24 pgrep -f ^APP/t3code$"])
-        self.assertEqual(box.state_file()["result"], "ok")
-
-    def assertRolledBack(self, box, done):
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual((box.app / ".nightly-version").read_text(), HAVE + "\n")
-        self.assertEqual(Path(f"{box.app}.failed-20000102.1/.nightly-version").read_text(), WANT + "\n")
-        self.assertEqual(sorted(path.name for path in box.apps.iterdir()), [
-            "restart.env", "t3-nightly-update.log", "t3-nightly-update.state", "t3code", "t3code.failed-20000102.1"])
-        state = box.state_file()
-        self.assertRegex(state.pop("restarted"), f"^{ISO_TIME}$")
-        self.assertEqual(state, {"from": HAVE, "to": WANT, "result": "rolled-back"})
-        self.assertEqual(box.log_lines(), [
-            f"restart: {HAVE} -> {WANT}", f"restart: {WANT} did not stay up; rolling back to {HAVE}",
-            f"restart: rolled back, running {HAVE}"])
-        self.assertEqual([call["argv"] for call in box.calls("notify-send")], [
-            ["-u", "critical", "T3 Code update rolled back", f"{WANT} did not start. Running {HAVE} again."]])
-
-    def test_restart_rolls_back_when_the_new_build_does_not_start(self):
-        box, done = self.play("restart-no-start")
-        self.assertRolledBack(box, done)
-        self.assertEqual(box.trace()[8:], [
-            "6 setsid -f APP/t3code",
-            *(line for second in range(6, 51) for line in (f"{second} sleep 1", f"{second + 1} pgrep -f ^APP/t3code$")),
-            "51 pkill -KILL -f APP/t3code",
-            "51 sleep 1",
-            "52 mv -T APP APP.failed-20000102.1",
-            "52 mv -T APP.prev-20000101.1 APP",
-            "52 setsid -f APP/t3code",
-            "52 sleep 1",
-            "53 pgrep -f ^APP/t3code$",
-            f"53 notify-send -u critical T3 Code update rolled back {WANT} did not start. Running {HAVE} again."])
-
-    def test_restart_rolls_back_when_the_new_build_dies_within_15_seconds(self):
-        box, done = self.play("restart-dies")
-        self.assertRolledBack(box, done)
-        self.assertEqual(box.trace()[8:], [
-            "6 setsid -f APP/t3code",
-            "6 sleep 1",
-            "7 pgrep -f ^APP/t3code$",
-            "7 sleep 15",
-            "22 pgrep -f ^APP/t3code$",
-            "22 pkill -KILL -f APP/t3code",
-            "22 sleep 1",
-            "23 mv -T APP APP.failed-20000102.1",
-            "23 mv -T APP.prev-20000101.1 APP",
-            "23 setsid -f APP/t3code",
-            "23 sleep 1",
-            "24 pgrep -f ^APP/t3code$",
-            f"24 notify-send -u critical T3 Code update rolled back {WANT} did not start. Running {HAVE} again."])
-
-    def test_restart_reports_down_when_the_rollback_does_not_start(self):
-        box, done = self.play("restart-down")
-        log = box.apps / "t3-nightly-update.log"
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual((box.app / ".nightly-version").read_text(), HAVE + "\n")
-        self.assertEqual(Path(f"{box.app}.failed-20000102.1/.nightly-version").read_text(), WANT + "\n")
-        state = box.state_file()
-        self.assertRegex(state.pop("restarted"), f"^{ISO_TIME}$")
-        self.assertEqual(state, {"from": HAVE, "to": WANT, "result": "down"})
-        self.assertEqual(box.log_lines()[1:], [
-            f"restart: {WANT} did not stay up; rolling back to {HAVE}", "restart: T3 Code is DOWN after rollback"])
-        self.assertEqual([call["argv"] for call in box.calls("notify-send")], [
-            ["-u", "critical", "T3 Code is down", f"The nightly update to {WANT} failed and the rollback did not start. See {log}."]])
-        self.assertEqual(box.trace("setsid"), ["6 setsid -f APP/t3code", "52 setsid -f APP/t3code"])
-        self.assertEqual(box.clock(), 97)
-
-    def test_restart_leaves_the_new_build_in_place_when_the_rollback_cannot_move_it(self):
-        box, done = self.play("restart-rollback-move-fails")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.trace("mv"), [
-            "6 mv -T APP APP.prev-20000101.1", "6 mv -T APP.new APP", "52 mv -T APP APP.failed-20000102.1"])
-        self.assertEqual(((box.app / ".nightly-version").read_text(), Path(f"{box.app}.prev-20000101.1/.nightly-version").read_text()),
-                         (WANT + "\n", HAVE + "\n"))
-        self.assertEqual(box.trace("setsid"), ["6 setsid -f APP/t3code", "52 setsid -f APP/t3code"])
-        self.assertEqual(box.state_file()["result"], "down")
-
-    def test_restart_starts_t3_without_the_environment_file_when_it_is_missing(self):
-        box, done = self.play("restart-no-env")
-        self.assertEqual(done.returncode, 0)
-        self.assertRegex(done.stderr, rf"^{re.escape(str(NIGHTLY))}: line \d+: {re.escape(str(box.apps))}/restart.env: No such file or directory\n$")
-        self.assertEqual([(call["argv"], call["env"]) for call in box.calls("setsid")], [(["-f", str(box.app / "t3code")], {})])
-        self.assertEqual(box.state_file()["result"], "ok")
-
-    def test_restart_adds_the_time_to_the_previous_name_when_it_is_taken(self):
-        box, done = self.play("restart-prev-taken")
-        self.assertEqual(done.returncode, 0)
-        kept = [path for path in box.apps.iterdir() if re.fullmatch(r"t3code\.prev-20000101\.1\.\d{6}", path.name)]
-        self.assertEqual([(path / ".nightly-version").read_text() for path in kept], [HAVE + "\n"])
-        self.assertEqual(os.listdir(f"{box.app}.prev-20000101.1"), [])
-        self.assertEqual(box.state_file()["prev"], str(kept[0]))
-
-    def test_restart_starts_the_old_build_again_when_it_cannot_be_moved_aside(self):
-        box, done = self.play("restart-move-fails")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.trace()[6:], [
-            "6 mv -T APP APP.prev-20000101.1", "6 setsid -f APP/t3code", "6 sleep 1", "7 pgrep -f ^APP/t3code$"])
-        self.assertEqual(((box.app / ".nightly-version").read_text(), (box.new / ".nightly-version").read_text()),
-                         (HAVE + "\n", WANT + "\n"))
-        self.assertEqual(box.log_lines()[1:], ["restart: could not move the old build aside; starting it again"])
-        self.assertIsNone(box.state_file())
-
-    def test_restart_restores_the_old_build_when_the_swap_fails(self):
-        box, done = self.play("restart-swap-fails")
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(box.trace()[6:], [
-            "6 mv -T APP APP.prev-20000101.1", "6 mv -T APP.new APP", "6 mv -T APP.prev-20000101.1 APP",
-            "6 setsid -f APP/t3code", "6 sleep 1", "7 pgrep -f ^APP/t3code$"])
-        self.assertEqual(((box.app / ".nightly-version").read_text(), (box.new / ".nightly-version").read_text()),
-                         (HAVE + "\n", WANT + "\n"))
-        self.assertEqual(box.log_lines()[1:], ["restart: swap FAILED, old build restored"])
-        self.assertFalse(Path(f"{box.app}.prev-20000101.1").exists())
-
-    def test_restart_follows_another_layout_of_paths_and_names(self):
-        elsewhere = Layout(apps="srv/builds", app_name="code-9", restart_env="etc/start.env")
-        box, done = play(self.addCleanup, "restart", script=NIGHTLY, layout=elsewhere, skip=self.skipTest)
-        self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual(box.app, box.home / "srv/builds/code-9")
-        self.assertEqual(box.trace("mv", "setsid"), ["6 mv -T APP APP.prev-20000101.1", "6 mv -T APP.new APP", "6 setsid -f APP/t3code"])
-        self.assertEqual(box.calls("setsid")[0]["env"], {"OPS_RESTART_MARK": "sourced"})
-        self.assertEqual(sorted(path.name for path in box.app.parent.iterdir()),
-                         ["code-9", "code-9.prev-20000101.1", "t3-nightly-update.log", "t3-nightly-update.state"])
-
-    def test_one_scenario_played_in_two_sandboxes_is_observed_the_same(self):
-        for name in ("stage", "restart-prev-taken", "restart-no-start"):
-            with self.subTest(scenario=name):
-                first_box, first = self.play(name)
-                second_box, second = self.play(name)
-                self.assertNotEqual(first_box.root, second_box.root)
-                self.assertEqual(first_box.observed(first), second_box.observed(second))
-
-    def test_the_sandbox_path_reaches_no_forbidden_command(self):
-        box = Sandbox(self.addCleanup, skip=self.skipTest)
-        self.assertEqual(box.env()["PATH"], str(box.bin))
-        self.assertNotIn(os.pathsep, str(box.bin))
-        self.assertEqual(sorted(os.listdir(box.bin)), sorted([*REAL_TOOLS, *STUBBED, "alpha", "beta", "gamma"]))
-        resolve = 'for name; do type -P "$name" || echo "$name is not found"; done'
-        found = subprocess.run([box.bash, "-c", resolve, "bash", *FORBIDDEN, "ls"], capture_output=True, text=True, env=box.env())
-        self.assertEqual(found.stdout.splitlines(), [*(str(box.bin / name) for name in FORBIDDEN), "ls is not found"])
-        for name in FORBIDDEN:
-            self.assertEqual(os.readlink(box.bin / name), str(box.state / "stub"))
-        bare = Sandbox(self.addCleanup, skip=self.skipTest, yay=False)
-        found = subprocess.run([bare.bash, "-c", resolve, "bash", "yay"], capture_output=True, text=True, env=bare.env())
-        self.assertEqual(found.stdout, "yay is not found\n")
 
 
 class ArchiveTest(OpsTest):
@@ -1714,8 +879,9 @@ class ScanTest(OpsTest):
         root = Path(temporary.name)
         ops = root / "ops"
         ops.mkdir()
-        for name in ("t3-nightly-update.sh", "t3-archive-threads.py", "config.example"):
-            (ops / name).write_text("echo ok\n")
+        for label in REQUIRED_SCAN:
+            if label.startswith("ops/"):
+                (ops / Path(label).name).write_text("echo ok\n")
         document = root / "docs" / "operations.md"
         document.parent.mkdir()
         document.write_text(doc)
