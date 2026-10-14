@@ -1,0 +1,1 @@
+- When `CI` is `true`, `RenderHeightTest.setUp` calls `select_browser` again after a miss, and a second miss fails that test with the same reason text a skip would use. When `CI` is not `true`, `setUp` calls `select_browser` once, and a miss skips. The class stores the probe on `_probe` and the next `setUp` uses it. `PROBE_TIMEOUT` stays 20.

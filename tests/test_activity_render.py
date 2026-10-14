@@ -192,12 +192,23 @@ def measure(browser, document, directory):
 
 class RenderHeightTest(unittest.TestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
-        self.browser, unavailable = select_browser(self.root)
+        in_ci = os.environ.get("CI") == "true"
+        probe = getattr(self.__class__, "_probe", None)
+        if probe is None:
+            directory = tempfile.TemporaryDirectory()
+            self.addClassCleanup(directory.cleanup)
+            root = Path(directory.name)
+            browser, unavailable = select_browser(root)
+            if browser is None and in_ci:
+                browser, unavailable = select_browser(root)
+            probe = (root, browser, unavailable)
+            self.__class__._probe = probe
+        self.root, self.browser, unavailable = probe
         if self.browser is None:
-            self.skipTest(f"no working headless browser: {'; '.join(unavailable)}")
+            reason = f"no working headless browser: {'; '.join(unavailable)}"
+            if in_ci:
+                self.fail(reason)
+            self.skipTest(reason)
 
     def test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame(self):
         # The four pages the reviewer of pull request 192 measured, each with the reserved height, the timeline rows, and the flight groups the fit leaves on it.
