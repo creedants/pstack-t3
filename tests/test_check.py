@@ -705,6 +705,18 @@ class GuideCountCheckTest(unittest.TestCase):
             "docs/guide.md: could not be read, so its doctor count was not checked: FileNotFoundError",
         ])
 
+    def test_an_explicit_tree_argument_gets_no_guide_finding(self):
+        root = self._tree("intro\n`doctor` should show `2/2 pstack-t3` for each provider you use.\n", ("a", "b"))
+        (root / "pstack-runtime/SKILL.md").write_text(
+            "---\nname: pstack-runtime\ndescription: d\n---\n\n"
+            "Call `watch_pull_request`. Call `unwatch_pull_request`.\n"
+        )
+        tests = tests_tree(root, {})
+        output = io.StringIO()
+        with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
+            status = check.main([str(root)])
+        self.assertEqual((status, output.getvalue()), (0, "ok\n"))
+
 
 class CheckoutRuleTest(unittest.TestCase):
     def _directory(self):
