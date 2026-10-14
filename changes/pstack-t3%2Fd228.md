@@ -1,1 +1,2 @@
 - `launch` prints one JSON object for the dish seat and writes nothing.
+- `watch` warns when `handoff.md` is larger than 40000 bytes. The watch text stays the same.
