@@ -1403,8 +1403,8 @@ class RunTestsTest(unittest.TestCase):
                 self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = success', check)
             skill = next(step for step in job["steps"] if step.get("name") == "Generated skills match the sources")
             self.assertEqual(skill["run"], "python3 scripts/build.py\n"
-                             "git diff --exit-code -- skills docs/skills.md\n"
-                             "test -z \"$(git status --porcelain -- skills docs/skills.md)\"\n")
+                             "git diff --exit-code -- skills docs/skills.md docs/cli\n"
+                             "test -z \"$(git status --porcelain -- skills docs/skills.md docs/cli)\"\n")
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
