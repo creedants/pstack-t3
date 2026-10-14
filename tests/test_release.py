@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
+from tests import in_process
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
@@ -104,11 +106,12 @@ def commit(repo, files, day=1, second=0):
 
 
 def run(repo, *args, env=ENV, date="2026-10-09"):
-    outside_the_checkout = repo.parent
-    return subprocess.run(
-        [sys.executable, str(repo / "scripts/release.py"), *args, "--date", date],
-        cwd=outside_the_checkout, capture_output=True, text=True, encoding="utf-8", env=env,
-    )
+    return in_process.invoke(in_process.Invocation(
+        program=repo / "scripts/release.py",
+        argv=(*args, "--date", date),
+        env=env,
+        cwd=repo.parent,
+    ))
 
 
 def state(repo):
