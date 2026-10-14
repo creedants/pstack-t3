@@ -1,0 +1,3 @@
+- When a script that `invoke` runs in this process raises `Exception`, the traceback on stderr omits the leading frame in `tests/in_process.py` and the `runpy` frames. Frames from the script stay.
+- `test_an_uncaught_exception_prints_the_same_traceback_as_a_real_process` runs one script that raises through `invoke` and through a real interpreter, and requires the same return code, stdout, and stderr.
+- `test_a_part_queue_starts_one_test_shards_before_larger_shards_and_a_full_queue_keeps_build_order` and `test_a_part_run_passes_one_test_shards_to_the_pool_ahead_of_larger_shards` give the `big` module 21 tests. That module is two shards, of 11 tests and 10 tests. A part run starts shard 3, shard 4, shard 1, then shard 2.
