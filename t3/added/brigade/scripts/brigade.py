@@ -447,7 +447,7 @@ def parser():
         help=(
             "print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.\n"
             "\n"
-            "The object names instanceId, model, and options when the seat has an options object. "
+            "The object names instanceId and model. It names options when the seat has an options object. "
             "providerInstanceId is renamed to instanceId. "
             "A brief with one Mode line of full or light is passed as --brief-mode. "
             "bug-fix, perf-issue, and hillclimb use that role name. "

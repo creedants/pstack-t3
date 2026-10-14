@@ -771,7 +771,7 @@ brigade.py [flags] launch --parent PARENT --catalog CATALOG dish
 
 print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.
 
-The object names instanceId, model, and options when the seat has an options object. providerInstanceId is renamed to instanceId. A brief with one Mode line of full or light is passed as --brief-mode. bug-fix, perf-issue, and hillclimb use that role name. feature and refactoring use the role "feature, refactoring". investigation has no code-delegate role and the command exits 1.
+The object names instanceId and model. It names options when the seat has an options object. providerInstanceId is renamed to instanceId. A brief with one Mode line of full or light is passed as --brief-mode. bug-fix, perf-issue, and hillclimb use that role name. feature and refactoring use the role "feature, refactoring". investigation has no code-delegate role and the command exits 1.
 
 The command exits 1 when the role is missing, seats are a string, or the seat count is not one. It exits 1 when the seat lacks providerInstanceId or model, and when options are not an object. The refusal is printed on stderr.
 
