@@ -1,4 +1,4 @@
-- A ticket-shaped name is a waiter only when it is a regular file whose link count is 1. Before it probes, the scan unlinks every ticket-shaped name of an inode whose link count is not 1, including a name at or above the caller's own number.
+- A ticket-shaped name is a waiter only when it is a regular file whose link count is 1. Before it probes, the scan unlinks every regular-file ticket-shaped name whose link count is not 1, including a name at or above the caller's own number.
 - When a retry cannot take its slots and the open file is no longer that sole name, the waiter closes the handle without unlinking and creates one new exclusively locked ticket. The number is one higher than the largest number the scan just returned, or 1 when that list is empty, and a path that already exists is skipped.
 - An unreadable single-link ticket name is skipped and left in place.
 - On a successful take, and when a demand no longer fits, the waiter's own ticket name is removed only when lstat still names that open inode.
