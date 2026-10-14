@@ -164,9 +164,10 @@ def add_arguments(sub):
             "the text ends `tokens not requested. Pass --tokens to read them.` and JSON sets "
             "`threads_without_a_token_source` to `not requested`. Token totals need `--tokens`.\n"
             "\n"
-            "A Claude model line prints `reasoning not recorded`. A recorded reasoning count prints "
-            "as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning "
-            "when either total was not recorded. Output and dollars stay the recorded totals.\n"
+            "A Claude model line prints `reasoning not recorded` when the log has no non-negative "
+            "integer `thinking_tokens`. A recorded count prints as a number, and 0 stays 0. Adding two "
+            "model totals prints `not recorded` for reasoning when either total was not recorded. Output "
+            "and dollars stay the recorded totals.\n"
             "\n"
             "`--by reviewer` groups whole items by the seat that reviewed them. Its token lines "
             "include the worker's and every other ledger role's usage for those items. An item "
@@ -457,6 +458,7 @@ class _Call:
     cache_read: int
     cache_write: int
     outgoing: int
+    reasoning: int | None
 
 
 def _add(left, right):
@@ -755,7 +757,7 @@ def _claude_totals(native):
         return None
     totals = {}
     for call in kept.values():
-        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing, None)
+        counts = _Counts(call.incoming, call.cache_read, call.cache_write, call.outgoing, call.reasoning)
         totals[call.model] = _add(totals[call.model], counts) if call.model in totals else counts
     return totals
 
@@ -788,6 +790,16 @@ def _usage_count(usage, key, required):
     return value
 
 
+def _thinking_tokens(usage):
+    details = usage.get("output_tokens_details")
+    if not isinstance(details, dict):
+        return None
+    value = details.get("thinking_tokens")
+    if type(value) is not int or value < 0:
+        return None
+    return value
+
+
 def _call_from(obj):
     if not isinstance(obj, dict):
         return None
@@ -813,7 +825,7 @@ def _call_from(obj):
         if (incoming, outgoing, cache_read, cache_write) == (0, 0, 0, 0):
             return None
         raise _Bare()
-    return _Call(ident, model, incoming, cache_read, cache_write, outgoing)
+    return _Call(ident, model, incoming, cache_read, cache_write, outgoing, _thinking_tokens(usage))
 
 
 def _dedupe(calls):

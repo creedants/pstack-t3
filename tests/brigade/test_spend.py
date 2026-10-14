@@ -20,6 +20,7 @@ FIRE = "2026-10-01T00:00:00+00:00"
 CLOSE = "2026-10-01T02:00:00+00:00"
 HOUR = "2026-10-01T01:00:00+00:00"
 FOOTER = "tokens not requested. Pass --tokens to read them."
+_OMIT = object()
 
 
 class SpendTest(BrigadeTest):
@@ -137,12 +138,14 @@ class SpendTest(BrigadeTest):
             body["tokenUsage"] = token_usage
         return (provider, json.dumps(body))
 
-    def assistant(self, ident, model, incoming, outgoing, cache_read=None, cache_write=None, content=None):
+    def assistant(self, ident, model, incoming, outgoing, cache_read=None, cache_write=None, content=None, thinking=_OMIT):
         usage = {"input_tokens": incoming, "output_tokens": outgoing}
         if cache_read is not None:
             usage["cache_read_input_tokens"] = cache_read
         if cache_write is not None:
             usage["cache_creation_input_tokens"] = cache_write
+        if thinking is not _OMIT:
+            usage["output_tokens_details"] = {"thinking_tokens": thinking}
         message = {"id": ident, "model": model, "usage": usage}
         if content is not None:
             message["content"] = [{"type": "text", "text": content}]
@@ -695,3 +698,60 @@ class SpendTest(BrigadeTest):
             self.assertNotIn(secret, outcome.stderr_text())
             self.assertNotIn(secret, json_outcome.stdout_text())
             self.assertNotIn(secret, json_outcome.stderr_text())
+
+    def priced_opus(self, lines):
+        native = "sessThink1"
+        self.fill([self.dish()], threads=[self.ledger(seat="claudeAgent/claude-opus-4-6")], logs=[self.close()])
+        claude = self.write_claude(native, lines)
+        (self.at / "prices.json").write_text(json.dumps({
+            "claude-opus-4-6": {"input": 3, "cache_read": 1.5, "cache_write": 6, "output": 12},
+        }))
+        base = self.database([self.provider("ledger-1", "prov-1", "claudeAgent", native)])
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(err, "")
+        return out
+
+    def opus_report(self, reasoning):
+        shown = "not recorded" if reasoning is None else reasoning
+        return (
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  claude-opus-4-6  in 1000  cache-read 2000  cache-write 500  out 250  "
+            f"reasoning {shown}  $0.012000\n"
+            "threads without a token source 0\n"
+        )
+
+    def test_thinking_tokens_print_as_reasoning(self):
+        out = self.priced_opus([
+            self.assistant("think-7", "claude-opus-4-6", 1000, 250, cache_read=2000, cache_write=500, thinking=7),
+        ])
+        self.assertEqual(out, self.opus_report(7))
+
+    def test_zero_thinking_tokens_stay_zero(self):
+        out = self.priced_opus([
+            self.assistant("think-0", "claude-opus-4-6", 1000, 250, cache_read=2000, cache_write=500, thinking=0),
+        ])
+        self.assertEqual(out, self.opus_report(0))
+
+    def test_a_missing_null_negative_bool_or_non_integer_thinking_count_stays_not_recorded(self):
+        cases = (
+            ("missing", _OMIT),
+            ("null", None),
+            ("bool", True),
+            ("negative", -1),
+            ("non-integer", 1.5),
+        )
+        for name, thinking in cases:
+            with self.subTest(name=name):
+                kwargs = {} if thinking is _OMIT else {"thinking": thinking}
+                out = self.priced_opus([
+                    self.assistant("think-bad", "claude-opus-4-6", 1000, 250, cache_read=2000, cache_write=500, **kwargs),
+                ])
+                self.assertEqual(out, self.opus_report(None))
+
+    def test_a_recorded_count_plus_a_missing_count_stays_not_recorded(self):
+        out = self.priced_opus([
+            self.assistant("think-a", "claude-opus-4-6", 600, 100, cache_read=1500, cache_write=200, thinking=7),
+            self.assistant("think-b", "claude-opus-4-6", 400, 150, cache_read=500, cache_write=300),
+        ])
+        self.assertEqual(out, self.opus_report(None))
