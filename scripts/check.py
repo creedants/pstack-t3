@@ -195,13 +195,12 @@ def _shipped_skill_count(root):
 def guide_count_findings(guide, root):
     """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
 
-    The shipped count is the set skill_names in scripts/install.py reads,
-    every directory directly in the tree that holds a SKILL.md. A quote is
-    a pair of numbers with a slash between them and pstack-t3 after them,
-    the shape link_health in scripts/install.py prints. A quote whose two
-    numbers differ, or whose first number differs from the shipped count,
-    is a finding that names the guide, the line, the quoted count, and the
-    shipped count. A guide that quotes no doctor count is one finding. A
+    The shipped count is every SKILL.md entry directly in a directory of the
+    tree. A quote is a pair of numbers with a slash between them and pstack-t3
+    after them, the shape link_health in scripts/install.py prints. A quote
+    whose two numbers differ, or whose first number differs from the shipped
+    count, is a finding that names the guide, the line, the quoted count, and
+    the shipped count. A guide that quotes no doctor count is one finding. A
     guide that cannot be read is one finding and no line is read. An empty
     list means every quote agrees with the shipped count.
     """
@@ -228,12 +227,12 @@ def guide_count_findings(guide, root):
 def readme_count_findings(readme, root):
     """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
 
-    The shipped count is the set skill_names in scripts/install.py reads,
-    every directory directly in the tree that holds a SKILL.md. A stated
-    count is the digits between `all ` and ` skills` when both of those
-    words stand alone on a line, the phrase the link to docs/skills.md in
-    README.md uses. A line whose stated count differs from the shipped count
-    is a finding that names README.md, the line, the stated count, and the
+    The shipped count is every SKILL.md entry directly in a directory of
+    the tree. A stated count is the digits between `all ` and ` skills`
+    where `all` starts at a word boundary and `skills` ends at one, the
+    phrase the link to docs/skills.md in README.md uses. The match is case
+    sensitive. A stated count that differs from the shipped count is a
+    finding that names README.md, the line, the stated count, and the
     shipped count. A README that states no skill count is one finding. A
     README that cannot be read is one finding and no line is read. An empty
     list means every stated count agrees with the shipped count.
