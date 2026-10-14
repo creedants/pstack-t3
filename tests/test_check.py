@@ -1041,7 +1041,7 @@ class EffortSpeedTest(unittest.TestCase):
         ]
         self.assertEqual(findings, expected)
 
-    def test_a_mapping_or_a_description_is_quiet(self):
+    def test_a_subagents_pointer_and_a_described_reasoning_level_are_not_named(self):
         body = (
             "---\nname: demo\ndescription: d\n---\n\n"
             "Follow the Subagents section.\n"
