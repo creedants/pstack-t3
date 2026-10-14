@@ -2146,14 +2146,16 @@ WAITING_FOR_CHECKS = "waiting for required checks before merging"
 BASE_MOVED_RETRIES = 3
 BASE_MOVED_WAIT = 2
 BLOCKER_QUERY = (
+    'def check_name: .name // .context; '
     '[.reviewDecision // "", '
     '([(.statusCheckRollup // [])[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length), '
     '([(.statusCheckRollup // [])[] | select((.conclusion // "") as $c | (.state // "") as $s '
     '| ($c == "FAILURE" or $c == "CANCELLED" or $c == "TIMED_OUT" or $s == "FAILURE" or $s == "ERROR")) '
-    '| (.name // .context)] | join(",")), '
+    '| check_name] | join(",")), '
     '((.statusCheckRollup // []) | length), '
     '(.autoMergeRequest != null), '
-    '(.headRefOid // "")] | @tsv'
+    '(.headRefOid // ""), '
+    '([(.statusCheckRollup // [])[] | check_name | select(type == "string" and . != "")] | tojson)] | @tsv'
 )
 
 
@@ -2171,7 +2173,7 @@ def classify_rollup(review, pending, failed, posted):
 
 
 def unposted_merge_refusal(stderr):
-    """The plain merge was refused by base branch policy while no check is posted."""
+    """True when stderr contains the base branch policy prohibition."""
     return "the base branch policy prohibits the merge" in (stderr or "")
 
 
@@ -2186,7 +2188,7 @@ def merge_requested(row):
 OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 PR_STATES = ("OPEN", "CLOSED", "MERGED")
 Line = namedtuple("Line", "entries stale tip")
-CheckRead = namedtuple("CheckRead", "blocker detail armed head")
+CheckRead = namedtuple("CheckRead", "blocker detail armed head names")
 
 
 def trunk_commit(store):
@@ -2267,16 +2269,65 @@ def remember_absent(store, ident, drain):
         store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
 
 
+def tsv_field_text(field):
+    """Reverse jq @tsv escapes in one field.
+
+    A backslash, tab, line feed, or carriage return comes back as itself.
+    An unknown escape or a trailing backslash returns None.
+    """
+    out = []
+    index = 0
+    size = len(field)
+    while index < size:
+        char = field[index]
+        if char != "\\":
+            out.append(char)
+            index += 1
+            continue
+        if index + 1 >= size:
+            return None
+        nxt = field[index + 1]
+        if nxt == "\\":
+            out.append("\\")
+        elif nxt == "t":
+            out.append("\t")
+        elif nxt == "n":
+            out.append("\n")
+        elif nxt == "r":
+            out.append("\r")
+        else:
+            return None
+        index += 2
+    return "".join(out)
+
+
 def merge_blocker(store, url):
+    """The check read, plus the posted names from that same rollup.
+
+    names is a tuple of non-empty strings. Field 7 is the @tsv form of their JSON array.
+    tsv_field_text reverses that escaping before the array is read.
+    A field count other than 7, or a field 7 that is not a JSON list of strings after that, raises Infrastructure.
+    """
     view = gh("pr", "view", url, "--json", "reviewDecision,statusCheckRollup,autoMergeRequest,headRefOid",
               "-q", BLOCKER_QUERY, cwd=store.repo)
     if view.returncode != 0:
         raise Infrastructure(f"could not read checks for {url}: {view.stderr.strip() or 'gh pr view failed'}")
     fields = view.stdout.rstrip("\n").split("\t")
-    if len(fields) != 6 or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
+    names = None
+    if len(fields) == 7:
+        text = tsv_field_text(fields[6])
+        parsed = None
+        if text is not None:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+        if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+            names = tuple(item for item in parsed if item)
+    if names is None or not fields[1].isdigit() or not fields[3].isdigit() or fields[4] not in ("true", "false"):
         raise Infrastructure(f"could not read checks for {url}: unparseable check rollup")
     blocker, detail = classify_rollup(fields[0], int(fields[1]), fields[2], int(fields[3]))
-    return CheckRead(blocker, detail, fields[4] == "true", fields[5])
+    return CheckRead(blocker, detail, fields[4] == "true", fields[5], names)
 
 
 def disarm_auto_merge(store, url, armed):
@@ -2311,6 +2362,59 @@ def pause_for_review(store, url, detail, disarm, armed=False):
     if problem:
         raise Infrastructure(f"{url} {requirement}. Auto-merge is still enabled: {problem}")
     raise Infrastructure(f"{url} {requirement}")
+
+
+def read_required_contexts(store):
+    """Contexts for store.contract["trunk"] from branch protection, or None.
+
+    The gh path is repos/{owner}/{repo}/branches/<trunk>/protection/required_status_checks.
+    gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
+    Return a tuple of non-empty strings when gh exits 0 and the body is a JSON object whose contexts is a list of non-empty strings.
+    An empty list returns ().
+    Return None on a non-zero gh exit, on a body that is not that object, and on a contexts element that is not a non-empty string.
+    Ignore checks. Do not call the rules endpoint.
+    """
+    result = gh(
+        "api",
+        "repos/{owner}/{repo}/branches/" + store.contract["trunk"] + "/protection/required_status_checks",
+        cwd=store.repo,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        body = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    contexts = body.get("contexts") if isinstance(body, dict) else None
+    if not isinstance(contexts, list):
+        return None
+    if any(not isinstance(item, str) or item == "" for item in contexts):
+        return None
+    return tuple(contexts)
+
+
+def missing_required(contexts, rollup_names):
+    """Context strings that rollup_names does not contain, in contexts order."""
+    posted = set(rollup_names)
+    return tuple(context for context in contexts if context not in posted)
+
+
+def refusal_waits(store, plain, checks):
+    """True when this plain-merge stderr waits instead of pausing the queue.
+
+    The policy phrase must be in plain. A blocker of absent waits and does not read protection.
+    Any other blocker waits only when read_required_contexts returns a tuple and missing_required is non-empty.
+    None does not wait. An empty tuple does not wait.
+    Stderr without the policy phrase returns False.
+    """
+    if not unposted_merge_refusal(plain):
+        return False
+    if checks.blocker == "absent":
+        return True
+    contexts = read_required_contexts(store)
+    if contexts is None or contexts == ():
+        return False
+    return missing_required(contexts, checks.names) != ()
 
 
 def request_merge(store, ident, out):
@@ -2360,7 +2464,7 @@ def request_merge(store, ident, out):
         time.sleep(BASE_MOVED_WAIT)
     if now_.returncode != 0:
         plain = (now_.stderr or "").strip()
-        if checks.blocker == "absent" and unposted_merge_refusal(plain):
+        if refusal_waits(store, plain, checks):
             with store.tx() as db:
                 store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
             return False

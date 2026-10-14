@@ -2218,6 +2218,14 @@ if args[:2] == ["repo", "view"]:
         sys.exit(0)
     print(json.dumps({"nameWithOwner": "o/r"}))
     sys.exit(0)
+if args[:1] == ["api"] and any("required_status_checks" in arg for arg in args):
+    required = base / "protection-required.json"
+    if required.exists():
+        text = required.read_text()
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
+        sys.exit(0)
+    print("required checks unavailable", file=sys.stderr)
+    sys.exit(1)
 if args[:1] == ["api"] and any("/branches/" in arg for arg in args):
     endpoint = next(arg for arg in args if "/branches/" in arg)
     branch = endpoint.split("/branches/", 1)[1]
@@ -3144,6 +3152,119 @@ os.execv({real!r}, [{real!r}, *args])
             (self.base / "pr-checks.json").unlink()
             (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_merge_mode_waits_when_policy_refuses_and_a_required_check_is_unposted(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "protection-required.json").write_text(json.dumps({
+                "contexts": ["test (3.10)", "test (3.12)"],
+                "checks": [{"context": "part 1", "app_id": 1}],
+            }))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", first)
+            self.assertNotIn("queue paused", first)
+            self.assertNotIn("landed", first)
+            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            self.assertIn("waiting for required checks", self.land("status", "E1"))
+            self.assertNotIn("Paused", self.land("status"))
+            self.assertIn("protection/required_status_checks", (self.base / "gh-calls").read_text())
+            (self.base / "pr-checks.json").unlink()
+            (self.base / "checks").write_text("passed")
+            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+
+    def test_merge_mode_pauses_when_policy_refuses_and_every_required_check_is_posted(self):
+        with self.fake_gh():
+            posted = [
+                {"name": "test (3.10)", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"context": "test (3.12)", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": posted}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "protection-required.json").write_text(json.dumps({
+                "contexts": ["test (3.10)", "test (3.12)"],
+                "checks": [{"context": "ghost", "app_id": 1}],
+            }))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertIn("queue paused", first)
+            self.assertIn("the base branch policy prohibits the merge", first)
+            self.assertNotIn("landed", first)
+            self.assertIn(
+                "the base branch policy prohibits the merge",
+                land.Store.for_repo(self.work).contract["paused"])
+            second = self.land("land")
+            self.assertIn("queue paused", second)
+            self.assertNotIn("landed", second)
+
+    def test_merge_mode_pauses_when_policy_refuses_and_required_names_are_unreadable(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertIn("queue paused", first)
+            self.assertIn("the base branch policy prohibits the merge", first)
+            self.assertNotIn("landed", first)
+            self.assertIn(
+                "the base branch policy prohibits the merge",
+                land.Store.for_repo(self.work).contract["paused"])
+            second = self.land("land")
+            self.assertIn("queue paused", second)
+
+    def test_merge_mode_pauses_when_policy_refuses_and_required_contexts_are_empty(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "protection-required.json").write_text(json.dumps({"contexts": []}))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertIn("queue paused", first)
+            self.assertIn("the base branch policy prohibits the merge", first)
+            self.assertNotIn("landed", first)
+            self.assertIn(
+                "the base branch policy prohibits the merge",
+                land.Store.for_repo(self.work).contract["paused"])
+            second = self.land("land")
+            self.assertIn("queue paused", second)
+            self.assertNotIn("landed", second)
+
+    def test_merge_mode_lands_a_green_rollup_whose_check_name_contains_a_quote(self):
+        with self.fake_gh():
+            posted = [
+                {"name": "b\"q\\\t\n", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": posted}))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertNotIn("queue paused", first)
+            self.assertIn("landed E1 (r/D1)", first)
+            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            self.assertEqual(self.land("land"), "nothing to land")
 
     def test_merge_mode_does_not_merge_when_a_pending_check_appears_between_reads(self):
         with self.fake_gh():
