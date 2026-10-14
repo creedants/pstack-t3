@@ -360,6 +360,22 @@ class LaunchTest(BrigadeTest):
         self.show_payload({"roles": {"bug-fix": {"seats": []}}})
         self.assert_refused("brigade: bug-fix has 0 seats")
 
+    def test_a_fake_roles_script_reaches_the_command_when_the_run_uses_real_processes(self):
+        name = "PSTACK_TEST_REAL_PROCESS"
+        previous = os.environ.get(name)
+        os.environ[name] = "1"
+
+        def restore():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+
+        self.addCleanup(restore)
+        self.fired_bug_fix()
+        self.show_payload({"roles": {"bug-fix": {"seats": []}}})
+        self.assert_refused("brigade: bug-fix has 0 seats")
+
     def test_a_missing_role_is_refused(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {}})
