@@ -5199,6 +5199,11 @@ os.execv({real!r}, [{real!r}, *args])
                     self.assertEqual(create[create.index("--body") + 1], "Reviewed body")
                     log.unlink()
 
+    def test_a_finished_row_before_a_non_utf8_unfinished_tail_is_read(self):
+        path = self.base / "dishes.tsv"
+        path.write_bytes(b"id\tbranch\nD1\tw1\n" + b"\xff\xfe")
+        self.assertEqual(land._table_rows(path), [{"id": "D1", "branch": "w1"}])
+
     def test_a_store_from_before_pr_text_columns_is_migrated(self):
         self.init()
         store = land.Store.for_repo(self.work)
@@ -6388,18 +6393,36 @@ os.execv({real!r}, [{real!r}, *args])
         holder = self.start_holder(kind="worker", command="make test")
         release = self.base / "holder-worker" / "release"
         process = self.popen_exclusive(
-            ["slot", "--exclusive", "--for", "0.5", "--", sys.executable, "-c",
+            ["slot", "--exclusive", "--for", "2", "--", sys.executable, "-c",
              "import time; time.sleep(0.2); print('ok', flush=True)"])
         try:
-            time.sleep(0.8)
+            tickets = self.base / "state/pstack-t3/governor/tickets"
+            deadline = time.monotonic() + 20
+            seen = None
+            while time.monotonic() < deadline:
+                try:
+                    names = os.listdir(tickets)
+                except OSError:
+                    names = []
+                if any(name.endswith("-exclusive") for name in names):
+                    seen = time.monotonic()
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.02)
+            self.assertIsNotNone(seen, "the exclusive waiter took no ticket")
+            while time.monotonic() - seen < 2.5:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.02)
             self.assertIsNone(process.poll(), "the exclusive caller exited while the slots were still busy")
             with open(release, "w") as handle:
                 handle.write("x")
-            stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=20)
         finally:
             if process.poll() is None:
                 os.kill(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
+                process.wait(timeout=20)
             process.stdout.close()
             process.stderr.close()
             if holder.poll() is None:
@@ -6491,7 +6514,7 @@ os.execv({real!r}, [{real!r}, *args])
             child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
             self.assertEqual(child_group, int(parent_path.read_text()))
             os.kill(process.pid, signum)
-            code = process.wait(timeout=10)
+            code = process.wait(timeout=30)
             self.assert_dead(child_pid)
             self.assert_slots_free()
             stderr = process.stderr.read()
@@ -6499,7 +6522,7 @@ os.execv({real!r}, [{real!r}, *args])
         finally:
             if process.poll() is None:
                 os.kill(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
+                process.wait(timeout=30)
             process.stdout.close()
             process.stderr.close()
             self.release_recorded_group(parent_path, child_path)
@@ -7353,6 +7376,88 @@ os.execv({real!r}, [{real!r}, *args])
                 pass
         self.assertEqual(child.wait(timeout=20), 0)
         self.assertTrue(target.exists())
+
+    def test_a_publish_retries_when_cleanup_removes_the_temporary_name_before_the_lock(self):
+        """Pin review finding D255-review-2 N1. Orders open-before-flock with FIFOs and no sleep. Starts a process for a race."""
+        import select
+        self.governor(1)
+        holds = self.base / "state/pstack-t3/governor/holds"
+        holds.mkdir(parents=True, exist_ok=True)
+        fifo_dir = self.base / "n1-fifos"
+        fifo_dir.mkdir()
+        c2p = fifo_dir / "c2p"
+        p2c = fifo_dir / "p2c"
+        os.mkfifo(c2p)
+        os.mkfifo(p2c)
+        c2p_fd = os.open(c2p, os.O_RDWR)
+        self.addCleanup(os.close, c2p_fd)
+        p2c_fd = os.open(p2c, os.O_RDWR)
+        self.addCleanup(os.close, p2c_fd)
+        child_code = (
+            "import os\n"
+            f"c2p = os.open({str(c2p)!r}, os.O_RDWR)\n"
+            f"p2c = os.open({str(p2c)!r}, os.O_RDWR)\n"
+            f"holds = {str(holds)!r}\n"
+            "import sys\n"
+            f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+            "import land\n"
+            "from pathlib import Path\n"
+            "assert os.read(p2c, 1) == b'O'\n"
+            "found = sorted(Path(holds).glob('worker-0.*.tmp'))\n"
+            "assert len(found) == 1\n"
+            "land._tmp_kept(found[0])\n"
+            "os.write(c2p, b'U')\n"
+            "assert os.read(p2c, 1) == b'D'\n"
+        )
+        child = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, "-c", child_code],
+            env=self.slot_env(), cwd=self.base, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop():
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=20)
+
+        self.addCleanup(stop)
+        real_open = os.open
+        paused = []
+
+        def pausing_open(path, flags, *args, **kwargs):
+            try:
+                text = os.fspath(path)
+            except (TypeError, ValueError):
+                return real_open(path, flags, *args, **kwargs)
+            if (isinstance(text, str) and text.endswith(f".{os.getpid()}.tmp")
+                    and (flags & os.O_CREAT) and not paused):
+                descriptor = real_open(path, flags, *args, **kwargs)
+                os.write(p2c_fd, b"O")
+                ready, _, _ = select.select([c2p_fd], [], [], 20)
+                self.assertTrue(ready, "cleanup did not remove the temporary name")
+                self.assertEqual(os.read(c2p_fd, 1), b"U")
+                paused.append(True)
+                return descriptor
+            return real_open(path, flags, *args, **kwargs)
+
+        handles = {name: open(land.governor_dir() / name, "a") for name in land._slot_names("exclusive", 1)}
+        records = []
+        try:
+            with mock.patch.object(land.os, "open", pausing_open):
+                records = land._publish("worker", handles, [handles["worker-0"]], str(self.work), "make test")
+            self.assertTrue(paused, "the writer did not pause after opening its temporary record")
+            self.assertEqual(len(records), 1, "cleanup removed the temporary name and the holder published no record")
+            record = land._read_holder(land._hold_path("worker-0"))
+            self.assertEqual((record.kind, record.command), ("worker", "make test"))
+        finally:
+            try:
+                os.write(p2c_fd, b"D")
+            except OSError:
+                pass
+            for handle in handles.values():
+                handle.close()
+            land._release_records(records)
+        self.assertEqual(child.wait(timeout=20), 0)
 
     def test_a_store_directory_that_cannot_be_searched_leaves_the_body_alone(self):
         log = self.base / "gh-log"

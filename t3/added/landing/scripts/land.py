@@ -593,7 +593,10 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     """Write one holder record for each slot just taken, before the turn mutex unlocks.
 
     Returns the locked record descriptors, one per slot whose write succeeded.
-    Stores cap and reason only when kind is exclusive.
+    Stores cap and reason only when kind is exclusive. When cleanup removed the temporary name
+    before the writer locked it, the rename fails and the write retries with a fresh temporary
+    record, up to three attempts per slot. A retry closes the failed descriptor first and holds
+    no record lock across the retry, and the slot flocks stay held throughout.
     """
     if kind != "exclusive":
         cap = None
@@ -603,10 +606,14 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     for name, handle in handles.items():
         if handle not in taken:
             continue
-        try:
-            records.append(_dump_holder(_hold_path(name), holder))
-        except OSError:
-            pass
+        for _ in range(3):
+            try:
+                records.append(_dump_holder(_hold_path(name), holder))
+                break
+            except FileNotFoundError:
+                continue
+            except OSError:
+                break
     return records
 
 
@@ -1212,14 +1219,20 @@ KINDS = ("feature", "fix", "polish", "upkeep", "study")
 def _table_rows(path):
     """The rows of one coordinator store table, each keyed by the cell names of its header line.
 
-    A table that does not exist, cannot be read, or is not UTF-8 has no rows. A line that holds more
-    cells than its header empties the whole table. A final line with no newline after it is not a row.
+    A table that does not exist or cannot be read has no rows. Finished bytes that are not UTF-8
+    have no rows. A line that holds more cells than its header empties the whole table. Bytes after
+    the last newline are dropped before decoding and are never a row.
     """
     try:
-        text = path.read_bytes().decode()
-    except (OSError, ValueError):
+        data = path.read_bytes()
+    except OSError:
         return []
-    lines = text.split("\n")[:-1]
+    finished = data.split(b"\n")[:-1]
+    try:
+        text = b"\n".join(finished).decode()
+    except ValueError:
+        return []
+    lines = text.split("\n") if finished else []
     header = lines[0].split("\t") if lines else []
     rows = []
     for line in lines[1:]:

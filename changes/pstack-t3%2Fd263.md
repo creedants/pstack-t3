@@ -1,0 +1,5 @@
+- kind fix
+- `_table_rows` drops bytes after the last newline before decoding, so a non-UTF-8 unfinished tail leaves finished rows.
+- `_publish` retries a `FileNotFoundError` from `_dump_holder` up to three attempts per slot, closing the failed descriptor first and holding slot flocks throughout.
+- The exclusive cap test uses a 2s cap and a 2.5s ticket wait exceeding the cap via polling, showing the cap does not run while waiting. The cap starts at acquire in code.
+- The signal test waits up to 30s for the exclusive land.py to exit after the signal, keeping its kill proof.
