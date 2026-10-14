@@ -2791,7 +2791,7 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
             {
                 "Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, "
                 "choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.",
-                '1. `t3_thread_organize` with `action: "pin"` and no `threadId`.',
+                '1. `t3_thread_organize` with `action: "pin"` and no `threadId`, acting on the caller on purpose.',
             },
         )
 
