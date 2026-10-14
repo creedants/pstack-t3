@@ -650,11 +650,19 @@ def follow_ups(text):
     A line outside a fence whose text is only `---` is not a block. The same holds for a list item `- ---` outside a
     fence. Leading and trailing whitespace do not count. Such a line separates blocks the way a blank line does.
     """
-    sections, level, fenced, blank, block = [], 0, False, True, None
+    sections, level, fenced, blank, block = [], 0, "", True, None
     for line in text.splitlines():
-        fence = line.strip().startswith("```")
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            mark = "`"
+        elif stripped.startswith("~~~"):
+            mark = "~"
+        else:
+            mark = ""
+        fence = mark == fenced if fenced else bool(mark)
         plain = not fence and not fenced
-        fenced = fenced != fence
+        if fence:
+            fenced = "" if fenced else mark
         heading = plain and re.match(r"(#{1,6})(\s|$)", line)
         if heading:
             depth = len(heading.group(1))
