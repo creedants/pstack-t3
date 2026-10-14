@@ -615,7 +615,8 @@ def _tmp_kept(path):
 
     The name is removed only when a nonblocking exclusive flock on a read-only open succeeds, because a
     writer locks the file it opened before it writes the record and holds the lock until it lets the slot
-    go. A failed open and any lock error leave the name, since neither proves the writer is gone.
+    go. A failed open and any lock error leave the name, since neither proves the writer is gone. A
+    writer that has opened its file and has not yet locked it loses the name in that window.
     """
     try:
         descriptor = os.open(path, os.O_RDONLY)
@@ -636,8 +637,8 @@ def _clear():
     """Remove this process's records while its slot flocks are still held.
 
     A name in governor/holds that ends in .tmp and is not this process's own record is removed too,
-    unless _tmp_kept keeps it. A holder that died before it renamed its file into place left that
-    name behind holding no lock.
+    unless _tmp_kept keeps it. A holder that died before it renamed its file into place left that name
+    behind holding no lock, and so does a writer that opened its file and has not yet locked it.
     """
     holds = governor_dir() / "holds"
     for path in holds.glob("*"):
@@ -1212,8 +1213,8 @@ def _table_rows(path):
 def _store_record(directory):
     """The coordinator record of one store directory, and whether that record is absent.
 
-    A record that cannot be read, or that is not a JSON object, gives an empty record that is not
-    absent, so the caller skips that store.
+    A record that exists but cannot be read, or that is not a JSON object, gives an empty record that is
+    not absent, so the caller skips that store. A missing record is absent.
     """
     try:
         text = (directory / STORE_RECORD).read_text(encoding="utf-8")
@@ -1247,12 +1248,13 @@ def _has_table(directory):
 
 
 def _item_store(repo):
-    """The coordinator store that records this repository, or None.
+    """The coordinator store for this repository, or None.
 
-    A store is a directory two levels under the store root. A store whose record is unreadable or is
-    not a JSON object, whose role is admin, or that holds no dishes table is skipped. A record that
-    names this repository as its project root selects its store. A store with no record at all is
-    skipped, unless it is the one store directory under the root and it holds a dishes table.
+    A store is a directory two levels under the store root, and the stores are tried in sorted name
+    order. The store read is the first whose record names this repository as its project root. When
+    exactly one store directory sits under the root, that store is read instead when it has no record
+    and it holds a dishes table. A store whose record is unreadable or is not a JSON object, whose role
+    is admin, or whose dishes table cannot be reached is skipped.
     """
     root = Path(os.environ.get(BRIGADE_ROOT) or state_home() / "brigade")
     try:
@@ -1287,7 +1289,7 @@ def _goal_name(directory, ident):
     """The name the goals table of one store gives this goal id, or "" when it has no such row.
 
     A name that is empty, or that holds a carriage return or a line feed, reads as no name. The first
-    row with the id wins.
+    row with the id wins. An empty id reads as no name without reading the table.
     """
     if not ident:
         return ""
@@ -1336,10 +1338,11 @@ def entry_commits(repo, entry):
 
 
 def pr_body(store, entry):
-    """The body ensure_pr passes to gh pr create. With no submitted body it is the message body of the reviewed commit.
+    """The body ensure_pr passes to gh pr create.
 
-    The work item's Kind and Goal line follows the body after one blank line, and is the whole body when
-    the body holds no text but whitespace.
+    The body is the submitted one when there is one, and otherwise the message body of the reviewed
+    commit. When the item has a line, it follows that body after one blank line and is the whole body
+    when the body holds no text but whitespace.
     """
     body = entry["body"] or git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
     line = _item_line(store, entry)
