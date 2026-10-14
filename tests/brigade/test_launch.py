@@ -32,22 +32,23 @@ class LaunchTest(BrigadeTest):
     def open_wide(self, **extra):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "8", *extra)
 
-    def launch_call(self, dish="D1", catalog=None, parent=PARENT):
+    def launch_call(self, dish="D1", catalog=None, parent=PARENT, in_process=False):
         catalog = CATALOG if catalog is None else catalog
-        return call_in_process(self, SCRIPT, [
+        runner = call_in_process if in_process else call
+        return runner(self, SCRIPT, [
             "--store", str(self.store), "--at", str(self.at),
             "launch", dish, "--parent", parent, "--catalog", str(catalog),
         ])
 
-    def assert_launch(self, expected, dish="D1", catalog=None):
-        outcome = self.launch_call(dish, catalog)
+    def assert_launch(self, expected, dish="D1", catalog=None, in_process=False):
+        outcome = self.launch_call(dish, catalog, in_process=in_process)
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stdout_text(), expected + "\n")
         self.assertEqual(outcome.stderr_text(), "")
         return outcome
 
-    def assert_refused(self, expected, dish="D1", catalog=None):
-        outcome = self.launch_call(dish, catalog)
+    def assert_refused(self, expected, dish="D1", catalog=None, in_process=False):
+        outcome = self.launch_call(dish, catalog, in_process=in_process)
         self.assertEqual(outcome.code, 1, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stdout_text(), "")
         self.assertEqual(outcome.stderr_text().strip(), expected)
@@ -182,7 +183,7 @@ class LaunchTest(BrigadeTest):
         self.show_payload({"roles": {"bug-fix": {"seats": [{
             "providerInstanceId": "grok", "model": "grok-4.7", "options": {},
         }]}}})
-        self.assert_launch('{"instanceId": "grok", "model": "grok-4.7", "options": {}}')
+        self.assert_launch('{"instanceId": "grok", "model": "grok-4.7", "options": {}}', in_process=True)
 
     def test_investigation_has_no_code_delegate_role_before_roles_py(self):
         self.open_wide()
@@ -311,7 +312,7 @@ class LaunchTest(BrigadeTest):
                     )
                     glob["BUILT_ROLES"] = script
                     glob["SOURCE_ROLES"] = script
-                outcome = self.launch_call(catalog=row.get("catalog", CATALOG))
+                outcome = self.launch_call(catalog=row.get("catalog", CATALOG), in_process=True)
                 if "ok" in row:
                     self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
                     self.assertEqual(outcome.stdout_text(), row["ok"] + "\n")
@@ -345,7 +346,7 @@ class LaunchTest(BrigadeTest):
     def test_catalog_required_seats_are_not_one_seat(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {"bug-fix": {"seats": "catalog-required"}}})
-        self.assert_refused("brigade: bug-fix seats are catalog-required, not one seat")
+        self.assert_refused("brigade: bug-fix seats are catalog-required, not one seat", in_process=True)
 
     def test_two_seat_objects_on_bug_fix_refuse_with_the_count(self):
         self.fired_bug_fix()
@@ -353,12 +354,12 @@ class LaunchTest(BrigadeTest):
             {"providerInstanceId": "grok", "model": "grok-4.7"},
             {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
         ]}}})
-        self.assert_refused("brigade: bug-fix has 2 seats")
+        self.assert_refused("brigade: bug-fix has 2 seats", in_process=True)
 
     def test_zero_seats_refuse_with_the_count(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {"bug-fix": {"seats": []}}})
-        self.assert_refused("brigade: bug-fix has 0 seats")
+        self.assert_refused("brigade: bug-fix has 0 seats", in_process=True)
 
     def test_a_fake_roles_script_reaches_the_command_when_the_run_uses_real_processes(self):
         name = "PSTACK_TEST_REAL_PROCESS"
@@ -374,24 +375,24 @@ class LaunchTest(BrigadeTest):
         self.addCleanup(restore)
         self.fired_bug_fix()
         self.show_payload({"roles": {"bug-fix": {"seats": []}}})
-        self.assert_refused("brigade: bug-fix has 0 seats")
+        self.assert_refused("brigade: bug-fix has 0 seats", in_process=True)
 
     def test_a_missing_role_is_refused(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {}})
-        self.assert_refused("brigade: bug-fix is missing from roles.py show")
+        self.assert_refused("brigade: bug-fix is missing from roles.py show", in_process=True)
 
     def test_a_seat_without_provider_or_model_is_refused(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {"bug-fix": {"seats": [{"model": "grok-4.7"}]}}})
-        self.assert_refused("brigade: bug-fix seat lacks providerInstanceId or model")
+        self.assert_refused("brigade: bug-fix seat lacks providerInstanceId or model", in_process=True)
 
     def test_options_that_are_not_an_object_are_refused(self):
         self.fired_bug_fix()
         self.show_payload({"roles": {"bug-fix": {"seats": [{
             "providerInstanceId": "grok", "model": "grok-4.7", "options": False,
         }]}}})
-        self.assert_refused("brigade: bug-fix seat options are not an object")
+        self.assert_refused("brigade: bug-fix seat options are not an object", in_process=True)
 
     def test_an_unknown_role_name_from_roles_py_is_the_wrapped_refusal(self):
         self.fired_bug_fix()
@@ -417,7 +418,7 @@ class LaunchTest(BrigadeTest):
                 1,
             )
         )
-        self.assert_launch(XHIGH)
+        self.assert_launch(XHIGH, in_process=True)
 
     def test_a_held_store_lock_refuses_launch_before_roles_py(self):
         self.fired_bug_fix()

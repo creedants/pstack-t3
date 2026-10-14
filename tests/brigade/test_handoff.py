@@ -590,13 +590,14 @@ def size_warning(size):
 
 
 class HandoffSizeTest(BrigadeTest):
-    def watch_call(self):
-        return call_in_process(self, SCRIPT, [
+    def watch_call(self, in_process=False):
+        runner = call_in_process if in_process else call
+        return runner(self, SCRIPT, [
             "--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), "watch",
         ])
 
-    def assert_watch(self, stderr=""):
-        outcome = self.watch_call()
+    def assert_watch(self, stderr="", in_process=False):
+        outcome = self.watch_call(in_process=in_process)
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stdout_text(), WATCH + "\n")
         self.assertEqual(outcome.stderr_text(), stderr)
@@ -650,7 +651,7 @@ class HandoffSizeTest(BrigadeTest):
         Path.stat = stat
         try:
             self.assertIsNone(line(self.at))
-            self.assert_watch()
+            self.assert_watch(in_process=True)
         finally:
             Path.is_file = real_is_file
             Path.stat = real_stat
