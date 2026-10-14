@@ -125,14 +125,59 @@ def _save():
     )
 
 
+def _close_live_owners(numbers):
+    stale = set(numbers)
+    if not stale:
+        return
+    owners = []
+    for obj in gc.get_objects():
+        fileno = getattr(obj, "fileno", None)
+        if not callable(fileno):
+            continue
+        try:
+            number = fileno()
+        except Exception:
+            continue
+        if type(number) is not int or number not in stale:
+            continue
+        owners.append(obj)
+
+    def depth(obj):
+        seen = set()
+        current = obj
+        steps = 0
+        while id(current) not in seen:
+            seen.add(id(current))
+            nxt = getattr(current, "buffer", None)
+            if nxt is None:
+                nxt = getattr(current, "raw", None)
+            if nxt is None:
+                break
+            current = nxt
+            steps += 1
+        return steps
+
+    # Close the wrapper before the raw file so the wrapper cannot close a reused number from its finalizer.
+    owners.sort(key=depth, reverse=True)
+    for obj in owners:
+        try:
+            obj.close()
+        except (OSError, ValueError):
+            pass
+
+
 def _close_new_fds(before):
     first = _descriptors()
     second = _descriptors()
+    stale = []
     for number in first.keys() & second.keys():
         if first[number] != second[number]:
             continue
         if before.get(number) == first[number]:
             continue
+        stale.append(number)
+    _close_live_owners(stale)
+    for number in stale:
         try:
             os.close(number)
         except OSError:
