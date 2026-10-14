@@ -15,6 +15,15 @@ SCRIPT = (
     "outer()\n"
 )
 
+SCRIPT_WITH_PATHS = (
+    "import sys\n"
+    "print('argv0=' + sys.argv[0])\n"
+    "print('file=' + __file__)\n"
+    "print('path0=' + sys.path[0])\n"
+    "\n"
+    + SCRIPT
+)
+
 
 def fence_git_environment():
     """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
@@ -39,8 +48,8 @@ def setUpModule():
 
 
 class UncaughtExceptionTest(unittest.TestCase):
-    def assert_same_as_real_interpreter(self, program):
-        invocation = in_process.Invocation(program=program)
+    def assert_same_as_real_interpreter(self, program, cwd=None):
+        invocation = in_process.Invocation(program=program, cwd=cwd)
         real = in_process.finished(in_process.Reason.INTERPRETER_EXIT, invocation)
         saved = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
         try:
@@ -66,3 +75,11 @@ class UncaughtExceptionTest(unittest.TestCase):
             program = Path(directory) / "runpy.py"
             program.write_text(SCRIPT)
             self.assert_same_as_real_interpreter(program)
+
+    def test_a_script_run_by_a_relative_path_matches_a_real_process(self):
+        self.maxDiff = None
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / "scripts" / "runpy.py"
+            program.parent.mkdir()
+            program.write_text(SCRIPT_WITH_PATHS)
+            self.assert_same_as_real_interpreter("scripts/runpy.py", cwd=directory)
