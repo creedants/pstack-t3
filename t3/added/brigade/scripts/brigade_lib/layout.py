@@ -1,36 +1,33 @@
 import ast
 import fnmatch
-import importlib.util
 import posixpath
-import sys
-import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 @dataclass(frozen=True)
 class _Prefix:
-    a: str
-    b: str
+    src: str
+    dst: str
 
 
 @dataclass(frozen=True)
 class _Exact:
-    a: str
-    b: str
+    src: str
+    dst: str
 
 
 @dataclass(frozen=True)
 class _Glob:
-    a: str
-    c: str
-    b: str
+    src: str
+    pat: str
+    dst: str
 
 
 @dataclass(frozen=True)
 class _Layout:
-    d: tuple
-    e: tuple
+    copies: tuple
+    pages: tuple
 
 
 def _const(node):
@@ -127,43 +124,82 @@ def _render_fn(mod):
     return None
 
 
-def _fresh():
-    return "_priv_" + uuid.uuid4().hex
-
-
-def _run(path):
-    tag = _fresh()
-    spec = importlib.util.spec_from_file_location(tag, str(path))
-    if spec is None or spec.loader is None:
+def _cli_tools(mod):
+    got = _top_assign(mod, "TOOLS")
+    if got is None or not isinstance(got, (ast.Tuple, ast.List)):
         return None
-    part = importlib.util.module_from_spec(spec)
-    sys.modules[tag] = part
+    tools = []
+    for one in got.elts:
+        text = _const(one)
+        if text is None:
+            return None
+        tools.append(text)
+    return tuple(tools)
+
+
+def _cli_out(mod):
+    got = _top_assign(mod, "OUT")
+    if got is None:
+        return None
+    parts = []
+    cur = got
+    while True:
+        made = _div(cur)
+        if made is None:
+            break
+        left, right = made
+        tail = _const(right)
+        if tail is None:
+            return None
+        parts.append(tail)
+        cur = left
+    if not parts or _name(cur) != "ROOT":
+        return None
+    parts.reverse()
+    return posixpath.join(*parts)
+
+
+def _page_name_ok(mod):
+    for sub in mod.body:
+        if not (isinstance(sub, ast.FunctionDef) and sub.name == "page_name"):
+            continue
+        args = sub.args
+        if args.vararg or args.kwarg or args.kwonlyargs or args.posonlyargs:
+            return None
+        if len(args.args) != 1:
+            return None
+        arg = args.args[0].arg
+        if len(sub.body) != 1 or not isinstance(sub.body[0], ast.Return):
+            return None
+        made = sub.body[0].value
+        if not (isinstance(made, ast.BinOp) and isinstance(made.op, ast.Add)):
+            return None
+        if not (isinstance(made.right, ast.Constant) and made.right.value == ".md"):
+            return None
+        head = made.left
+        if not (isinstance(head, ast.Attribute) and head.attr == "stem"):
+            return None
+        call = head.value
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Path"):
+            return None
+        if len(call.args) != 1 or call.keywords:
+            return None
+        if _name(call.args[0]) != arg:
+            return None
+        return arg
+    return None
+
+
+def _cli_pages(path):
     try:
-        spec.loader.exec_module(part)
-        tools = getattr(part, "TOOLS", None)
-        out = getattr(part, "OUT", None)
-        page = getattr(part, "page_name", None)
-        if not isinstance(tools, (tuple, list)):
-            return None
-        for item in tools:
-            if not isinstance(item, str):
-                return None
-        if not callable(page):
-            return None
-        try:
-            probe = page(tools[0]) if tools else page("")
-        except Exception:
-            return None
-        if not isinstance(probe, str):
-            return None
-        return (tuple(tools), out, page)
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        return None
-    finally:
-        sys.modules.pop(tag, None)
-        sys.modules.pop("cli_reference", None)
+        mod = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    except (OSError, SyntaxError, UnicodeError):
+        return ()
+    tools = _cli_tools(mod)
+    out = _cli_out(mod)
+    if tools is None or not out or _page_name_ok(mod) is None:
+        return ()
+    return tuple((tool, out + "/" + PurePosixPath(tool).stem + ".md") for tool in tools)
 
 
 def _resolve(node, arg, pub, run_map):
@@ -190,8 +226,7 @@ def _layout(project_root):
         base = Path(str(project_root))
         b_path = base / "scripts" / "build.py"
         c_path = base / "scripts" / "cli_reference.py"
-        b_text = b_path.read_text(encoding="utf-8")
-        b_mod = ast.parse(b_text, str(b_path))
+        b_mod = ast.parse(b_path.read_text(encoding="utf-8"), str(b_path))
         src_name = _root_name(b_mod, "T3", "ROOT")
         pub = _out_name(b_mod)
         if not src_name or not pub:
@@ -200,18 +235,7 @@ def _layout(project_root):
         if fn is None or not fn.args.args:
             return None
         arg = fn.args.args[0].arg
-        loaded = _run(c_path)
-        if loaded is None:
-            return None
-        tools, out, page = loaded
-        try:
-            rel = Path(str(out)).relative_to(base.resolve()).as_posix()
-        except Exception:
-            return None
-        if not rel or rel.startswith("."):
-            if rel != ".":
-                return None
-            rel = ""
+        pages = _cli_pages(c_path)
         vendor_vars = set()
         for sub in fn.body:
             if isinstance(sub, ast.Assign) and len(sub.targets) == 1:
@@ -338,18 +362,6 @@ def _layout(project_root):
         for _spot, _o, folder, pat, run_var, hold in glob_spots:
             dest = pub + "/" + run_map[run_var] + "/" + hold
             copies.append(_Glob(src_name + "/" + folder, pat, dest))
-        pages = []
-        for item in tools:
-            try:
-                leaf = page(item)
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                return None
-            if not isinstance(leaf, str):
-                return None
-            head = rel + "/" + leaf if rel else leaf
-            pages.append((item, head))
         all_calls = _call_list(fn, "copy_file")
         for call in all_calls:
             if id(call) in seen_calls:
@@ -386,41 +398,44 @@ def _layout(project_root):
 
 
 def _one(norm, lay):
-    got_copy = None
-    for item in lay.d:
+    found = []
+    for item in lay.copies:
         if isinstance(item, _Exact):
-            if norm == item.a:
-                got_copy = item.b
-                break
-    if got_copy is None:
-        for item in lay.d:
-            if isinstance(item, _Glob):
-                head = item.a + "/"
+            if norm == item.src:
+                if item.dst not in found:
+                    found.append(item.dst)
+            elif posixpath.dirname(item.src) == norm:
+                if item.dst not in found:
+                    found.append(item.dst)
+        elif isinstance(item, _Glob):
+            if norm == item.src:
+                if item.dst not in found:
+                    found.append(item.dst)
+            else:
+                head = item.src + "/"
                 if norm.startswith(head):
                     rest = norm[len(head):]
-                    if rest and "/" not in rest and fnmatch.fnmatch(rest, item.c):
-                        got_copy = item.b + "/" + rest
-                        break
-    if got_copy is None:
-        for item in lay.d:
-            if isinstance(item, _Prefix):
-                if norm == item.a:
-                    got_copy = item.b
-                    break
-                head = item.a + "/"
+                    if rest and "/" not in rest and fnmatch.fnmatch(rest, item.pat):
+                        dest = item.dst + "/" + rest
+                        if dest not in found:
+                            found.append(dest)
+        elif isinstance(item, _Prefix):
+            if norm == item.src:
+                if item.dst not in found:
+                    found.append(item.dst)
+            else:
+                head = item.src + "/"
                 if norm.startswith(head):
                     rest = norm[len(head):]
                     if rest:
-                        got_copy = item.b + "/" + rest
-                        break
-    got_page = None
-    for tool, head in lay.e:
+                        dest = item.dst + "/" + rest
+                        if dest not in found:
+                            found.append(dest)
+    for tool, head in lay.pages:
         if norm == tool:
-            got_page = head
-            break
-    found = []
-    if got_copy is not None:
-        found.append(got_copy)
-    if got_page is not None:
-        found.append(got_page)
+            if head not in found:
+                found.append(head)
+        elif tool.startswith(norm + "/"):
+            if head not in found:
+                found.append(head)
     return tuple(found)

@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import attempt_starts
+from brigade_lib.layout import _layout, _one
 from brigade_lib.leases import STANDINGS, StandingText, autofire_of, block_inputs, claim_paths, entry_line, fire_command, lease_block, paths_inside, paths_overlap, recheck_blocks, refill_of, renew_line, running_workers, worker_cap, workers_line
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, age, clean, slug
@@ -87,7 +88,7 @@ def waiting_ticket(row, label=Label()):
     return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label)
 
 
-def plan(tickets, refill, running, cap, level, refusals, now):
+def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
     allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
@@ -97,7 +98,8 @@ def plan(tickets, refill, running, cap, level, refusals, now):
     for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
                                                      int(ticket.id[1:]) if ticket.id[1:].isdigit() else 0)):
         low = ticket.priority == "low"
-        shared = [ident for ident, paths in started.items() if paths_overlap(ticket.paths, paths)]
+        eff = expanded.get(ticket.id, ticket.paths) if expanded else ticket.paths
+        shared = [ident for ident, paths in started.items() if paths_overlap(eff, paths)]
         kind, why = "start", ""
         if ticket.decision:
             kind = "decision"
@@ -108,7 +110,7 @@ def plan(tickets, refill, running, cap, level, refusals, now):
         elif ticket.label.goal and _goal_paused(ticket.label.goal, refill):
             kind, why = "paused", "its goal is paused"
         elif (low and len(shared) == 1 and priorities[shared[0]] != "low"
-              and paths_inside(ticket.paths, started[shared[0]])):
+              and paths_inside(eff, started[shared[0]])):
             kind, why = "rides", shared[0]
         elif shared:
             kind, why = "blocked", STARTS_AFTER.format(tickets=", ".join(shared))
@@ -122,7 +124,7 @@ def plan(tickets, refill, running, cap, level, refusals, now):
             kind = "reserve"
         else:
             idle -= 1
-            started[ticket.id] = ticket.paths
+            started[ticket.id] = eff
             refill = refill.started(ticket.label)
         standings.append(Standing(ticket, kind, why, low and now - ticket.filed > timedelta(days=LOW_FLAG_DAYS)))
     return standings
@@ -140,6 +142,29 @@ def lease_refusals(meta, tickets, next_dish):
         if asked[ticket.paths]:
             refusals[ticket.id] = clean(asked[ticket.paths][1])
     return refusals
+
+
+def expanded_paths(tickets, lay):
+    found = {}
+    for ticket in tickets:
+        if not ticket.paths or lay is None:
+            found[ticket.id] = ticket.paths
+            continue
+        seen = set(ticket.paths)
+        extras = []
+        for raw in ticket.paths:
+            try:
+                got = _one(raw, lay)
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                continue
+            for one in got:
+                if one not in seen:
+                    seen.add(one)
+                    extras.append(one)
+        found[ticket.id] = tuple([*ticket.paths, *extras])
+    return found
 
 
 def startable_lines(standings, meta, running, now):
@@ -166,9 +191,16 @@ def startable(restaurant):
         tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
+    try:
+        lay = _layout(meta["projectRoot"])
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        lay = None
+    expanded = expanded_paths(tickets, lay)
     refusals = lease_refusals(meta, tickets, next_dish)
     moment = datetime.now(timezone.utc)
-    return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment), meta, running, moment)
+    return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment, expanded), meta, running, moment)
 
 
 def ticket_lines(restaurant, state, held):

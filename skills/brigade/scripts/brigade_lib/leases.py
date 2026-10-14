@@ -208,6 +208,16 @@ def changelog_fragment(branch):
     return f"changes/{encoded}.md"
 
 
+def with_fragment(paths, branch):
+    if not paths or not branch:
+        return paths
+    frag = changelog_fragment(branch)
+    parts = [part for part in paths.split(",") if part]
+    if frag not in parts:
+        parts.append(frag)
+    return ",".join(parts)
+
+
 @dataclass(frozen=True)
 class Claim:
     text: str
@@ -227,15 +237,6 @@ def _claim_norm(raw):
 
 
 def claim_paths(project_root, paths, branch):
-    def with_fragment(cur, via):
-        if not cur or not via:
-            return cur
-        frag = changelog_fragment(via)
-        parts = [part for part in cur.split(",") if part]
-        if frag not in parts:
-            parts.append(frag)
-        return ",".join(parts)
-
     if not paths:
         return Claim("", ())
     raw_list = [part for part in paths.split(",") if part]
@@ -488,7 +489,7 @@ def fragment_lines(restaurant, ident, branch):
     states = lease_states(restaurant.meta["projectRoot"])
     with restaurant.checked():
         dish = restaurant.find("dishes.tsv", ident)[1]
-    lease, paths = dish["lease"], claim_paths(restaurant.meta["projectRoot"], dish["paths"], branch).text
+    lease, paths = dish["lease"], with_fragment(dish["paths"], branch)
     if not lease or dish["state"] in ("merged", "dropped") or paths == dish["paths"]:
         return None
     fragment = changelog_fragment(branch)
