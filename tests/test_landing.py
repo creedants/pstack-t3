@@ -3252,6 +3252,21 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
 
+    def test_merge_mode_lands_a_green_rollup_whose_check_name_contains_a_quote(self):
+        with self.fake_gh():
+            posted = [
+                {"name": "b\"q\\\t\n", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": posted}))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertNotIn("queue paused", first)
+            self.assertIn("landed E1 (r/D1)", first)
+            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            self.assertEqual(self.land("land"), "nothing to land")
+
     def test_merge_mode_does_not_merge_when_a_pending_check_appears_between_reads(self):
         with self.fake_gh():
             (self.base / "pr-checks.json").write_text('{"reviewDecision":"APPROVED","statusCheckRollup":[]}')
