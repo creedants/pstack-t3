@@ -1,1 +1,0 @@
-- `docs/guide.md` says `doctor` shows `59/59 pstack-t3`. The 0.15.24 sync added `$sharpen`, taking the shipped skill count from 58 to 59.

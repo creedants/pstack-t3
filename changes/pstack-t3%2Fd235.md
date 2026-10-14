@@ -1,2 +1,0 @@
-- `CallTest._captured` removes `PYTHONUNBUFFERED` from the real child's environment when `PSTACK_TEST_REAL_PROCESS` is not `1`. The test still compares that child's full stdout, stderr, and exit code with `call`.
-- When `PSTACK_TEST_REAL_PROCESS` is `1`, the real child keeps the caller's environment.

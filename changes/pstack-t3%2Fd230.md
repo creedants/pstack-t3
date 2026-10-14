@@ -1,2 +1,0 @@
-- When `CI` is `true`, `RenderHeightTest.setUp` calls `select_browser` again after a miss, and a second miss fails that test with the same reason text a skip would use. When `CI` is not `true`, `setUp` calls `select_browser` once, and a miss skips. Each `setUp` creates one temporary directory and removes it when that test ends. `PROBE_TIMEOUT` stays 20.
-- No test in `tests/test_activity_render.py` builds a `unittest.TestSuite`.
