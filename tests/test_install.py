@@ -5828,3 +5828,17 @@ class InProcessRestoreTest(unittest.TestCase):
             self.assertEqual(os.getcwd(), previous)
             self.assertIs(sys.argv, argv)
             self.assertEqual(list(sys.argv), contents)
+
+    def test_a_preloaded_module_attribute_replaced_by_an_installer_hook_is_the_same_object_afterwards(self):
+        import ctypes
+        saved = ctypes.CDLL
+        wrapper, home = fresh_home()
+        self.addCleanup(wrapper.cleanup)
+        checkout = make_checkout(home, "a")
+        installed = run(home, checkout, "--harness", "grok")
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        swarm = provider_link(home, "grok", "swarm")
+        raced = uninstall_hooked(home, checkout, put_back_race(swarm, "link", link_error=True, rename="libc"))
+        self.assertEqual(raced.returncode, 3, raced.stderr + raced.stdout)
+        self.assertEqual(noreplace_result(home), errno.ENOSYS)
+        self.assertIs(ctypes.CDLL, saved)
