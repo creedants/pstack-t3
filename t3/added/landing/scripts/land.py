@@ -332,7 +332,7 @@ def _discard_ticket(path):
 
 
 def _drop_aliased(tickets):
-    """Unlink every ticket-shaped name in this directory whose link count is not 1.
+    """Unlink every regular-file ticket-shaped name in this directory whose link count is not 1.
 
     Names that fail TICKET are ignored. An lstat or unlink failure skips that name.
     A name that is not a regular file stays for _open_ticket.
