@@ -614,10 +614,10 @@ def _tmp_kept(path):
     """True when this temporary record file stays in place rather than being removed.
 
     The name is removed only when two nonblocking exclusive flocks on read-only opens both succeed.
-    The second flock is held through the unlink and released after the close. A writer locks the file
+    The second flock is held through the unlink, then unlocked and closed. A writer locks the file
     it opened before it writes the record and holds the lock until it lets the slot go. A failed open
-    and any lock error leave the name, since neither proves the writer is gone. A writer that has not
-    locked by the second flock loses the name.
+    and a failed exclusive lock leave the name, since neither proves the writer is gone. A writer that
+    has not locked by the second flock loses the name.
     """
     try:
         first = os.open(path, os.O_RDONLY)
@@ -647,7 +647,7 @@ def _tmp_kept(path):
             path.unlink()
         except OSError:
             pass
-        return False
+        return path.exists()
     finally:
         try:
             fcntl.flock(second, fcntl.LOCK_UN)
@@ -1255,7 +1255,7 @@ def _same_directory(text, repo):
         return False
     try:
         return Path(text).resolve() == Path(repo).resolve()
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
