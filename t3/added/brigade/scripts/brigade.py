@@ -57,7 +57,7 @@ try:
     from brigade_lib.briefs import ESCALATED, MEASURING_STATIONS, MODE_RESOLUTIONS, ModeInputs, ModeLines, SEAT_RULE, WAIT_RULE, brief, brief_dish, contract_file, mode_inputs, roles_mode, stored_contract, write_brief
     from brigade_lib.edits import BLANK, BLOB_MODES, Digest, EDITS_REFUSED, EDITS_SECTION, EDIT_FAILS, EDIT_MARKS, EDIT_TITLE, Edit, EditsRefused, FILE_LINE, HEADING, LABELS, NEEDS_COMMANDS, NESTED, NO_COMMAND, PATH_LINES, TreeEntry, UNDERLINE, UNREAD, apply_edits, commit_tree, compared_paths, digests, edit_mark, exit_code, git, head_digest, occurrences, one_edit, parse_edits, path_lines, replay, report_edits, report_parts
     from brigade_lib.items import ATTEMPT_AFTER, DocAllowed, DocRefused, PreparedDocFire, _CATALOG, _SharedDoc, _can_cover_catalog, _covers, _fixed_docs, _gate_inventory, _held_from_tracked, _is_skill_file, _lease_parts, _skill_roots, _walk_opaque, attempt_kind, attempt_starts, block_note, checked_fire_label, drop, fire, fire_label, item_escalation, latest_mode_note, menu_purpose, prepare_doc_fire, record_blocked, record_escalation, retired_worker_threads, unfireable, workers_full, write_lead_kind
-    from brigade_lib.leases import ClaimError, ENTRY_LINE, NOT_STOPPED, STANDINGS, StandingText, autofire_of, block_holds, block_inputs, blocked_waiting, changelog_fragment, claim_lease, contract_mode, entry_line, fire_command, fragment_lines, holder, holding_blocks, land_result, lease_block, lease_check, lease_states, next_owner, paths_inside, paths_overlap, recheck_blocks, refusal_kind, release_lease, renew_line, repository_cap, require_workers, running_workers, set_thread, with_fragment, worker_cap, workers_line
+    from brigade_lib.leases import Claim, ClaimError, ENTRY_LINE, NOT_STOPPED, STANDINGS, StandingText, autofire_of, block_holds, block_inputs, blocked_waiting, changelog_fragment, claim_lease, claim_paths, contract_mode, entry_line, fire_command, fired_line, fragment_lines, holder, holding_blocks, land_result, lease_block, lease_check, lease_states, next_owner, paths_inside, paths_overlap, recheck_blocks, refusal_kind, release_lease, renew_line, repository_cap, require_workers, running_workers, set_thread, worker_cap, workers_line
     from brigade_lib.reporting import GROUPED_SECTIONS, REPAIR, REQUEST_NOTE, SECTIONS, _ruling_note, add_ruling, admin_requests, admin_sections, counts, display_root, end_ruling, events_since, finished_by_coordinator, goal_lines, leases_for, log_rows, log_rulings, overrule, relayed, report, republish, ruling_line, section_lines, send_request, status_label_lines, status_line, sync, tally_words, unclaimed_reports, unlogged_rulings, walk
     from brigade_lib.reports import ITEM_REPORT, NOT_A_REPORT, REVIEW_FILE, in_reports, item_report, report_entry, report_stat
     from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, THREADS_ITEM, THREADS_REFUSED, THREADS_REFUSED_LINE, THREADS_SECTION, cross_family, edits_gate, fix_round_refusal, item_verdicts, latest_verdict, pass_check, pass_json, record_pass, report_threads, report_threads_refusal, review_report, roles_family, round_count, round_debt, round_decision, send_backs, unrecorded_reviews, verify_edits, worker_report, write_threads
@@ -230,7 +230,7 @@ def parser():
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
-    p.add_argument("--paths", default="", help="paths the dish will change; fire claims a landing lease on them first")
+    p.add_argument("--paths", default="", help="paths the dish will change. Fire claims a landing lease on them plus generated copies and doc pages read from the build layout")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
     p.add_argument("--kind", choices=KINDS,
@@ -597,8 +597,11 @@ def selection_from_show(payload, role):
 
 def catalog_refusal(path):
     """Explain a nonzero exit for a directory, non-UTF-8 bytes, or JSON that is not an object. Return None for every other path. This does not guard the run."""
-    if Path(path).is_dir():
-        return f"{path} is a directory"
+    try:
+        if Path(path).is_dir():
+            return f"{path} is a directory"
+    except OSError as error:
+        return f"roles.py show failed on {path}: {type(error).__name__}: {error}"
     try:
         raw = Path(path).read_bytes()
     except OSError:
@@ -611,6 +614,8 @@ def catalog_refusal(path):
         data = json.loads(text)
     except json.JSONDecodeError:
         return None
+    except (RecursionError, ValueError) as error:
+        return f"roles.py show failed on {path}: {type(error).__name__}: {error}"
     if not isinstance(data, dict):
         return f"{path} is JSON that is not an object"
     return None
@@ -621,24 +626,39 @@ def show_failure(catalog, code, stderr):
     for line in stderr.splitlines():
         if line.strip():
             reason = line.strip()
-    if reason.startswith("error: "):
-        return "roles.py show refused the seat: " + reason.removeprefix("error: ")
-    if not reason or "Traceback" in reason or re.search(r'File ".+", line \d+, in ', reason):
+    had = reason.startswith("error: ")
+    rest = reason[len("error: "):] if had else reason
+    if not rest or "Traceback" in rest or re.search(r'File ".+", line \d+, in ', rest):
         return f"roles.py show failed on {catalog}: exit {code} with no message"
+    if had:
+        return "roles.py show refused the seat: " + rest
     return f"roles.py show failed on {catalog}: {reason}"
 
 
 def show_payload(catalog, argv):
-    result = subprocess.run(argv, capture_output=True, text=True, errors="replace")
+    try:
+        result = subprocess.run(argv, capture_output=True)
+    except (OSError, subprocess.SubprocessError, ValueError, RecursionError, UnicodeDecodeError) as error:
+        raise BrigadeError(f"roles.py show failed on {catalog}: {type(error).__name__}: {error}") from None
+    try:
+        out_text = result.stdout.decode("utf-8")
+        err_text = result.stderr.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise BrigadeError(f"roles.py show failed on {catalog}: {type(error).__name__}: {error}") from None
     if result.returncode == 0:
         try:
-            payload = json.loads(result.stdout)
+            payload = json.loads(out_text)
         except json.JSONDecodeError:
             raise BrigadeError("roles.py show printed no JSON object") from None
+        except (RecursionError, ValueError) as error:
+            raise BrigadeError(f"roles.py show failed on {catalog}: {type(error).__name__}: {error}") from None
         if not isinstance(payload, dict):
             raise BrigadeError("roles.py show printed no JSON object")
         return payload
-    raise BrigadeError(catalog_refusal(catalog) or show_failure(catalog, result.returncode, result.stderr))
+    refusal = catalog_refusal(catalog)
+    if refusal:
+        raise BrigadeError(refusal)
+    raise BrigadeError(show_failure(catalog, result.returncode, err_text))
 
 
 def launch_text(restaurant, args):

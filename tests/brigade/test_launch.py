@@ -248,6 +248,13 @@ class LaunchTest(BrigadeTest):
         providers_null.write_text('{"providers": [null]}')
         script_catalog = root / "script-catalog.json"
         script_catalog.write_text("{}")
+        deep_text = "[" * 20000 + "]" * 20000
+        deep_catalog = root / "catalog-deep.json"
+        deep_catalog.write_text(deep_text)
+        huge_text = '{"a": ' + "9" * 10000 + "}"
+        huge_catalog = root / "catalog-huge.json"
+        huge_catalog.write_text(huge_text)
+        long_catalog = root / ("a" * 300 + ".json")
         trace = "\n".join([
             "Traceback (most recent call last):",
             '  File "roles.py", line 8, in <module>',
@@ -287,6 +294,21 @@ class LaunchTest(BrigadeTest):
              "prefix": f"brigade: roles.py show failed on {providers_null}: TypeError:"},
             {"name": "traceback", "catalog": script_catalog, "show": ("", 1, trace + "\n"),
              "line": f"brigade: roles.py show failed on {script_catalog}: ValueError: boom"},
+            {"name": "deep json catalog", "catalog": deep_catalog,
+             "prefix": f"brigade: roles.py show failed on {deep_catalog}: RecursionError:"},
+            {"name": "huge int catalog", "catalog": huge_catalog,
+             "prefix": f"brigade: roles.py show failed on {huge_catalog}: ValueError:"},
+            {"name": "overlong catalog basename", "catalog": long_catalog,
+             "prefix": f"brigade: roles.py show failed on {long_catalog}: OSError:"},
+            {"name": "deep json child stdout", "catalog": script_catalog,
+             "show": (deep_text, 0, ""),
+             "prefix": f"brigade: roles.py show failed on {script_catalog}: RecursionError:"},
+            {"name": "huge int child stdout", "catalog": script_catalog,
+             "show": (huge_text, 0, ""),
+             "prefix": f"brigade: roles.py show failed on {script_catalog}: ValueError:"},
+            {"name": "error prefixed frame", "catalog": script_catalog,
+             "show": ("", 1, 'error: File "roles.py", line 3, in <module>\n'),
+             "line": f"brigade: roles.py show failed on {script_catalog}: exit 1 with no message"},
             {"name": "frame", "catalog": script_catalog,
              "show": ("", 1, '  File "roles.py", line 3, in <module>\n'),
              "line": f"brigade: roles.py show failed on {script_catalog}: exit 1 with no message"},

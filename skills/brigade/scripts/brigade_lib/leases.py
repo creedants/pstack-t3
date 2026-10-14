@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
 
@@ -207,14 +208,75 @@ def changelog_fragment(branch):
     return f"changes/{encoded}.md"
 
 
-def with_fragment(paths, branch):
-    if not paths or not branch:
-        return paths
-    fragment = changelog_fragment(branch)
-    parts = [part for part in paths.split(",") if part]
-    if fragment not in parts:
-        parts.append(fragment)
-    return ",".join(parts)
+@dataclass(frozen=True)
+class Claim:
+    text: str
+    added: tuple
+
+
+def _claim_norm(raw):
+    cleaned = raw.strip().replace("\\", "/")
+    if not cleaned:
+        return ""
+    made = posixpath.normpath(cleaned).lstrip("/")
+    if made in (".", ""):
+        return ""
+    if made == ".." or made.startswith("../"):
+        return None
+    return made
+
+
+def claim_paths(project_root, paths, branch):
+    def with_fragment(cur, via):
+        if not cur or not via:
+            return cur
+        frag = changelog_fragment(via)
+        parts = [part for part in cur.split(",") if part]
+        if frag not in parts:
+            parts.append(frag)
+        return ",".join(parts)
+
+    if not paths:
+        return Claim("", ())
+    raw_list = [part for part in paths.split(",") if part]
+    if not raw_list:
+        return Claim("", ())
+    try:
+        lay = _layout(project_root)
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        lay = None
+    if lay is None:
+        return Claim(with_fragment(paths, branch), ())
+    seen = set()
+    for raw in raw_list:
+        made = _claim_norm(raw)
+        if made:
+            seen.add(made)
+    extras = []
+    for raw in raw_list:
+        made = _claim_norm(raw)
+        if not made:
+            continue
+        try:
+            found = _one(made, lay)
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            continue
+        for one in found:
+            if one not in seen:
+                seen.add(one)
+                extras.append(one)
+    return Claim(with_fragment(",".join([*raw_list, *extras]), branch), tuple(extras))
+
+
+def fired_line(dish, lease, holder_name, added):
+    base = f"{dish} (lease {lease} held by {holder_name})" if lease else dish
+    if added:
+        return f"{base}\nadded {', '.join(added)}"
+    return base
 
 
 def refusal_kind(message):
@@ -335,7 +397,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    return lease_block(project_root, f"{prefix}/{ident}", with_fragment(requested, known), note.get("kind") or "lease")
+    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known).text, note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):
@@ -426,7 +488,7 @@ def fragment_lines(restaurant, ident, branch):
     states = lease_states(restaurant.meta["projectRoot"])
     with restaurant.checked():
         dish = restaurant.find("dishes.tsv", ident)[1]
-    lease, paths = dish["lease"], with_fragment(dish["paths"], branch)
+    lease, paths = dish["lease"], claim_paths(restaurant.meta["projectRoot"], dish["paths"], branch).text
     if not lease or dish["state"] in ("merged", "dropped") or paths == dish["paths"]:
         return None
     fragment = changelog_fragment(branch)

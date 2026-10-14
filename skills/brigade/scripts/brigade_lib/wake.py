@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import attempt_starts
-from brigade_lib.leases import STANDINGS, StandingText, autofire_of, block_inputs, entry_line, fire_command, lease_block, paths_inside, paths_overlap, recheck_blocks, refill_of, renew_line, running_workers, with_fragment, worker_cap, workers_line
+from brigade_lib.leases import STANDINGS, StandingText, autofire_of, block_inputs, claim_paths, entry_line, fire_command, lease_block, paths_inside, paths_overlap, recheck_blocks, refill_of, renew_line, running_workers, worker_cap, workers_line
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, age, clean, slug
 from brigade_lib.store import LEASED_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MESSAGE_ONLY, OPEN_LINES, OPEN_RUN_MINUTES, PRIORITIES_BY_RANK, ROUND_BUDGET, ROUND_KIND, TABLES, reporting_of, store_path
@@ -136,7 +136,7 @@ def lease_refusals(meta, tickets, next_dish):
             continue
         if ticket.paths not in asked:
             asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
-                                              with_fragment(",".join(ticket.paths), f"{prefix}/{next_dish.lower()}"))
+                                              claim_paths(root, ",".join(ticket.paths), f"{prefix}/{next_dish.lower()}").text)
         if asked[ticket.paths]:
             refusals[ticket.id] = clean(asked[ticket.paths][1])
     return refusals
