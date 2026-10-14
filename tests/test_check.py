@@ -680,7 +680,7 @@ class SkillCountCheckTest(unittest.TestCase):
         return root
 
     def _readme_states(self, root, readme):
-        """Point README_PATH at a README with the given skill count sentence."""
+        """Point README_PATH at a README holding the given text."""
         document = root / "README.md"
         document.write_text(readme)
         patcher = mock.patch.object(check, "README_PATH", document)
