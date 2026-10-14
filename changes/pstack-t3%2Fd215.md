@@ -1,1 +1,0 @@
-- Each of the eight part jobs calls `select_browser` after `pip install pyyaml` and before `python3 scripts/run_tests.py`, prints that path and the binary's `--version` output when the call returns a path, exits non-zero with `no working headless browser: ` plus the joined skip segments when the call returns no path, and downloads no browser.

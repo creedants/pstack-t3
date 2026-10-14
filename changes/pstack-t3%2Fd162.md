@@ -1,1 +1,0 @@
-- Light mode no longer caps the `review backups` role at `medium`. Under light with budget `default`, `roles.py show` and `roles.py backup` resolve a `review backups` seat on the configured budget, as in full mode, and the `review backups` panel that `backup` prints follows the same rule. Every role except `verifiers` and `review backups` still takes the cap.

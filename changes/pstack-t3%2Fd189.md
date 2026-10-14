@@ -1,1 +1,0 @@
-- AGENTS.md describes the persona lock for `t3/agents/` and extends the build, `--update-lock`, and `--merge` steps to a persona.

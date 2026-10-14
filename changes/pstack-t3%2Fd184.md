@@ -1,1 +1,0 @@
-- The grouped work-item strip reserves each wrapped count line and the gaps between count lines.

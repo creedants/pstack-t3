@@ -1,1 +1,0 @@
-- Part jobs set `PSTACK_TEST_REAL_PROCESS` to `1` on a push to main and leave it empty on a pull request.

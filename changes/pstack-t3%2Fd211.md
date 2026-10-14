@@ -1,1 +1,0 @@
-- Upstream pstack is now 0.15.23 at dbf49813a39c. `$in-your-own-words` restates the user's goal and the problem. The help table says to check that before the agent starts. A `$ketchup` reply stays under 250 words. When something happened, it shows what happened in one visual. `principle-fix-root-causes` asks for a cheap always-on signal when a deciding fact took a deep dig.
