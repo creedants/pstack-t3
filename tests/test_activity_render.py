@@ -1,5 +1,6 @@
 """Draw four activity pages in a headless browser at 390 pixels wide and measure the page root element."""
 
+import io
 import os
 import re
 import shutil
@@ -353,3 +354,14 @@ class ProbeContractTest(unittest.TestCase):
 
         browser, _ = probe_with({"chromium": "/opt/link"}, {"/opt/link": "/snap/real"}, runner)
         self.assertEqual(browser, "/opt/link")
+
+    def test_ci_miss_fails_after_two_tries_and_a_local_miss_skips_after_one(self):
+        calls = []
+        miss = lambda _directory: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
+        self.addCleanup(setattr, RenderHeightTest, "_probe", None)
+        with mock.patch(f"{__name__}.select_browser", miss):
+            for ci, n in (("", 1), ("true", 2)):
+                calls.clear(); RenderHeightTest._probe = None
+                with mock.patch.dict(os.environ, {"CI": ci}):
+                    result = unittest.TextTestRunner(stream=io.StringIO()).run(RenderHeightTest("test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"))
+                self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * n, True, ci == "true", ci != "true"))
