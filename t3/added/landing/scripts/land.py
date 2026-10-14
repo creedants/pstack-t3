@@ -613,24 +613,47 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
 def _tmp_kept(path):
     """True when this temporary record file stays in place rather than being removed.
 
-    The name is removed only when a nonblocking exclusive flock on a read-only open succeeds, because a
-    writer locks the file it opened before it writes the record and holds the lock until it lets the slot
-    go. A failed open and any lock error leave the name, since neither proves the writer is gone. A
-    writer that has opened its file and has not yet locked it loses the name in that window.
+    The name is removed only when two nonblocking exclusive flocks on read-only opens both succeed.
+    The second flock is held through the unlink and released after the close. A writer locks the file
+    it opened before it writes the record and holds the lock until it lets the slot go. A failed open
+    and any lock error leave the name, since neither proves the writer is gone. A writer that has not
+    locked by the second flock loses the name.
     """
     try:
-        descriptor = os.open(path, os.O_RDONLY)
+        first = os.open(path, os.O_RDONLY)
     except OSError:
         return True
     try:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(first, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             return True
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        try:
+            fcntl.flock(first, fcntl.LOCK_UN)
+        except OSError:
+            return True
+    finally:
+        os.close(first)
+    try:
+        second = os.open(path, os.O_RDONLY)
+    except OSError:
+        return True
+    try:
+        try:
+            fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        try:
+            path.unlink()
+        except OSError:
+            pass
         return False
     finally:
-        os.close(descriptor)
+        try:
+            fcntl.flock(second, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(second)
 
 
 def _clear():
@@ -647,11 +670,8 @@ def _clear():
                 path.unlink()
             except OSError:
                 pass
-        elif path.name.endswith(".tmp") and not _tmp_kept(path):
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        elif path.name.endswith(".tmp"):
+            _tmp_kept(path)
 
 
 def _live_holders(names):
@@ -1251,10 +1271,9 @@ def _item_store(repo):
     """The coordinator store for this repository, or None.
 
     A store is a directory two levels under the store root, and the stores are tried in sorted name
-    order. The store read is the first whose record names this repository as its project root. When
-    exactly one store directory sits under the root, that store is read instead when it has no record
-    and it holds a dishes table. A store whose record is unreadable or is not a JSON object, whose role
-    is admin, or whose dishes table cannot be reached is skipped.
+    order. The store read is the first whose readable record names this repository as its project root.
+    A store with no record, with an unreadable record, with a record that is not a JSON object, with
+    role admin, or with no reachable dishes table is skipped.
     """
     root = Path(os.environ.get(BRIGADE_ROOT) or state_home() / "brigade")
     try:
@@ -1264,8 +1283,6 @@ def _item_store(repo):
     for directory in candidates:
         record, absent = _store_record(directory)
         if absent:
-            if len(candidates) == 1 and _has_table(directory):
-                return directory
             continue
         if not _has_table(directory):
             continue
