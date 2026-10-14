@@ -19,7 +19,7 @@ XHIGH = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffor
 MEDIUM = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}'
 LOW = '{"instanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "low"}}'
 FAST = '{"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"fastMode": false}}'
-BARE = '{"instanceId": "grok", "model": "grok-4.7"}'
+BARE = '{"instanceId": "grok", "model": "grok-4.7", "options": {}}'
 
 
 class LaunchTest(BrigadeTest):
@@ -159,7 +159,7 @@ class LaunchTest(BrigadeTest):
         })
         self.assert_launch(LOW)
 
-    def test_a_seat_with_no_options_key_omits_options(self):
+    def test_a_seat_with_no_options_key_prints_an_empty_options_object(self):
         self.fired_bug_fix()
         self.write_user_roles({
             "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
@@ -220,6 +220,30 @@ class LaunchTest(BrigadeTest):
         self.fired_bug_fix()
         self.write_brief(b"\xff")
         self.assert_refused("brigade: briefs/D1.md is not UTF-8 text")
+
+    def test_a_catalog_of_json_that_is_not_an_object_refuses_with_the_path(self):
+        self.fired_bug_fix()
+        path = Path(self.temporary.name) / "catalog-number.json"
+        path.write_bytes(b"42")
+        before = self.store_files()
+        self.assert_refused(f"brigade: {path} is JSON that is not an object", catalog=path)
+        self.assertEqual(self.store_files(), before)
+
+    def test_a_catalog_that_is_not_utf8_text_refuses_with_the_path(self):
+        self.fired_bug_fix()
+        path = Path(self.temporary.name) / "catalog-bytes.json"
+        path.write_bytes(b"\xff")
+        before = self.store_files()
+        self.assert_refused(f"brigade: {path} is not UTF-8 text", catalog=path)
+        self.assertEqual(self.store_files(), before)
+
+    def test_a_catalog_that_is_a_directory_refuses_with_the_path(self):
+        self.fired_bug_fix()
+        path = Path(self.temporary.name) / "catalog-dir"
+        path.mkdir()
+        before = self.store_files()
+        self.assert_refused(f"brigade: {path} is a directory", catalog=path)
+        self.assertEqual(self.store_files(), before)
 
     def test_inherit_seats_are_not_one_seat(self):
         self.fired_bug_fix()
