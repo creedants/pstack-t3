@@ -3216,7 +3216,6 @@ os.execv({real!r}, [{real!r}, *args])
             (self.base / "pr-checks.json").write_text(
                 json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
             (self.base / "policy-until-passed").write_text("")
-            (self.base / "protection-required-fails").write_text("")
             self.init(mode="merge")
             self.queue_one()
             first = self.land("land")

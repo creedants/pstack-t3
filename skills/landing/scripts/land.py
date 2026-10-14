@@ -2372,7 +2372,7 @@ def read_required_contexts(store):
     Return a tuple of non-empty strings when gh exits 0 and the body is a JSON object whose contexts is a list of non-empty strings.
     An empty list returns ().
     Return None on a non-zero gh exit, on a body that is not that object, and on a contexts element that is not a non-empty string.
-    Ignore checks. Do not call the rules endpoint. Do not raise.
+    Ignore checks. Do not call the rules endpoint.
     """
     result = gh(
         "api",
