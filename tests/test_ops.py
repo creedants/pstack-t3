@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Literal, NamedTuple, Optional, Union
 
+from tests import in_process
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from check import Identity, machine_value_findings  # noqa: E402
@@ -267,9 +269,24 @@ class Sandbox:
             self.write_config()
         if config is not False:
             flag = ["--config", str(self.config if config is True else config)]
-        interpreter = self.bash if Path(script).suffix == ".sh" else sys.executable
-        return subprocess.run([interpreter, str(script), *flag, *args], stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, env=self.env(**extra_env), cwd=self.root, timeout=120)
+        env = self.env(**extra_env)
+        if Path(script).suffix == ".sh":
+            return subprocess.run(
+                [self.bash, str(script), *flag, *args],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=self.root,
+                timeout=120,
+            )
+        return in_process.invoke(in_process.Invocation(
+            program=script,
+            argv=(*flag, *args),
+            env=env,
+            cwd=self.root,
+            stdin="",
+        ))
 
     def _build(self, where, version, behavior):
         where.mkdir(parents=True)

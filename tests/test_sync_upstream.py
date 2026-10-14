@@ -7,8 +7,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
+
+from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/sync_upstream.py"
@@ -221,6 +224,28 @@ def marker_lines(root):
     ]
 
 
+@contextmanager
+def checkout_import(program):
+    saved_tempdir = tempfile.tempdir
+    tempfile.tempdir = None
+    directory = Path(program).resolve().parent
+    popped = {}
+    try:
+        for path in directory.glob("*.py"):
+            name = path.stem
+            module = sys.modules.get(name)
+            loaded = getattr(module, "__file__", None)
+            if not name.isidentifier() or loaded is None:
+                continue
+            if Path(loaded).resolve() == path.resolve():
+                continue
+            popped[name] = sys.modules.pop(name)
+        yield
+    finally:
+        tempfile.tempdir = saved_tempdir
+        sys.modules.update(popped)
+
+
 class CheckoutCase(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -234,13 +259,14 @@ class CheckoutCase(unittest.TestCase):
     def sync(self, *flags, **environment):
         # PYTHONDONTWRITEBYTECODE in a developer's shell would hide a script that writes __pycache__.
         inherited = {name: value for name, value in GIT_ENV.items() if not name.startswith("PYTHON")}
-        return subprocess.run(
-            [sys.executable, str(self.root / "scripts/sync_upstream.py"), *flags],
-            cwd=self.root,
-            env={**inherited, "TMPDIR": str(self.scratch), **environment},
-            capture_output=True,
-            text=True,
-        )
+        program = self.root / "scripts/sync_upstream.py"
+        with checkout_import(program):
+            return in_process.invoke(in_process.Invocation(
+                program=program,
+                argv=flags,
+                cwd=self.root,
+                env={**inherited, "TMPDIR": str(self.scratch), **environment},
+            ))
 
 
 class CheckTest(CheckoutCase):
