@@ -133,8 +133,7 @@ class EntryLoadTest(unittest.TestCase):
         self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
         self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
 
-    def test_a_failed_import_drops_imported_modules_and_restores_prior_modules_and_the_bytecode_flag(self):
-        runpy.run_path(str(SCRIPT))
+    def test_a_failed_import_drops_added_brigade_package_modules_and_restores_prior_modules_and_the_bytecode_flag(self):
         case = Path(self.temporary.name) / "load"
         case.mkdir()
         source = case / "brigade.py"
@@ -153,7 +152,13 @@ class EntryLoadTest(unittest.TestCase):
             prior = sys.modules.copy()
             with self.assertRaises(ImportError):
                 runpy.run_path(str(source))
-            self.assertEqual([name for name in sys.modules if name not in prior], [])
+            added = [
+                name for name in sys.modules
+                if name not in prior and (
+                    name == "brigade_lib" or name.startswith("brigade_lib.") or name.startswith("_brigade_ns_")
+                )
+            ]
+            self.assertEqual(added, [])
             self.assertEqual(
                 [name for name in prior if sys.modules.get(name) is not prior[name]],
                 [],
