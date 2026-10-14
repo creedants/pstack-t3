@@ -7214,8 +7214,10 @@ os.execv({real!r}, [{real!r}, *args])
                 pass
         self.assertFalse(stale.exists())
 
-    def test_a_live_holders_temporary_record_file_is_kept(self):
+    def test_a_locked_temporary_record_file_is_kept(self):
         self.governor(1)
+        # The pid comes from a process that has exited, so the name cannot collide with the pid this
+        # process publishes its own temporary file under.
         pid = self.dead_pid()
         live, descriptor = self.temporary_hold(pid, locked=True)
         try:
@@ -7225,6 +7227,29 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertTrue(live.exists())
         finally:
             os.close(descriptor)
+
+    def test_a_store_directory_that_cannot_be_searched_leaves_the_body_alone(self):
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            self.store_item("w1", "polish", "G2")
+            sha = self.worker("w1", {"a.txt": "agent\n"})
+            self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1",
+                      "--reviewer", REVIEWER)
+            # Read the store's tables with no search permission on the store itself, so a stat inside it fails.
+            store = self.base / "state/pstack-t3/brigade/proj/store"
+            os.chmod(store, 0o444)
+            try:
+                self.land("land")
+            finally:
+                os.chmod(store, 0o755)
+            self.assertTrue(log.exists(), "the queue opened no pull request")
+            create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][0])
+            self.assertEqual(create[create.index("--body") + 1], "")
 
     def test_a_nested_slot_yields_without_a_second_record(self):
         self.governor(1)

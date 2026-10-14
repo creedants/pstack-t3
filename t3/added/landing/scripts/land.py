@@ -635,8 +635,9 @@ def _tmp_kept(path):
 def _clear():
     """Remove this process's records while its slot flocks are still held.
 
-    A name in governor/holds that ends in .tmp is removed too, unless _tmp_kept keeps it. A holder that
-    died before it renamed its file into place left that name behind holding no lock.
+    A name in governor/holds that ends in .tmp and is not this process's own record is removed too,
+    unless _tmp_kept keeps it. A holder that died before it renamed its file into place left that
+    name behind holding no lock.
     """
     holds = governor_dir() / "holds"
     for path in holds.glob("*"):
@@ -1237,6 +1238,14 @@ def _same_directory(text, repo):
         return False
 
 
+def _has_table(directory):
+    """True when the store directory holds a dishes table name, and False when the name cannot be reached."""
+    try:
+        return (directory / DISHES_TABLE).is_file()
+    except OSError:
+        return False
+
+
 def _item_store(repo):
     """The coordinator store that records this repository, or None.
 
@@ -1253,10 +1262,10 @@ def _item_store(repo):
     for directory in candidates:
         record, absent = _store_record(directory)
         if absent:
-            if len(candidates) == 1 and (directory / DISHES_TABLE).is_file():
+            if len(candidates) == 1 and _has_table(directory):
                 return directory
             continue
-        if not (directory / DISHES_TABLE).is_file():
+        if not _has_table(directory):
             continue
         if record.get("role") == "admin":
             continue
