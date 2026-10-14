@@ -5,6 +5,7 @@ import enum
 import io
 import locale
 import os
+import pkgutil
 import runpy
 import signal
 import subprocess
@@ -254,6 +255,14 @@ def _restore(saved):
         raise first
 
 
+class _TypedArgv(list):
+    """sys.argv for one run. A real interpreter keeps argv[0] as the program was typed, so writes to index 0 are ignored."""
+
+    def __setitem__(self, index, value):
+        if index != 0:
+            super().__setitem__(index, value)
+
+
 def _command(invocation):
     program = os.fspath(invocation.program)
     args = [os.fspath(part) for part in invocation.argv]
@@ -330,13 +339,21 @@ def _drain_atexit(saved, recorded):
 
 
 def _execute(saved, invocation):
-    program = invocation.program
+    typed = invocation.program
     if invocation.cwd is not None:
         os.chdir(invocation.cwd)
     if invocation.env is not None:
         os.environ.clear()
         os.environ.update(dict(invocation.env))
-    sys.argv = [os.fspath(program), *[os.fspath(part) for part in invocation.argv]]
+    # A real interpreter resolves its script argument against the directory it starts in and
+    # runs that path, so the traceback, __file__, and sys.path[0] name it.
+    program = os.path.join(os.getcwd(), os.fspath(typed))
+    sys.argv = _TypedArgv([os.fspath(typed), *[os.fspath(part) for part in invocation.argv]])
+    if pkgutil.get_importer(program) is None:
+        # runpy.run_path runs a plain script with sys.path untouched, while a real interpreter
+        # puts the script's own directory first, with symlinks resolved. A directory or zipfile
+        # is a valid sys.path entry, and run_path inserts it itself.
+        sys.path.insert(0, os.path.dirname(os.path.realpath(program)))
     sys.dont_write_bytecode = _bytecode_flag(os.environ)
     if invocation.clock is not None:
         frozen = float(repr(invocation.clock))
@@ -361,7 +378,7 @@ def _execute(saved, invocation):
     warnings._filters_mutated()
     try:
         try:
-            runpy.run_path(os.fspath(program), run_name="__main__")
+            runpy.run_path(program, run_name="__main__")
             code = 0
         except SystemExit as exit_error:
             code = _code_from_exit(exit_error.code)
