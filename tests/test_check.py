@@ -962,5 +962,58 @@ class CheckoutRuleTest(unittest.TestCase):
                 self.assertEqual(check.shared_source_findings(roles_path, install_path), expected)
 
 
+class RenderedTreeCheckTest(unittest.TestCase):
+    def _root(self, roles=False, demo=None):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "pstack-runtime").mkdir()
+        (root / "pstack-runtime/SKILL.md").write_text(
+            "---\nname: pstack-runtime\ndescription: d\n---\n\n"
+            "Call `watch_pull_request`. Call `unwatch_pull_request`.\n"
+        )
+        (root / "setup-pstack").mkdir()
+        (root / "setup-pstack/SKILL.md").write_text(
+            "---\nname: setup-pstack\ndescription: d\n---\n\n"
+            "Call `watch_pull_request`. T3 Code 0.0.46-nightly.20261005.2702 or later.\n"
+        )
+        if roles:
+            (root / "pstack-runtime/scripts").mkdir()
+            (root / "pstack-runtime/scripts/roles.py").write_text("")
+        if demo is not None:
+            (root / "demo").mkdir()
+            (root / "demo/SKILL.md").write_text(demo)
+        return root
+
+    def test_a_tree_with_both_witness_skills_and_roles_py_has_no_roles_finding(self):
+        self.assertEqual(check.check_tree(self._root(roles=True)), [])
+
+    def test_a_tree_with_both_witness_skills_and_no_roles_py_names_that_file(self):
+        self.assertEqual(check.check_tree(self._root()), ["pstack-runtime/scripts/roles.py: is missing"])
+
+    def test_disable_model_invocation_in_a_skill_body_is_not_a_frontmatter_finding(self):
+        demo = (
+            "---\nname: demo\ndescription: d\n---\n\n"
+            "The build strips disable-model-invocation.\n"
+        )
+        self.assertEqual(check.check_tree(self._root(roles=True, demo=demo)), [])
+
+    def test_disable_model_invocation_in_frontmatter_is_named(self):
+        demo = (
+            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n\n"
+            "body\n"
+        )
+        self.assertEqual(
+            check.check_tree(self._root(roles=True, demo=demo)),
+            ["demo/SKILL.md: frontmatter contains disable-model-invocation"],
+        )
+
+    def test_disable_model_invocation_after_one_mark_is_only_missing_frontmatter(self):
+        demo = "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n"
+        self.assertEqual(
+            check.check_tree(self._root(roles=True, demo=demo)),
+            ["demo/SKILL.md: missing frontmatter"],
+        )
+
 if __name__ == "__main__":
     unittest.main()

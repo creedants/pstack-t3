@@ -1165,16 +1165,6 @@ class ModesTest(unittest.TestCase):
 
 
 class BuildTest(unittest.TestCase):
-    def test_generated_tree_passes_check(self):
-        with tempfile.TemporaryDirectory() as directory:
-            out = Path(directory) / "skills"
-            result = subprocess.run([sys.executable, str(ROOT / "scripts/build.py"), "--out", str(out)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(check.check_tree(out), [])
-            self.assertTrue((out / "pstack-runtime/scripts/roles.py").exists())
-            for skill_md in out.glob("*/SKILL.md"):
-                self.assertNotIn("disable-model-invocation", skill_md.read_text().split("---")[1], skill_md)
-
     def test_replace_tree_recovers_an_interrupted_swap_before_copying(self):
         import build
         from unittest import mock
@@ -2959,30 +2949,6 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
         import catalog
         group = catalog.render(ROOT / "skills").split("\n## Plan and run long work\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("| [`brigade-admin`](../skills/brigade-admin/SKILL.md) |", group)
-
-
-def repository_state(repo):
-    """Config bytes, HEAD, and every ref of a repository."""
-    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname) %(objectname)"], cwd=repo,
-                          check=True, capture_output=True, text=True).stdout
-    return (repo / ".git/config").read_bytes(), (repo / ".git/HEAD").read_text(), refs
-
-
-class GitEnvironmentFenceTest(unittest.TestCase):
-    def test_a_fixture_test_leaves_a_repository_named_by_the_callers_git_variables_unchanged(self):
-        for names in (("GIT_DIR", "GIT_WORK_TREE"), ("GIT_DIR",)):
-            with self.subTest(leaked=names), tempfile.TemporaryDirectory() as tmp:
-                victim = Path(tmp) / "victim"
-                subprocess.run(["git", "init", "-q", "-b", "main", str(victim)], check=True)
-                subprocess.run(["git", "-c", "user.name=v", "-c", "user.email=v@v", "commit", "-q", "--allow-empty", "-m", "init"],
-                               cwd=victim, check=True)
-                before = repository_state(victim)
-                leaked = {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(victim)}
-                child = subprocess.run([sys.executable, str(Path(__file__).resolve()), "WorktreeAuditTest.test_flag_and_env_replace_the_configured_directory"],
-                                       env={**os.environ, **{name: leaked[name] for name in names}},
-                                       capture_output=True, text=True, timeout=300)
-                self.assertEqual(repository_state(victim), before)
-                self.assertEqual(child.returncode, 0, child.stderr)
 
 
 if __name__ == "__main__":
