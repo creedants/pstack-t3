@@ -57,7 +57,10 @@ def _pipe_encoding():
 
 
 def _text_from_pipe(data):
-    """Decode the way subprocess text mode decodes a pipe."""
+    """Decode pipe bytes with the encoding locale.getencoding returns when that function exists.
+
+    Otherwise use the encoding locale.getpreferredencoding(False) returns. Errors are strict. CR LF and CR become LF.
+    """
     return data.decode(_pipe_encoding(), "strict").replace("\r\n", "\n").replace("\r", "\n")
 
 
@@ -266,7 +269,7 @@ def drive(script, argv, *, env, cwd=None):
     """Run one land.py command and return its exit code, stdout, and stderr.
 
     PSTACK_TEST_REAL_PROCESS is read from the process environment on entry, before env is installed and before the script loads. The value 1 starts a real process. Any other value runs in this process.
-    After an in-process call, including when main raises, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored. A later restore step still runs when an earlier step raises, and the first restore error is raised after those steps.
+    After an in-process call, including when main raises, cwd, os.environ, sys.argv, the standard streams, the umask, signal handlers, and sys.dont_write_bytecode are restored.
     An in-process call closes unreachable file objects before the script loads and again before the call returns. On an in-process return, os.close runs for each descriptor at or above 3 whose two later snapshots report one inode that the entry snapshot does not report for that descriptor.
     Each in-process call loads the script again. The imported land module is not the module that runs.
     """
