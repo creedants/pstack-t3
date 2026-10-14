@@ -340,13 +340,12 @@ def _env(home):
 
 
 def _run(home, checkout, args, env=None, cwd=None):
-    return subprocess.run(
-        [sys.executable, str(Path(checkout) / "scripts" / "install.py"), *args],
+    return in_process.invoke(in_process.Invocation(
+        program=Path(checkout) / "scripts" / "install.py",
+        argv=tuple(args),
         env={**_env(home), **(env or {})},
         cwd=cwd or home,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 class FreshInstallTest(unittest.TestCase):
@@ -523,14 +522,12 @@ def pause_after_load(home, checkout, args):
         "module.load = paused\n"
         "sys.exit(module.main())\n"
     )
-    proc = subprocess.Popen(
-        [sys.executable, str(wrapper), *args],
+    proc = in_process.spawn(in_process.Reason.RACE, in_process.Invocation(
+        program=wrapper,
+        argv=tuple(args),
         env=_env(home),
         cwd=home,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    ))
     return proc, ready, go
 
 
@@ -558,13 +555,12 @@ def squat_uninstall(home, checkout, path, payload, *args):
         "os.unlink = after(os.unlink)\n"
         "sys.exit(module.main())\n"
     )
-    return subprocess.run(
-        [sys.executable, str(wrapper), *args],
+    return in_process.invoke(in_process.Invocation(
+        program=wrapper,
+        argv=tuple(args),
         env=_env(home),
         cwd=home,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 def run_failing(home, checkout, call, path, *args):
@@ -585,13 +581,12 @@ def run_failing(home, checkout, call, path, *args):
         f"setattr({module}, {name!r}, failing)\n"
         "sys.exit(installer.main())\n"
     )
-    return subprocess.run(
-        [sys.executable, str(wrapper), *args],
+    return in_process.invoke(in_process.Invocation(
+        program=wrapper,
+        argv=tuple(args),
         env=_env(home),
         cwd=home,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 def interleave_removal(home, checkout, paths, call, *args, occupy=None):
@@ -624,13 +619,12 @@ def interleave_removal(home, checkout, paths, call, *args, occupy=None):
         "assert fired, 'the interleaved call never ran'\n"
         "sys.exit(status)\n"
     )
-    return subprocess.run(
-        [sys.executable, str(wrapper), *args],
+    return in_process.finished(in_process.Reason.RACE, in_process.Invocation(
+        program=wrapper,
+        argv=tuple(args),
         env=_env(home),
         cwd=home,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 def set_aside(path):
@@ -639,7 +633,7 @@ def set_aside(path):
     return sorted(holder / path.name for holder in path.parent.glob(".pstack-t3-*/") if os.path.lexists(holder / path.name))
 
 
-def uninstall_hooked(home, checkout, code):
+def uninstall_hooked(home, checkout, code, *, reason=None):
     """Run this checkout's uninstall with `code` run first against the loaded installer, named `module`."""
     wrapper = home / f"hooked-{checkout.name}.py"
     installer = str(checkout / "scripts" / "install.py")
@@ -653,13 +647,15 @@ def uninstall_hooked(home, checkout, code):
         f"{code}\n"
         "sys.exit(module.main())\n"
     )
-    return subprocess.run(
-        [sys.executable, str(wrapper), "--harness", "grok", "uninstall"],
+    invocation = in_process.Invocation(
+        program=wrapper,
+        argv=("--harness", "grok", "uninstall"),
         env=_env(home),
         cwd=home,
-        capture_output=True,
-        text=True,
     )
+    if reason is None:
+        return in_process.invoke(invocation)
+    return in_process.finished(reason, invocation)
 
 
 def bind_mounts_refused():
@@ -702,13 +698,12 @@ def install_hooked(home, checkout, code, *args):
         f"{code}\n"
         "sys.exit(module.main())\n"
     )
-    return subprocess.run(
-        [sys.executable, str(wrapper), *args],
+    return in_process.invoke(in_process.Invocation(
+        program=wrapper,
+        argv=tuple(args),
         env=_env(home),
         cwd=home,
-        capture_output=True,
-        text=True,
-    )
+    ))
 
 
 def doctor_counting_plans(home, checkout, *args):
@@ -2944,11 +2939,11 @@ class OwnershipTest(unittest.TestCase):
         """Every hidden directory an installer made to move an entry through, anywhere under the home."""
         return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
 
-    def strand_backup(self, hook, kind="directory"):
+    def strand_backup(self, hook, kind="directory", *, reason=None):
         """Checkout a's uninstall, stopped by `hook` with the backup of a displaced swarm left aside."""
         a, swarm, rows = self.displaced_by(kind)
         backup = Path(rows[0]["backup"])
-        raced = uninstall_hooked(self.home, a, hook)
+        raced = uninstall_hooked(self.home, a, hook, reason=reason)
         aside = set_aside(backup)
         self.assertEqual(len(aside), 1, raced.stdout + raced.stderr)
         self.assert_displaced(aside[0], kind)
@@ -3037,10 +3032,13 @@ class OwnershipTest(unittest.TestCase):
         )
 
     def test_a_later_uninstall_restores_a_backup_left_in_a_holder(self):
-        for stopped, hook in (("error", raising("same_entry")), ("kill", KILLED_ASIDE)):
+        for stopped, hook, reason in (
+            ("error", raising("same_entry"), None),
+            ("kill", KILLED_ASIDE, in_process.Reason.INTERPRETER_EXIT),
+        ):
             with self.subTest(stopped=stopped):
                 self.use_fresh()
-                a, swarm, backup, raced, aside = self.strand_backup(hook)
+                a, swarm, backup, raced, aside = self.strand_backup(hook, reason=reason)
                 self.assertEqual(raced.returncode, 9 if stopped == "kill" else 3, raced.stdout + raced.stderr)
                 self.ok(
                     run(self.home, a, "--harness", "grok", "uninstall"),
@@ -3271,7 +3269,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(count.read_text(), "0")
 
     def test_an_older_uninstall_restores_a_backup_the_new_installer_returned(self):
-        a, swarm, backup, raced, aside = self.strand_backup(KILLED_ASIDE)
+        a, swarm, backup, raced, aside = self.strand_backup(KILLED_ASIDE, reason=in_process.Reason.INTERPRETER_EXIT)
         b = make_checkout(self.home, "b", old=True)
         swarm.write_bytes(b"occupant")
         self.ok(
@@ -3408,14 +3406,12 @@ class OwnershipTest(unittest.TestCase):
         lock = os.open(state_dir(self.home), os.O_RDONLY)
         self.addCleanup(os.close, lock)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        waiting = subprocess.Popen(
-            [sys.executable, str(a / "scripts" / "install.py"), "--harness", "grok", "uninstall"],
+        waiting = in_process.spawn(in_process.Reason.RACE, in_process.Invocation(
+            program=a / "scripts" / "install.py",
+            argv=("--harness", "grok", "uninstall"),
             env=_env(self.home),
             cwd=self.home,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        ))
         self.addCleanup(waiting.kill)
         with self.assertRaises(subprocess.TimeoutExpired):
             waiting.communicate(timeout=1)
@@ -3735,7 +3731,15 @@ class OwnershipTest(unittest.TestCase):
                 self.assertEqual(done.stderr, "")
         for flags, status in ((("--help",), 0), (("--harness", "nope"), 2)):
             with self.subTest(flags=flags):
-                done = run(self.home, a, *flags, env=self.RELATIVE_XDG, cwd=work)
+                if flags == ("--help",):
+                    done = in_process.finished(in_process.Reason.HELP, in_process.Invocation(
+                        program=a / "scripts" / "install.py",
+                        argv=flags,
+                        env={**_env(self.home), **self.RELATIVE_XDG},
+                        cwd=work,
+                    ))
+                else:
+                    done = run(self.home, a, *flags, env=self.RELATIVE_XDG, cwd=work)
                 self.assertEqual(done.returncode, status, done.stdout + done.stderr)
                 self.assertNotIn("XDG_CONFIG_HOME", done.stderr)
         (a / "skills").rename(a / "skills.away")
@@ -4230,8 +4234,12 @@ class OwnershipTest(unittest.TestCase):
         """
 
         def call(*args):
-            command = [sys.executable, "scripts/install.py", *args, *given, "--harness", "grok"]
-            return subprocess.run(command, env=_env(self.home), cwd=a, capture_output=True, text=True)
+            return in_process.invoke(in_process.Invocation(
+                program="scripts/install.py",
+                argv=(*args, *given, "--harness", "grok"),
+                env=_env(self.home),
+                cwd=a,
+            ))
 
         def doctor(status):
             result = call("doctor")
@@ -4300,7 +4308,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(self.doctor(a, 0, "--harness", "grok"), [self.harness_line("grok", "3/3 pstack-t3"), row])
 
     def test_doctor_names_a_backup_row_whose_entry_sits_in_a_holder_beside_it(self):
-        a, swarm, backup, raced, aside = self.strand_backup(KILLED_ASIDE)
+        a, swarm, backup, raced, aside = self.strand_backup(KILLED_ASIDE, reason=in_process.Reason.INTERPRETER_EXIT)
         self.assertEqual(
             self.doctor(a, 1, "--harness", "grok"),
             [
@@ -4538,7 +4546,12 @@ class OwnershipTest(unittest.TestCase):
         a, swarm, rows = self.displaced_by("directory")
         alpha = provider_link(self.home, "grok", "alpha")
         backup = Path(rows[0]["backup"])
-        raced = uninstall_hooked(self.home, a, UNLINK_ASIDE.replace("'/swarm'", "'/alpha'") + KILLED_ASIDE)
+        raced = uninstall_hooked(
+            self.home,
+            a,
+            UNLINK_ASIDE.replace("'/swarm'", "'/alpha'") + KILLED_ASIDE,
+            reason=in_process.Reason.INTERPRETER_EXIT,
+        )
         held_link, held_backup = set_aside(alpha), set_aside(backup)
         self.assertEqual((len(held_link), len(held_backup)), (1, 1), raced.stdout + raced.stderr)
         self.assertEqual(os.readlink(held_link[0]), str(a / "skills" / "alpha"))
@@ -4612,8 +4625,12 @@ class OwnershipTest(unittest.TestCase):
         project.mkdir()
 
         def call(*args):
-            command = [sys.executable, "scripts/install.py", *args, "--project", str(project), "--harness", "grok"]
-            return subprocess.run(command, env=_env(self.home), cwd=a, capture_output=True, text=True)
+            return in_process.invoke(in_process.Invocation(
+                program="scripts/install.py",
+                argv=(*args, "--project", str(project), "--harness", "grok"),
+                env=_env(self.home),
+                cwd=a,
+            ))
 
         self.ok(call("install"), "linked 3 skills into grok")
         skills = project / ".grok" / "skills"
@@ -5708,12 +5725,13 @@ class OwnershipTest(unittest.TestCase):
         notes = provider_link(self.home, "grok", "notes")
         backup = f"{state_dir(self.home)}/backups/20260101T000000-1-abcd/grok/no{{surrogate}}tes"
         self.add_rows(backups=[{"harnesses": ["grok"], "original": str(notes), "backup": backup.format(surrogate=surrogate)}])
-        checked = subprocess.run(
-            [sys.executable, str(a / "scripts" / "install.py"), "doctor", "--harness", "grok"],
+        checked = in_process.invoke(in_process.Invocation(
+            program=a / "scripts" / "install.py",
+            argv=("doctor", "--harness", "grok"),
             env={**_env(self.home), "PYTHONIOENCODING": f"utf-8:{handler}"},
             cwd=self.home,
-            capture_output=True,
-        )
+            text=False,
+        ))
         lines = (
             f"{self.harness_line('grok', '3/3 pstack-t3')}\n"
             f"        backup row {backup}: nothing is there (recorded as the backup of {notes}); uninstall skips the row "
@@ -5789,6 +5807,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(dry.stdout, "would remove 0 links, would restore 0 entries\n")
         self.assertNotIn("Traceback", dry.stderr)
+
 
 class InProcessRestoreTest(unittest.TestCase):
     def test_skipping_the_restore_of_sys_argv_or_the_working_directory_leaves_them_changed(self):

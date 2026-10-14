@@ -18,6 +18,8 @@ import zlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from tests import in_process
 from unittest import mock
 from urllib.parse import quote, unquote
 
@@ -178,19 +180,22 @@ class Fixture:
 
     def command(self, *args, at=True, t3_home=True, env=None, cwd=None):
         """The script runs as the main program of a process whose time.time() returns self.now, however long ago the fixture was built."""
-        words = [sys.executable, "-c", FROZEN, repr(self.now), str(SCRIPT)]
-        words += ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
-        words += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
+        argv = ["--at", str(self.store)] if at is True else ["--at", str(at)] if at else []
+        argv += ["--t3-home", str(self.base)] if t3_home is True else ["--t3-home", str(t3_home)] if t3_home else []
         environment = {"HOME": str(self.home), "PATH": os.environ.get("PATH", ""), **(env or {})}
-        return [*words, *args], {"text": True, "env": environment, "cwd": cwd or self.root}
+        return in_process.Invocation(
+            program=SCRIPT,
+            argv=(*argv, *args),
+            env=environment,
+            cwd=cwd or self.root,
+            clock=self.now,
+        )
 
     def run(self, *args, **how):
-        words, options = self.command(*args, **how)
-        return subprocess.run(words, capture_output=True, **options)
+        return in_process.invoke(self.command(*args, **how))
 
     def stdout_bytes(self, *args, **how):
-        words, options = self.command(*args, **how)
-        result = subprocess.run(words, capture_output=True, **dict(options, text=False))
+        result = in_process.invoke(replace(self.command(*args, **how), text=False))
         assert (result.returncode, result.stderr) == (0, b""), result.stderr
         return result.stdout
 
@@ -198,8 +203,7 @@ class Fixture:
         return datetime.fromtimestamp(self.ago(minutes), timezone(timedelta(hours=hours))).isoformat(timespec="milliseconds")
 
     def start(self, *args, **how):
-        words, options = self.command(*args, **how)
-        return subprocess.Popen(words, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
+        return in_process.spawn(in_process.Reason.RACE, self.command(*args, **how))
 
     def read(self, hours=3.0):
         store = MOD["read_store"](self.store)
@@ -3419,7 +3423,12 @@ class BudgetTest(OutputCase):
         ascii_locale = {"LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
         for form in ((), ("--text",)):
             with self.subTest(form):
-                self.assertIn("Agent activity page 𝔸é".encode(), fixture.stdout_bytes(*form, env=ascii_locale))
+                result = in_process.finished(
+                    in_process.Reason.INHERITED_ENVIRONMENT,
+                    replace(fixture.command(*form, env=ascii_locale), text=False),
+                )
+                self.assertEqual((result.returncode, result.stderr), (0, b""), result.stderr)
+                self.assertIn("Agent activity page 𝔸é".encode(), result.stdout)
 
     def test_link_cut_by_the_last_fold_is_counted_in_a_note(self):
         fixture = extreme(self.fixture)
@@ -3454,9 +3463,14 @@ class WindowTest(OutputCase):
 
 
 def frozen_bytes(script, fixture, *args):
-    words = [sys.executable, "-c", FROZEN, repr(fixture.now), str(script), "--at", str(fixture.store), "--t3-home", str(fixture.base), *args]
-    environment = {"HOME": str(fixture.home), "PATH": os.environ.get("PATH", "")}
-    result = subprocess.run(words, capture_output=True, env=environment, cwd=fixture.root)
+    result = in_process.invoke(in_process.Invocation(
+        program=script,
+        argv=("--at", str(fixture.store), "--t3-home", str(fixture.base), *args),
+        env={"HOME": str(fixture.home), "PATH": os.environ.get("PATH", "")},
+        cwd=fixture.root,
+        clock=fixture.now,
+        text=False,
+    ))
     if (result.returncode, result.stderr) != (0, b""):
         raise AssertionError(result.stderr)
     return result.stdout

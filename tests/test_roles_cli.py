@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests import in_process
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "t3/scripts"))
 import roles  # noqa: E402
@@ -74,8 +76,6 @@ def show(*role_names):
     with tempfile.TemporaryDirectory() as directory:
         env = {**os.environ, "XDG_CONFIG_HOME": directory}
         argv = [
-            sys.executable,
-            str(ROOT / "t3/scripts/roles.py"),
             "show",
             "--cwd",
             directory,
@@ -86,7 +86,11 @@ def show(*role_names):
         ]
         for name in role_names:
             argv.extend(["--role", name])
-        return subprocess.run(argv, env=env, capture_output=True, text=True)
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=tuple(argv),
+            env=env,
+        ))
 
 
 class RolesCliTest(unittest.TestCase):
@@ -173,21 +177,19 @@ def agent_body():
 
 
 def run_check_brief(path):
-    return subprocess.run(
-        [sys.executable, str(ROOT / "t3/scripts/roles.py"), "check-brief", str(path)],
-        capture_output=True,
-        text=True,
-    )
+    return in_process.invoke(in_process.Invocation(
+        program=ROOT / "t3/scripts/roles.py",
+        argv=("check-brief", str(path)),
+    ))
 
 
 def mode_output(*args):
     with tempfile.TemporaryDirectory() as directory:
-        completed = subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "mode", "--cwd", directory, *args],
+        completed = in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=("mode", "--cwd", directory, *args),
             env={**os.environ, "XDG_CONFIG_HOME": directory},
-            capture_output=True,
-            text=True,
-        )
+        ))
     assert completed.returncode == 0 and completed.stderr == "", completed.stderr
     return completed.stdout
 
@@ -431,10 +433,9 @@ class CheckBriefModeCliTest(unittest.TestCase):
         for stem, attempt in rows:
             with self.subTest(stem=stem, attempt=attempt):
                 with tempfile.TemporaryDirectory() as directory:
-                    completed = subprocess.run(
-                        [
-                            sys.executable,
-                            str(ROOT / "t3/scripts/roles.py"),
+                    completed = in_process.invoke(in_process.Invocation(
+                        program=ROOT / "t3/scripts/roles.py",
+                        argv=(
                             "mode",
                             "--brief-mode",
                             "light",
@@ -444,11 +445,9 @@ class CheckBriefModeCliTest(unittest.TestCase):
                             attempt,
                             "--cwd",
                             directory,
-                        ],
+                        ),
                         env={**os.environ, "XDG_CONFIG_HOME": directory},
-                        capture_output=True,
-                        text=True,
-                    )
+                    ))
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(completed.stderr, "")
                 checked = check_text(f"{body}\n\n{completed.stdout}")
@@ -499,12 +498,11 @@ class Repo:
 
     def run(self, *args):
         env = {**os.environ, "XDG_CONFIG_HOME": str(self.directory)}
-        return subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), *args, "--cwd", str(self.directory)],
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=(*args, "--cwd", str(self.directory)),
             env=env,
-            capture_output=True,
-            text=True,
-        )
+        ))
 
     def show_bug_fix(self):
         return self.run(
@@ -731,12 +729,11 @@ class ModeCliTest(unittest.TestCase):
         )
         for command in ("show", "mode"):
             with self.subTest(command=command):
-                completed = subprocess.run(
-                    [sys.executable, str(ROOT / "t3/scripts/roles.py"), command, "--help"],
+                completed = in_process.finished(in_process.Reason.HELP, in_process.Invocation(
+                    program=ROOT / "t3/scripts/roles.py",
+                    argv=(command, "--help"),
                     env={**os.environ, "COLUMNS": "200"},
-                    capture_output=True,
-                    text=True,
-                )
+                ))
                 self.assertEqual(completed.returncode, 0)
                 self.assertEqual(completed.stderr, "")
                 for flag, text in mode_flags:
@@ -1386,21 +1383,18 @@ class ModeCliTest(unittest.TestCase):
             env = {**os.environ, "XDG_CONFIG_HOME": str(root)}
 
             def invoke(*extra):
-                return subprocess.run(
-                    [
-                        sys.executable,
-                        str(ROOT / "t3/scripts/roles.py"),
+                return in_process.invoke(in_process.Invocation(
+                    program=ROOT / "t3/scripts/roles.py",
+                    argv=(
                         "show",
                         "--cwd", str(worktree),
                         "--catalog", str(CATALOG),
                         "--parent", "claudeAgent/claude-opus-5-5",
                         "--role", "bug-fix",
                         *extra,
-                    ],
+                    ),
                     env=env,
-                    capture_output=True,
-                    text=True,
-                )
+                ))
 
             capped = invoke("--brief-mode", "light")
             plain = invoke()
@@ -1475,11 +1469,10 @@ class Haiku55CliTest(unittest.TestCase):
                 self.assertEqual(entry["haikuBrief"], HAIKU_BRIEF)
 
     def test_bounded_seat_command_unknown(self):
-        completed = subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "bounded-seat"],
-            capture_output=True,
-            text=True,
-        )
+        completed = in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=("bounded-seat",),
+        ))
         self.assertEqual(completed.returncode, 2)
 
     def test_write_and_show_configured_haiku_skill_tests(self):
@@ -2839,21 +2832,18 @@ def run_backup(*args, text=_LIMIT, catalog=None, roles_file=None):
         if roles_file is not None:
             repo.put(repo.user, roles_file)
         env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
-        return subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "t3/scripts/roles.py"),
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=(
                 "backup",
                 "--cwd", str(repo.directory),
                 "--catalog", str(path),
                 "--parent", "claudeAgent/claude-opus-5-5",
                 *args,
-            ],
+            ),
             env=env,
-            capture_output=True,
-            text=True,
-            input=text,
-        )
+            stdin=text,
+        ))
 
 
 class BackupCliTest(unittest.TestCase):
@@ -3549,10 +3539,9 @@ class BackupCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repo(directory)
             env = {**os.environ, "XDG_CONFIG_HOME": str(repo.directory)}
-            stdin_catalog = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "t3/scripts/roles.py"),
+            stdin_catalog = in_process.invoke(in_process.Invocation(
+                program=ROOT / "t3/scripts/roles.py",
+                argv=(
                     "backup",
                     "--cwd", str(repo.directory),
                     "--catalog", "-",
@@ -3560,12 +3549,10 @@ class BackupCliTest(unittest.TestCase):
                     "--role", "bug-fix",
                     "--provider", "grok",
                     "--model", "grok-4.7",
-                ],
+                ),
                 env=env,
-                capture_output=True,
-                text=True,
-                input=_LIMIT,
-            )
+                stdin=_LIMIT,
+            ))
         self.assertEqual(stdin_catalog.returncode, 2)
         self.assertEqual(stdin_catalog.stdout, "")
         self.assertIn("--catalog -", stdin_catalog.stderr)
@@ -3956,16 +3943,12 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo, catalog = self.panel_repo(directory, self.PANEL_CONFIG)
             shown = repo.run("show", "--catalog", catalog, "--role", "review backups")
-            backed = subprocess.run(
-                [
-                    sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
-                    "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
-                ],
+            backed = in_process.invoke(in_process.Invocation(
+                program=ROOT / "t3/scripts/roles.py",
+                argv=("backup", "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT),
                 env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
-                capture_output=True,
-                text=True,
-                input=_LIMIT,
-            )
+                stdin=_LIMIT,
+            ))
             user = str(repo.user)
         self.assertEqual(shown.returncode, 0, shown.stderr)
         self.assertEqual(json.loads(shown.stdout)["roles"], {"review backups": {
@@ -4062,16 +4045,12 @@ class ReviewBackupsRoleCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo, catalog = self.panel_repo(directory, self.ONE_SEAT)
             validated = repo.run("validate", "--catalog", catalog)
-            backed = subprocess.run(
-                [
-                    sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
-                    "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT,
-                ],
+            backed = in_process.invoke(in_process.Invocation(
+                program=ROOT / "t3/scripts/roles.py",
+                argv=("backup", "--cwd", str(repo.directory), "--catalog", catalog, *VERIFIER_OUT),
                 env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
-                capture_output=True,
-                text=True,
-                input=_LIMIT,
-            )
+                stdin=_LIMIT,
+            ))
         self.assertEqual(validated.returncode, 1)
         self.assertEqual(validated.stdout, self.SHORTFALL)
         self.assertEqual(backed.returncode, 0, backed.stderr)
@@ -4654,13 +4633,15 @@ class RelativeConfigHomeCliTest(unittest.TestCase):
 
     def run_roles(self, *args):
         env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": ".config"}
-        return subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), *args],
+        invocation = in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=tuple(args),
             env=env,
             cwd=self.work,
-            capture_output=True,
-            text=True,
         )
+        if args == ("show", "--help"):
+            return in_process.finished(in_process.Reason.HELP, invocation)
+        return in_process.invoke(invocation)
 
     def test_show_under_a_relative_xdg_config_home_reads_the_default_roles_file_and_prints_the_ignored_line_once(self):
         self.put(self.default / "roles.json", {"version": 1, "roles": {"bug-fix": [self.OPUS]}})
@@ -4733,16 +4714,12 @@ class WriteFilesCliTest(unittest.TestCase):
 
     def write(self, config_home):
         env = {**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": config_home}
-        return subprocess.run(
-            [
-                sys.executable, str(ROOT / "t3/scripts/roles.py"), "write", "--cwd", str(self.home),
-                "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7",
-            ],
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=("write", "--cwd", str(self.home), "--catalog", str(CATALOG), "--set", "bug-fix=grok/grok-4.7"),
             env=env,
             cwd=self.home,
-            capture_output=True,
-            text=True,
-        )
+        ))
 
     def temporary_files(self):
         return sorted(str(path.relative_to(self.home)) for path in self.home.rglob("tmp*"))
@@ -4906,17 +4883,16 @@ class OpenCodeAllowCliTest(unittest.TestCase):
         return repo.run("write", "--catalog", catalog, "--set", f"bug-fix={provider}/{model}", *flags)
 
     def backup_bug_fix(self, repo, catalog):
-        return subprocess.run(
-            [
-                sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=(
+                "backup",
                 "--cwd", str(repo.directory), "--catalog", catalog,
                 "--role", "bug-fix", "--provider", "codex", "--model", "gpt-6.1-sol",
-            ],
+            ),
             env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
-            capture_output=True,
-            text=True,
-            input=_LIMIT,
-        )
+            stdin=_LIMIT,
+        ))
 
     def test_write_refuses_unnamed_metered_opencode_seat(self):
         both = [catalog_model(PICKLE), catalog_model(SPACE_BUNNY)]
@@ -5002,12 +4978,11 @@ class OpenCodeAllowCliTest(unittest.TestCase):
                     self.assertFalse(repo.user.exists())
 
     def test_allow_list_changes_only_through_allow_flags(self):
-        completed = subprocess.run(
-            [sys.executable, str(ROOT / "t3/scripts/roles.py"), "write", "--help"],
+        completed = in_process.finished(in_process.Reason.HELP, in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=("write", "--help"),
             env={**os.environ, "COLUMNS": "200"},
-            capture_output=True,
-            text=True,
-        )
+        ))
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(completed.stderr, "")
         self.assertIn(
@@ -5264,20 +5239,19 @@ class OpenCodeAllowCliTest(unittest.TestCase):
         return repo, str(path)
 
     def backup_verifiers(self, repo, catalog):
-        return subprocess.run(
-            [
-                sys.executable, str(ROOT / "t3/scripts/roles.py"), "backup",
+        return in_process.invoke(in_process.Invocation(
+            program=ROOT / "t3/scripts/roles.py",
+            argv=(
+                "backup",
                 "--cwd", str(repo.directory), "--catalog", catalog,
                 "--role", "verifiers", "--provider", "codex", "--model", "gpt-6.1-sol",
                 "--author", "claudeAgent/claude-opus-5-5",
                 "--out", "grok", "--out", "claudeAgent",
                 "--brief-mode", "light",
-            ],
+            ),
             env={**os.environ, "XDG_CONFIG_HOME": str(repo.directory)},
-            capture_output=True,
-            text=True,
-            input=_LIMIT,
-        )
+            stdin=_LIMIT,
+        ))
 
     def test_an_unlisted_metered_panel_gets_the_allow_notes(self):
         seats = [bare_seat("opencode", PICKLE), bare_seat("opencode-go", GO_STEP)]
