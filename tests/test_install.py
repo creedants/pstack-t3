@@ -15,6 +15,8 @@ import time
 import unittest
 from pathlib import Path
 
+from tests import in_process
+
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ("alpha", "pstack-runtime", "swarm")
 OLD_SHA = "3936df1838da72e64c9870c6c73262929c27f828385be625286018a80039a33d"
@@ -5787,3 +5789,23 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(dry.stdout, "would remove 0 links, would restore 0 entries\n")
         self.assertNotIn("Traceback", dry.stderr)
+
+class InProcessRestoreTest(unittest.TestCase):
+    def test_skipping_the_restore_of_sys_argv_or_the_working_directory_leaves_them_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / "move.py"
+            program.write_text(
+                "import os, sys\n"
+                "os.chdir('/')\n"
+                "sys.argv[:] = ['changed']\n"
+                "raise SystemExit(0)\n",
+                encoding="utf-8",
+            )
+            previous = os.getcwd()
+            argv = sys.argv
+            contents = list(sys.argv)
+            result = in_process.invoke(in_process.Invocation(program=program))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(os.getcwd(), previous)
+            self.assertIs(sys.argv, argv)
+            self.assertEqual(list(sys.argv), contents)
