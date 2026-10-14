@@ -247,7 +247,7 @@ A queue bounce is not a send-back. Its fresh worker gets `Attempt: bounce` and t
 The runtime requires one executing fresh-child test per changed spawn or coordination behavior.
 
 - A leaf test runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation.
-- An executing workflow test runs the playbook with its real children. It is required once for each changed spawn or coordination behavior. One test covers one behavior.
+- An executing test runs on the `skill tests` seat. It is required once for each changed spawn or coordination behavior. One test covers one behavior.
 - The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which defaults to Claude Haiku 5.5 at high, or at medium under the light mode reasoning cap. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`. A seat that resolves to Cursor is refused with `cannot launch seats`.
 
 ## Decision
