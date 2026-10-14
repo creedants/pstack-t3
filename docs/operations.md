@@ -70,21 +70,23 @@ On T3 Code 0.0.46-nightly.20261014.3105 or later, only one server can own a T3 h
 | `--top-level-settled` | Also archive settled top-level threads. |
 | `--dry-run` | Choose and print. Archive nothing. |
 | `--selection-only` | When `--batch-dir` is absent, print the candidate thread ids as a sorted JSON array of strings on stdout. Exit without constructing the MCP client and without reading `T3_CODE_MCP_AUTHORIZATION`. |
+| `--batch-dir DIR` | With `--selection-only`, create DIR when it does not exist yet. Write each selected id on its own line into `batch-1.txt`, `batch-2.txt`, and so on in the order `--selection-only` prints. Each file holds at most `--batch-size` ids. Print each file path, a tab, and its count. Without `--selection-only`, exit 2 and create nothing. |
+| `--batch-size N` | At most this many ids in each batch file. 140 when the flag is absent. Below 1 exits 2. |
 
-The script prints two lines.
+A direct run with threads to archive and the credential prints two lines.
 
 ```text
 to archive: <n>; skipped: live <n>, recent <n>, under a running thread <n>, kept <n>
 archived <n>, failed <n>
 ```
 
-Between them it prints one `failed:` line for each of the first five threads that T3 did not archive. It carries on with the rest. With `--dry-run`, or when it chose no thread, it prints the first line only.
+Between them it prints one `failed:` line for each of the first five threads that T3 did not archive. It carries on with the rest. With `--dry-run`, or when it chose no thread, it prints the first line only. With `--selection-only` and without `--batch-dir`, it prints the ids as a sorted JSON array of strings instead of those lines. With `--selection-only` and `--batch-dir`, it prints one line per batch file with the path, a tab, and the count instead of those lines. It prints nothing when it chose no thread. It still creates DIR. When DIR already exists, it prints nothing on stdout and one line on stderr and exits 1. With `--batch-dir` and without `--selection-only`, it prints nothing on stdout and one line on stderr and exits 2. Without `T3_CODE_MCP_AUTHORIZATION` in a direct run with threads to archive, it prints the first line on stdout and one line on stderr and exits 1.
 
 | Exit | Meaning |
 |---|---|
-| 0 | Every chosen thread was archived, or the run was a dry run, or no thread was chosen. |
-| 1 | At least one thread was not archived, or the title did not match exactly one project. |
-| 2 | The flags were not valid, or `--config` had no file after it. |
+| 0 | Every chosen thread was archived, a dry run chose and printed, no thread was chosen, or `--selection-only` printed or wrote its selection. |
+| 1 | At least one thread was not archived, the title did not match exactly one project, the batch directory already existed, or the credential was missing in a direct run with threads to archive. |
+| 2 | The flags were not valid, `--config` had no file after it, `--batch-dir` was given without `--selection-only`, or `--batch-size` was below 1. |
 | 78 | The config file is missing or not valid. Nothing ran. |
 
 ### Which threads it archives

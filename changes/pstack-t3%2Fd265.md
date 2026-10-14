@@ -1,0 +1,3 @@
+- kind polish
+- `docs/operations.md` adds `--batch-dir` and `--batch-size` to the archiver flag table
+- `docs/operations.md` scopes the archiver output and exits to `--selection-only` with and without `--batch-dir`, `--batch-dir` without `--selection-only`, and a missing credential
