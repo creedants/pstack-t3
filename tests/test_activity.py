@@ -70,6 +70,13 @@ def worker(number):
     return f"mcp:threadmarker-worker-{number}"
 
 
+def write_threads(fixture, rows):
+    columns = ("at", "dish", "attempt", "role", "thread", "seat", "start", "end")
+    lines = ["\t".join(columns)]
+    lines += ["\t".join(row.get(column, "") for column in columns) for row in rows]
+    (fixture.store / "threads.tsv").write_text("\n".join(lines) + "\n")
+
+
 def native(number):
     return f"thread:provider:threadmarker-native-{number}"
 
@@ -405,7 +412,17 @@ class StoreTest(ActivityCase):
 
     def test_store_columns_equal_brigade_tables(self):
         tables = runpy.run_path(str(SCRIPT.with_name("brigade.py")))["TABLES"]
-        self.assertEqual({name: MOD["STORE_COLUMNS"][name] for name in ("dishes.tsv", "log.tsv")}, {name: tables[name] for name in ("dishes.tsv", "log.tsv")})
+        names = ("dishes.tsv", "log.tsv", "threads.tsv")
+        self.assertEqual({name: MOD["STORE_COLUMNS"][name] for name in names}, {name: tables[name] for name in names})
+
+    def test_malformed_thread_table_line_exits_1_with_the_line_number(self):
+        self.fixture.write()
+        path = self.fixture.store / "threads.tsv"
+        header = "at\tdish\tattempt\trole\tthread\tseat\tstart\tend\n"
+        path.write_text(header + "only\tseven\tcells\there\tand\there\tend\n")
+        self.assertEqual(self.fails(1), "activity: line 2 of the store's thread table is malformed; fix or remove it")
+        path.write_bytes(header.encode() + b"\xff\t\t\t\t\t\t\t\n")
+        self.assertEqual(self.fails(1), "activity: line 2 of the store's thread table is malformed; fix or remove it")
 
 
 class ArgumentTest(ActivityCase):
@@ -2387,6 +2404,63 @@ class RendererTest(OutputCase):
                          ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, HOSTILE_DRAWN])
         self.assertEqual(built["titles"], ["done · 60s", HOSTILE_DRAWN, "model " + HOSTILE_DRAWN])
 
+    def test_item_block_lists_ledger_rows_in_attempt_order_with_role_seat_and_open_or_ended(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "verifier", "thread": worker(3), "seat": "grok/grok-4", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "seat": "", "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "fix worker", "thread": worker(2), "seat": "", "start": stamp, "end": ""},
+        ])
+        phrases = [
+            "attempt 1 · worker · open",
+            "attempt 2 · verifier · grok/grok-4 · ended",
+            "attempt 2 · fix worker · open",
+        ]
+        document = self.document()
+        texts = self.render(document)["texts"]
+        self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
+        self.assertEqual([text for text in texts if text.startswith("attempt ")], phrases)
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + phrase for phrase in phrases])
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_worker_with_an_end_stamp_and_verifier_with_an_empty_end_say_ended(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "verifier", "thread": worker(2), "start": "", "end": ""},
+        ])
+        phrases = ["attempt 1 · worker · ended", "attempt 2 · verifier · ended"]
+        texts = self.render(self.document())["texts"]
+        self.assertEqual([text for text in texts if text.startswith("attempt ")], phrases)
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 3], ["    " + phrase for phrase in phrases])
+
+    def test_hostile_seat_is_escaped_in_the_document_and_drawn_as_text(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        # A tab would split this cell. The seat keeps HOSTILE with that tab written as a space.
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "verifier", "thread": worker(2),
+             "seat": HOSTILE.replace("\t", " "), "start": stamp, "end": stamp},
+        ])
+        document = self.document()
+        raw = DATA.search(document).group(1)
+        self.assertIn("attempt 1 · verifier · x&lt;/script&gt;&lt;img onerror=a… · ended", raw)
+        self.assertNotIn("</script><img", raw)
+        self.assertEqual([character for character in "<>" if character in raw], [])
+        drawn = [text for text in self.render(document)["texts"] if text.startswith("attempt ")]
+        self.assertEqual(drawn, ["attempt 1 · verifier · x</script><img onerror=a… · ended"])
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1], "    attempt 1 · verifier · x</script><img onerror=a… · ended")
+
     def test_renderer_lists_a_queued_agent_under_queued_with_a_plain_mark_and_an_outlined_bar_and_draws_no_running_list(self):
         fixture = queued_only(self.fixture)
         fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
@@ -3600,6 +3674,34 @@ class GoalStripTest(OutputCase):
         self.assertNotIn("Ship the parser", html)
         self.assertNotIn("Unassigned", html)
         self.assertNotIn("F", data_of(html))
+
+
+class LedgerTest(OutputCase):
+    def test_store_without_threads_tsv_omits_the_ledger_hook_and_matches_a_header_only_file(self):
+        fixture = one_running(self.fixture).write()
+        absent, text = fixture.stdout_bytes(), fixture.stdout_bytes("--text")
+        (fixture.store / "threads.tsv").write_text("at\tdish\tattempt\trole\tthread\tseat\tstart\tend\n")
+        present = fixture.stdout_bytes()
+        self.assertEqual(present, absent)
+        self.assertEqual(fixture.stdout_bytes("--text"), text)
+        for document in (absent, present):
+            self.assertNotIn(b".ldg", document)
+            self.assertNotIn(b"D.L", document)
+
+    def test_ledger_thread_id_used_as_a_seat_is_absent_from_the_page(self):
+        seat = "mcp:threadmarker-ledger-1"
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(2), "seat": seat, "start": stamp, "end": ""},
+        ])
+        document = self.document()
+        lines = self.out("--text").split("\n")
+        self.assertNotIn(seat, document)
+        self.assertNotIn(seat, "\n".join(lines))
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1], "    attempt 1 · worker · open")
+        self.assertNotIn(seat, MOD["roots_of"](MOD["read_store"](fixture.store)))
 
 
 if __name__ == "__main__":

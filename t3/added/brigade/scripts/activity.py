@@ -118,14 +118,17 @@ STORE_LOCK = "restaurant.lock"
 UNITS_TABLE = "dishes.tsv"
 LOG_TABLE = "log.tsv"
 GOALS_TABLE = "goals.tsv"
+THREADS_TABLE = "threads.tsv"
 STORE_COLUMNS = {
     UNITS_TABLE: ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported", "kind", "goal"),
     LOG_TABLE: ("at", "kind", "id", "state", "note"),
     GOALS_TABLE: ("id", "at", "state", "name", "purpose", "done", "share", "closed"),
+    THREADS_TABLE: ("at", "dish", "attempt", "role", "thread", "seat", "start", "end"),
 }
 # How many trailing cells a row of each table may lack. A missing cell reads as empty. brigade.py allows the same.
 ADDED_COLUMNS = {UNITS_TABLE: 2}
-TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table"}
+TABLE_WORDS = {UNITS_TABLE: "work item table", LOG_TABLE: "log", GOALS_TABLE: "goals table", THREADS_TABLE: "thread table"}
+WORKER_ROLES = ("worker", "fix worker")
 # The forms read_store accepts at these keys of the store's record.
 # Each is absent, null, or a string that encodes as UTF-8 and holds no NUL character.
 RECORD_WORDS = {"restaurant": "name", "projectRoot": "project root", "thread": "thread", "previousThread": "previous thread"}
@@ -225,6 +228,7 @@ class Store:
     units: tuple[Unit, ...]
     project_root: str = ""
     goals: tuple[GoalRecord, ...] = ()
+    threads: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -308,6 +312,15 @@ class Item:
     key: int = 0
     kind: str = ""
     goal: str = ""
+    lines: tuple = ()
+
+
+@dataclass(frozen=True)
+class LedgerLine:
+    attempt: str
+    role: str
+    seat: str
+    open: bool
 
 
 @dataclass(frozen=True)
@@ -535,6 +548,7 @@ def read_store(directory):
         units = read_table(directory, UNITS_TABLE)
         log = read_table(directory, LOG_TABLE)
         goals = goals_of(directory)
+        threads = tuple(read_table(directory, THREADS_TABLE))
     except OSError as error:
         raise ActivityError(f"cannot read the store ({error.strerror}); check its permissions and run this again") from None
     earlier = {}
@@ -547,7 +561,7 @@ def read_store(directory):
     }
     name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
     coordinators = tuple(value for value in (record_text(meta, "thread"), record_text(meta, "previousThread")) if value.strip())
-    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals)
+    return Store(name, frozenset(re.findall(r"[a-z0-9]+", f"{name} {Path(root).name}".lower())), coordinators, tuple(by_id.values()), root, goals, threads)
 
 
 def roots_of(store):
@@ -1092,6 +1106,7 @@ def privacy_of(store, t3, paths=()):
     ids = {*store.coordinators, *t3.ids}
     for unit in store.units:
         ids.update((unit.worker, unit.task, *unit.earlier_workers))
+    ids.update(row["thread"] for row in store.threads if row["thread"])
     # A relative path as given can be one ordinary word, which a page may hold for another reason.
     places = {form for path in (store.project_root, *map(str, paths)) if path
               for form in (os.path.abspath(path), os.path.realpath(path), *((path,) if os.path.isabs(path) else ()))}
@@ -1259,12 +1274,38 @@ def with_parents(agents):
     return [agent for agent in agents if agent.thread in kept]
 
 
-def item_of(unit, privacy, key, goal_ids=()):
+def is_open(row):
+    return row["role"] in WORKER_ROLES and not row["end"]
+
+
+def lines_of(rows, dish, privacy):
+    chosen = [(index, row) for index, row in enumerate(rows) if row["dish"] == dish]
+
+    def order(pair):
+        text = privacy.field(pair[1]["attempt"])
+        return ((0, int(text)) if text.isascii() and text.isdigit() else (1, text), pair[0])
+
+    return tuple(
+        LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
+        for _, row in sorted(chosen, key=order))
+
+
+def spoken(line):
+    parts = (
+        f"attempt {clip(line.attempt, ID_BYTES)}",
+        clip(line.role, LABEL_BYTES),
+        clip(line.seat, SUMMARY_BYTES),
+        "open" if line.open else "ended",
+    )
+    return " · ".join(part for part in parts if part)
+
+
+def item_of(unit, privacy, key, goal_ids=(), lines=()):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
     kind = unit.kind if unit.kind in KINDS else ""
     goal = unit.goal if unit.goal in goal_ids else ""
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal)
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal, tuple(lines))
 
 
 def build_page(store, t3, window, privacy):
@@ -1297,7 +1338,8 @@ def build_page(store, t3, window, privacy):
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        groups.append(Group(item_of(units[unit], privacy, keys[unit], goal_ids) if unit else None, rows, len(active) - subagents, subagents))
+        item = item_of(units[unit], privacy, keys[unit], goal_ids, lines_of(store.threads, unit, privacy)) if unit else None
+        groups.append(Group(item, rows, len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1315,7 +1357,8 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids) for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
+    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids, lines_of(store.threads, unit.id, privacy))
+                  for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
     return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals, flight=flight_of(items, goals))
 
@@ -1570,6 +1613,8 @@ LEGEND_PX = (23, 43)
 AXIS_PX = 16
 GROUP_PX = 34
 ROW_PX = 30
+LEDGER_PX = 16
+LEDGER_GAP_PX = 8
 CHIP_PX = 39
 STRIP_PX = 35
 FOOT_PX = 12
@@ -1612,10 +1657,24 @@ def fixed_height(page, said):
     return STATS_PX + HEADING_PX + LEGEND_PX[len(page.legend) > 1] + AXIS_PX + (ROW_PX if page.coordinator else 0) + FOOT_PX + LINE_PX * lines
 
 
+def ledger_px(page):
+    grouped = {group.item.key for group in page.groups if group.item}
+    seen = set()
+    total = 0
+    for item in items_of(page):
+        if not item.lines or item.key in seen:
+            continue
+        seen.add(item.key)
+        total += LEDGER_GAP_PX + LEDGER_PX * len(item.lines)
+        if item.key not in grouped:
+            total += GROUP_PX
+    return total
+
+
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
-    A grouped strip adds flight_column_px.
+    A grouped strip adds flight_column_px. A page with ledger lines adds ledger_px.
     """
     rows = [row for group in page.groups for row in group.rows]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
@@ -1623,7 +1682,7 @@ def height(page):
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
         total += HEADING_PX + OPEN_PX * lines if lines else 0
     total += flight_column_px(page.flight)
-    return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0)
+    return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0) + ledger_px(page)
 
 
 def framed(page, limit):
@@ -1645,6 +1704,7 @@ def framed(page, limit):
     items = tuple(item for item, keep in zip(page.items, listed) if keep)
     flight = flight_of(items, page.goals)
     left -= (STRIP_PX + CHIP_PX * len(items) + flight_column_px(flight)) if items else 0
+    left -= ledger_px(page)
 
     def tier(row):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
@@ -1965,6 +2025,46 @@ RENDERER = squeezed("""
 """)
 
 STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
+LEDGER_CSS = ".ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
+LEDGER_HOOK = """
+    if (D && D.v === 1 && D.L && D.L.length) {
+      const children = (node) => node.kids || [...node.children];
+      const attach = (head, lines) => {
+        const block = document.createElement('div');
+        block.className = 'ldg';
+        for (const phrase of lines) {
+          const span = document.createElement('span');
+          span.textContent = phrase;
+          block.appendChild(span);
+        }
+        head.appendChild(block);
+      };
+      const lanes = root.querySelector('.tl');
+      const groups = D.G || [];
+      const heads = children(lanes).filter((node) => (node.className || '').split(' ').includes('grp'));
+      const placed = new Set();
+      if (heads.length === groups.length) {
+        groups.forEach((group, at) => {
+          const lines = D.L.find((entry) => entry[0] === group[0]);
+          if (lines) { attach(heads[at], lines[1]); placed.add(group[0]); }
+        });
+      }
+      for (const [index, lines] of D.L) {
+        if (placed.has(index)) continue;
+        const item = D.I[index];
+        const head = add(lanes, 'div', 'grp');
+        const link = (parent, text, url) => {
+          const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
+          if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+          return node;
+        };
+        link(head, item[0], item[4]).className = 'one';
+        add(head, 'span', 'sum', item[1]);
+        add(head, 'b', 'chip ' + item[3], item[2]);
+        attach(head, lines);
+      }
+    }
+"""
 STRIP_HOOK = squeezed("""
     if (D && D.v === 1 && D.F && D.F.length) {
       const link = (parent, text, url) => {
@@ -2034,6 +2134,8 @@ def wire(page):
     if grouped:
         places = {id(item): index for index, item in enumerate(items)}
         data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
+    if any(item.lines for item in items):
+        data["L"] = [[index, [spoken(line) for line in item.lines]] for index, item in enumerate(items) if item.lines]
     return data
 
 
@@ -2049,6 +2151,9 @@ def render_html(page, clean):
     data = encode(wire(page), clean)
     style = STYLE if page.flight is None else STYLE + STRIP_CSS
     script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
+    if any(item.lines for item in items_of(page)):
+        style += LEDGER_CSS
+        script += squeezed(LEDGER_HOOK)
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
         f"<title>Agent activity</title><style>{style}</style><div id=o></div>"
@@ -2096,7 +2201,16 @@ def render_text(page, clean):
     listed = [*drawn, *(item for item in page.items if item not in drawn)][:TEXT_ITEMS]
     more = len(drawn) + sum(item not in drawn for item in page.items) - len(listed)
     loose = [line(UNGROUPED, f"{people(group.agents, group.subagents)}, {worked(group.rows)}") for group in page.groups if not group.item]
-    flat = [line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr) for item in listed]
+
+    def flat_block(item):
+        head = line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
+        return [head, *("    " + spoken(entry) for entry in item.lines)]
+
+    def grouped_block(item):
+        head = "  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
+        return [head, *("      " + spoken(entry) for entry in item.lines)]
+
+    flat = [part for item in listed for part in flat_block(item)]
     text_flight = flight_of(listed, page.goals)
     if text_flight is None:
         items = flat
@@ -2106,7 +2220,7 @@ def render_text(page, clean):
             items.append(line(group.heading, group.count))
             items.append("  " + group.heading)
             for item in group.items:
-                items.append("  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr))
+                items.extend(grouped_block(item))
     totals = page.totals
     lines = [
         f"Agent activity for {page.name}, last {span(page.window)}",
