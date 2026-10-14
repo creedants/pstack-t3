@@ -941,7 +941,7 @@ _real_sleep = time.sleep
 
 def _exclusive_ready_ack():
     """Run once the command starts, after the slots are locked and the holder records are written.
-    Production does nothing. A test swaps in a function that marks a ready file, so the signal test can prove the supervisor reached its protected wait before it signals."""
+    Production does nothing. A test swaps in a function that marks a ready file, so the signal test can prove the supervisor reached the hook just before its protected wait before it signals."""
     return None
 
 

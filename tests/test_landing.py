@@ -574,7 +574,7 @@ CAP_CLOCK_MAIN = (
 )
 
 # EXCLUSIVE_MAIN with the ready acknowledgement swapped for a touch of the path in LAND_EXCLUSIVE_READY.
-# Production leaves the hook a no-op, so the signal test overrides it here to observe the protected wait.
+# Production leaves the hook a no-op, so the signal test overrides it here to observe the hook just before the protected wait.
 READY_MAIN = (
     "import os, sys\n"
     "sys.path.insert(0, sys.argv[1])\n"
@@ -6585,7 +6585,7 @@ os.execv({real!r}, [{real!r}, *args])
                     if process.poll() is not None:
                         break
                     time.sleep(0.02)
-                self.assertTrue(ready_path.exists(), "the supervisor did not enter its protected wait")
+                self.assertTrue(ready_path.exists(), "the ready marker was not written before the signal")
                 os.kill(process.pid, signum)
                 code = process.wait(timeout=30)
                 self.assert_dead(child_pid)
@@ -7507,7 +7507,7 @@ os.execv({real!r}, [{real!r}, *args])
                 descriptor = real_open(path, flags, *args, **kwargs)
                 os.write(p2c_fd, b"O")
                 ready, _, _ = select.select([c2p_fd], [], [], 20)
-                self.assertTrue(ready, "cleanup did not remove the temporary name")
+                self.assertTrue(ready, "the child did not signal after its cleanup step")
                 self.assertEqual(os.read(c2p_fd, 1), b"U")
                 paused.append(True)
                 return descriptor
