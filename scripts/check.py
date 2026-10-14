@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. In that same case it reports a doctor count quoted in that checkout's `docs/guide.md` that disagrees with the number of skills in the tree. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -71,6 +71,7 @@ ROLES_PY = Path(__file__).resolve().parents[1] / "t3/scripts/roles.py"
 TESTS_DIR = Path(__file__).resolve().parents[1] / "tests"
 README_PATH = Path(__file__).resolve().parents[1] / "README.md"
 UPSTREAM_PATH = Path(__file__).resolve().parents[1] / "upstream.json"
+GUIDE_PATH = Path(__file__).resolve().parents[1] / "docs/guide.md"
 # Every tests/test_*.py must carry fence_git_environment as it is in the reference module, and a setUpModule that contains a call to it.
 FENCE_REFERENCE = "test_landing.py"
 FENCE_FUNCTION = "fence_git_environment"
@@ -179,6 +180,43 @@ def badge_findings(readme, upstream):
     if url == pin and alt == pin:
         return []
     return [f"README.md badge url {url} alt {alt} disagrees with upstream.json version {pin}"]
+
+
+# `doctor` prints `{installed}/{expected} pstack-t3` for one harness.
+_QUOTED_COUNT = re.compile(r"(\d+)/(\d+) pstack-t3")
+
+
+def guide_count_findings(guide, root):
+    """Report a doctor count quoted in the guide that disagrees with the tree's skill count.
+
+    The shipped count is the set skill_names in scripts/install.py reads,
+    every directory in the tree that holds a SKILL.md. A quote is a pair of
+    numbers with a slash between them and pstack-t3 after them, the shape
+    link_health in scripts/install.py prints. A quote whose two numbers
+    differ, or whose first number differs from the shipped count, is a
+    finding that names the guide, the line, the quoted count, and the
+    shipped count. A guide that quotes no doctor count is one finding. A
+    guide that cannot be read is one finding and no line is read. An empty
+    list means every quote agrees with the shipped count.
+    """
+    try:
+        text = guide.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"docs/guide.md: could not be read, so its doctor count was not checked: {type(error).__name__}"]
+    shipped = sum(1 for _skill in root.glob("*/SKILL.md"))
+    findings = []
+    quoted = False
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in _QUOTED_COUNT.finditer(line):
+            quoted = True
+            if match.group(1) != match.group(2) or int(match.group(1)) != shipped:
+                findings.append(
+                    f"docs/guide.md:{number}: quotes the doctor count {match.group(1)}/{match.group(2)}, "
+                    f"and the shipped skill count is {shipped}"
+                )
+    if not quoted:
+        findings.append(f"docs/guide.md: quotes no doctor count, and the shipped skill count is {shipped}")
+    return findings
 
 
 _catalog_module = None
@@ -313,6 +351,7 @@ def check_tree(root):
         findings.extend(library_wording_findings(repo / "tests"))
         findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
+        findings.extend(guide_count_findings(GUIDE_PATH, root))
     return findings
 
 
