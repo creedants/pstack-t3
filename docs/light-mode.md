@@ -32,7 +32,7 @@ A parent writes `Mode: <effective mode>` into every brief whose child resolves s
 
 A session in light mode passes `--session-mode light` to every `roles.py` call with no brief value, except an explicit reflect, which passes `--session-mode full`. It writes `Mode: light` into its children briefs.
 
-The brief has to carry the decision because a child can miss the project file. `.gitignore` lists `/.pstack/`. A new worktree has no `.pstack/t3-roles.json`. `project_config_path` in `t3/scripts/roles.py` stops at the worktree `.git` file. A worker that ran `show --cwd` in its worktree would read only the user file. For the same reason `roles.py mode` runs in the coordinator checkout where the project `escalate` list lives.
+The brief has to carry the decision because a child can miss the project file. `.gitignore` lists `/.pstack/`. A new worktree has no `.pstack/t3-roles.json`. `project_config_path` in `t3/scripts/roles.py` stops at the worktree `.git` file. A worker that ran `show --cwd` in its worktree would read only the user file. For the same reason `roles.py mode` runs with `--cwd` set to the project root, where the project `escalate` list lives.
 
 The coordinator resolves the worker `modelSelection` when it launches the worker. It resolves the gate verifier seat when it launches the verifier. It resolves both with `show --brief-mode <the item mode>`. It never uses `--coordinator-mode` there. An escalated item worker and gate get full seats.
 
@@ -40,7 +40,7 @@ A coordinator set to `light` over a project set to `full` writes `Mode: light` i
 
 ### The reasoning cap
 
-When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` and `review backups` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats. `full` with `small` keeps the `medium` cap it already has. Under budget `small` an `inherit` seat already becomes an explicit target with the capped option. A light child cannot pass its parent xhigh through. That conversion needs a catalog and the right parent. Without a catalog `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped but an `inherit` seat either stays `inherit` or converts against the catalog saved parent. Under `light` with budget `default`, `show` without a catalog or without `--parent` prints an `info` line that the `inherit` cap can be wrong, unless every role the call resolves is `verifiers` or `review backups`. [The runtime's Modes section](../t3/runtime.md#modes) already requires both.
+When the effective mode is `light` and the merged budget is `default`, `show` resolves the seats of every role except `verifiers` and `review backups` as budget `small`. `BUDGETS` in `t3/scripts/roles.py` maps `small` to a `medium` reasoning cap. An explicit budget wins in both directions. `light` with `large` keeps xhigh seats. `full` with `small` keeps the `medium` cap it already has. Under budget `small`, an `inherit` seat becomes an explicit target with the capped option when the catalog names the parent, the parent provider can run children, and the parent model has an effort option. Otherwise it stays `inherit`. A light child cannot pass its parent xhigh through. That conversion needs a catalog and the right parent. Without a catalog `resolve` caps nothing. With a catalog and no `--parent`, explicit seats are capped but an `inherit` seat either stays `inherit` or converts against the catalog saved parent. Under `light` with budget `default`, `show` without a catalog prints an `info` line that no seat was capped. With a catalog but without `--parent`, it prints an `info` line that an `inherit` seat can keep the parent reasoning. Neither line prints when every role the call resolves is `verifiers` or `review backups`. [The runtime's Modes section](../t3/runtime.md#modes) already requires both.
 
 The cap is the only option light mode changes. Light mode never sets `fastMode` to true. With a catalog, a Grok seat on a model that declares `fastMode` comes back from `show` with `fastMode` set to false. That includes a seat that falls back to the built-in Grok default. [Excluded seats](../t3/runtime.md#excluded-seats) states the rule.
 
@@ -103,8 +103,8 @@ Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" m
 | Comment Sicko | 1 child | The worker applies the no-comments rules to its diff. The gate review brief adds the comments check | Merged |
 | Comment Sicko follow-ups | `how`, `why`, rerun, `architect` | None. A finding that needs them goes into the gate verdict as a send-back | Cut |
 | `interrogate` | 1 per seat | Not run. A contested design escalates to `full`. Outside brigade, the gate review replaces the PR-opening child run | Cut |
-| Fresh-child test | 1 per test, plus one on another provider | See [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) | Cheaper seat |
-| Description eval | 5 children, one per prompt | Only when the change edits a `description` | Cut |
+| Fresh-child test | 1 per test, plus one on another provider for a skill that must work under several providers | See [Fresh-child tests in light mode](#fresh-child-tests-in-light-mode) | Cheaper seat |
+| Description eval | 5 prompts, each sent to a fresh child | Only when the change edits a `description` | Cut |
 | `swarm` | N workers | At most 3 workers | Cut |
 | Trail reviewer | 1 child | Folded into the gate review when one runs at that head. Otherwise kept as the gate | Merged |
 | `reflect` | 3 and 1 | A scheduled reflect does not run. A user explicit reflect runs in full | Cut |
