@@ -33,10 +33,12 @@ That is NO TESTS RAN from Python 3.12 on and OK before it.
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
 are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
 verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
-shard, and each shard of the run finished cleanly. A run with no `--part` selects every test discovery
-returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
+shard, and each shard of the run finished cleanly. A run with no `--part` or `--real-process-share` selects
+every test discovery returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
 Part i of n is every test whose index in that sequence, counting from 0, leaves remainder i - 1 when divided
-by n. A run with `--part i/n` selects part i of n by the rule above and no other test. So each of these makes
+by n. A run with `--part i/n` selects part i of n by the rule above and no other test. A run with
+`--real-process-share` selects every discovered test whose module starts with `brigade.test_launch` or
+`brigade.test_handoff` and no other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
 test calls `os._exit`. A worker past
@@ -79,6 +81,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_REAL_PROCESS_PREFIXES = ("brigade.test_launch", "brigade.test_handoff")
 SHARD_SIZE = 20
 # land.py's governor defaults to one slot per four cores, with at least 1 slot and at most 4.
 MAX_DEFAULT_JOBS = 4
@@ -446,6 +449,10 @@ def tests_in_part(plan: tuple[Test, ...], index: int, count: int) -> tuple[Test,
     return tuple(test for test in plan if test.seq in chosen)
 
 
+def tests_in_real_process_share(plan: tuple[Test, ...]) -> tuple[Test, ...]:
+    return tuple(test for test in plan if test.module.startswith(_REAL_PROCESS_PREFIXES))
+
+
 def launch_order(shards: list[Shard], parted: bool) -> tuple[Shard, ...]:
     if not parted:
         return tuple(shards)
@@ -650,11 +657,14 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
             worker.channel.close()
 
 
-def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None) -> int:
+def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None,
+        real_process_share: bool = False) -> int:
     if os.environ.get(ACTIVE) == str(start):
         raise Refusal(f"already running on {start}. A test must not start the runner on its own suite.")
     if not start.is_dir():
         raise Refusal(f"no test found under {start}")
+    if part is not None and real_process_share:
+        raise Refusal("cannot combine --part with --real-process-share")
     began = time.monotonic()
     watch = Watch()
     scratch = Path(tempfile.mkdtemp(prefix="run-tests-"))
@@ -667,11 +677,16 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
     try:
         try:
             plan = list_tests(start, scratch, timeout, watch.pause)
-            selected = plan if part is None else tests_in_part(plan, part[0], part[1])
-            if part is not None and not selected:
-                raise Refusal(f"part {part[0]}/{part[1]} has no test")
+            if real_process_share:
+                selected = tests_in_real_process_share(plan)
+                if not selected:
+                    raise Refusal("real-process share has no test")
+            else:
+                selected = plan if part is None else tests_in_part(plan, part[0], part[1])
+                if part is not None and not selected:
+                    raise Refusal(f"part {part[0]}/{part[1]} has no test")
             shards = list(launch_order(build_shards(selected), part is not None))
-            ledger = Ledger(len(plan), None if part is None else tuple(test.seq for test in selected))
+            ledger = Ledger(len(plan), None if part is None and not real_process_share else tuple(test.seq for test in selected))
 
             def settle(seq: int, verdict: Verdict) -> None:
                 ledger.settle(seq, verdict)
@@ -890,7 +905,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,
                         help=f"Seconds a worker may go without writing an event before the runner kills it. The listing of the tests gets the same number of seconds in all. The default is {DEFAULT_TIMEOUT:g}.")
     parser.add_argument("--part", type=parse_part,
-                        help="Run part i of n, written as i/n. i is an integer from 1 to n. The default is every test discovery returned.")
+                        help="Run part i of n, written as i/n. i is an integer from 1 to n. With neither this nor --real-process-share, the run selects every test discovery returned.")
+    parser.add_argument("--real-process-share", action="store_true",
+                        help="Run the launch and handoff share. Cannot be used with --part.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -900,7 +917,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         return list_main(start, Path(args.list))
     try:
-        return run(start, args.jobs, args.timeout, args.part)
+        return run(start, args.jobs, args.timeout, args.part, args.real_process_share)
     except Refusal as refusal:
         print(f"run_tests: {refusal}", file=sys.stderr)
         return 2

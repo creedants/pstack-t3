@@ -1353,14 +1353,109 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(empty.returncode, 2, empty.stderr)
         self.assertIn("part 2/2 has no test", empty.stderr)
 
+    def test_real_process_share_runs_only_brigade_tests(self):
+        # This starts a process because the check is an exit status.
+        (self.tests / "brigade").mkdir()
+        (self.tests / "brigade" / "__init__.py").write_text("")
+        (self.tests / "brigade" / "test_launch.py").write_text(textwrap.dedent("""
+            import unittest
+            from pathlib import Path
+
+            PROJECT = Path(__file__).resolve().parents[2]
+
+            class LaunchTest(unittest.TestCase):
+                def test_launch(self):
+                    with open(PROJECT / "ran", "a") as out:
+                        out.write("launch\\n")
+        """))
+        (self.tests / "brigade" / "test_handoff.py").write_text(textwrap.dedent("""
+            import unittest
+            from pathlib import Path
+
+            PROJECT = Path(__file__).resolve().parents[2]
+
+            class HandoffTest(unittest.TestCase):
+                def test_handoff(self):
+                    with open(PROJECT / "ran", "a") as out:
+                        out.write("handoff\\n")
+        """))
+        self.write("test_sibling.py", """
+            import unittest
+            from pathlib import Path
+
+            PROJECT = Path(__file__).resolve().parents[1]
+
+            class SiblingTest(unittest.TestCase):
+                def test_sibling(self):
+                    with open(PROJECT / "ran", "a") as out:
+                        out.write("sibling\\n")
+        """)
+        for name in [name for name in sys.modules if name == "brigade" or name.startswith("brigade.") or name == "test_sibling"]:
+            del sys.modules[name]
+        plan = self.plan_of(self.tests)
+        for name in [name for name in sys.modules if name == "brigade" or name.startswith("brigade.") or name == "test_sibling"]:
+            del sys.modules[name]
+        share = run_tests.tests_in_real_process_share(plan)
+        self.assertEqual(sorted(test.module for test in share), ["brigade.test_handoff", "brigade.test_launch"])
+        markers = {"brigade.test_launch": "launch", "brigade.test_handoff": "handoff"}
+        expected = [markers[test.module] for test in share]
+        result = self.runner("--real-process-share", "-j", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "2")
+        self.assertEqual((self.proj / "ran").read_text().splitlines(), expected)
+
+    def test_real_process_share_selector_matches_prefix_rule_and_covers_launch_and_handoff(self):
+        repo = self.plan_of(run_tests.ROOT / "tests")
+        for name in [name for name in sys.modules if name == "brigade" or name.startswith("brigade.")]:
+            del sys.modules[name]
+        share = run_tests.tests_in_real_process_share(repo)
+        self.assertEqual(share, tuple(test for test in repo if test.module.startswith(("brigade.test_launch", "brigade.test_handoff"))))
+        self.assertTrue(any(test.module == "brigade.test_launch" for test in share))
+        self.assertTrue(any(test.module == "brigade.test_handoff" for test in share))
+        self.assertFalse(any(test.module == "brigade.test_admin" for test in share))
+        self.assertFalse(any(test.module == "test_landing" for test in share))
+        self.assertFalse(any(test.module == "test_brigade" for test in share))
+        extra = (run_tests.Test(0, "brigade_extra.T.test_x", "brigade_extra", "brigade_extra.T"),)
+        self.assertEqual(run_tests.tests_in_real_process_share(extra), ())
+
+    def test_combining_part_with_real_process_share_is_refused(self):
+        # This starts a process because the check is an exit status.
+        self.write("test_single.py", """
+            import unittest
+
+            class SingleTest(unittest.TestCase):
+                def test_one(self):
+                    pass
+        """)
+        result = self.runner("--part", "1/1", "--real-process-share")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot combine --part with --real-process-share", result.stderr)
+        self.assertNotIn("Ran ", result.stderr)
+
+    def test_empty_real_process_share_is_refused(self):
+        # This starts a process because the check is an exit status.
+        self.write("test_single.py", """
+            import unittest
+
+            class SingleTest(unittest.TestCase):
+                def test_one(self):
+                    pass
+        """)
+        result = self.runner("--real-process-share")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("real-process share has no test", result.stderr)
+        self.assertNotIn("Ran ", result.stderr)
+
     def test_ci_runs_eight_part_jobs_and_two_gates(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         try:
             import yaml
         except ImportError:
             self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4]", text)
-            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4]", text)
+            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312]", text)
             self.assertEqual(text.count("if: always()"), 2)
+            self.assertIn("if: github.event_name == 'pull_request'", text)
+            self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
             for index in range(1, 5):
                 self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
             return
@@ -1368,6 +1463,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(list(jobs), [
             "part_310_1", "part_310_2", "part_310_3", "part_310_4",
             "part_312_1", "part_312_2", "part_312_3", "part_312_4",
+            "real_312",
             "test_310", "test_312",
         ])
         for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
@@ -1387,13 +1483,28 @@ class RunTestsTest(unittest.TestCase):
                 self.assertIn("select_browser", runs[1])
                 self.assertEqual(runs[2], f"python3 scripts/run_tests.py --part {index}/4")
                 self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in job["steps"]))
+        real = jobs["real_312"]
+        self.assertEqual(real["name"], "real process share (3.12)")
+        self.assertEqual(real["runs-on"], "ubuntu-latest")
+        self.assertEqual(real["if"], "github.event_name == 'pull_request'")
+        self.assertEqual(real.get("env"), {"PSTACK_TEST_REAL_PROCESS": "1"})
+        self.assertEqual(real["steps"][0]["uses"], "actions/checkout@v7")
+        setup = next(step for step in real["steps"] if step.get("uses") == "actions/setup-python@v7")
+        self.assertEqual(setup["with"]["python-version"], "3.12")
+        self.assertIsInstance(setup["with"]["python-version"], str)
+        runs = [step["run"] for step in real["steps"] if "run" in step]
+        self.assertEqual(runs, ["pip install pyyaml", "python3 scripts/run_tests.py --real-process-share"])
+        self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in real["steps"]))
         self.assertNotIn("strategy:", text)
         self.assertNotIn("fail-fast", text)
         for version, gate, prefix in (("3.10", "test_310", "part_310"), ("3.12", "test_312", "part_312")):
             job = jobs[gate]
             self.assertEqual(job["name"], f"test ({version})")
             self.assertEqual(job["if"], "always()")
-            self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
+            if gate == "test_312":
+                self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)] + ["real_312"])
+            else:
+                self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
             self.assertEqual(job["runs-on"], "ubuntu-latest")
             setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
             self.assertEqual(setup["with"]["python-version"], version)
@@ -1401,6 +1512,10 @@ class RunTestsTest(unittest.TestCase):
             check = next(step["run"] for step in job["steps"] if step.get("name") != "Generated skills match the sources" and "needs." in step.get("run", ""))
             for index in range(1, 5):
                 self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = success', check)
+            if gate == "test_312":
+                self.assertIn('test "${{ needs.real_312.result }}" = success || test "${{ needs.real_312.result }}" = skipped', check)
+            else:
+                self.assertNotIn("real_312", check)
             skill = next(step for step in job["steps"] if step.get("name") == "Generated skills match the sources")
             self.assertEqual(skill["run"], "python3 scripts/build.py\n"
                              "git diff --exit-code -- skills docs/skills.md docs/cli\n"
@@ -1465,6 +1580,42 @@ class RunTestsTest(unittest.TestCase):
                         else:
                             self.assertNotEqual(status, 0)
 
+    def test_gate_passes_when_real_share_skipped_and_fails_when_it_failed(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        parts = ("success", "success", "success", "success")
+        cases = (("success", True), ("skipped", True), ("failure", False), ("cancelled", False), ("", False))
+        for reader in gate_readers():
+            scripts = dict(gate_scripts(text, reader))
+            self.assertNotIn("real_312", scripts["part_310"])
+            for real, ok in cases:
+                with self.subTest(reader=reader, real=real):
+                    status = gate_script_status(scripts["part_312"], "part_312", parts, real=real)
+                    if ok:
+                        self.assertEqual(status, 0)
+                    else:
+                        self.assertNotEqual(status, 0)
+
+    def test_switch_appears_only_at_workflow_root_and_in_real_share(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            with self.subTest(reader=reader):
+                read_workflow_switch(text, reader)
+        lines = text.splitlines(keepends=True)
+        start = next(index for index, line in enumerate(lines) if line.strip() == "part_310_1:")
+        indent = len(lines[start]) - len(lines[start].lstrip(" "))
+        injected = lines[:start + 1] + [" " * (indent + 2) + "env:\n",
+                                        " " * (indent + 4) + "PSTACK_TEST_REAL_PROCESS: '1'\n"] + lines[start + 1:]
+        for reader in gate_readers():
+            with self.subTest(reader=reader, case="part job"):
+                with self.assertRaises(AssertionError):
+                    read_workflow_switch("".join(injected), reader)
+        wrong = text.replace("PSTACK_TEST_REAL_PROCESS: '1'", "PSTACK_TEST_REAL_PROCESS: '0'", 1)
+        for reader in gate_readers():
+            with self.subTest(reader=reader, case="wrong value"):
+                with self.assertRaises(AssertionError):
+                    read_workflow_switch(wrong, reader)
+
     def test_set_plus_e_or_a_false_if_or_or_true_makes_a_failed_part_exit_zero(self):
         # This starts a process because the check is an exit status.
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -1472,8 +1623,13 @@ class RunTestsTest(unittest.TestCase):
             mutated = workflow_with_gate_mutation(text, name)
             for reader in gate_readers():
                 with self.subTest(mutation=name, reader=reader):
+                    original = dict(gate_scripts(text, reader))
                     for prefix, script in gate_scripts(mutated, reader):
                         expected = mutate_gate_block(name, result_block(text, prefix))
+                        if prefix == "part_312":
+                            real_lines = "".join(line for line in original[prefix].splitlines(keepends=True)
+                                                if "real_312" in line)
+                            expected += real_lines
                         self.assertEqual(script, expected)
                         with self.assertRaises(AssertionError) as caught:
                             report_failed_part(script, prefix)
@@ -1548,12 +1704,13 @@ def yaml_workflow_switch(text: str) -> WorkflowSwitch:
     jobs = loaded.get("jobs") if isinstance(loaded, dict) else None
     if not isinstance(jobs, dict):
         raise AssertionError("cannot find the real-process switch")
-    for job in jobs.values():
+    for job_id, job in jobs.items():
         if not isinstance(job, dict):
             raise AssertionError("cannot find the real-process switch")
         job_env = job.get("env")
         if isinstance(job_env, dict) and "PSTACK_TEST_REAL_PROCESS" in job_env:
-            raise AssertionError("cannot find the real-process switch")
+            if job_id != "real_312" or job_env["PSTACK_TEST_REAL_PROCESS"] != "1":
+                raise AssertionError("cannot find the real-process switch")
         steps = job.get("steps")
         if not isinstance(steps, list):
             raise AssertionError("cannot find the real-process switch")
@@ -1567,7 +1724,7 @@ def yaml_workflow_switch(text: str) -> WorkflowSwitch:
 def indent_workflow_switch(text: str) -> WorkflowSwitch:
     lines = text.splitlines(keepends=True)
     key = "PSTACK_TEST_REAL_PROCESS"
-    if sum(key in line for line in lines) != 1:
+    if sum(key in line for line in lines) != 2:
         raise AssertionError("cannot find the real-process switch")
     header = next((index for index, line in enumerate(lines) if line.rstrip("\n") == "env:"), None)
     if header is None:
@@ -1592,6 +1749,12 @@ def indent_workflow_switch(text: str) -> WorkflowSwitch:
             body = job_body(lines, job)
             if body is None or any(key in line for line in body):
                 raise AssertionError("cannot find the real-process switch")
+    body = job_body(lines, "real_312")
+    if body is None:
+        raise AssertionError("cannot find the real-process switch")
+    matches = [line.strip() for line in body if key in line]
+    if matches != [key + ": '1'"]:
+        raise AssertionError("cannot find the real-process switch")
     return WorkflowSwitch(value)
 
 
@@ -1763,13 +1926,16 @@ def report_failed_part(script: str, prefix: str) -> None:
         raise AssertionError("gate exited 0 with a failed part")
 
 
-def gate_script_status(script: str, prefix: str, results: tuple[str, ...]) -> int:
+def gate_script_status(script: str, prefix: str, results: tuple[str, ...], real: str = "skipped") -> int:
     body = script
     for index, result in enumerate(results, start=1):
         token = "${{ needs." + prefix + "_" + str(index) + ".result }}"
         if token not in body:
             raise AssertionError(token)
         body = body.replace(token, result, 1)
+    token = "${{ needs.real_312.result }}"
+    while token in body:
+        body = body.replace(token, real, 1)
     if "${{" in body:
         raise AssertionError(body)
     completed = subprocess.run(["bash", "-e", "-c", body], capture_output=True, text=True)
