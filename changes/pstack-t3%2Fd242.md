@@ -1,0 +1,6 @@
+- Sync upstream pstack to 1e5c90a4b6f249917bd21fe361b3a2a7deb741b8. The version is 0.15.24.
+- `$sharpen` asks how a top expert would approach the task, what the user is really after, and whether the task is overspecified or underspecified, then does the work instead of handing back a rewritten prompt.
+- The help table and the recipe list name `$sharpen`.
+- An Autopilot-full hourly tick that changed something catches the operator up per ketchup. A tick that changed nothing stays quiet.
+- Autopilot-full and Autopilot-stack reply by catching the operator up per ketchup.
+- README says all 59 skills. The playbook count stays 23.
