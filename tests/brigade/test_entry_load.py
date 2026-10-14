@@ -132,3 +132,27 @@ class EntryLoadTest(unittest.TestCase):
             runpy.run_path(str(source))
         self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
         self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
+
+    def test_a_failed_import_restores_the_bytecode_flag_and_the_prior_entry(self):
+        case = Path(self.temporary.name) / "load"
+        case.mkdir()
+        source = case / "brigade.py"
+        source.write_text(Path(SCRIPT).read_text().replace(
+            "from brigade_lib.spend import add_arguments, spend_text",
+            "from brigade_lib.spend import add_arguments, spend_text, _not_a_real_export",
+            1,
+        ))
+        (case / "brigade_lib").symlink_to(Path(SCRIPT).parent / "brigade_lib")
+        unrelated = types.ModuleType("brigade_lib.unrelated")
+        sys.modules["brigade_lib.unrelated"] = unrelated
+        self.addCleanup(self.forget_planted_modules, unrelated)
+        before = sys.dont_write_bytecode
+        sys.dont_write_bytecode = not before
+        try:
+            with self.assertRaises(ImportError):
+                runpy.run_path(str(source))
+            self.assertEqual([name for name in sys.modules if name.startswith("_brigade_ns_")], [])
+            self.assertIs(sys.modules.get("brigade_lib.unrelated"), unrelated)
+            self.assertEqual(sys.dont_write_bytecode, not before)
+        finally:
+            sys.dont_write_bytecode = before
