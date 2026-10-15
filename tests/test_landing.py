@@ -80,8 +80,24 @@ class _Saved:
     fds: dict
 
 
-def _descriptors():
-    probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+def _open_fd_directory():
+    """Open the descriptor directory and return it with the descriptor that reads it.
+
+    The directory is /proc/self/fd when this host provides it, and /dev/fd otherwise.
+    """
+    try:
+        return "/proc/self/fd", os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+    except FileNotFoundError:
+        return "/dev/fd", os.open("/dev/fd", os.O_RDONLY | os.O_DIRECTORY)
+
+
+def _fd_paths():
+    """Return the descriptor directory and the path of every open descriptor except the probe.
+
+    The probe is the descriptor that reads the directory, and its number is left out. An entry under
+    /proc/self/fd is a symlink. An entry under /dev/fd is not, and F_GETPATH names it.
+    """
+    directory, probe = _open_fd_directory()
     try:
         names = os.listdir(probe)
     finally:
@@ -92,6 +108,20 @@ def _descriptors():
         if name == probe_name or not name.isdigit():
             continue
         number = int(name)
+        try:
+            if directory == "/proc/self/fd":
+                found[number] = os.readlink(f"/proc/self/fd/{number}")
+            else:
+                found[number] = fcntl.fcntl(number, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode()
+        except OSError:
+            continue
+    return directory, found
+
+
+def _descriptors():
+    _, paths = _fd_paths()
+    found = {}
+    for number in paths:
         if number < 3:
             continue
         try:
@@ -1784,20 +1814,10 @@ exit 0
         fired = {"done": False}
 
         def _open_land_db(database):
-            prefix = os.fspath(database)
+            directory, paths = _fd_paths()
+            prefix = os.fspath(database) if directory == "/proc/self/fd" else os.path.realpath(database)
             found = []
-            probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                names = os.listdir(probe)
-            finally:
-                os.close(probe)
-            for name in names:
-                if not name.isdigit():
-                    continue
-                try:
-                    target = os.readlink(f"/proc/self/fd/{name}")
-                except OSError:
-                    continue
+            for target in paths.values():
                 if target.startswith(prefix):
                     found.append(target)
             for obj in gc.get_objects():
@@ -8395,7 +8415,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def identity_pause(self, now, before="Owner <owner@example.com>"):
         return (f"the configured git identity is now {now} and the queue last ran as {before}; "
-                f"check git config --show-origin user.email in {self.work}, then run land.py resume")
+                f"check git config --show-origin user.email in {os.path.realpath(self.work)}, then run land.py resume")
 
     UNSET = "unset (user.name and user.email do not both have a non-empty value)"
 
