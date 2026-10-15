@@ -226,10 +226,9 @@ def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
-    resolved file that the repository holding its own directory or the repository holding the project root reports as
-    tracked or cannot report on, and a git command that cannot start all refuse with exit 1 and change no file. A
-    filesystem failure while the directory, the temporary file, or the replacement is made refuses the same way with
-    the system's reason, so every caller sees one BrigadeError.
+    resolved file that either lookup in _git_refusal reports as tracked or unreadable, and a git command that cannot
+    start all refuse with exit 1 and change no file. A filesystem failure while the directory, the temporary file, or
+    the replacement is made refuses the same way with the system's reason, so every caller sees one BrigadeError.
     """
     cap = effective_cap(meta)
     path, text = _load(meta["projectRoot"])
