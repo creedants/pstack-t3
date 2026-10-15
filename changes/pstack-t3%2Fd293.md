@@ -1,0 +1,4 @@
+- kind upkeep
+- `t3/added/landing/scripts/land.py` splits into `t3/added/landing/scripts/landing_lib/` with `foundation`, `governor`, `store`, `policy`, `leases`, `queue`, `merge`, `contests`, `drain`, pure moves with `seam.` prefixes, entry re-exports every `land.<name>`.
+- `tests/landing/test_in_process.py` follows moved names to `landing_lib/drain.py` for `status` and `land` traces.
+- `docs/landing-plan.md` and `docs/multi-coordinator.md` name `tests/landing/` instead of `tests/test_landing.py`.
