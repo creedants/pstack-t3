@@ -5501,6 +5501,14 @@ os.execv({real!r}, [{real!r}, *args])
                          (0, f"updated {directory}\n", ""))
         assert_closed()
 
+    def test_a_store_close_after_a_directory_failure_raises_nothing(self):
+        """self.db is assigned before the directory conversion, so a close after that failure is a no-op."""
+        store = land.Store.__new__(land.Store)
+        with self.assertRaises(TypeError):
+            store.__init__(None)
+        store.close()
+        store.close()
+
     def entry_columns(self):
         with self.raw_db() as db:
             return [row[1] for row in db.execute("PRAGMA table_info(entry)")]
@@ -6498,10 +6506,10 @@ os.execv({real!r}, [{real!r}, *args])
         self.fail(f"pid {pid} is still running")
 
     def assert_live(self, pid):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            self.fail(f"pid {pid} is not running")
+        # A zombie answers os.kill(pid, 0) too, so the member's state read is the liveness witness.
+        state = land._ps_line(pid, "stat=")
+        self.assertIsNotNone(state, f"pid {pid} is not running")
+        self.assertFalse(state.strip().startswith("Z"), f"pid {pid} is a zombie")
 
     def assert_worker_holder_keeps_the_slot(self, holder):
         self.assertIsNone(holder.poll())
