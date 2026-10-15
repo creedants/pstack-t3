@@ -274,12 +274,13 @@ def recovery_lines(dish, error):
     """The flag line and the four recovery steps for a dish whose worker ended with no report."""
     ident = dish["id"]
     branch = dish.get("branch") or ""
-    quoted = shlex.quote(branch)
     context = shlex.quote(error)
-    # A brief needs a goal, an acceptance, a verify, and a base, so the line names them instead of a command brief refuses.
-    words = f"base {quoted}, context {context}" if branch else f"a base trunk ref, context {context}"
-    steps = ["  keep the commits where the worker left them; the dish keeps its lease",
-             f"  write the continuation brief: brief {ident} with {words}, and the goal, acceptance, and verify it needs",
+    # A brief needs a goal, an acceptance, a verify, a base, and a contract, so the line names them
+    # instead of a command brief refuses.
+    steps = [f"  keep the commits on {shlex.quote(branch)} and record no new branch; the dish keeps its lease"
+             if branch else "  keep the commits where the worker left them; the dish keeps its lease",
+             f"  write the continuation brief: brief {ident} with --base <trunk ref>, --context {context}, "
+             "and the goal, acceptance, verify, and contract it needs",
              f"  launch a fresh thread in the same worktree and record it with dish {ident} --thread <new thread id>"]
     # The record needs a thread, but the cell can be cleared afterwards without starting another attempt.
     steps.append(f"  archive the dead thread {shlex.quote(dish['thread'])}" if dish["thread"]

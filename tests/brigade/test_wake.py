@@ -1632,9 +1632,9 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(self.brigade("watch"), "\n".join([
             "workers: 1 of 2 running, 1 idle, auto-start: normal",
             f"D1: worker ended with no report; the provider error is {error}",
-            "  keep the commits where the worker left them; the dish keeps its lease",
-            f"  write the continuation brief: brief D1 with base perf/d1, context {shlex.quote(error)}, "
-            "and the goal, acceptance, and verify it needs",
+            "  keep the commits on perf/d1 and record no new branch; the dish keeps its lease",
+            "  write the continuation brief: brief D1 with --base <trunk ref>, "
+            f"--context {shlex.quote(error)}, and the goal, acceptance, verify, and contract it needs",
             "  launch a fresh thread in the same worktree and record it with dish D1 --thread <new thread id>",
             "  archive the dead thread thread-9",
         ]))
@@ -1780,7 +1780,7 @@ class WakeTest(BrigadeTest, _WakeRace):
                       self.brigade("watch"))
         self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "model"]), 2)
 
-    def test_model_clear_refuses_a_seat_that_is_not_skipped_and_a_model_needs_provider_and_name(self):
+    def test_model_clear_refuses_a_seat_with_no_model_row_and_a_model_needs_provider_and_name(self):
         self.open()
         self.assertEqual(self.brigade("model", "clear", "grok/grok-4.7", ok=False),
                          "brigade: grok/grok-4.7 is not skipped")
