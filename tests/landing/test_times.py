@@ -73,6 +73,10 @@ class LandingTest(LandingTestBase):
 
     def test_times_holder_matches_one_holder_and_every_holder_under_a_prefix(self):
         self.landed_entries(THREE)
+        self.assertEqual(self.land("times", "--holder", "r/D1"), "\n".join([
+            "E1 r/D1 https://github.com/o/r/pull/9 12.5",
+            "n=1 median=12.5 p90=12.5 max=12.5 skipped=0",
+        ]))
         self.assertEqual(self.land("times", "--holder", "r/"), "\n".join([
             "E1 r/D1 https://github.com/o/r/pull/9 12.5",
             "E2 r/D2 - 24.5",
@@ -82,6 +86,14 @@ class LandingTest(LandingTestBase):
             "E3 docs/D1 - 33.5",
             "n=1 median=33.5 p90=33.5 max=33.5 skipped=0",
         ]))
+        with self.raw_db() as db, db:
+            db.execute("DELETE FROM log WHERE kind = 'entry' AND id = 3 AND state = 'landed'")
+        self.assertEqual(self.land("times", "--holder", "r/"), "\n".join([
+            "E1 r/D1 https://github.com/o/r/pull/9 12.5",
+            "E2 r/D2 - 24.5",
+            "n=2 median=12.5 p90=24.5 max=24.5 skipped=0",
+        ]))
+        self.assertIn("skipped=1", self.land("times"))
 
     def test_times_json_holds_the_entries_and_the_summary(self):
         self.landed_entries(FOUR)
