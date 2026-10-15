@@ -16,11 +16,11 @@ import sys
 import tarfile
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from brigade_lib import seam
+from brigade_lib import seam, spend
 from brigade_lib.leases import holding_blocks
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
@@ -211,6 +211,7 @@ def report(restaurant, write=True):
         lines.append("")
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
+    lines += spend_section(restaurant, since)
     text = "\n".join(lines)
     path = None
     if write:
@@ -218,6 +219,35 @@ def report(restaurant, write=True):
         restaurant.write(path.relative_to(restaurant.dir), text)
         restaurant.change_meta(lastReportAt=stamp)
     return text, path
+
+
+def spend_section(restaurant, since):
+    """The `## Spend` lines of a report, taken from `spend --by goal` for items fired at or after the UTC date of `since`.
+
+    `since` is the ISO time of the last report, and its UTC date is the finest window `spend --since` takes, so a
+    second close on the same UTC day repeats that day's rows. One `spend_text` call runs under this store's held
+    lock, and its stderr stays off close's stderr. A token source that spend reports as unreadable or as another
+    schema keeps the goal rows and prints `tokens unavailable`, while a bad prices.json still fails the close.
+    """
+    date = since[:10] if since else None
+    args = argparse.Namespace(by="goal", item=None, since=date, json=False, tokens=True, t3_home=None)
+    captured = io.StringIO()
+    with redirect_stderr(captured):
+        text = spend.spend_text(restaurant, args)
+    failed = any(line in (spend.UNREADABLE, spend.SCHEMA) for line in captured.getvalue().splitlines())
+    return ["## Spend", "", *_spend_lines(text, failed), ""]
+
+
+def _spend_lines(text, token_failed):
+    """The body of a `## Spend` section from one spend text.
+
+    Spend text always ends in one footer line, which is dropped. On a token failure the indented model and
+    `not recorded` lines go and one `tokens unavailable` line follows the goal rows. An empty body prints `none`.
+    """
+    body = text.splitlines()[:-1]
+    if token_failed:
+        body = [line for line in body if not line.startswith("  ")] + ["tokens unavailable"]
+    return body or ["none"]
 
 
 def display_root(path):

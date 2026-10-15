@@ -631,7 +631,7 @@ the thread line first, then counts, then workers outside the executive admin's s
 brigade.py [flags] close [--dry-run | --to-file]
 ```
 
-write the report of what changed since the last one
+write the report of what changed since the last one, with a `## Spend` section by goal for items fired on or after the UTC date of the last close, the finest window `spend --since` takes
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

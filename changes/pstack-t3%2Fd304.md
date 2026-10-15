@@ -1,0 +1,7 @@
+- kind feature
+- `close` appends a `## Spend` section after its other sections, from one `spend_text` call with `by="goal"`, `tokens=True`, and `since` the UTC date of `lastReportAt`, with that call's standard error captured
+- The section drops spend's last line, and when a captured line equals `spend.UNREADABLE` or `spend.SCHEMA` it drops every line that starts with two spaces and appends one `tokens unavailable` line, and it prints `none` when no line remains
+- The window is the UTC date of `lastReportAt`, which is the finest window `spend --since` takes, so a second close on the same UTC day repeats that day's goal rows
+- A `prices.json` that spend refuses still fails the close
+- `close --help` names the section, and `docs/cli/brigade.md` and the `skills/brigade/` copies regenerate
+- `tests/brigade/test_reporting.py` adds three close tests over fixture token stores, and `tests/brigade/test_briefs.py` and `tests/brigade/test_reviews.py` carry the section in their exact report assertions
