@@ -319,9 +319,10 @@ def _cap_only(project_root, before, after):
     """True when the settings file's two tree states differ by nothing but the autoCompactWindow member.
 
     Every tree entry that holds the settings file must be in SETTINGS_MODE, the mode of the file sync_meta writes, so
-    a symbolic link and an executable file are compared whatever else they hold. A state that holds no file is a
-    settings file that was created. The later state must hold exactly the cap splice written over the earlier one, or
-    hold nothing but the cap when the earlier holds no file.
+    a symbolic link and an executable file are compared whatever else they hold. An earlier state that holds no file
+    is a settings file that was created, and a later state that holds no file gets no allowance. The later state must
+    hold exactly the cap splice written over the earlier one, or hold nothing but the cap when the earlier holds no
+    file.
     """
     if (after is None or after.mode != SETTINGS_MODE
             or (before is not None and before.mode != after.mode)):

@@ -225,6 +225,20 @@ class ContextCapTest(BrigadeTest):
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
 
+    def test_open_refuses_a_dangling_settings_file_symlink_whose_target_is_tracked(self):
+        self.git_project()
+        self.commit_files({"missing.json": '{"keep":true}'})
+        (self.project / "missing.json").unlink()
+        self.settings().parent.mkdir(parents=True)
+        os.symlink("../missing.json", self.settings())
+        self.assertEqual(self.open(ok=False),
+                         f"brigade: {self.project / 'missing.json'} is tracked by git; "
+                         "untrack it before brigade writes autoCompactWindow")
+        self.assertTrue(self.settings().is_symlink())
+        self.assertEqual(os.readlink(self.settings()), "../missing.json")
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
     def test_a_failed_settings_write_on_open_leaves_no_store_and_claims_no_intake(self):
         if os.geteuid() == 0:
             self.skipTest("root writes through file permissions")
@@ -365,7 +379,7 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(len(self.edits_rows()), 1)
 
     def open_edits_dish(self):
-        """D1 in review on a coordinator that writes no settings file, with the build and check commands set."""
+        """D1 fired and in progress on a coordinator that writes no settings file, with the build and check commands set."""
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
                      "--coordinator-provider", "other")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")

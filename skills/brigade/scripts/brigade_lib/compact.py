@@ -121,17 +121,18 @@ def _load(project_root):
     refusal = _git_refusal(path)
     if refusal:
         raise BrigadeError(refusal)
+    # realpath never raises on a symbolic link loop, which the read below then refuses with ELOOP.
+    resolved = Path(os.path.realpath(path)) if path.is_symlink() else path
+    if resolved != path:
+        refusal = _git_refusal(resolved)
+        if refusal:
+            raise BrigadeError(refusal)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return path, None
     except OSError as error:
         raise BrigadeError(f"cannot read {path}: {error}") from error
-    resolved = path.resolve() if path.is_symlink() else path
-    if resolved != path:
-        refusal = _git_refusal(resolved)
-        if refusal:
-            raise BrigadeError(refusal)
     try:
         text = raw.decode("utf-8")
         value = json.loads(text, parse_constant=_reject_constant)
