@@ -397,6 +397,26 @@ def _layout(project_root):
         return None
 
 
+_SKILL_FILES = ("t3/runtime.md", "t3/setup.md", "t3/removed.txt")
+_SKILL_ROOTS = ("t3", "t3/overrides", "t3/added", "vendor/pstack", "vendor/pstack/skills")
+_SKILL_BASES = ("t3/overrides/", "t3/added/", "vendor/pstack/skills/")
+
+
+def _needs_skills_doc(norm):
+    if norm in _SKILL_FILES or norm in _SKILL_ROOTS:
+        return True
+    for base in _SKILL_BASES:
+        if norm.startswith(base):
+            rest = norm[len(base):]
+            parts = rest.split("/")
+            if len(parts) == 1:
+                return True
+            if len(parts) == 2 and parts[1] == "SKILL.md":
+                return True
+            return False
+    return False
+
+
 def _one(norm, lay):
     found = []
     for item in lay.copies:
@@ -438,4 +458,7 @@ def _one(norm, lay):
         elif tool.startswith(norm + "/"):
             if head not in found:
                 found.append(head)
+    if _needs_skills_doc(norm):
+        if "docs/skills.md" not in found:
+            found.append("docs/skills.md")
     return tuple(found)
