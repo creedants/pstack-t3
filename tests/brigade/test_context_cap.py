@@ -3,7 +3,6 @@ from .support import (
     BrigadeTest,
     SCRIPT,
     Path,
-    _owner_words,
     call,
     json,
     os,
@@ -23,14 +22,8 @@ class ContextCapTest(BrigadeTest):
         self.settings().parent.mkdir(parents=True, exist_ok=True)
         self.settings().write_text(text)
 
-    def open(self, *extra, ok=True):
-        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok)
-
-    def refused(self, *args):
-        """The exit code and stderr of a brigade call on this store that must refuse."""
-        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
-                                      *_owner_words(self.at), *(str(arg) for arg in args)])
-        return outcome.code, outcome.stderr_text().strip()
+    def open(self, *extra, ok=True, code=None):
+        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok, code=code)
 
     def test_open_writes_the_default_cap_when_the_settings_file_is_missing(self):
         self.assertEqual(self.open(), f"opened {self.at}")
@@ -93,7 +86,7 @@ class ContextCapTest(BrigadeTest):
         self.brigade("set", "--context-cap", "50000")
         self.assertEqual(self.meta()["contextCap"], 50000)
         before = (self.at / "restaurant.json").read_bytes()
-        error = self.brigade("set", "--context-cap", "49999", ok=False)
+        error = self.brigade("set", "--context-cap", "49999", code=1)
         self.assertEqual(error, "brigade: --context-cap takes an integer of at least 50000, got '49999'")
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 50000\n}\n')
@@ -101,7 +94,7 @@ class ContextCapTest(BrigadeTest):
     def test_set_refuses_a_non_integer_cap_and_changes_nothing(self):
         self.open()
         before = (self.at / "restaurant.json").read_bytes()
-        error = self.brigade("set", "--context-cap", "abc", ok=False)
+        error = self.brigade("set", "--context-cap", "abc", code=1)
         self.assertEqual(error, "brigade: --context-cap takes an integer of at least 50000, got 'abc'")
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
@@ -109,7 +102,7 @@ class ContextCapTest(BrigadeTest):
     def test_set_refuses_an_unknown_provider_and_changes_nothing(self):
         self.open()
         before = (self.at / "restaurant.json").read_bytes()
-        error = self.brigade("set", "--coordinator-provider", "grok", ok=False)
+        error = self.brigade("set", "--coordinator-provider", "grok", code=1)
         self.assertEqual(error, "brigade: --coordinator-provider takes claude or other, got 'grok'")
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
         self.assertNotIn("coordinatorProvider", self.meta())
@@ -137,7 +130,7 @@ class ContextCapTest(BrigadeTest):
         before = self.settings().read_bytes()
         subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
                        capture_output=True)
-        error = self.brigade("set", "--context-cap", "120000", ok=False)
+        error = self.brigade("set", "--context-cap", "120000", code=1)
         self.assertEqual(
             error,
             f"brigade: {self.settings()} is tracked by git; "
@@ -153,7 +146,7 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(run("git", "ls-files", "--error-unmatch", "--", "config/settings.local.json").returncode, 0)
         before = tracked.read_bytes()
         (self.project / ".claude").symlink_to("config")
-        error = self.open(ok=False)
+        error = self.open(code=1)
         self.assertEqual(error, f"brigade: {self.project / '.claude'} is a symbolic link; "
                                 "brigade writes .claude/settings.local.json through no link")
         self.assertEqual(tracked.read_bytes(), before)
@@ -165,7 +158,7 @@ class ContextCapTest(BrigadeTest):
         self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})
         (self.project / ".git" / "index").write_bytes(b"not an index")
         before = self.settings().read_bytes()
-        error = self.open(ok=False)
+        error = self.open(code=1)
         self.assertEqual(error, f"brigade: git cannot say whether {self.settings()} is tracked; "
                                 "fix that repository and run this again")
         self.assertEqual(self.settings().read_bytes(), before)
@@ -176,7 +169,7 @@ class ContextCapTest(BrigadeTest):
         self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})
         (self.project / ".git" / "config").write_bytes(b"not a config\n")
         before = self.settings().read_bytes()
-        error = self.open(ok=False)
+        error = self.open(code=1)
         self.assertEqual(error, f"brigade: git cannot say whether {self.settings()} is tracked; "
                                 "fix that repository and run this again")
         self.assertEqual(self.settings().read_bytes(), before)
@@ -200,20 +193,20 @@ class ContextCapTest(BrigadeTest):
     def test_a_refused_open_of_a_new_store_leaves_no_store_and_claims_no_intake(self):
         self.write_settings('{"autoCompactWindow":')
         refusal = f"brigade: {self.settings()} holds invalid JSON; fix or remove it"
-        self.assertEqual(self.open("--intake", "github", ok=False), refusal)
+        self.assertEqual(self.open("--intake", "github", code=1), refusal)
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
         # No coordinator claimed github, so the next open reaches the same refusal instead of an intake dispute.
         self.assertEqual(self.run_at(self.store / "bridge-kit" / "replacement",
                                      "open", "--project-root", str(self.project), "--name", "Replacement",
-                                     "--intake", "github", ok=False), refusal)
+                                     "--intake", "github", code=1), refusal)
         self.assertFalse((self.store / "bridge-kit" / "replacement").exists())
 
     def test_a_refused_open_of_an_existing_store_changes_no_store_file(self):
         self.open()
         before = self.store_files()
         self.write_settings('[1, {"keep": true}]\n')
-        self.assertEqual(self.open(ok=False), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
+        self.assertEqual(self.open(code=1), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
         self.assertEqual(self.store_files(), before)
 
     def test_open_refuses_a_tracked_settings_file_symlink_and_changes_nothing(self):
@@ -223,7 +216,7 @@ class ContextCapTest(BrigadeTest):
         os.symlink("../untracked.json", self.settings())
         subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
                        capture_output=True)
-        self.assertEqual(self.open(ok=False),
+        self.assertEqual(self.open(code=1),
                          f"brigade: {self.settings()} is tracked by git; "
                          "untrack it before brigade writes autoCompactWindow")
         self.assertTrue(self.settings().is_symlink())
@@ -238,7 +231,7 @@ class ContextCapTest(BrigadeTest):
         (self.project / "missing.json").unlink()
         self.settings().parent.mkdir(parents=True)
         os.symlink("../missing.json", self.settings())
-        self.assertEqual(self.open(ok=False),
+        self.assertEqual(self.open(code=1),
                          f"brigade: {self.project / 'missing.json'} is tracked by git; "
                          "untrack it before brigade writes autoCompactWindow")
         self.assertTrue(self.settings().is_symlink())
@@ -252,9 +245,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before = self.settings().read_bytes()
-        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
-                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                             "untrack it there before brigade writes autoCompactWindow"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", code=1),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
@@ -269,9 +262,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before, store = self.settings().read_bytes(), self.store_files()
-        self.assertEqual(self.refused("set", "--context-cap", "120000"),
-                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                             "untrack it there before brigade writes autoCompactWindow"))
+        self.assertEqual(self.brigade("set", "--context-cap", "120000", code=1),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertEqual(self.store_files(), store)
         self.assertNotIn("contextCap", self.meta())
@@ -285,9 +278,9 @@ class ContextCapTest(BrigadeTest):
                        capture_output=True)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
-        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
-                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                             "untrack it there before brigade writes autoCompactWindow"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", code=1),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
         self.assertTrue(self.settings().is_symlink())
         self.assertEqual(os.readlink(self.settings()), "../untracked.json")
         self.assertEqual((self.project / "untracked.json").read_text(), '{"keep":true}')
@@ -309,9 +302,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before = self.settings().read_bytes()
-        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
-                         (1, f"brigade: git cannot say whether the repository that holds the project root tracks "
-                             f"{self.settings()}; fix that repository and run this again"))
+        self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", code=1),
+                         f"brigade: git cannot say whether the repository that holds the project root tracks "
+                         f"{self.settings()}; fix that repository and run this again")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
@@ -345,7 +338,7 @@ class ContextCapTest(BrigadeTest):
         self.settings().parent.chmod(0o555)
         before = self.settings().read_bytes()
         try:
-            self.assertEqual(self.open("--intake", "github", ok=False),
+            self.assertEqual(self.open("--intake", "github", code=1),
                              f"brigade: cannot write {self.settings()}: Permission denied")
             self.assertEqual(self.settings().read_bytes(), before)
             self.assertFalse(self.at.exists())
@@ -357,7 +350,7 @@ class ContextCapTest(BrigadeTest):
         self.open()
         self.write_settings('{"autoCompactWindow":')
         before = self.settings().read_bytes()
-        error = self.brigade("set", "--context-cap", "120000", ok=False)
+        error = self.brigade("set", "--context-cap", "120000", code=1)
         self.assertEqual(error, f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertNotIn("contextCap", self.meta())
@@ -366,7 +359,7 @@ class ContextCapTest(BrigadeTest):
         self.open()
         self.write_settings('[1, {"keep": true}]\n')
         before, store = self.settings().read_bytes(), self.store_files()
-        error = self.brigade("set", "--context-cap", "120000", ok=False)
+        error = self.brigade("set", "--context-cap", "120000", code=1)
         self.assertEqual(error, f"brigade: {self.settings()} holds no JSON object; fix or remove it")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertEqual(self.store_files(), store)
@@ -376,7 +369,7 @@ class ContextCapTest(BrigadeTest):
         for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
             with self.subTest(text=text):
                 self.write_settings(text)
-                self.assertEqual(self.open(ok=False),
+                self.assertEqual(self.open(code=1),
                                  f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
                 self.assertEqual(self.settings().read_text(), text)
                 self.assertFalse(self.at.exists())
@@ -387,7 +380,7 @@ class ContextCapTest(BrigadeTest):
         for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
             with self.subTest(text=text):
                 self.write_settings(text)
-                self.assertEqual(self.brigade("set", "--context-cap", "120000", ok=False),
+                self.assertEqual(self.brigade("set", "--context-cap", "120000", code=1),
                                  f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
                 self.assertEqual(self.settings().read_text(), text)
                 self.assertEqual(self.store_files(), store)
