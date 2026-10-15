@@ -67,11 +67,13 @@ def environment(canary, tmpdir):
     return env
 
 
-def run(canary, tmpdir, *argv):
+def run(canary, tmpdir, *argv, overrides=None):
+    env = environment(canary, tmpdir)
+    env.update(overrides or {})
     return in_process.invoke(in_process.Invocation(
         program=ROOT / "scripts" / "outsider_smoke.py",
         argv=argv,
-        env=environment(canary, tmpdir),
+        env=env,
     ))
 
 
@@ -96,4 +98,22 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertEqual(result.stdout, "")
             self.assertIn(str(canary), result.stderr)
+            self.assertEqual(listing(Path(canary)), before)
+
+    def test_inherited_git_overrides_cannot_reach_the_canary_home(self):
+        # Review D306 round 1: an inherited GIT_INDEX_FILE, GIT_TRACE, or GIT_CONFIG_SYSTEM let Git
+        # write or read outside the home this run made.
+        with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
+            (Path(canary) / CANARY).write_text("keep\n")
+            (Path(canary) / "system-config").write_text("not a git configuration line\n")
+            overrides = {
+                "GIT_INDEX_FILE": str(Path(canary) / "index"),
+                "GIT_TRACE": str(Path(canary) / "trace"),
+                "GIT_CONFIG_SYSTEM": str(Path(canary) / "system-config"),
+            }
+            before = listing(Path(canary))
+            result = run(canary, tmpdir, overrides=overrides)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            expected = "".join(outsider_smoke.ok_line(name) for name in outsider_smoke.plan_names())
+            self.assertEqual(result.stdout, expected)
             self.assertEqual(listing(Path(canary)), before)

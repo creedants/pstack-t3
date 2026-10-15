@@ -22,7 +22,8 @@ CHECKOUT = Path(__file__).resolve().parents[1]
 FIXTURE_CATALOG = CHECKOUT / "tests" / "fixtures" / "catalog.json"
 AUTHOR_NAMES = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
 DROPPED = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-           "CLAUDE_CONFIG_DIR", "BRIGADE_STORE", "BRIGADE_DIR", "GIT_CONFIG_GLOBAL")
+           "XDG_RUNTIME_DIR", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
+           "CLAUDE_CONFIG_DIR", "BRIGADE_STORE", "BRIGADE_DIR")
 README_TEXT = "# outsider smoke\n"
 # One prep command writes a file whose text is its second argument.
 WRITER = "import sys\nopen(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2])\n"
@@ -180,9 +181,16 @@ def make_layout(root, home):
 
 
 def child_env(home, inherited):
-    """The environment every command of the run inherits. HOME names the home this run made."""
-    env = {name: value for name, value in inherited.items() if name not in DROPPED}
+    """The environment every command of the run inherits. HOME names the home this run made.
+
+    Git honors its own path, configuration, template, and tracing overrides independently of HOME,
+    so every GIT_* variable is dropped except the four that name the commit identity. System
+    configuration is off for the run.
+    """
+    env = {name: value for name, value in inherited.items()
+           if name not in DROPPED and (not name.startswith("GIT_") or name in AUTHOR_NAMES)}
     env["HOME"] = str(home)
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
 
 
