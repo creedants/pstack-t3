@@ -718,7 +718,7 @@ CLOSE_AT = "2026-10-01T02:00:00+00:00"
 
 
 class _SpendFixture:
-    """Fixture tables copied from tests/brigade/test_spend.py, plus a token database of the shape spend probes."""
+    """`fill`, `put`, `dish`, and `dish_close` follow `SpendTest` in tests/brigade/test_spend.py. `goal_row`, `thread_row`, `token_database`, and `advance_report` are new."""
 
     def fill(self, dishes, passes=(), threads=(), logs=(), goals=()):
         self.open()

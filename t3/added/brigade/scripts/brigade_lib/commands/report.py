@@ -41,8 +41,8 @@ def register_status(sub):
 
 def register_close(sub):
     p = sub.add_parser("close", help="write the report of what changed since the last one, with a `## Spend` section "
-                                     "by goal for items fired on or after the UTC date of the last close, the finest "
-                                     "window `spend --since` takes")
+                                     "by goal for items fired on or after the UTC date of the last close, or for every "
+                                     "item when no report was written yet, the finest window `spend --since` takes")
     output = p.add_mutually_exclusive_group()
     output.add_argument("--dry-run", action="store_true")
     output.add_argument("--to-file", action="store_true",
