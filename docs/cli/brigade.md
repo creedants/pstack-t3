@@ -313,7 +313,7 @@ record one open run after report-back, once per attempt
 brigade.py [flags] model <action>
 ```
 
-record or clear a provider/model seat that new launches skip
+record a provider/model seat as skipped, or clear it after a smoke test
 
 `<action>` is one of `skip`, `clear`.
 
@@ -323,7 +323,7 @@ record or clear a provider/model seat that new launches skip
 brigade.py [flags] model skip --cause CAUSE model
 ```
 
-skip a provider/model seat for new launches until a smoke test passes
+record a provider/model seat as skipped until model clear records a passing smoke test
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
