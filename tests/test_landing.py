@@ -657,8 +657,8 @@ FAILED_WITNESS_PROBE = (
     "subprocess.run = _ps\n"
 )
 
-# A witness probe that reports a zombie leader this process may not signal. os.waitid still answers
-# the exit question, and a ps uid query prints a uid line that matches no uid of this process.
+# A witness probe that reports a zombie leader this process may not signal. The host's waitid or ps
+# answers the exit question, and a ps uid query prints a uid line that matches no uid of this process.
 # land.py sees an effective uid that is not root, so root does not short circuit the check.
 FOREIGN_UID_WITNESS_PROBE = (
     "import os, subprocess\n"
@@ -674,11 +674,11 @@ FOREIGN_UID_WITNESS_PROBE = (
     "subprocess.run = _ps\n"
 )
 
-# A stub for os.killpg. "after-term" delivers the first signal and raises EPERM for every later one,
-# which is the macOS behavior this port covers, where the exited unreaped leader keeps killpg from
-# reaching the rest of the group. "always" raises EPERM for every signal, and kills the leader itself
-# first when kills is set. No macOS path behaves that way, so it is the seam that shows which EPERM
-# land.py must refuse to swallow.
+# A stub for os.killpg. "after-term" delivers the first signal and raises EPERM for every later one.
+# It does not deliver those later signals, even if the group still has a live permitted member.
+# "always" raises EPERM for every signal, and kills the leader itself first when kills is set.
+# These seams exercise the witness check. Native macOS killpg can still signal live permitted members
+# when the leader is a zombie.
 EPERM_KILLPG_STUB = (
     "import errno, os, signal\n"
     "_real_killpg = os.killpg\n"
@@ -6993,7 +6993,7 @@ os.execv({real!r}, [{real!r}, *args])
                 self.assert_slots_free()
 
     def test_an_exclusive_darwin_eperm_leaves_a_sigterm_ignoring_member_alive_after_the_cap(self):
-        """A killpg that macOS refuses for the exited leader leaves a SIGTERM-ignoring member running.
+        """An injected EPERM after the leader exits leaves a SIGTERM-ignoring member running.
 
         The command still stops at its cap and frees the slots, so the caller never learns that the
         group has a live member.
