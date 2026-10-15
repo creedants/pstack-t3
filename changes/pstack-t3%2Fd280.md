@@ -1,0 +1,7 @@
+- kind polish
+- `t3/added/brigade/SKILL.md` tells the coordinator to rewrite handoff.md at a quiet point before compaction, and to read handoff.md, house-rules.md, and the memory index after any compaction
+- `t3/added/brigade/SKILL.md` states that the context cap is stored in `restaurant.json` and that `open` writes it into the project's `.claude/settings.local.json` as `autoCompactWindow`
+- `t3/added/brigade/SKILL.md` states that `set` writes the cap again when `--context-cap` or `--coordinator-provider` changes it
+- `t3/added/brigade/SKILL.md` states that reopening a store creates or repairs that file from the stored cap
+- `t3/added/brigade/SKILL.md` states that a successful write replaces an untracked settings file symbolic link with a regular file and leaves the link's target unchanged
+- `t3/added/brigade/SKILL.md` states that on a host that is not Claude the context cap is not enforced and no settings file is written
