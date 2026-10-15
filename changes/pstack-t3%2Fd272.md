@@ -1,0 +1,2 @@
+- kind fix
+- land.py slot --exclusive stops the command at its cap when macOS killpg returns EPERM for a zombie leader this process may signal, and the same EPERM for a live leader still fails the command.

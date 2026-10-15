@@ -627,6 +627,95 @@ READY_MAIN = (
     "sys.exit(land.main(sys.argv[5:]))\n"
 )
 
+# A witness probe that cannot answer. os.waitid is gone, so land.py falls back to ps, and every ps
+# call raises.
+FAILED_WITNESS_PROBE = (
+    "import os, subprocess\n"
+    "vars(os).pop('waitid', None)\n"
+    "_real_run = subprocess.run\n"
+    "def _ps(*args, **kwargs):\n"
+    "    command = args[0] if args else kwargs.get('args')\n"
+    "    if isinstance(command, (list, tuple)) and command[:1] == ['ps']:\n"
+    "        raise OSError('ps is unavailable')\n"
+    "    return _real_run(*args, **kwargs)\n"
+    "subprocess.run = _ps\n"
+)
+
+# A witness probe that reports a zombie leader this process may not signal. os.waitid still answers
+# the exit question, and a ps uid query prints a uid line that matches no uid of this process.
+# land.py sees an effective uid that is not root, so root does not short circuit the check.
+FOREIGN_UID_WITNESS_PROBE = (
+    "import os, subprocess\n"
+    "land.os.geteuid = lambda: 1000\n"
+    "_real_run = subprocess.run\n"
+    "_uid = next(uid for uid in (1, 2, 3) if uid not in (os.getuid(), 1000))\n"
+    "_line = '%d %d %d\\n' % (_uid, _uid, _uid)\n"
+    "def _ps(*args, **kwargs):\n"
+    "    command = args[0] if args else kwargs.get('args')\n"
+    "    if isinstance(command, (list, tuple)) and any('uid=' in str(part) for part in command):\n"
+    "        return subprocess.CompletedProcess(list(command), 0, stdout=_line)\n"
+    "    return _real_run(*args, **kwargs)\n"
+    "subprocess.run = _ps\n"
+)
+
+# A stub for os.killpg. "after-term" delivers the first signal and raises EPERM for every later one,
+# which is the macOS behavior this port covers, where the exited unreaped leader keeps killpg from
+# reaching the rest of the group. "always" raises EPERM for every signal, and kills the leader itself
+# first when kills is set. No macOS path behaves that way, so it is the seam that shows which EPERM
+# land.py must refuse to swallow.
+EPERM_KILLPG_STUB = (
+    "import errno, os, signal\n"
+    "_real_killpg = os.killpg\n"
+    "_sent = []\n"
+    "_leader = []\n"
+    "def _killpg(pid, sig):\n"
+    "    _leader.append(pid)\n"
+    "    if {kills!r}:\n"
+    "        os.kill(pid, signal.SIGKILL)\n"
+    "    if {mode!r} == 'always' or ({mode!r} == 'after-term' and _sent):\n"
+    "        raise PermissionError(errno.EPERM, 'Operation not permitted')\n"
+    "    _sent.append(sig)\n"
+    "    _real_killpg(pid, sig)\n"
+    "os.killpg = _killpg\n"
+)
+
+# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child. The wait is
+# the same waitid the grace uses, so the interrupt lands after the SIGTERM has killed the leader.
+INTERRUPT_AFTER_THE_LEADER_EXITS = (
+    "import os, time\n"
+    "_real_time_sleep = time.sleep\n"
+    "def _interrupt(seconds):\n"
+    "    if _leader and os.waitid(os.P_PID, _leader[0], os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:\n"
+    "        raise KeyboardInterrupt()\n"
+    "    _real_time_sleep(seconds)\n"
+    "land._real_sleep = _interrupt\n"
+)
+
+
+def _darwin_eperm_main(mode="after-term", kills=False, probe="waitid", darwin=True, after=""):
+    """Return EXCLUSIVE_MAIN with the Darwin kill path forced and os.killpg replaced by a stub.
+
+    mode and kills pick the signals that raise EPERM. probe picks the witness probe, and is one of
+    waitid, failed, or foreign. darwin False leaves the platform alone, so the Linux path runs.
+    after holds extra lines the wrapper runs after the killpg stub, and may read that stub's state.
+    """
+    lines = ["import land\n"]
+    if darwin:
+        lines.append("land.sys.platform = 'darwin'\n")
+    if probe == "failed":
+        lines.append(FAILED_WITNESS_PROBE)
+    elif probe == "foreign":
+        lines.append(FOREIGN_UID_WITNESS_PROBE)
+    lines.append(EPERM_KILLPG_STUB.format(mode=mode, kills=kills))
+    lines.append(after)
+    return EXCLUSIVE_MAIN.replace("import land\n", "".join(lines), 1)
+
+
+def cap_line(cap):
+    return (f"land: stopped the command at the {cap}s exclusive cap. "
+            f"--for sets a longer cap and needs --reason past {cap}s.\n")
+
+
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
     "import os, sys, time\n"
@@ -649,6 +738,24 @@ IGNORING_GROUP = (
     "if child == 0:\n"
     "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
     "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    time.sleep(3600)\n"
+    "time.sleep(3600)\n"
+)
+
+# The same command with a child that closes the standard streams, so a child that outlives the command
+# does not hold the capture pipes of the caller that waits for it.
+SURVIVING_IGNORING_GROUP = (
+    "import os, signal, sys, time\n"
+    "from pathlib import Path\n"
+    "parent_path, child_path = sys.argv[1], sys.argv[2]\n"
+    "Path(parent_path).write_text(str(os.getpid()))\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    os.close(0)\n"
+    "    os.close(1)\n"
+    "    os.close(2)\n"
     "    time.sleep(3600)\n"
     "time.sleep(3600)\n"
 )
@@ -6277,6 +6384,12 @@ os.execv({real!r}, [{real!r}, *args])
             time.sleep(0.02)
         self.fail(f"pid {pid} is still running")
 
+    def assert_live(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            self.fail(f"pid {pid} is not running")
+
     def assert_worker_holder_keeps_the_slot(self, holder):
         self.assertIsNone(holder.poll())
         record = json.loads((land.governor_dir() / "holds" / "worker-0").read_text())
@@ -6623,10 +6736,6 @@ os.execv({real!r}, [{real!r}, *args])
     def test_cap_cases_without_os_waitid(self):
         self.governor(1)
 
-        def cap_line(cap):
-            return (f"land: stopped the command at the {cap}s exclusive cap. "
-                    f"--for sets a longer cap and needs --reason past {cap}s.\n")
-
         result = self.run_exclusive(
             ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
             cap=0.4, grace=0.05, timeout=10, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
@@ -6739,6 +6848,93 @@ os.execv({real!r}, [{real!r}, *args])
                     except ProcessLookupError:
                         break
                     time.sleep(0.02)
+
+    def test_an_exclusive_cap_stops_when_darwin_eperm_follows_an_exited_leader(self):
+        """A killpg that macOS refuses for an exited leader still stops the command at its cap."""
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.05, timeout=20, main=_darwin_eperm_main("after-term"))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (124, "", cap_line("0.4")))
+        self.assert_slots_free()
+
+    def test_an_exclusive_darwin_eperm_is_reraised_when_the_witness_is_not_a_permitted_target(self):
+        """Every witness that is not a permitted target fails the command instead of capping it."""
+        self.governor(1)
+        rows = (
+            ("live leader", dict(mode="always", probe="waitid"), True),
+            ("unknown witness", dict(mode="always", probe="failed"), True),
+            ("foreign uid", dict(mode="after-term", probe="foreign"), True),
+            ("leader exits after a negative witness", dict(mode="always", kills=True, probe="waitid"), True),
+            ("linux", dict(mode="always", probe="waitid"), False),
+        )
+        for label, options, darwin in rows:
+            with self.subTest(witness=label):
+                # The command ends on its own, so a caller that never signals it cannot outlive the test.
+                result = self.run_exclusive(
+                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(0.6)"],
+                    cap=0.2, grace=0.05, timeout=20,
+                    main=_darwin_eperm_main(darwin=darwin, **options))
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("PermissionError", result.stderr)
+                self.assertNotIn("exclusive cap", result.stderr)
+                self.assert_slots_free()
+
+    def test_an_exclusive_darwin_eperm_leaves_a_sigterm_ignoring_member_alive_after_the_cap(self):
+        """A killpg that macOS refuses for the exited leader leaves a SIGTERM-ignoring member running.
+
+        The command still stops at its cap and frees the slots, so the caller never learns that the
+        group has a live member.
+        """
+        self.governor(1)
+        parent_path = self.base / "member-parent.pid"
+        child_path = self.base / "member-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", SURVIVING_IGNORING_GROUP,
+             str(parent_path), str(child_path)],
+            cap=1, grace=0.15, main=_darwin_eperm_main("after-term"))
+        try:
+            child_line = self.wait_for_line(child_path)
+            code = process.wait(timeout=20)
+            parent_pid = int(parent_path.read_text())
+            child_pid, child_group = (int(part) for part in child_line.split())
+            self.assertEqual(child_group, parent_pid)
+            self.assert_dead(parent_pid)
+            self.assertEqual((code, process.stderr.read()), (124, cap_line("1")))
+            self.assert_slots_free()
+            self.assert_live(child_pid)
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=20)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
+
+    def test_an_interrupt_during_the_exclusive_grace_survives_a_darwin_eperm(self):
+        """The interrupt that ends the grace wait is the error the caller sees, not the EPERM."""
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.4, timeout=20,
+            main=_darwin_eperm_main("after-term", after=INTERRUPT_AFTER_THE_LEADER_EXITS))
+        self.assertNotEqual(result.returncode, 124, result.stderr)
+        self.assertIn("KeyboardInterrupt", result.stderr)
+        self.assertNotIn("PermissionError", result.stderr)
+        self.assert_slots_free()
+
+    def test_supervised_treats_darwin_eperm_for_a_witnessed_zombie_like_a_successful_killpg(self):
+        """A timed out command reports no status when macOS refuses the killpg for an exited leader."""
+        self.governor(1)
+        # The shell exits at once and leaves a member that holds the capture pipe, so the leader is an
+        # unreaped zombie when the killpg runs and the member ends on its own.
+        command = f"{sys.executable} -c 'import time; time.sleep(2)' & exit 0"
+        with mock.patch.object(land.sys, "platform", "darwin"), \
+                mock.patch.object(land.os, "killpg",
+                                  side_effect=PermissionError(errno.EPERM, "Operation not permitted")):
+            code, output = land.supervised(command, str(self.base), 0.4)
+        self.assertIsNone(code)
+        self.assertEqual(output, "")
 
     def test_an_exclusive_deadline_is_when_every_slot_is_locked(self):
         self.governor(1)
