@@ -107,7 +107,7 @@ def parser():
     times_help = ("report submit-to-landed minutes for the last N landed entries, one line per entry then a summary line. "
                   "A line holds the entry's id, holder, PR, and minutes to one decimal, and the PR prints - when the entry has none. "
                   "The summary line is n=<count> median=<m> p90=<m> max=<m> skipped=<k>, where median and p90 are the "
-                  "nearest-rank 50th and 90th percentiles. An entry in state landed with no landed log row is skipped and "
+                  "nearest-rank 50th and 90th percentiles. A selected entry in state landed with no landed log row is skipped and "
                   "counted in skipped. With nothing landed the three statistics print - and the command exits 0")
     p = sub.add_parser("times", help=times_help, description=times_help)
     p.add_argument("--last", type=int, default=30, metavar="N",

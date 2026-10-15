@@ -58,10 +58,16 @@ class LandingTest(LandingTestBase):
         ]))
 
     def test_times_last_keeps_the_last_entries_by_landing_time(self):
-        self.landed_entries(FOUR)
+        rows = (
+            ("r/D1", SUBMITTED, "2026-10-01T00:12:30.000000+00:00"),
+            ("r/D2", SUBMITTED, "2026-10-01T00:24:30.000000+00:00"),
+            ("r/D3", SUBMITTED, "2026-10-01T00:44:30.000000+00:00"),
+            ("r/D4", SUBMITTED, "2026-10-01T00:33:30.000000+00:00"),
+        )
+        self.landed_entries(rows)
         self.assertEqual(self.land("times", "--last", "2"), "\n".join([
-            "E3 r/D3 - 33.5",
-            "E4 r/D4 - 44.5",
+            "E4 r/D4 - 33.5",
+            "E3 r/D3 - 44.5",
             "n=2 median=33.5 p90=44.5 max=44.5 skipped=0",
         ]))
 
