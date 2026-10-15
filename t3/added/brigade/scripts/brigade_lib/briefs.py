@@ -25,7 +25,7 @@ from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, reco
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
 from brigade_lib.shared import BrigadeError, same_text, slug
-from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, VERDICTS, roles_script, scratch_parent_text
+from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, VERDICTS, roles_script, scratch_parent_text
 
 
 
@@ -236,7 +236,11 @@ def standing_rules(restaurant, base, context, verify):
     A rule whose placeholder has no value is skipped. A rule is dropped when the coordinator's context and
     verify text already hold every one of its anchors.
     """
-    scratch = scratch_parent_text(restaurant.meta.get(SCRATCH_KEY))
+    try:
+        scratch = scratch_parent_text(restaurant.meta.get(SCRATCH_KEY))
+    except BrigadeError:
+        raw = restaurant.meta.get(SCRATCH_KEY)
+        raise BrigadeError(f"restaurant.json {SCRATCH_KEY} {raw!r} is invalid: {SCRATCH_REFUSAL}") from None
     values = {"reports": str(restaurant.dir / "reports"), "base": base, "scratch": scratch}
     seen = same_text(" ".join(context) + " " + verify)
     lines = []
@@ -248,7 +252,18 @@ def standing_rules(restaurant, base, context, verify):
         for anchor in anchors:
             if anchor not in text:
                 raise BrigadeError(f"standing rule anchor {anchor!r} is not in {text!r}")
-        if all(same_text(anchor) in seen for anchor in anchors):
+        scoped = "<scratch>" in rule.text
+        seen_all = True
+        for anchor in anchors:
+            needle = same_text(anchor)
+            if scoped:
+                if re.search(re.escape(needle) + r"(?![A-Za-z0-9_.\-~])", seen) is None:
+                    seen_all = False
+                    break
+            elif needle not in seen:
+                seen_all = False
+                break
+        if seen_all:
             continue
         lines.append(f"- {text}")
     return lines

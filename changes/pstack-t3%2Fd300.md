@@ -1,0 +1,5 @@
+- kind polish
+- A scratch anchor matches only when the next character is not an ASCII letter or digit, underscore, dot, hyphen, or tilde.
+- `brief --base` refuses an empty or whitespace-only value with `brief --base takes a trunk ref, such as origin/main`.
+- An invalid stored `scratchDir` refusal names `restaurant.json` and the key and the value.
+- `scratch_parent_text` also refuses a path at or under the resolved `/tmp`.

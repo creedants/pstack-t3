@@ -651,6 +651,53 @@ class BriefsTest(BrigadeTest):
         self.assertIn(f"\n- A reviewer sent an earlier attempt back. Its findings: {self.at}/reports/D1-review-2.md\n", text)
         self.assertNotIn("D1-review-1.md", text)
 
+    def test_a_scratch_path_prefix_does_not_drop_the_scratch_rule(self):
+        self.coordinator()
+        parent = str(Path.home().resolve())
+        self.brigade("set", "--scratch-dir", parent)
+        text = self.brigade(*self.BRIEF, "--context", f"`mktemp -d -p {parent}-old`")
+        self.assertIn(
+            f"- Make every scratch directory, archive copy, and saved output with `mktemp -d -p {parent}`, never "
+            "directly under `/tmp`. Delete that directory when you are done. A test suite's own temporary files stay "
+            "where the tests put them. Do not set TMPDIR.", text)
+
+    def test_an_empty_base_is_refused_and_writes_nothing(self):
+        self.briefable()
+        refusal = "brigade: brief --base takes a trunk ref, such as origin/main\n"
+        flagged = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v",
+                   "--paths", "src/boot.ts", "--lease", "L4")
+        for base in ("", "   "):
+            with self.subTest(form="flag", base=base):
+                before = self.store_files()
+                self.assertEqual(self.run_raw(*flagged, "--base", base), (1, "", refusal))
+                self.assertFalse((self.at / "briefs" / "D1.md").exists())
+                self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
+                self.assertEqual(self.store_files(), before)
+        for base in ("", "   "):
+            with self.subTest(form="fields", base=base):
+                fields = self.at / "brief-fields.json"
+                fields.write_text(json.dumps({"goal": "g", "acceptance": ["a"], "verify": "v", "base": base,
+                                              "paths": "src/boot.ts", "lease": "L4", "contract": "none"}),
+                                  encoding="utf-8")
+                before = self.store_files()
+                self.assertEqual(self.run_raw("brief", "D1", "--fields", str(fields)), (1, "", refusal))
+                self.assertFalse((self.at / "briefs" / "D1.md").exists())
+                self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
+                self.assertEqual(self.store_files(), before)
+
+    def test_an_invalid_stored_scratch_dir_names_the_key(self):
+        self.briefable()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["scratchDir"] = "/tmp/x"
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+        before = self.store_files()
+        refusal = ("brigade: restaurant.json scratchDir '/tmp/x' is invalid: --scratch-dir takes an absolute "
+                   "directory path outside /tmp, or empty string to clear it\n")
+        self.assertEqual(self.run_raw("brief", "D1", *self.FLAGS, "--contract", "none"), (1, "", refusal))
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+        self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
+        self.assertEqual(self.store_files(), before)
+
     def test_ticket_list_startable_watch_86_list_close_walk_pass_check_and_contract_print_for_a_store_from_before_kinds_what_the_tool_printed_before_kinds_and_change_no_table(self):
         self.store_from_before_kinds()
         before = self.tables()
