@@ -301,6 +301,20 @@ class ContextCapTest(BrigadeTest):
                           self.not_verified(reviewed, changed)))
         self.assertEqual(len(self.edits_rows()), 1)
 
+    def test_edits_verify_fails_a_settings_edit_hidden_by_the_cap_exemption(self):
+        reviewed = self.edits_store_with_settings('{\n  "autoCompactWindow": 300000,\n  "keep": true\n}\n')
+        self.edits_report(self.edit_block("1", ".claude/settings.local.json", '"keep": true', '"keep": false'),
+                          self.edit_block("2", "src/greeting.txt", "helo", "hello"),
+                          self.edit_block("3", "src/greeting.txt", "wrold", "world"))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        cap_only = self.head_commit(self.FIXED, **{".claude/settings.local.json":
+                                                   '{\n  "autoCompactWindow": 90000,\n  "keep": true\n}\n'})
+        self.assertEqual(self.verify(reviewed, cap_only),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, cap_only)))
+        self.assertEqual(self.edits_rows(), [])
+
     def test_edits_verify_passes_the_coordinators_own_settings_file_swept_into_a_head_commit(self):
         reviewed = self.edits_store()
         self.two_edits()

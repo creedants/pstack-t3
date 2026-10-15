@@ -331,14 +331,16 @@ def _cap_only(project_root, before, after):
 def compared_paths(project_root, before, after, extracted, edited, built):
     """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted.
 
-    The settings file is compared like every other path, except that a head whose version of it holds the cap splice
-    written over the reviewed version, or holds nothing but the cap when the reviewed version holds no file, is left out.
+    The settings file is compared like every other path, except that a path whose two tree states differ by nothing
+    but the cap splice is left out only when the scratch copy agrees at that path at every stage, meaning the
+    extracted, edited, and built digests there are equal.
     """
     found = {path for path in before.keys() | after.keys()
              if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
              or edited.get(path) != built.get(path)}
     return sorted(path for path in found
-                  if path != SETTINGS_RELATIVE or not _cap_only(project_root, before.get(path), after.get(path)))
+                  if path != SETTINGS_RELATIVE or not _cap_only(project_root, before.get(path), after.get(path))
+                  or extracted.get(path) != edited.get(path) or edited.get(path) != built.get(path))
 
 
 def path_lines(paths, edited, built, head, sha):

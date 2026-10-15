@@ -10,3 +10,4 @@
 - A refused open of a new store leaves no store directory and claims no intake, and a refused write to an existing store changes no store file
 - `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
 - `edits verify` compares `.claude/settings.local.json` like every other path and passes a head whose only change there is the `autoCompactWindow` member
+- `edits verify` leaves the settings path out of its comparison only when the two trees differ by the cap splice alone and the scratch copy holds equal digests there, so a review edit or a build that changes the settings file fails the verify
