@@ -87,7 +87,7 @@ def brigade_tree(directory, support, modules):
 
 
 def landing_tree(directory, support, modules):
-    """tests_tree plus tests/landing and the given modules. support.py is written only when support is not None."""
+    """tests_tree plus the given landing modules. support.py is absent when support is None."""
     tests = tests_tree(directory, {})
     landing = tests / "landing"
     if support is None:
