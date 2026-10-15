@@ -1456,6 +1456,9 @@ class RunTestsTest(unittest.TestCase):
             self.assertEqual(text.count("if: always()"), 2)
             self.assertIn("if: github.event_name == 'pull_request'", text)
             self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
+            macos = job_body(text.splitlines(keepends=True), "macos_312")
+            self.assertIsNotNone(macos)
+            self.assertIn("continue-on-error: true", "".join(macos))
             for index in range(1, 5):
                 self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
             return
@@ -1465,6 +1468,7 @@ class RunTestsTest(unittest.TestCase):
             "part_312_1", "part_312_2", "part_312_3", "part_312_4",
             "real_312",
             "test_310", "test_312",
+            "macos_312",
         ])
         for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
             for index in range(1, 5):
@@ -1523,6 +1527,15 @@ class RunTestsTest(unittest.TestCase):
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312"])
+        macos = jobs["macos_312"]
+        self.assertEqual(macos["name"], "macOS (3.12)")
+        self.assertEqual(macos["runs-on"], "macos-latest")
+        self.assertNotIn("if", macos)
+        setup = next(step for step in macos["steps"] if step.get("uses") == "actions/setup-python@v7")
+        self.assertEqual(setup["with"]["python-version"], "3.12")
+        self.assertIsInstance(setup["with"]["python-version"], str)
+        test = next(step for step in macos["steps"] if "unittest" in step.get("run", ""))
+        self.assertTrue(test["continue-on-error"])
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
