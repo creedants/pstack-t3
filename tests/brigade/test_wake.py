@@ -1719,3 +1719,76 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("dish", "D1", "--worker-ended", "worker died")
         self.park_item()
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
+
+    def test_watch_lists_a_skipped_model_until_a_smoke_test_passes(self):
+        self.open()
+        self.fire_one(timebox="60")
+        before = self.brigade("watch")
+        seat = "grok/grok-4.7"
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"),
+                         f"{seat}: skipped for new launches until a smoke test passes")
+        workers, dish_line = before.splitlines()
+        skipped = f"skipped {seat} (rate-limit); run model clear {shlex.quote(seat)} after a smoke test passes"
+        self.assertEqual(self.brigade("watch"), "\n".join([workers, skipped, dish_line]))
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped for new launches")
+        self.assertEqual(self.brigade("watch"), before)
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: already cleared")
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [("skipped", "rate-limit"), ("cleared", "smoke test passed")])
+
+    def test_a_skipped_model_does_not_replace_no_work_in_progress(self):
+        self.open()
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                "skipped grok/grok-4.7 (rate-limit); "
+                                                "run model clear grok/grok-4.7 after a smoke test passes\n"
+                                                "no work in progress")
+
+    def test_a_second_skip_with_the_same_cause_writes_nothing_and_a_new_cause_replaces_the_line(self):
+        self.open()
+        seat = "grok/grok-4.7"
+        self.brigade("model", "skip", seat, "--cause", "rate-limit")
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"), f"{seat}: already skipped")
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [("skipped", "rate-limit")])
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "failed"),
+                         f"{seat}: skipped for new launches until a smoke test passes")
+        self.assertIn(f"skipped {seat} (failed); run model clear {shlex.quote(seat)} after a smoke test passes",
+                      self.brigade("watch"))
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "model"]), 2)
+
+    def test_model_clear_refuses_a_seat_that_is_not_skipped_and_a_model_needs_provider_and_name(self):
+        self.open()
+        self.assertEqual(self.brigade("model", "clear", "grok/grok-4.7", ok=False),
+                         "brigade: grok/grok-4.7 is not skipped for new launches")
+        for seat in ("grok", "grok/a/b"):
+            self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit", ok=False),
+                             "brigade: a model is provider/model", seat)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "model"], [])
+
+    def test_close_omits_the_worker_end_and_the_skipped_model(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "rate limit from grok/grok-4.7")
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        closed = self.brigade("close", "--dry-run")
+        self.assertIn("Cut startup", closed)
+        self.assertNotIn("rate limit", closed)
+        self.assertNotIn("grok/grok-4.7", closed)
+
+    def test_next_and_startable_stay_unchanged_when_a_worker_has_ended_and_a_model_is_skipped(self):
+        self.open()
+        self.fire_one(timebox="60")
+        before = (self.brigade("next", "liveness"), self.brigade("startable"))
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        self.assertEqual((self.brigade("next", "liveness"), self.brigade("startable")), before)
+
+    def test_the_executive_admin_store_refuses_model_skip_and_clear(self):
+        self.open_admin()
+        refusal = "brigade: the executive admin routes work and never runs it"
+        self.assertEqual(self.admin("model", "skip", "grok/grok-4.7", "--cause", "rate-limit", ok=False), refusal)
+        self.assertEqual(self.admin("model", "clear", "grok/grok-4.7", ok=False), refusal)
+        rows = [line.split("\t") for line in
+                (self.store / "bridge-kit" / ".admin" / "log.tsv").read_text().splitlines()[1:] if line]
+        self.assertEqual([row[1] for row in rows], [])

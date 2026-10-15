@@ -368,6 +368,8 @@ def watch(restaurant):
             lines.append(f"handed to you: {handed}; run ticket take")
         inputs = block_inputs(restaurant)
         workers = workers_line(restaurant.meta, inputs[1])
+        # A skipped seat is a restaurant-wide fact, not a dish line, so it sits between the two.
+        skipped = skip_lines(restaurant)
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -395,7 +397,7 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=seam.now())
-    text = "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
+    text = "\n".join([workers, *skipped, *(item_lines + lines or ["no work in progress"])])
     sentence = handoff_size_line(restaurant.dir)
     if sentence:
         restaurant.warn(sentence)
@@ -431,6 +433,52 @@ def record_hang(restaurant, ident, provider, minutes, attempt=None):
     suffix = f" (attempt {attempt})" if attempt else ""
     restaurant.log("hang", ident, "open", f"{provider} {minutes}m{suffix}")
     return f"{ident}: {provider} open {minutes}m{suffix}"
+
+
+def require_seat(seat):
+    """The cleaned provider/model seat. A seat is one slash, both sides non-empty, and no whitespace."""
+    value = clean(seat)
+    provider, _, model = value.partition("/")
+    if not (provider and model) or "/" in model or any(character.isspace() for character in value):
+        raise BrigadeError("a model is provider/model")
+    return value
+
+
+def latest_models(restaurant):
+    """The latest model log row per seat. The latest row for a seat wins."""
+    found = {}
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "model":
+            found[row["id"]] = row
+    return found
+
+
+def skip_lines(restaurant):
+    """One line per seat new launches skip, sorted by seat."""
+    return [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
+            for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+
+
+def record_model_skip(restaurant, seat, cause):
+    """Skip one provider/model seat for new launches. The same cause again writes no row."""
+    name = require_seat(seat)
+    latest = latest_models(restaurant).get(name)
+    if latest is not None and latest["state"] == "skipped" and latest["note"] == cause:
+        return f"{name}: already skipped"
+    restaurant.log("model", name, "skipped", cause)
+    return f"{name}: skipped for new launches until a smoke test passes"
+
+
+def record_model_clear(restaurant, seat):
+    """Record a passing smoke test and clear one seat's skip."""
+    name = require_seat(seat)
+    latest = latest_models(restaurant).get(name)
+    if latest is None:
+        raise BrigadeError(f"{name} is not skipped for new launches")
+    if latest["state"] == "cleared":
+        return f"{name}: already cleared"
+    restaurant.log("model", name, "cleared", "smoke test passed")
+    return f"{name}: no longer skipped for new launches"
 
 
 def record_worker_end(restaurant, ident, error):
