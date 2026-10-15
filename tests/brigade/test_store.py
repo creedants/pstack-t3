@@ -1,6 +1,7 @@
 from .support import (
     setUpModule,
     BrigadeTest,
+    brigade_docs,
     CLAUDE,
     CODEX,
     Path,
@@ -517,7 +518,7 @@ class StoreTest(BrigadeTest):
         self.assertNotIn("run close --to-file", direct)
 
     def test_next_admin_lines_match_the_events_table(self):
-        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        text = brigade_docs()
         rows = []
         started = False
         for line in text.splitlines():
