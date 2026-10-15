@@ -209,6 +209,37 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.open(ok=False), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
         self.assertEqual(self.store_files(), before)
 
+    def test_open_refuses_a_tracked_settings_file_symlink_and_changes_nothing(self):
+        self.git_project()
+        (self.project / "untracked.json").write_text('{"keep":true}')
+        self.settings().parent.mkdir(parents=True)
+        os.symlink("../untracked.json", self.settings())
+        subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
+                       capture_output=True)
+        self.assertEqual(self.open(ok=False),
+                         f"brigade: {self.settings()} is tracked by git; "
+                         "untrack it before brigade writes autoCompactWindow")
+        self.assertTrue(self.settings().is_symlink())
+        self.assertEqual(os.readlink(self.settings()), "../untracked.json")
+        self.assertEqual((self.project / "untracked.json").read_text(), '{"keep":true}')
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
+    def test_a_failed_settings_write_on_open_leaves_no_store_and_claims_no_intake(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes through file permissions")
+        self.write_settings('{"keep":true}')
+        self.settings().parent.chmod(0o555)
+        before = self.settings().read_bytes()
+        try:
+            self.assertEqual(self.open("--intake", "github", ok=False),
+                             f"brigade: cannot write {self.settings()}: Permission denied")
+            self.assertEqual(self.settings().read_bytes(), before)
+            self.assertFalse(self.at.exists())
+            self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+        finally:
+            self.settings().parent.chmod(0o755)
+
     def test_set_refuses_invalid_json_and_changes_nothing(self):
         self.open()
         self.write_settings('{"autoCompactWindow":')
@@ -228,7 +259,7 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.store_files(), store)
         self.assertNotIn("contextCap", self.meta())
 
-    def test_open_and_set_refuse_a_settings_file_holding_a_non_json_constant(self):
+    def test_open_refuses_a_settings_file_holding_a_non_json_constant(self):
         for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
             with self.subTest(text=text):
                 self.write_settings(text)
@@ -319,7 +350,8 @@ class ContextCapTest(BrigadeTest):
         reviewed = self.edits_store()
         self.two_edits()
         self.record_edits(reviewed, "--edits", "D1-review-1.md")
-        head = self.head_commit(self.FIXED)
+        head = self.head_commit(self.FIXED, **{".claude/settings.local.json":
+                                               '{\n  "autoCompactWindow": 300000\n}\n'})
         self.assertEqual(self.verify(reviewed, head),
                          (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n"
                              f"{self.verified(reviewed, head)}", ""))
@@ -331,6 +363,76 @@ class ContextCapTest(BrigadeTest):
                              f"built out/greeting.txt\nedited src/greeting.txt",
                           self.not_verified(reviewed, smuggled)))
         self.assertEqual(len(self.edits_rows()), 1)
+
+    def open_edits_dish(self):
+        """D1 in review on a coordinator that writes no settings file, with the build and check commands set."""
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                     "--coordinator-provider", "other")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.brigade("set", "--build-command", self.BUILD_COMMAND, "--check-command", self.CHECK_COMMAND)
+
+    def head_settings_entry(self, kind, text, mode=None):
+        """The head commit holding the FIXED greeting and one settings entry, and its sha.
+
+        kind is "link" for a symbolic link whose target text is text, or "file" for a regular file.
+        """
+        link = self.settings()
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        if kind == "link":
+            os.symlink(text, link)
+        else:
+            link.write_text(text)
+            if mode is not None:
+                link.chmod(mode)
+        (self.project / "src").mkdir(parents=True, exist_ok=True)
+        (self.project / "out").mkdir(parents=True, exist_ok=True)
+        (self.project / "src" / "greeting.txt").write_text(self.FIXED)
+        (self.project / "out" / "greeting.txt").write_text(self.FIXED.upper())
+        run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
+        run("git", "add", "-A")
+        run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "head")
+        return run("git", "rev-parse", "HEAD").stdout.strip()
+
+    def test_edits_verify_fails_a_settings_file_created_as_a_symbolic_link(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_settings_entry("link", '{"autoCompactWindow":300000}')
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_a_settings_file_created_as_an_executable_file(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_settings_entry("file", '{\n  "autoCompactWindow": 300000\n}\n', 0o755)
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_fails_a_cap_change_on_a_committed_settings_file_symlink(self):
+        self.git_project()
+        self.settings().parent.mkdir(parents=True, exist_ok=True)
+        os.symlink('{"autoCompactWindow":300000}', self.settings())
+        reviewed = self.commit_files({"src/greeting.txt": self.SOURCE, "out/greeting.txt": self.SOURCE.upper(),
+                                      "tools/build.py": self.BUILD, "tools/check.py": self.CHECK})
+        self.open_edits_dish()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_settings_entry("link", '{"autoCompactWindow":90000}')
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
 
     def test_status_reports_an_unreadable_settings_file(self):
         if os.geteuid() == 0:

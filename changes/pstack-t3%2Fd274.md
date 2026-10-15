@@ -10,4 +10,7 @@
 - A refused open of a new store leaves no store directory and claims no intake, and a refused write to an existing store changes no store file
 - `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
 - `edits verify` compares `.claude/settings.local.json` like every other path and passes a head whose only change there is the `autoCompactWindow` member
-- `edits verify` leaves the settings path out of its comparison only when the two trees differ by the cap splice alone and the scratch copy holds equal digests there, so a review edit or a build that changes the settings file fails the verify
+- A settings file that is a symbolic link refuses the write when the link itself or the file it points at is tracked by git, and the link, its target text, and its target bytes stay unchanged
+- A settings write the file system refuses, such as an unwritable `.claude` directory, exits 1 with a `brigade:` line naming the settings path and the system's reason, and a refused open of a new store leaves no store directory
+- `edits verify` applies the cap exemption only when every tree entry holding the settings file is a regular file in mode 100644, so a created symbolic link, a created executable file, and a cap change on a committed symbolic link are compared
+- `edits verify` leaves the settings path out of its comparison only when the two trees differ by the cap splice alone and the scratch copy holds equal digests there; a review edit or build that changes the settings file uses the normal tree comparison

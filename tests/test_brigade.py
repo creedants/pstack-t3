@@ -169,15 +169,6 @@ class OpenFlagHelpTest(BrigadeTest):
         self.assertIn(self.CAP_HELP, words)
         self.assertIn(self.PROVIDER_HELP, words)
 
-    def test_set_help_still_promises_the_settings_file_write(self):
-        result = real_process(ProcessReason.HELP, SCRIPT, ["set", "--help"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        words = " ".join(result.stdout.split())
-        self.assertIn('--context-cap CONTEXT_CAP the auto-compact window written to .claude/settings.local.json; '
-                      '"" clears it to 300000', words)
-        self.assertIn('--coordinator-provider COORDINATOR_PROVIDER claude or other; "" clears it to claude; '
-                      'other writes no settings file', words)
-
 
 class ReleaseSectionsTest(unittest.TestCase):
     """The release bump and the changelog sections a store of fragments of every kind gives."""
