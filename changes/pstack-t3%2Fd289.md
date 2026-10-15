@@ -7,4 +7,4 @@
 - `dish --worker-ended` records that this attempt's worker ended or failed and wrote no report and writes one ended log row and changes no dish field
 - `watch` prints four recovery steps for a worker ended with no report, and the coordinator runs them in order. The first step keeps the commits on the dish branch with no new branch when the dish has one.
 - `watch` prints a `skipped` line for each skipped seat until `model clear` records a passing smoke test. No command refuses a launch on a skipped seat, so the coordinator must launch none on it.
-- Worker reports hold a `## Threads` section listing code delegate, claims check, and architect runner threads
+- The worker brief asks a worker that used a code delegate, claims check, or architect runner to write a `## Threads` section listing those threads. A report without the section adds no row and is not an error.
