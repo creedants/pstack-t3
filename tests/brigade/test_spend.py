@@ -72,7 +72,7 @@ class SpendTest(BrigadeTest):
         env.pop("T3CODE_HOME", None)
         return env
 
-    def database(self, providers=(), turns=(), *, tables=True, indexed=True):
+    def database(self, providers=(), turns=(), *, threads=(), tables=True, indexed=True):
         base = Path(self.temporary.name) / "t3"
         path = base / "userdata" / "statev2.sqlite"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +90,10 @@ class SpendTest(BrigadeTest):
                 connection.execute(
                     "CREATE TABLE orchestration_v2_projection_provider_turns "
                     "(provider_thread_id TEXT, payload_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE orchestration_v2_projection_threads "
+                    "(thread_id TEXT PRIMARY KEY, payload_json TEXT)"
                 )
                 if indexed:
                     connection.execute(
@@ -115,6 +119,11 @@ class SpendTest(BrigadeTest):
                     "(provider_thread_id, payload_json) VALUES (?, ?)",
                     turns,
                 )
+                connection.executemany(
+                    "INSERT INTO orchestration_v2_projection_threads "
+                    "(thread_id, payload_json) VALUES (?, ?)",
+                    threads,
+                )
             connection.commit()
         finally:
             connection.close()
@@ -138,6 +147,11 @@ class SpendTest(BrigadeTest):
         if token_usage is not None:
             body["tokenUsage"] = token_usage
         return (provider, json.dumps(body))
+
+    def selected(self, thread, model, instance="codex"):
+        """One row of the `thread_id` and `payload_json` columns that `spend` reads from T3's thread projection, with the thread's recorded model selection in the payload."""
+        payload = {"modelSelection": {"instanceId": instance, "model": model}}
+        return (thread, json.dumps(payload))
 
     def assistant(self, ident, model, incoming, outgoing, cache_read=None, cache_write=None, content=None, thinking=_OMIT):
         usage = {"input_tokens": incoming, "output_tokens": outgoing}
@@ -413,6 +427,66 @@ class SpendTest(BrigadeTest):
         }])
         self.assertEqual(report["threads_without_a_token_source"], 0)
         self.assertNotIn("dollars", report["rows"][0]["models"][0])
+
+    def test_a_codex_turn_reports_the_thread_model_selection(self):
+        self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "codex")],
+            [self.turn("prov-1", 100, 20, cached=80, created=5, reasoning=4)],
+            threads=[self.selected("ledger-1", "gpt-6.1-sol")],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  gpt-6.1-sol  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
+            "threads without a token source 0\n",
+        )
+
+    def test_an_opencode_turn_reports_the_thread_model_selection(self):
+        self.fill([self.dish()], threads=[self.ledger(seat="opencode/opencode-go")], logs=[self.close()])
+        base = self.database(
+            [self.provider("ledger-1", "prov-1", "opencode")],
+            [self.turn("prov-1", 100, 20, cached=80, created=5, reasoning=4)],
+            threads=[self.selected("ledger-1", "opencode-go/step-5-preview-free", instance="opencode")],
+        )
+        code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            out,
+            "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+            "  opencode-go/step-5-preview-free  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
+            "threads without a token source 0\n",
+        )
+
+    def test_a_thread_model_that_is_missing_empty_or_not_a_model_id_stays_model_not_recorded(self):
+        cases = (
+            ("no selection row", ()),
+            ("null model", (None,)),
+            ("empty model", ("",)),
+            ("model with a space", ("gpt 6",)),
+            ("model as a number", (7,)),
+        )
+        for name, models in cases:
+            with self.subTest(name=name):
+                self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
+                base = self.database(
+                    [self.provider("ledger-1", "prov-1", "codex")],
+                    [self.turn("prov-1", 100, 20, cached=80, created=5, reasoning=4)],
+                    threads=[self.selected("ledger-1", model) for model in models],
+                )
+                code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env())
+                self.assertEqual(code, 0, out + err)
+                self.assertEqual(err, "")
+                self.assertEqual(
+                    out,
+                    "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+                    "  model not recorded  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
+                    "threads without a token source 0\n",
+                )
 
     def test_a_partial_turn_prints_not_recorded(self):
         self.fill([self.dish()], threads=[self.ledger()], logs=[self.close()])
