@@ -1,0 +1,5 @@
+- kind feature
+- `scripts/outsider_smoke.py` runs the README Quick start commands, `roles.py show` on a catalog written from `tests/fixtures/catalog.json`, and `brigade.py open` plus `land.py init` on a scratch repository, each as one process with a fresh HOME and no XDG or store variables, printing one `ok` line per step and exiting 1 on the first failure
+- It refuses a `--home` pointing at a directory the run did not create, and a missing git identity, before making anything
+- `.github/workflows/outsider.yml` runs the script on push to main and pull requests in a `python:3.12-slim` container that installs git
+- `tests/test_outsider_smoke.py` asserts the five step lines with exit 0 and an unchanged canary directory, and the refusal with exit 1
