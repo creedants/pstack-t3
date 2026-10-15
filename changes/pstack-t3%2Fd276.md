@@ -1,0 +1,7 @@
+- kind upkeep
+- upstream.json names commit e5136d82418d2db3165ea1050d17577cd618cc05 and keeps version 0.15.25
+- vendor/pstack carries the sync of cursor/plugins pstack at e5136d82 for ticket T706, and rewrite of the version badge leaves README.md unchanged
+- t3/overrides/poteto-mode/SKILL.md takes the new upstream Principles bullets for Attack the Premise, Fix Root Causes, and Test Behavior Not Implementation
+- those three bullets name no Cursor mechanism, so no T3 mapping was needed and every other line of the override is unchanged
+- t3/overrides.lock.json moves the poteto-mode/SKILL.md pin to the hash of the new vendored file, which build.py records as the sha256 of vendor/pstack/skills/poteto-mode/SKILL.md
+- skills/poteto-mode/SKILL.md, skills/correct/SKILL.md, skills/principle-attack-the-premise/SKILL.md, skills/principle-fix-root-causes/SKILL.md, skills/principle-make-operations-idempotent/SKILL.md, and skills/principle-test-behavior-not-implementation/SKILL.md regenerate from vendor/pstack
