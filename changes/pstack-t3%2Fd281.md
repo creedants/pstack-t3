@@ -2,6 +2,7 @@
 - `t3/runtime.md` records T3 Code nightly 20261015.3145 behavior. A delegated child's question for the user wakes this thread, and an approval request still sends no wake.
 - `hasPendingQuestion` is `true` on `task_status` while a question blocks the child, and a question that blocks the child also ends a `mode: "wait"` call with `hasPendingQuestion: true` and `waitTimedOut: false` while the task stays open.
 - The stalled-child step of Failure handling lists the child's pending requests with the child's `childThreadId` as `threadId` before it reads the child's last items, and Pending requests names that `threadId` on `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`.
-- History records that a progress update Claude 5.1 or later writes between tool calls is an assistant message on 3145, that a project can also remove a worktree a set number of days after its thread settles, and that a thread dropped from another environment arrives as a saved transcript file.
-- The omitted-`threadId` rule for `t3_thread_organize` is stated once as one sentence, with no mid-sentence semicolon.
+- History records that a progress update Claude 5.1 or later writes between tool calls is an assistant message from nightly 3132, and that a thread dropped from another environment arrives as a saved transcript file.
+- Local state records that a project can also remove a worktree a set number of days after its thread settles. No rule removes the worktree of a settled thread that still exists within a minute of that thread's last update.
+- The `t3_thread_organize` sentence that says the tool acts on the calling thread when `threadId` is missing is one sentence with no mid-sentence semicolon, and it appears once.
 - `skills/pstack-runtime/SKILL.md` is the regenerated copy of `t3/runtime.md`.
