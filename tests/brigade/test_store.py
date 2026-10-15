@@ -538,8 +538,9 @@ class StoreTest(BrigadeTest):
         self.assertEqual(recorded, rows)
 
     def test_a_path_under_the_resolved_tmp_is_refused(self):
-        # In process so the Path resolve patch reaches the command.
+        # Uses call_in_process so the Path resolve patch reaches the command.
         from unittest import mock
+        from .support import call_in_process
         self.open()
         fake = Path.home().resolve() / "fake-tmp"
         real = Path.resolve
@@ -553,5 +554,7 @@ class StoreTest(BrigadeTest):
         before = (self.at / "restaurant.json").read_bytes()
         refusal = "brigade: --scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it\n"
         with mock.patch.object(Path, "resolve", patched):
-            self.assertEqual(self.run_raw("set", "--scratch-dir", bad), (1, "", refusal))
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                      "set", "--scratch-dir", bad])
+            self.assertEqual((outcome.code, outcome.stdout_text(), outcome.stderr_text()), (1, "", refusal))
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
