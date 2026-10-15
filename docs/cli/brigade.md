@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -307,6 +307,41 @@ record one open run after report-back, once per attempt
 | `--provider PROVIDER` | yes |  |  |  |
 | `--minutes MINUTES` | yes |  |  |  |
 
+## brigade.py model
+
+```text
+brigade.py [flags] model <action>
+```
+
+record a provider/model seat as skipped, or clear it after a smoke test
+
+`<action>` is one of `skip`, `clear`.
+
+## brigade.py model skip
+
+```text
+brigade.py [flags] model skip --cause CAUSE model
+```
+
+record a provider/model seat as skipped until model clear records a passing smoke test
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `model` | yes |  |  | the seat as provider/model |
+| `--cause CAUSE` | yes | `rate-limit`, `failed` |  |  |
+
+## brigade.py model clear
+
+```text
+brigade.py [flags] model clear model
+```
+
+record a passing smoke test and clear that seat
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `model` | yes |  |  | the seat as provider/model |
+
 ## brigade.py thread
 
 ```text
@@ -325,7 +360,7 @@ record one thread an item used, for a role no other command writes
 ## brigade.py dish
 
 ```text
-brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--lease LEASE] [--paths PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
+brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
 ```
 
 update a dish
@@ -341,6 +376,7 @@ update a dish
 | `--sha SHA` |  |  |  |  |
 | `--timebox TIMEBOX` |  |  |  | minutes; raise it once for a worker that is still making progress |
 | `--reported` |  |  |  | record that this attempt's report-back arrived |
+| `--worker-ended WORKER_ENDED` |  |  |  | record that this attempt's worker ended or failed and wrote no report |
 | `--lease LEASE` |  |  |  | record a lease id claimed again |
 | `--paths PATHS` |  |  |  | record the paths that lease covers |
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |

@@ -251,6 +251,43 @@ def worker_where(dish):
     return "no worker recorded"
 
 
+def attempt_count(restaurant, dish):
+    """The attempt this dish is on, counted from 1."""
+    return len(attempt_starts(restaurant, dish))
+
+
+def ended_row(restaurant, dish):
+    """The log row that records this attempt's worker end, or None.
+
+    The attempt number is the row's state cell, so no row is rewritten when a
+    replacement worker starts another attempt.
+    """
+    number = str(attempt_count(restaurant, dish))
+    found = None
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "ended" and row["id"] == dish["id"] and row["state"] == number:
+            found = row
+    return found
+
+
+def recovery_lines(dish, error):
+    """The flag line and the four recovery steps for a dish whose worker ended with no report."""
+    ident = dish["id"]
+    branch = dish.get("branch") or ""
+    context = shlex.quote(error)
+    # A brief needs a goal, an acceptance, a verify, a base, and a contract, so the line names them
+    # instead of a command brief refuses.
+    steps = [f"  keep the commits on {shlex.quote(branch)} and record no new branch; the dish keeps its lease"
+             if branch else "  keep the commits where the worker left them; the dish keeps its lease",
+             f"  write the continuation brief: brief {ident} with --base <trunk ref>, --context {context}, "
+             "and the goal, acceptance, verify, and contract it needs",
+             f"  launch a fresh thread in the same worktree and record it with dish {ident} --thread <new thread id>"]
+    # The record needs a thread, but the cell can be cleared afterwards without starting another attempt.
+    steps.append(f"  archive the dead thread {shlex.quote(dish['thread'])}" if dish["thread"]
+                 else "  archive the dead worker")
+    return [f"{ident}: worker ended with no report; the recorded reason is {error}", *steps]
+
+
 def dish_progress(restaurant, dish, moment, held=False):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
@@ -276,6 +313,10 @@ def dish_progress(restaurant, dish, moment, held=False):
                 return [f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})"]
             return [f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})"]
         return [f"{dish['id']}: report written, no report-back ({where})"]
+    # A dead worker is neither running nor over its timebox, so its lines come before both.
+    ended = ended_row(restaurant, dish)
+    if ended:
+        return recovery_lines(dish, ended["note"])
     if minutes > timebox:
         return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
     return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
@@ -330,6 +371,8 @@ def watch(restaurant):
             lines.append(f"handed to you: {handed}; run ticket take")
         inputs = block_inputs(restaurant)
         workers = workers_line(restaurant.meta, inputs[1])
+        # A skipped seat is a restaurant-wide fact, not a dish line, so it sits between the two.
+        skipped = skip_lines(restaurant)
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -357,7 +400,7 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=seam.now())
-    text = "\n".join([workers, *(item_lines + lines or ["no work in progress"])])
+    text = "\n".join([workers, *skipped, *(item_lines + lines or ["no work in progress"])])
     sentence = handoff_size_line(restaurant.dir)
     if sentence:
         restaurant.warn(sentence)
@@ -393,6 +436,80 @@ def record_hang(restaurant, ident, provider, minutes, attempt=None):
     suffix = f" (attempt {attempt})" if attempt else ""
     restaurant.log("hang", ident, "open", f"{provider} {minutes}m{suffix}")
     return f"{ident}: {provider} open {minutes}m{suffix}"
+
+
+def require_seat(seat):
+    """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
+    value = clean(seat)
+    provider, _, model = value.partition("/")
+    if not (provider and model) or any(character.isspace() for character in value):
+        raise BrigadeError("a model is provider/model")
+    return value
+
+
+def latest_models(restaurant):
+    """The latest model log row per seat. The latest row for a seat wins."""
+    found = {}
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "model":
+            found[row["id"]] = row
+    return found
+
+
+def skip_lines(restaurant):
+    """One line per seat whose latest model row is skipped, sorted by seat."""
+    return [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
+            for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+
+
+def record_model_skip(restaurant, seat, cause):
+    """Record one provider/model seat as skipped. The same cause writes no row while the seat stays skipped with it."""
+    name = require_seat(seat)
+    latest = latest_models(restaurant).get(name)
+    if latest is not None and latest["state"] == "skipped" and latest["note"] == cause:
+        return f"{name}: already skipped"
+    restaurant.log("model", name, "skipped", cause)
+    return f"{name}: recorded as skipped"
+
+
+def record_model_clear(restaurant, seat):
+    """Record a passing smoke test for one seat and clear its skip."""
+    name = require_seat(seat)
+    latest = latest_models(restaurant).get(name)
+    if latest is None:
+        raise BrigadeError(f"{name} is not skipped")
+    if latest["state"] == "cleared":
+        return f"{name}: already cleared"
+    restaurant.log("model", name, "cleared", "smoke test passed")
+    return f"{name}: no longer skipped"
+
+
+def record_worker_end(restaurant, ident, error):
+    """Record that this attempt's worker ended or failed and wrote no report.
+
+    The log row is the only dish write, so the dish keeps its lease, its branch,
+    and its thread cell.
+    """
+    reason = clean(error)
+    if not reason:
+        raise BrigadeError("--worker-ended needs a reason")
+    _, dish = restaurant.find("dishes.tsv", ident)
+    if dish["state"] != "in-progress":
+        raise BrigadeError(f"{ident} is {dish['state']}; --worker-ended records an in-progress dish")
+    if not dish["thread"]:
+        raise BrigadeError(f"{ident} has no worker thread recorded")
+    if dish.get("reported") == "yes":
+        raise BrigadeError(f"{ident} has a report-back on this attempt")
+    if report_is_current(restaurant, dish):
+        raise BrigadeError(f"{ident} has a report file for this attempt")
+    attempt = str(attempt_count(restaurant, dish))
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "ended" and row["id"] == ident and row["state"] == attempt:
+            if row["note"] == reason:
+                return f"{ident}: worker end already recorded"
+            raise BrigadeError(f"{ident} already records a different worker end for this attempt")
+    restaurant.log("ended", ident, attempt, reason)
+    return f"{ident}: worker ended with no report; the recorded reason is {reason}"
 
 
 @dataclass(frozen=True)

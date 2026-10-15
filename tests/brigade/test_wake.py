@@ -14,6 +14,7 @@ from .support import (
     json,
     os,
     runpy,
+    shlex,
     subprocess,
     sys,
     time,
@@ -1621,3 +1622,212 @@ class WakeTest(BrigadeTest, _WakeRace):
         see = [line for line in lines if line.startswith("see ")]
         self.assertEqual(see, ["see Run startable and take the first ticket it prints as startable, "
                                "with every ticket it prints as rides with that ticket."])
+
+    def test_watch_names_a_worker_that_ended_with_no_report_and_the_recorded_reason(self):
+        self.open()
+        self.fire_one(timebox="60")
+        error = "rate limit from grok/grok-4.7"
+        self.assertEqual(self.brigade("dish", "D1", "--worker-ended", error),
+                         f"D1: worker ended with no report; the recorded reason is {error}")
+        self.assertEqual(self.brigade("watch"), "\n".join([
+            "workers: 1 of 2 running, 1 idle, auto-start: normal",
+            f"D1: worker ended with no report; the recorded reason is {error}",
+            "  keep the commits on perf/d1 and record no new branch; the dish keeps its lease",
+            "  write the continuation brief: brief D1 with --base <trunk ref>, "
+            f"--context {shlex.quote(error)}, and the goal, acceptance, verify, and contract it needs",
+            "  launch a fresh thread in the same worktree and record it with dish D1 --thread <new thread id>",
+            "  archive the dead thread thread-9",
+        ]))
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "ended"],
+                         [("D1", "1", error)])
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual((row["thread"], row["branch"], row["reported"]), ("thread-9", "perf/d1", ""))
+
+    def test_a_second_worker_end_with_the_same_error_writes_nothing(self):
+        self.open()
+        self.fire_one(timebox="60")
+        error = "rate limit from grok/grok-4.7"
+        self.brigade("dish", "D1", "--worker-ended", error)
+        before = json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"]
+        self.assertEqual(self.brigade("dish", "D1", "--worker-ended", error), "D1: worker end already recorded")
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "ended"]), 1)
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["lastActivityAt"], before)
+
+    def test_a_different_worker_end_on_the_same_attempt_is_refused(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "rate limit from grok/grok-4.7")
+        self.assertEqual(self.brigade("dish", "D1", "--worker-ended", "context window exhausted", ok=False),
+                         "brigade: D1 already records a different worker end for this attempt")
+        self.assertEqual([row["note"] for row in self.log_rows() if row["kind"] == "ended"],
+                         ["rate limit from grok/grok-4.7"])
+
+    def test_worker_ended_refuses_every_other_dish_flag(self):
+        self.open()
+        self.fire_one(timebox="60")
+        others = (("--state", "sent-back"), ("--state", "dropped"), ("--thread", "thread-10"), ("--thread", ""),
+                  ("--task", "t-2"), ("--branch", "perf/d2"), ("--pr", "https://x/1"), ("--sha", "abc"),
+                  ("--timebox", "90"), ("--reported",), ("--lease", "L1"), ("--paths", "README.md"),
+                  ("--stopped", "idle"), ("--mode", "full", "--reason", "why"))
+        for extra in others:
+            self.assertEqual(self.brigade("dish", "D1", "--worker-ended", "worker died", *extra, ok=False),
+                             "brigade: --worker-ended takes no other dish flag", extra)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ended"], [])
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "thread-9")
+
+    def test_worker_ended_refuses_a_dish_that_is_not_in_progress_has_no_thread_or_already_has_a_report(self):
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "4")
+        for number in range(1, 5):
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Fix {number}")
+            self.brigade("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", f"Fix {number}",
+                         "--thread", "thread-9")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("dish", "D2", "--thread", "")
+        self.brigade("dish", "D3", "--reported")
+        self.attempt_report("done", dish="D4")
+        refusals = (
+            (("dish", "D1", "--worker-ended", "worker died"),
+             "brigade: D1 is sent-back; --worker-ended records an in-progress dish"),
+            (("dish", "D2", "--worker-ended", "worker died"), "brigade: D2 has no worker thread recorded"),
+            (("dish", "D3", "--worker-ended", "worker died"), "brigade: D3 has a report-back on this attempt"),
+            (("dish", "D4", "--worker-ended", "worker died"), "brigade: D4 has a report file for this attempt"),
+        )
+        for argv, refusal in refusals:
+            self.assertEqual(self.brigade(*argv, ok=False), refusal, argv)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ended"], [])
+
+    def test_a_report_file_written_after_the_worker_end_keeps_the_report_line(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.attempt_report("done")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n"
+                                                "D1: report written, no report-back (thread thread-9)")
+
+    def test_replacing_the_worker_hides_the_ended_line(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.brigade("dish", "D1", "--thread", "thread-10")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n"
+                                                "D1: running 0m of 60m (thread thread-10)")
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "ended"],
+                         [("1", "worker died")])
+
+    def test_an_ended_row_from_the_previous_attempt_does_not_flag_the_new_one(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died on attempt 1")
+        self.brigade("dish", "D1", "--thread", "thread-10")
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n"
+                                                "D1: running 0m of 60m (thread thread-10)")
+        self.brigade("dish", "D1", "--worker-ended", "worker died on attempt 2")
+        self.assertIn("D1: worker ended with no report; the recorded reason is worker died on attempt 2",
+                      self.brigade("watch"))
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "ended"],
+                         [("1", "worker died on attempt 1"), ("2", "worker died on attempt 2")])
+
+    def test_a_cleared_thread_cell_does_not_name_an_empty_dead_thread(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.brigade("dish", "D1", "--thread", "")
+        lines = self.brigade("watch").splitlines()
+        self.assertEqual(lines[1], "D1: worker ended with no report; the recorded reason is worker died")
+        self.assertEqual(lines[-1], "  archive the dead worker")
+
+    def test_a_held_dish_does_not_print_the_ended_line(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.park_item()
+        self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
+
+    def test_watch_lists_a_skipped_model_until_model_clear_records_it(self):
+        self.open()
+        self.fire_one(timebox="60")
+        before = self.brigade("watch")
+        seat = "grok/grok-4.7"
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"),
+                         f"{seat}: recorded as skipped")
+        workers, dish_line = before.splitlines()
+        skipped = f"skipped {seat} (rate-limit); run model clear {shlex.quote(seat)} after a smoke test passes"
+        self.assertEqual(self.brigade("watch"), "\n".join([workers, skipped, dish_line]))
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped")
+        self.assertEqual(self.brigade("watch"), before)
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: already cleared")
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [("skipped", "rate-limit"), ("cleared", "smoke test passed")])
+
+    def test_a_skipped_model_does_not_replace_no_work_in_progress(self):
+        self.open()
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                "skipped grok/grok-4.7 (rate-limit); "
+                                                "run model clear grok/grok-4.7 after a smoke test passes\n"
+                                                "no work in progress")
+
+    def test_a_second_skip_with_the_same_cause_writes_nothing_and_a_new_cause_replaces_the_line(self):
+        self.open()
+        seat = "grok/grok-4.7"
+        self.brigade("model", "skip", seat, "--cause", "rate-limit")
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"), f"{seat}: already skipped")
+        self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [("skipped", "rate-limit")])
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "failed"),
+                         f"{seat}: recorded as skipped")
+        self.assertIn(f"skipped {seat} (failed); run model clear {shlex.quote(seat)} after a smoke test passes",
+                      self.brigade("watch"))
+        self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "model"]), 2)
+
+    def test_model_clear_refuses_a_seat_with_no_model_row_and_a_model_needs_provider_and_name(self):
+        self.open()
+        self.assertEqual(self.brigade("model", "clear", "grok/grok-4.7", ok=False),
+                         "brigade: grok/grok-4.7 is not skipped")
+        for seat in ("grok", "grok/", "/grok-4.7", "grok /grok-4.7"):
+            self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit", ok=False),
+                             "brigade: a model is provider/model", seat)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "model"], [])
+
+    def test_a_seat_with_a_namespaced_model_id_skips_watches_and_clears(self):
+        self.open()
+        seat = "opencode-go/opencode-go/step-5-preview-free"
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"),
+                         f"{seat}: recorded as skipped")
+        skipped = (f"skipped {seat} (rate-limit); "
+                   f"run model clear {shlex.quote(seat)} after a smoke test passes")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                f"{skipped}\n"
+                                                "no work in progress")
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                "no work in progress")
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [(seat, "skipped", "rate-limit"), (seat, "cleared", "smoke test passed")])
+
+    def test_close_omits_the_worker_end_and_the_skipped_model(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "rate limit from grok/grok-4.7")
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        closed = self.brigade("close", "--dry-run")
+        self.assertIn("Cut startup", closed)
+        self.assertNotIn("rate limit", closed)
+        self.assertNotIn("grok/grok-4.7", closed)
+
+    def test_next_and_startable_stay_unchanged_when_a_worker_has_ended_and_a_model_is_skipped(self):
+        self.open()
+        self.fire_one(timebox="60")
+        before = (self.brigade("next", "liveness"), self.brigade("startable"))
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.brigade("model", "skip", "grok/grok-4.7", "--cause", "rate-limit")
+        self.assertEqual((self.brigade("next", "liveness"), self.brigade("startable")), before)
+
+    def test_the_executive_admin_store_refuses_model_skip_and_clear(self):
+        self.open_admin()
+        refusal = "brigade: model works only in a coordinator's store"
+        self.assertEqual(self.admin("model", "skip", "grok/grok-4.7", "--cause", "rate-limit", ok=False), refusal)
+        self.assertEqual(self.admin("model", "clear", "grok/grok-4.7", ok=False), refusal)
+        rows = [line.split("\t") for line in
+                (self.store / "bridge-kit" / ".admin" / "log.tsv").read_text().splitlines()[1:] if line]
+        self.assertEqual([row[1] for row in rows], [])

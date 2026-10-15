@@ -66,7 +66,7 @@ try:
     from brigade_lib.shared import BrigadeError, FENCE_OPEN, FENCE_OPEN_INDENTED, KEPT_CELLS, MalformedTable, age, clean, command_words, fence_close, fence_open, now, one_of, plural, same_text, slug, stored, threads_fence_open
     from brigade_lib.store import ADDED_COLUMNS, ADMIN_COMMANDS, ADMIN_DIR, ADMIN_LINES, ADMIN_MENU, ADMIN_NAME, AUTOFIRE, CHILD_ROLES, CLAIM_WAIT_SECONDS, CLOSED_GOAL_STATES, COUNTED_STATES, DISH_STATES, EDITS_VERDICT, GENERATED_ROOT, GOAL_MOVES, GOAL_STATES, HELD_LOCKS, HOUSE_RULES, IN_FLIGHT_STATES, KINDS, KIND_CHOICE, LEASED_STATES, LINE_SUFFIX, LIVE_TICKET_STATES, LOW_FLAG_DAYS, LOW_RESERVE, MENU, MESSAGE_ONLY, MODES, NEEDS_CONTRACT, NOTHING_HANDED, OFF_MENU_TEMPLATE, OPEN_LINES, OPEN_RUN_MINUTES, OWING_STATES, PREFIX, PRIORITIES_BY_RANK, PURPOSE_TEMPLATE, REPORTING, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, RULING_KINDS, RULING_RULES, RULING_STATES, Restaurant, SCRATCH_KEY, SNAPSHOT_CHUNK, SOURCE_PRIORITY, SOURCE_ROOT, STATION_KIND, TABLES, THREADS_WRITERS, THREAD_COMMAND_ROLES, THREAD_ROLES, TICKET_STATES, UNSENT, VERDICTS, WORKER_ROLES, WORK_COMMANDS, _read_meta, holder_prefix, intake_owner, is_admin, is_timestamp, menu_section, open_restaurant, parse_row, read_chunk, refuse_owned_intake, reporting_of, roles_script, scratch_parent_text, sibling_lines, siblings, store_path, store_root, wait_for_meta, write_atomic
     from brigade_lib.tickets import ActsOn, EVERY_ROW, Fault, FollowUps, GOALS_ONLY, Goal, Label, LabelCounts, Labels, NO_WORK, Tally, Tracked, add_goal, add_ticket, append_ticket, base_source, cap_pairs, count_labels, file_follow_ups, finish_request, finished_requests, follow_up_kind, follow_ups, frozen_label, goal_share, goal_work, handed_count, handoff_id, in_flight_tickets, inbox_file, intake_list, is_live, label_words, move_ticket, open_goal, paths_of, pattern_directory, priority_of, quoted_paths, read_goal, read_label, read_labels, record_paths, refuse_live_ref, request_files, review_pairs, says_no_work, set_goal, set_intake, sibling_named, sibling_rails, take_inbox, take_tickets, taken_row, tell, ticket_paths, tracked_paths, unique_names, whole_share
-    from brigade_lib.wake import CLOSE_OCCASIONS, DRAIN_LABELS, Debt, If, NO_WORKER, OCCASION_ORDER, ROUTINE_DETAILS, Reply, Run, STARTS_AFTER, See, Snapshot, Standing, Trigger, Waiting, YES_OCCASIONS, accepted_argv, admin_sends, blocked_needs_user, budget_reached, closing_options, compile_sheet, counted_timebox, crossing_send_back, cue_line, decision_detail, decision_holds, dish_by_id, dish_progress, format_sheet, fresh_decision_ids, from_user_request, hang_attempt, held_occasions, holder_of, housekeeping, inbox_cues, inbox_ready, is_drained, land_follow, lease_refusals, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, merge_accepted, merge_why, next_text, note_unsent, occasion_yes, older_than_hour, open_for, open_item_decisions, option_key, pass_words, pause_if, plan, prefix_cues, record_hang, reply_for, report_is_current, request_text, routine_detail, startable, startable_lines, tail_cues, ticket_lines, trigger_from, waiting_ticket, wake_label, watch, worker_where
+    from brigade_lib.wake import CLOSE_OCCASIONS, DRAIN_LABELS, Debt, If, NO_WORKER, OCCASION_ORDER, ROUTINE_DETAILS, Reply, Run, STARTS_AFTER, See, Snapshot, Standing, Trigger, Waiting, YES_OCCASIONS, accepted_argv, admin_sends, blocked_needs_user, budget_reached, closing_options, compile_sheet, counted_timebox, crossing_send_back, cue_line, decision_detail, decision_holds, dish_by_id, dish_progress, format_sheet, fresh_decision_ids, from_user_request, hang_attempt, held_occasions, holder_of, housekeeping, inbox_cues, inbox_ready, is_drained, land_follow, lease_refusals, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, merge_accepted, merge_why, next_text, note_unsent, occasion_yes, older_than_hour, open_for, open_item_decisions, option_key, pass_words, pause_if, plan, prefix_cues, record_hang, record_model_clear, record_model_skip, record_worker_end, reply_for, report_is_current, request_text, require_seat, routine_detail, startable, startable_lines, tail_cues, ticket_lines, trigger_from, waiting_ticket, wake_label, watch, worker_where
     from brigade_lib import seam
     seam.bind(globals())
 finally:
@@ -286,6 +286,14 @@ def parser():
     p.add_argument("--provider", required=True)
     p.add_argument("--minutes", type=int, required=True)
 
+    p = sub.add_parser("model", help="record a provider/model seat as skipped, or clear it after a smoke test")
+    t = p.add_subparsers(dest="action", required=True)
+    a = t.add_parser("skip", help="record a provider/model seat as skipped until model clear records a passing smoke test")
+    a.add_argument("model", help="the seat as provider/model")
+    a.add_argument("--cause", choices=("rate-limit", "failed"), required=True)
+    a = t.add_parser("clear", help="record a passing smoke test and clear that seat")
+    a.add_argument("model", help="the seat as provider/model")
+
     p = sub.add_parser("thread", help="record one thread an item used, for a role no other command writes")
     p.add_argument("dish")
     p.add_argument("--role", required=True, choices=THREAD_COMMAND_ROLES,
@@ -301,6 +309,7 @@ def parser():
         p.add_argument(f"--{field}")
     p.add_argument("--timebox", type=int, help="minutes; raise it once for a worker that is still making progress")
     p.add_argument("--reported", action="store_true", help="record that this attempt's report-back arrived")
+    p.add_argument("--worker-ended", help="record that this attempt's worker ended or failed and wrote no report")
     p.add_argument("--lease", help="record a lease id claimed again")
     p.add_argument("--paths", help="record the paths that lease covers")
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
@@ -752,6 +761,8 @@ def run(argv):
     admin = is_admin(restaurant.meta)
     if admin and args.command in WORK_COMMANDS:
         raise BrigadeError("the executive admin routes work and never runs it")
+    if admin and args.command == "model":
+        raise BrigadeError("model works only in a coordinator's store")
     if not admin and args.command in ADMIN_COMMANDS:
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
     if args.command == "spend":
@@ -787,6 +798,12 @@ def run(argv):
         args.reason = item_escalation(args.mode, args.reason)
         if args.reason and args.command == "dish" and args.state in ("queued", "merged", "dropped"):
             raise BrigadeError(f"--mode full needs open work; run --state {args.state} without it")
+    # The flag-alone refusal runs before the dropped line below, which dispatches to drop before command runs.
+    if args.command == "dish" and args.worker_ended is not None:
+        if not worker_ended_alone(args):
+            raise BrigadeError("--worker-ended takes no other dish flag")
+        with restaurant.checked():
+            return record_worker_end(restaurant, args.id, args.worker_ended)
     if args.command == "dish" and args.state == "dropped":
         return drop(restaurant, args.id, args.stopped)
     if args.command == "brief":
@@ -864,6 +881,22 @@ def _rebound_for_restart(restaurant, ident, thread):
                  if row["dish"] == ident and row["role"] in WORKER_ROLES and not row["end"]
                  and row["thread"] == thread and row["start"] > departed]
     return len(open_rows) == 1
+
+
+def worker_ended_alone(args):
+    """True when --worker-ended is the only dish flag given.
+
+    A dish change on the same argv races the record, because `--state dropped`
+    dispatches to drop before command runs, and a new non-empty `--thread` on an
+    in-progress dish appends the attempt-start row the attempt number is counted
+    from. An empty value is a change too: `--thread ""` clears the cell the
+    archive step names.
+    """
+    def given(name):
+        value = getattr(args, name)
+        return value is not None and value is not False
+    return not any(given(name) for name in ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported",
+                                            "lease", "paths", "stopped", "mode", "reason"))
 
 
 def command(restaurant, args, contract=None, rails=None):
@@ -1191,6 +1224,10 @@ def command(restaurant, args, contract=None, rails=None):
 
     if args.command == "hang":
         return record_hang(restaurant, args.id, args.provider, args.minutes, args.attempt)
+    if args.command == "model":
+        if args.action == "skip":
+            return record_model_skip(restaurant, args.model, args.cause)
+        return record_model_clear(restaurant, args.model)
     if args.command == "status":
         meta = restaurant.meta
         thread = (meta.get("thread") or "").strip()
