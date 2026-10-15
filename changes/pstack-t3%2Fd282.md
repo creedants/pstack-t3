@@ -1,0 +1,3 @@
+- kind upkeep
+- The brigade skill's Run a service step 9 gains a rule that a delegated child's question is not a reply occasion at any level. It answers that question per the pstack-runtime skill's Pending requests section, and parks a question that the brief and the menu do not settle with `86 add`, replying as that level replies to a decision.
+- Step 9's T3 Code version claim now ends at nightly 20261014.3118, where new native Claude thinking stays reasoning and does not create reply text. From 0.0.46-nightly.20261014.3132 or later, a progress update that Claude 5.1 or later writes between tool calls shows as reply text, so a wake that sends no reply writes no progress update between tool calls.
