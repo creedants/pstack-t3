@@ -551,8 +551,7 @@ def _folded_tokens(connection, loaded, wanted):
         for thread_id, provider_id, driver, native in provider_rows:
             if thread_id in by_thread:
                 by_thread[thread_id].append((provider_id, driver, native))
-        models = {thread: _recorded_model(model)
-                  for thread, model in _rows_in(connection, _thread_sql, wanted, loaded["BATCH"])}
+        models = _recorded_models(connection, wanted, loaded["BATCH"])
         turn_ids = list(dict.fromkeys(
             provider_id
             for providers in by_thread.values()
@@ -608,10 +607,8 @@ def _probe(connection):
         ("thread_id", "provider_thread_id", "driver", "payload_json"), "thread_id",
     )
     _require_table(connection, PROVIDER_TURNS, ("provider_thread_id", "payload_json"), "provider_thread_id")
-    _require_table(connection, THREADS, ("thread_id", "payload_json"), "thread_id")
     _searches(connection, _provider_sql(1), ("x",))
     _searches(connection, _turn_sql(1), ("x",))
-    _searches(connection, _thread_sql(1), ("x",))
 
 
 def _require_table(connection, table, columns, lead):
@@ -698,6 +695,15 @@ def _recorded_model(value):
     if not isinstance(value, str) or MODEL_NAME.fullmatch(value) is None:
         return None
     return value
+
+
+def _recorded_models(connection, wanted, batch):
+    try:
+        _require_table(connection, THREADS, ("thread_id", "payload_json"), "thread_id")
+        rows = _rows_in(connection, _thread_sql, wanted, batch)
+    except _Schema:
+        return {}
+    return {thread: _recorded_model(model) for thread, model in rows}
 
 
 def _turn_totals(rows, model):
