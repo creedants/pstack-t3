@@ -135,9 +135,9 @@ def _load(project_root):
 
     The directory that holds the settings file must sit below the project root with no symbolic link at any component
     on the way. The entry at the settings path, which os.replace replaces, and the file the path resolves to when the
-    two differ, must each be a path git leaves writable in the repository that holds its own directory and in the
-    repository that holds the project root. A file that exists must hold a strict JSON object. A refusal raises
-    BrigadeError and changes no file.
+    two differ, must each be a path git leaves writable in the repository that holds its own directory, and in the
+    repository that holds the project root whenever that directory resolves below it. A file that exists must hold a
+    strict JSON object. A refusal raises BrigadeError and changes no file.
     """
     path = settings_path(project_root)
     directory = Path(project_root)
