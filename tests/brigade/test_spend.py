@@ -72,7 +72,7 @@ class SpendTest(BrigadeTest):
         env.pop("T3CODE_HOME", None)
         return env
 
-    def database(self, providers=(), turns=(), *, threads=(), tables=True, indexed=True):
+    def database(self, providers=(), turns=(), *, threads=(), tables=True, indexed=True, thread_table="complete"):
         base = Path(self.temporary.name) / "t3"
         path = base / "userdata" / "statev2.sqlite"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,10 +91,17 @@ class SpendTest(BrigadeTest):
                     "CREATE TABLE orchestration_v2_projection_provider_turns "
                     "(provider_thread_id TEXT, payload_json TEXT)"
                 )
-                connection.execute(
-                    "CREATE TABLE orchestration_v2_projection_threads "
-                    "(thread_id TEXT PRIMARY KEY, payload_json TEXT)"
-                )
+                if thread_table != "absent":
+                    columns = {
+                        "complete": "thread_id TEXT PRIMARY KEY, payload_json TEXT",
+                        "no_thread_id": "payload_json TEXT",
+                        "no_payload_json": "thread_id TEXT PRIMARY KEY",
+                        "no_index": "thread_id TEXT, payload_json TEXT",
+                    }[thread_table]
+                    connection.execute(
+                        "CREATE TABLE orchestration_v2_projection_threads "
+                        f"({columns})"
+                    )
                 if indexed:
                     connection.execute(
                         "CREATE INDEX provider_threads_thread "
@@ -119,11 +126,12 @@ class SpendTest(BrigadeTest):
                     "(provider_thread_id, payload_json) VALUES (?, ?)",
                     turns,
                 )
-                connection.executemany(
-                    "INSERT INTO orchestration_v2_projection_threads "
-                    "(thread_id, payload_json) VALUES (?, ?)",
-                    threads,
-                )
+                if thread_table in ("complete", "no_index"):
+                    connection.executemany(
+                        "INSERT INTO orchestration_v2_projection_threads "
+                        "(thread_id, payload_json) VALUES (?, ?)",
+                        threads,
+                    )
             connection.commit()
         finally:
             connection.close()
@@ -484,6 +492,47 @@ class SpendTest(BrigadeTest):
                 self.assertEqual(
                     out,
                     "D1  wall 2h  rounds 0  send-backs 0  threads 1\n"
+                    "  model not recorded  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
+                    "threads without a token source 0\n",
+                )
+
+    def test_an_unreadable_thread_table_keeps_every_token_total(self):
+        native = "sessUnreadable1"
+        cases = (
+            ("table dropped", "absent"),
+            ("no thread_id", "no_thread_id"),
+            ("no payload_json", "no_payload_json"),
+            ("no index", "no_index"),
+        )
+        for name, thread_table in cases:
+            with self.subTest(name=name):
+                self.fill(
+                    [self.dish()],
+                    threads=[
+                        self.ledger("ledger-turn", "codex/gpt-6.1-sol"),
+                        self.ledger("ledger-claude", "claudeAgent/claude-opus-4-6"),
+                    ],
+                    logs=[self.close()],
+                )
+                claude = self.write_claude(native, [
+                    self.assistant("msgUnreadable1", "claude-opus-4-6", 10, 4),
+                ])
+                base = self.database(
+                    [
+                        self.provider("ledger-turn", "prov-1", "codex"),
+                        self.provider("ledger-claude", "prov-2", "claudeAgent", native),
+                    ],
+                    [self.turn("prov-1", 100, 20, cached=80, created=5, reasoning=4)],
+                    threads=[self.selected("ledger-turn", "gpt-6.1-sol")],
+                    thread_table=thread_table,
+                )
+                code, out, err = self.streams("spend", "--tokens", "--t3-home", str(base), env=self.token_env(claude))
+                self.assertEqual(code, 0, out + err)
+                self.assertEqual(err, "")
+                self.assertEqual(
+                    out,
+                    "D1  wall 2h  rounds 0  send-backs 0  threads 2\n"
+                    "  claude-opus-4-6  in 10  cache-read 0  cache-write 0  out 4  reasoning not recorded\n"
                     "  model not recorded  in 15  cache-read 80  cache-write 5  out 20  reasoning 4\n"
                     "threads without a token source 0\n",
                 )
