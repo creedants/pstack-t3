@@ -1,10 +1,10 @@
 - kind polish
 - `dish --thread` writes the open worker row of threads.tsv for the current attempt with an empty seat and closes the previous open worker row
-- A later attempt is stored as fix worker and the same thread again writes nothing
+- A later attempt is stored as fix worker and the same thread again writes no new row when the call has no --reported or state change
 - `pass record --reviewer-thread` writes the reviewer row for this attempt taking its seat from `--verifier`
-- `thread` records one panel member thread an item used and the other six roles are written by dish thread, reviewer thread, or a report
+- `thread` records one panel member thread an item used and the other six roles are written by `dish --thread`, `pass record --reviewer-thread`, or a report
 - `model skip` needs cause rate-limit or failed and `model clear` records a passing smoke test and clears the skip
 - `dish --worker-ended` records that this attempt's worker ended or failed and wrote no report and writes one ended log row and changes no dish field
-- The liveness check recovers a worker ended with no report by running the four printed steps in order and keeps the commits on the dish branch with no new branch
-- A skipped seat launches no worker, verifier, code delegate, or resolving station until `model clear` after a passing smoke test
+- `watch` prints four recovery steps for a worker ended with no report, and the coordinator runs them in order. The first step keeps the commits on the dish branch with no new branch when the dish has one.
+- `watch` prints a `skipped` line for each skipped seat until `model clear` records a passing smoke test. No command refuses a launch on a skipped seat, so the coordinator must launch none on it.
 - Worker reports hold a `## Threads` section listing code delegate, claims check, and architect runner threads
