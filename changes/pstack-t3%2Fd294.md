@@ -1,0 +1,8 @@
+- kind upkeep
+- `upstream.json` names commit `99743e9c151c8537cbbf1f98bb38f34ef3368453` and keeps version `0.15.25`
+- `vendor/pstack` carries the sync of cursor/plugins `pstack` at `99743e9c` for ticket T730
+- `t3/overrides/swarm/SKILL.md` drops the intro sentence and the step 3 Set N line and the Keep a compact result table sentence to match upstream deletions in `vendor/pstack/skills/swarm/SKILL.md`
+- No new upstream line holds a Cursor mechanism so no new T3 mapping was needed and every other line of the override is unchanged except the retained Remove worker worktrees sentence
+- `t3/overrides.lock.json` moves the `swarm/SKILL.md` pin to the hash of the new vendored file
+- `skills/swarm/SKILL.md` regenerates from the override and `skills/interrogate/references/lead-judgment.md` and `skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md` and `skills/principle-type-system-discipline/SKILL.md` regenerate from vendor
+- `docs/skills.md` updates the `principle-type-system-discipline` description to match upstream
