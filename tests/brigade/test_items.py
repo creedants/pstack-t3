@@ -1113,7 +1113,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.brigade("ticket", "add", "--summary", "b", "--kind", "polish")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
         self.assertEqual(self.close_run("--dry-run")[1].splitlines()[4:],
-                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- polish T2: b"])
+                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- polish T2: b",
+                          "", "## Spend", "", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"])
 
     def test_an_item_and_an_assigned_ticket_whose_kind_cells_hold_no_kind_are_warned_of_and_are_in_no_count_by_kind(self):
         self.fired_bug_fix()
@@ -1124,7 +1125,9 @@ class ItemsTest(BrigadeTest, _ItemsRace):
             f"D1 has kind 'chore', {self.NOT_A_KIND}; no command changes this cell; correct it in dishes.tsv by hand")
         self.assertEqual(len(out["status"].splitlines()), 3)
         self.assertEqual(out["ticket list"], "T1 assigned normal [user] s")
-        self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s"])
+        self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s",
+                                                                  "", "## Spend", "",
+                                                                  "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"])
         self.assertNotIn("chore", "".join(out.values()))
 
     def test_fire_of_a_ticket_whose_goal_cell_and_whose_goals_tsv_row_id_are_the_same_padded_text_warns_of_both_and_starts_an_unassigned_item(self):
@@ -1170,9 +1173,12 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
         self.assertEqual(out["startable"].splitlines()[2], "T2 normal fix, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
-                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b"])
-        for value in ("G9", "G7"):
-            self.assertNotIn(value, "".join(out.values()))
+                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
+                          "", "## Spend", "", "G7  wall open  rounds 0  send-backs 0  threads not recorded"])
+        self.assertNotIn("G9", "".join(out.values()))
+        before, _, after = out["close --dry-run"].partition("## Spend")
+        self.assertNotIn("G7", "".join(value for key, value in out.items() if key != "close --dry-run") + before)
+        self.assertIn("G7", after)
 
     def test_with_goals_tsv_deleted_each_goal_cell_is_warned_of_its_row_counts_as_unassigned_and_no_command_writes_the_table(self):
         self.two_goals()
@@ -1188,7 +1194,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.assertEqual(out["goal list"], "no open or paused goals\nunassigned: 1 waiting, 1 in flight, 0 merged, 0 send-backs")
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
-                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b"])
+                         ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
+                          "", "## Spend", "", "G1  wall open  rounds 0  send-backs 0  threads not recorded"])
         self.assertFalse((self.at / "goals.tsv").exists())
 
     def test_next_accepts_commands(self):
