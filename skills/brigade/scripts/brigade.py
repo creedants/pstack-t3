@@ -886,11 +886,14 @@ def worker_ended_alone(args):
 
     A dish change on the same argv races the record, because `--state dropped`
     dispatches to drop before command runs and `--thread` appends the
-    attempt-start row the attempt number is counted from.
+    attempt-start row the attempt number is counted from. An empty value is a
+    change too: `--thread ""` clears the cell the archive step names.
     """
-    return not any(getattr(args, name) not in (None, False, "")
-                   for name in ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported",
-                                "lease", "paths", "stopped", "mode", "reason"))
+    def given(name):
+        value = getattr(args, name)
+        return value is not None and value is not False
+    return not any(given(name) for name in ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported",
+                                            "lease", "paths", "stopped", "mode", "reason"))
 
 
 def command(restaurant, args, contract=None, rails=None):

@@ -280,8 +280,10 @@ def recovery_lines(dish, error):
     else:
         steps = ["  keep the commits on the dish branch and record no new branch; the dish keeps its lease",
                  f"  run brief {dish['id']} --context {shlex.quote(error)}"]
-    steps += [f"  launch a fresh thread in the same worktree and record it with dish {dish['id']} --thread <new thread id>",
-              f"  archive the dead thread {shlex.quote(dish.get('thread') or '')}"]
+    steps += [f"  launch a fresh thread in the same worktree and record it with dish {dish['id']} --thread <new thread id>"]
+    # The record needs a thread, but the cell can be cleared afterwards without starting another attempt.
+    steps.append(f"  archive the dead thread {shlex.quote(dish['thread'])}" if dish["thread"]
+                 else "  archive the dead worker")
     return [f"{dish['id']}: worker ended with no report; the provider error is {error}", *steps]
 
 
