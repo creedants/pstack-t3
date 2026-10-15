@@ -1632,8 +1632,9 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(self.brigade("watch"), "\n".join([
             "workers: 1 of 2 running, 1 idle, auto-start: normal",
             f"D1: worker ended with no report; the provider error is {error}",
-            "  keep the commits on perf/d1 and record no new branch; the dish keeps its lease",
-            f"  run brief D1 --base perf/d1 --context {shlex.quote(error)}",
+            "  keep the commits where the worker left them; the dish keeps its lease",
+            f"  write the continuation brief: brief D1 with base perf/d1, context {shlex.quote(error)}, "
+            "and the goal, acceptance, and verify it needs",
             "  launch a fresh thread in the same worktree and record it with dish D1 --thread <new thread id>",
             "  archive the dead thread thread-9",
         ]))
@@ -1742,17 +1743,17 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.park_item()
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
-    def test_watch_lists_a_skipped_model_until_a_smoke_test_passes(self):
+    def test_watch_lists_a_skipped_model_until_model_clear_records_it(self):
         self.open()
         self.fire_one(timebox="60")
         before = self.brigade("watch")
         seat = "grok/grok-4.7"
         self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"),
-                         f"{seat}: skipped for new launches until a smoke test passes")
+                         f"{seat}: recorded as skipped")
         workers, dish_line = before.splitlines()
         skipped = f"skipped {seat} (rate-limit); run model clear {shlex.quote(seat)} after a smoke test passes"
         self.assertEqual(self.brigade("watch"), "\n".join([workers, skipped, dish_line]))
-        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped for new launches")
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped")
         self.assertEqual(self.brigade("watch"), before)
         self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: already cleared")
         self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
@@ -1774,7 +1775,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
                          [("skipped", "rate-limit")])
         self.assertEqual(self.brigade("model", "skip", seat, "--cause", "failed"),
-                         f"{seat}: skipped for new launches until a smoke test passes")
+                         f"{seat}: recorded as skipped")
         self.assertIn(f"skipped {seat} (failed); run model clear {shlex.quote(seat)} after a smoke test passes",
                       self.brigade("watch"))
         self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "model"]), 2)
@@ -1782,7 +1783,7 @@ class WakeTest(BrigadeTest, _WakeRace):
     def test_model_clear_refuses_a_seat_that_is_not_skipped_and_a_model_needs_provider_and_name(self):
         self.open()
         self.assertEqual(self.brigade("model", "clear", "grok/grok-4.7", ok=False),
-                         "brigade: grok/grok-4.7 is not skipped for new launches")
+                         "brigade: grok/grok-4.7 is not skipped")
         for seat in ("grok", "grok/a/b"):
             self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit", ok=False),
                              "brigade: a model is provider/model", seat)

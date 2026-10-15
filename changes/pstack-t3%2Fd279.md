@@ -1,3 +1,3 @@
 - kind feature
-- `watch` prints a line with the four recovery steps for a dish whose worker ended or failed without a report, after the coordinator records it with `dish <id> --worker-ended <reason>`.
-- A model recorded with `model skip <model> --cause rate-limit|failed` is listed in `watch` as skipped for new launches until `model clear <model>` records a passing smoke test.
+- `watch` prints a flag line and four recovery steps for a dish whose worker ended or failed without a report, after the coordinator records it with `dish <id> --worker-ended <reason>`.
+- A model recorded with `model skip <model> --cause rate-limit|failed` is listed in `watch` as skipped until `model clear <model>` records a passing smoke test.

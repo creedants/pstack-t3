@@ -272,19 +272,19 @@ def ended_row(restaurant, dish):
 
 def recovery_lines(dish, error):
     """The flag line and the four recovery steps for a dish whose worker ended with no report."""
+    ident = dish["id"]
     branch = dish.get("branch") or ""
     quoted = shlex.quote(branch)
-    if branch:
-        steps = [f"  keep the commits on {quoted} and record no new branch; the dish keeps its lease",
-                 f"  run brief {dish['id']} --base {quoted} --context {shlex.quote(error)}"]
-    else:
-        steps = ["  keep the commits on the dish branch and record no new branch; the dish keeps its lease",
-                 f"  run brief {dish['id']} --context {shlex.quote(error)}"]
-    steps += [f"  launch a fresh thread in the same worktree and record it with dish {dish['id']} --thread <new thread id>"]
+    context = shlex.quote(error)
+    # A brief needs a goal, an acceptance, a verify, and a base, so the line names them instead of a command brief refuses.
+    words = f"base {quoted}, context {context}" if branch else f"a base trunk ref, context {context}"
+    steps = ["  keep the commits where the worker left them; the dish keeps its lease",
+             f"  write the continuation brief: brief {ident} with {words}, and the goal, acceptance, and verify it needs",
+             f"  launch a fresh thread in the same worktree and record it with dish {ident} --thread <new thread id>"]
     # The record needs a thread, but the cell can be cleared afterwards without starting another attempt.
     steps.append(f"  archive the dead thread {shlex.quote(dish['thread'])}" if dish["thread"]
                  else "  archive the dead worker")
-    return [f"{dish['id']}: worker ended with no report; the provider error is {error}", *steps]
+    return [f"{ident}: worker ended with no report; the provider error is {error}", *steps]
 
 
 def dish_progress(restaurant, dish, moment, held=False):
@@ -456,38 +456,38 @@ def latest_models(restaurant):
 
 
 def skip_lines(restaurant):
-    """One line per seat new launches skip, sorted by seat."""
+    """One line per seat whose latest model row is skipped, sorted by seat."""
     return [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
             for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
 
 
 def record_model_skip(restaurant, seat, cause):
-    """Skip one provider/model seat for new launches. The same cause again writes no row."""
+    """Record one provider/model seat as skipped. The same cause writes no row while the seat stays skipped with it."""
     name = require_seat(seat)
     latest = latest_models(restaurant).get(name)
     if latest is not None and latest["state"] == "skipped" and latest["note"] == cause:
         return f"{name}: already skipped"
     restaurant.log("model", name, "skipped", cause)
-    return f"{name}: skipped for new launches until a smoke test passes"
+    return f"{name}: recorded as skipped"
 
 
 def record_model_clear(restaurant, seat):
-    """Record a passing smoke test and clear one seat's skip."""
+    """Record a passing smoke test for one seat and clear its skip."""
     name = require_seat(seat)
     latest = latest_models(restaurant).get(name)
     if latest is None:
-        raise BrigadeError(f"{name} is not skipped for new launches")
+        raise BrigadeError(f"{name} is not skipped")
     if latest["state"] == "cleared":
         return f"{name}: already cleared"
     restaurant.log("model", name, "cleared", "smoke test passed")
-    return f"{name}: no longer skipped for new launches"
+    return f"{name}: no longer skipped"
 
 
 def record_worker_end(restaurant, ident, error):
     """Record that this attempt's worker ended or failed and wrote no report.
 
-    The log row is the only write, so the dish keeps its lease, its branch, and
-    its thread cell.
+    The log row is the only dish write, so the dish keeps its lease, its branch,
+    and its thread cell.
     """
     reason = clean(error)
     if not reason:

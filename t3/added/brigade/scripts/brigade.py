@@ -286,9 +286,9 @@ def parser():
     p.add_argument("--provider", required=True)
     p.add_argument("--minutes", type=int, required=True)
 
-    p = sub.add_parser("model", help="record or clear a provider/model seat that new launches skip")
+    p = sub.add_parser("model", help="record a provider/model seat as skipped, or clear it after a smoke test")
     t = p.add_subparsers(dest="action", required=True)
-    a = t.add_parser("skip", help="skip a provider/model seat for new launches until a smoke test passes")
+    a = t.add_parser("skip", help="record a provider/model seat as skipped until model clear records a passing smoke test")
     a.add_argument("model", help="the seat as provider/model")
     a.add_argument("--cause", choices=("rate-limit", "failed"), required=True)
     a = t.add_parser("clear", help="record a passing smoke test and clear that seat")
@@ -885,9 +885,10 @@ def worker_ended_alone(args):
     """True when --worker-ended is the only dish flag given.
 
     A dish change on the same argv races the record, because `--state dropped`
-    dispatches to drop before command runs and `--thread` appends the
-    attempt-start row the attempt number is counted from. An empty value is a
-    change too: `--thread ""` clears the cell the archive step names.
+    dispatches to drop before command runs, and a new non-empty `--thread` on an
+    in-progress dish appends the attempt-start row the attempt number is counted
+    from. An empty value is a change too: `--thread ""` clears the cell the
+    archive step names.
     """
     def given(name):
         value = getattr(args, name)
