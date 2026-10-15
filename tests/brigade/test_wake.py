@@ -1784,10 +1784,26 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.open()
         self.assertEqual(self.brigade("model", "clear", "grok/grok-4.7", ok=False),
                          "brigade: grok/grok-4.7 is not skipped")
-        for seat in ("grok", "grok/a/b"):
+        for seat in ("grok", "grok/", "/grok-4.7", "grok /grok-4.7"):
             self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit", ok=False),
                              "brigade: a model is provider/model", seat)
         self.assertEqual([row for row in self.log_rows() if row["kind"] == "model"], [])
+
+    def test_a_seat_with_a_namespaced_model_id_skips_watches_and_clears(self):
+        self.open()
+        seat = "opencode-go/opencode-go/step-5-preview-free"
+        self.assertEqual(self.brigade("model", "skip", seat, "--cause", "rate-limit"),
+                         f"{seat}: recorded as skipped")
+        skipped = (f"skipped {seat} (rate-limit); "
+                   f"run model clear {shlex.quote(seat)} after a smoke test passes")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                f"{skipped}\n"
+                                                "no work in progress")
+        self.assertEqual(self.brigade("model", "clear", seat), f"{seat}: no longer skipped")
+        self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                                                "no work in progress")
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
+                         [(seat, "skipped", "rate-limit"), (seat, "cleared", "smoke test passed")])
 
     def test_close_omits_the_worker_end_and_the_skipped_model(self):
         self.open()

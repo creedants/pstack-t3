@@ -439,10 +439,10 @@ def record_hang(restaurant, ident, provider, minutes, attempt=None):
 
 
 def require_seat(seat):
-    """The cleaned provider/model seat. A seat is one slash, both sides non-empty, and no whitespace."""
+    """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
     value = clean(seat)
     provider, _, model = value.partition("/")
-    if not (provider and model) or "/" in model or any(character.isspace() for character in value):
+    if not (provider and model) or any(character.isspace() for character in value):
         raise BrigadeError("a model is provider/model")
     return value
 

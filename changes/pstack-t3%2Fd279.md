@@ -1,3 +1,3 @@
 - kind feature
 - `watch` prints a flag line and four recovery steps for an in-progress dish whose current attempt `dish <id> --worker-ended <reason>` records as ended with no report, and a dish with no worker thread on its second or later attempt shows its `launch a fresh worker` line instead; a current report, a held dish, or a fresh worker removes the lines.
-- A model recorded with `model skip <model> --cause rate-limit|failed` is listed in `watch` as skipped until `model clear <model>` records a passing smoke test.
+- A model recorded with `model skip <seat> --cause rate-limit|failed` is listed in `watch` as skipped until `model clear <seat>` records a passing smoke test. A seat is the provider before the first slash and the whole model id after it, so `opencode-go/opencode-go/step-5-preview-free` is one seat.
