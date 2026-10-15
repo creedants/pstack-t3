@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import SETTINGS_RELATIVE, settings_cap_only
+from brigade_lib.compact import SETTINGS_MODE, SETTINGS_RELATIVE, settings_cap_only
 from brigade_lib.shared import BrigadeError, command_words, fence_close, fence_open
 
 EDITS_SECTION = (2, "Edits")
@@ -318,11 +318,13 @@ def apply_edits(contents, edits, sha):
 def _cap_only(project_root, before, after):
     """True when the settings file's two tree states differ by nothing but the autoCompactWindow member.
 
-    A state that holds no file is a settings file that was created. Two states that hold a file must hold the same
-    mode, because a change of kind or of the execute bit is a change of file property. The later state must hold
-    exactly the cap splice written over the earlier one, or hold nothing but the cap when the earlier holds no file.
+    Every tree entry that holds the settings file must be in SETTINGS_MODE, the mode of the file sync_meta writes, so
+    a symbolic link and an executable file are compared whatever else they hold. A state that holds no file is a
+    settings file that was created. The later state must hold exactly the cap splice written over the earlier one, or
+    hold nothing but the cap when the earlier holds no file.
     """
-    if after is None or (before is not None and before.mode != after.mode):
+    if (after is None or after.mode != SETTINGS_MODE
+            or (before is not None and before.mode != after.mode)):
         return False
     earlier = None if before is None else git(project_root, "cat-file", "blob", before.oid).stdout
     return settings_cap_only(earlier, git(project_root, "cat-file", "blob", after.oid).stdout)
