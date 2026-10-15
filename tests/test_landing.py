@@ -7446,7 +7446,7 @@ os.execv({real!r}, [{real!r}, *args])
             time.sleep(0.01)
         self.assertTrue(marker.exists(), "the reporting probe did not pause holding the free slot")
 
-        landing = slots.start("landing", pool="landing")
+        landing = slots.start("landing", pool="landing", stepped=True)
         slots.wait(lambda: (landing.directory / "blocking").exists() or landing.started,
                    "the landing caller blocks on the turn mutex the paused probe holds")
         self.assertTrue((landing.directory / "blocking").exists())
@@ -7454,10 +7454,14 @@ os.execv({real!r}, [{real!r}, *args])
 
         os.write(gate, b"x")
         stop_reporter()
+        # The landing caller ran on its own clock, so its next attempt could have taken the free slot
+        # before the exclusive stepped. Stepping it first proves it saw the earlier exclusive and yielded.
+        self.assertEqual(slots.settle(landing), "waiting")
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
         slots.release(exclusive)
-        slots.release(slots.enter(landing))
+        self.assertEqual(slots.step(landing), "started")
+        slots.release(landing)
         self.assertEqual(slots.entries(), ["holder", "exclusive", "landing"])
 
     def test_a_worker_waiter_names_the_worker_holder_and_not_the_landing_holder(self):
