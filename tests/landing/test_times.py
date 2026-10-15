@@ -106,7 +106,7 @@ class LandingTest(LandingTestBase):
             "entries": [], "n": 0, "median": None, "p90": None, "max": None, "skipped": 0,
         })
 
-    def test_times_writes_nothing_to_the_store(self):
+    def test_times_creates_no_store_file_and_rewrites_no_database_byte(self):
         self.landed_entries(FOUR)
         before_names = sorted(p.name for p in self.database().parent.iterdir())
         before_bytes = self.database().read_bytes()
@@ -114,6 +114,28 @@ class LandingTest(LandingTestBase):
         self.land("times", "--json")
         self.assertEqual(sorted(p.name for p in self.database().parent.iterdir()), before_names)
         self.assertEqual(self.database().read_bytes(), before_bytes)
+
+    def test_times_with_a_live_log_leaves_land_db_unchanged(self):
+        self.landed_entries(FOUR)
+        with self.raw_db() as writer:
+            writer.execute("UPDATE entry SET note = ? WHERE id = ?", ("held", 1))
+            writer.commit()
+            self.assertTrue((self.database().parent / "land.db-wal").exists())
+            before_names = sorted(p.name for p in self.database().parent.iterdir())
+            before_bytes = self.database().read_bytes()
+            self.land("times")
+            self.assertEqual(sorted(p.name for p in self.database().parent.iterdir()), before_names)
+            self.assertEqual(self.database().read_bytes(), before_bytes)
+
+    def test_times_counts_a_skipped_entry_outside_the_last_window(self):
+        self.landed_entries(FOUR)
+        with self.raw_db() as db, db:
+            db.execute("DELETE FROM log WHERE kind = 'entry' AND id = 1 AND state = 'landed'")
+        self.assertEqual(self.land("times", "--last", "2"), "\n".join([
+            "E3 r/D3 - 33.5",
+            "E4 r/D4 - 44.5",
+            "n=2 median=33.5 p90=44.5 max=44.5 skipped=1",
+        ]))
 
     def test_times_refuses_a_last_below_one(self):
         self.assertEqual(self.land("times", "--last=0", ok=False), "land: --last must be at least 1")
