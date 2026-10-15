@@ -239,6 +239,76 @@ class ContextCapTest(BrigadeTest):
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
 
+    def test_open_refuses_an_outer_tracked_settings_file_a_nested_repository_hides(self):
+        self.git_project()
+        self.commit_files({".claude/settings.local.json": '{"keep":true}'})
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        before = self.settings().read_bytes()
+        self.assertEqual(self.open(ok=False),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
+    def test_set_refuses_an_outer_tracked_settings_file_a_nested_repository_hides(self):
+        self.git_project()
+        self.open()
+        subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
+                       capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "settings"],
+                       cwd=self.project, capture_output=True, check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        before, store = self.settings().read_bytes(), self.store_files()
+        self.assertEqual(self.brigade("set", "--context-cap", "120000", ok=False),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertEqual(self.store_files(), store)
+        self.assertNotIn("contextCap", self.meta())
+
+    def test_open_refuses_an_outer_tracked_settings_file_symlink_a_nested_repository_hides(self):
+        self.git_project()
+        (self.project / "untracked.json").write_text('{"keep":true}')
+        self.settings().parent.mkdir(parents=True)
+        os.symlink("../untracked.json", self.settings())
+        subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
+                       capture_output=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        self.assertEqual(self.open(ok=False),
+                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertTrue(self.settings().is_symlink())
+        self.assertEqual(os.readlink(self.settings()), "../untracked.json")
+        self.assertEqual((self.project / "untracked.json").read_text(), '{"keep":true}')
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
+    def test_open_writes_a_settings_file_a_nested_repository_leaves_untracked(self):
+        self.git_project()
+        self.settings().parent.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        self.assertEqual(self.open(), f"opened {self.at}")
+        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+
+    def test_open_refuses_a_settings_file_when_the_project_root_repository_git_cannot_read(self):
+        self.git_project()
+        self.commit_files({".claude/settings.local.json": '{"keep":true}'})
+        (self.project / ".git" / "index").write_bytes(b"not an index")
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        before = self.settings().read_bytes()
+        self.assertEqual(self.open(ok=False),
+                         f"brigade: git cannot say whether the repository that holds the project root tracks "
+                         f"{self.settings()}; fix that repository and run this again")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
     def test_a_failed_settings_write_on_open_leaves_no_store_and_claims_no_intake(self):
         if os.geteuid() == 0:
             self.skipTest("root writes through file permissions")
@@ -442,6 +512,17 @@ class ContextCapTest(BrigadeTest):
         self.two_edits()
         self.record_edits(reviewed, "--edits", "D1-review-1.md")
         head = self.head_settings_entry("link", '{"autoCompactWindow":90000}')
+        self.assertEqual(self.verify(reviewed, head),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_edits_verify_compares_a_settings_file_whose_earlier_blob_is_no_object(self):
+        reviewed = self.edits_store_with_settings("[1]\n")
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED, **{".claude/settings.local.json": '{\n  "autoCompactWindow": 90000\n}\n'})
         self.assertEqual(self.verify(reviewed, head),
                          (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
                              f"built out/greeting.txt\nedited src/greeting.txt",
