@@ -14,6 +14,8 @@ PROVIDERS = ("claude", "other")
 DEFAULT_PROVIDER = "claude"
 SETTINGS_RELATIVE = ".claude/settings.local.json"
 SETTINGS_KEY = "autoCompactWindow"
+# The git tree mode of the file sync_meta writes, whose temporary file is a regular file with no execute bit.
+SETTINGS_MODE = "100644"
 
 
 def effective_cap(meta):
@@ -106,8 +108,9 @@ def _load(project_root):
     """The settings path and the text its file holds, or None when it holds none.
 
     The directory that holds the settings file must sit below the project root with no symbolic link at any component
-    on the way. The file's real destination must be one git leaves writable. A file that exists must hold a strict
-    JSON object. A refusal raises BrigadeError and changes no file.
+    on the way. The entry at the settings path, which os.replace replaces, must be one git leaves writable, and so
+    must the file the path resolves to when the two differ. A file that exists must hold a strict JSON object. A
+    refusal raises BrigadeError and changes no file.
     """
     path = settings_path(project_root)
     directory = Path(project_root)
@@ -115,7 +118,7 @@ def _load(project_root):
         directory = directory / part
         if directory.is_symlink():
             raise BrigadeError(f"{directory} is a symbolic link; brigade writes {SETTINGS_RELATIVE} through no link")
-    refusal = _git_refusal(path.resolve())
+    refusal = _git_refusal(path)
     if refusal:
         raise BrigadeError(refusal)
     try:
@@ -124,6 +127,11 @@ def _load(project_root):
         return path, None
     except OSError as error:
         raise BrigadeError(f"cannot read {path}: {error}") from error
+    resolved = path.resolve() if path.is_symlink() else path
+    if resolved != path:
+        refusal = _git_refusal(resolved)
+        if refusal:
+            raise BrigadeError(refusal)
     try:
         text = raw.decode("utf-8")
         value = json.loads(text, parse_constant=_reject_constant)
@@ -145,7 +153,7 @@ def _members(text):
     """(name, the start of its value, the end of its value) for every member of one top-level JSON object, and the
     index of that object's closing brace.
 
-    A name that occurs more than once keeps every member. None when the text is not one JSON object.
+    A name that occurs more than once keeps every member. Text that does not start with an object returns None.
     """
     decoder = json.JSONDecoder(parse_constant=_reject_constant)
     opening = _space(text, 0)
@@ -189,27 +197,32 @@ def _with_cap(text, cap):
 def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
-    A file that holds no strict JSON object, a settings directory reached through a symbolic link, a destination that
-    git reports as tracked or cannot report on, and a git command that cannot start all refuse with exit 1 and change
-    no file.
+    A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
+    resolved file that git reports as tracked or cannot report on, and a git command that cannot start all refuse
+    with exit 1 and change no file. A filesystem failure while the directory, the temporary file, or the replacement
+    is made refuses the same way with the system's reason, so every caller sees one BrigadeError.
     """
     cap = effective_cap(meta)
     path, text = _load(meta["projectRoot"])
     published = json.dumps({SETTINGS_KEY: cap}, indent=2) + "\n" if text is None else _with_cap(text, cap)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=str(path.parent), delete=False, suffix=".tmp",
-                                     encoding="utf-8", newline="") as handle:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=str(path.parent), delete=False, suffix=".tmp",
+                                         encoding="utf-8", newline="") as handle:
+            try:
+                handle.write(published)
+                handle.flush()
+            except BaseException:
+                handle.close()
+                os.unlink(handle.name)
+                raise
         try:
-            handle.write(published)
-        except BaseException:
-            handle.close()
+            os.replace(handle.name, path)
+        except OSError:
             os.unlink(handle.name)
             raise
-    try:
-        os.replace(handle.name, path)
-    except OSError:
-        os.unlink(handle.name)
-        raise
+    except OSError as error:
+        raise BrigadeError(f"cannot write {path}: {error.strerror}") from error
 
 
 def _drift(path, cap):
