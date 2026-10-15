@@ -54,7 +54,7 @@ def listing(directory):
 
 
 def environment(canary, tmpdir):
-    """A caller's environment whose HOME and XDG paths all sit under `canary`."""
+    """A caller's environment whose HOME, XDG config and state, Claude, and brigade paths sit under `canary`."""
     env = os.environ.copy()
     env.update(AUTHOR)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
