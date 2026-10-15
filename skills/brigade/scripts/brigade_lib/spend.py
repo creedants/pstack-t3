@@ -34,6 +34,7 @@ MILLION = Decimal(1000000)
 PLACES = Decimal("0.000001")
 PROVIDER_THREADS = "orchestration_v2_projection_provider_threads"
 PROVIDER_TURNS = "orchestration_v2_projection_provider_turns"
+THREADS = "orchestration_v2_projection_threads"
 TURN_FIELDS = (
     "usageStatus", "inputTokens", "cachedInputTokens",
     "cacheCreationTokens", "outputTokens", "reasoningTokens",
@@ -550,6 +551,8 @@ def _folded_tokens(connection, loaded, wanted):
         for thread_id, provider_id, driver, native in provider_rows:
             if thread_id in by_thread:
                 by_thread[thread_id].append((provider_id, driver, native))
+        models = {thread: _recorded_model(model)
+                  for thread, model in _rows_in(connection, _thread_sql, wanted, loaded["BATCH"])}
         turn_ids = list(dict.fromkeys(
             provider_id
             for providers in by_thread.values()
@@ -564,7 +567,7 @@ def _folded_tokens(connection, loaded, wanted):
         turns.setdefault(row[0], []).append(row[1:])
     folded = {}
     for thread, providers in by_thread.items():
-        folded[thread] = _ledger_totals(providers, turns)
+        folded[thread] = _ledger_totals(providers, turns, models.get(thread))
     return folded
 
 
@@ -572,13 +575,13 @@ def _viable(providers):
     return bool(providers) and all(DRIVERS.get(driver) in ("claude", "turns") for _provider, driver, _native in providers)
 
 
-def _ledger_totals(providers, turns):
+def _ledger_totals(providers, turns, model):
     if not _viable(providers):
         return None
     parts = []
     for provider_id, driver, native in providers:
         kind = DRIVERS.get(driver)
-        part = _claude_totals(native) if kind == "claude" else _turn_totals(turns.get(provider_id, ()))
+        part = _claude_totals(native) if kind == "claude" else _turn_totals(turns.get(provider_id, ()), model)
         if part is None:
             return None
         parts.append(part)
@@ -605,8 +608,10 @@ def _probe(connection):
         ("thread_id", "provider_thread_id", "driver", "payload_json"), "thread_id",
     )
     _require_table(connection, PROVIDER_TURNS, ("provider_thread_id", "payload_json"), "provider_thread_id")
+    _require_table(connection, THREADS, ("thread_id", "payload_json"), "thread_id")
     _searches(connection, _provider_sql(1), ("x",))
     _searches(connection, _turn_sql(1), ("x",))
+    _searches(connection, _thread_sql(1), ("x",))
 
 
 def _require_table(connection, table, columns, lead):
@@ -682,7 +687,20 @@ def _turn_sql(count):
     )
 
 
-def _turn_totals(rows):
+def _thread_sql(count):
+    return (
+        "SELECT thread_id, json_extract(payload_json, '$.modelSelection.model') "
+        f"FROM {THREADS} WHERE thread_id IN ({_marks(count)})"
+    )
+
+
+def _recorded_model(value):
+    if not isinstance(value, str) or MODEL_NAME.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _turn_totals(rows, model):
     if not rows:
         return None
     incoming = cache_read = cache_write = outgoing = reasoning_total = 0
@@ -703,7 +721,7 @@ def _turn_totals(rows):
         cache_write += created
         outgoing += output
         reasoning_total += reasoning
-    return {MODEL_MISSING: _Counts(incoming, cache_read, cache_write, outgoing, reasoning_total)}
+    return {model or MODEL_MISSING: _Counts(incoming, cache_read, cache_write, outgoing, reasoning_total)}
 
 
 def _claude_base():

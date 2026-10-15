@@ -1,0 +1,3 @@
+- kind fix
+- `spend --tokens` labels a Codex or OpenCode thread's turn totals with the model id at `orchestration_v2_projection_threads.payload_json.modelSelection.model` when that field holds a model id, where the label was `model not recorded` before.
+- `tests/brigade/test_spend.py`'s `database()` fixture creates the thread table when it creates the other two. Three tests assert the model id for a Codex turn, the model id for an OpenCode turn, and the `model not recorded` fallback.
