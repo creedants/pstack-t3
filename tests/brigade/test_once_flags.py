@@ -22,7 +22,7 @@ class OnceFlagsTest(BrigadeTest):
         before = self.store_files()
         outcome = self.refused(*args)
         self.assertEqual(outcome.code, 1)
-        self.assertEqual(outcome.stderr_text().strip(), refusal)
+        self.assertEqual(outcome.stderr, (refusal + "\n").encode())
         self.assertEqual(outcome.stdout_text(), "")
         self.assertEqual(self.store_files(), before)
         self.assertFalse(lock.exists())
