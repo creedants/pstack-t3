@@ -54,6 +54,7 @@ _bw = _sys.dont_write_bytecode
 _sys.dont_write_bytecode = True
 try:
     from brigade_lib import seam as _seam_bootstrap
+    from brigade_lib.compact import effective_provider, parse_context_cap, parse_coordinator_provider, status_lines, sync_meta
     from brigade_lib.briefs import ESCALATED, MEASURING_STATIONS, MODE_RESOLUTIONS, ModeInputs, ModeLines, SEAT_RULE, WAIT_RULE, brief, brief_dish, contract_file, mode_inputs, roles_mode, stored_contract, write_brief
     from brigade_lib.edits import BLANK, BLOB_MODES, Digest, EDITS_REFUSED, EDITS_SECTION, EDIT_FAILS, EDIT_MARKS, EDIT_TITLE, Edit, EditsRefused, FILE_LINE, HEADING, LABELS, NEEDS_COMMANDS, NESTED, NO_COMMAND, PATH_LINES, TreeEntry, UNDERLINE, UNREAD, apply_edits, commit_tree, compared_paths, digests, edit_mark, exit_code, git, head_digest, occurrences, one_edit, parse_edits, path_lines, replay, report_edits, report_parts
     from brigade_lib.items import ATTEMPT_AFTER, DocAllowed, DocRefused, PreparedDocFire, _CATALOG, _SharedDoc, _can_cover_catalog, _covers, _fixed_docs, _gate_inventory, _held_from_tracked, _is_skill_file, _lease_parts, _skill_roots, _walk_opaque, attempt_kind, attempt_starts, block_note, checked_fire_label, drop, fire, fire_label, item_escalation, latest_mode_note, menu_purpose, prepare_doc_fire, record_blocked, record_escalation, retired_worker_threads, unfireable, workers_full, write_lead_kind
@@ -97,6 +98,10 @@ def parser():
     p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
     p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
+    p.add_argument("--context-cap", default=None,
+                   help="on creation, set the context cap; missing uses 300000; an existing store syncs its saved cap")
+    p.add_argument("--coordinator-provider", default=None,
+                   help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
 
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")
@@ -126,6 +131,10 @@ def parser():
     p.add_argument("--scratch-dir", metavar="DIR",
                    help="the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside "
                         "/tmp; \"\" clears the setting")
+    p.add_argument("--context-cap", default=None,
+                   help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
+    p.add_argument("--coordinator-provider", default=None,
+                   help="claude or other; \"\" clears it to claude; other writes no settings file")
 
     p = sub.add_parser("ticket", help="add, list, update, move, take, or record paths on tickets on the rail")
     t = p.add_subparsers(dest="action", required=True)
@@ -701,8 +710,16 @@ def run(argv):
         if not args.admin and not args.name:
             raise BrigadeError("open needs --name, or --admin")
         require_workers(args.workers)
+        context_cap = None
+        if args.context_cap not in (None, ""):
+            context_cap = parse_context_cap(args.context_cap)
+        coordinator_provider = None
+        if args.coordinator_provider not in (None, ""):
+            coordinator_provider = parse_coordinator_provider(args.coordinator_provider)
         restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
-                                              intake_list(args.intake), args.workers, args.admin, args.mode)
+                                              intake_list(args.intake), args.workers, args.admin, args.mode,
+                                              context_cap=context_cap,
+                                              coordinator_provider=coordinator_provider)
         lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
         meta = restaurant.meta
         thread = (meta.get("thread") or "").strip()
@@ -719,6 +736,9 @@ def run(argv):
             workers = worker_cap(restaurant.meta)
             if cap is not None and workers >= cap:
                 lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
+        meta = restaurant.meta
+        if not created and effective_provider(meta) == "claude":
+            sync_meta(meta)
         return "\n".join(lines)
     if args.command == "walk":
         text, failures = walk(root, args.stale_hours, args.repo)
@@ -914,6 +934,16 @@ def command(restaurant, args, contract=None, rails=None):
                 changes[SCRATCH_KEY] = scratch
             else:
                 drop.append(SCRATCH_KEY)
+        if args.context_cap is not None:
+            if args.context_cap == "":
+                drop.append("contextCap")
+            else:
+                changes["contextCap"] = parse_context_cap(args.context_cap)
+        if args.coordinator_provider is not None:
+            if args.coordinator_provider == "":
+                drop.append("coordinatorProvider")
+            else:
+                changes["coordinatorProvider"] = parse_coordinator_provider(args.coordinator_provider)
         if args.schedule:
             schedules = dict(meta.get("schedules") or {})
             for pair in args.schedule:
@@ -925,6 +955,13 @@ def command(restaurant, args, contract=None, rails=None):
                 else:
                     schedules.pop(name, None)
             changes["schedules"] = schedules
+        if args.context_cap is not None or args.coordinator_provider is not None:
+            prospective = dict(meta)
+            prospective.update(changes)
+            for key in drop:
+                prospective.pop(key, None)
+            if effective_provider(prospective) == "claude":
+                sync_meta(prospective)
         meta = restaurant.change_meta(drop, **changes)
         return json.dumps(meta, indent=2)
 
@@ -1172,6 +1209,7 @@ def command(restaurant, args, contract=None, rails=None):
             lines.append(f"mode {meta['mode']}")
         if meta.get("generation") is not None:
             lines.append(f"owner {thread}@{meta['generation']}")
+        lines.extend(status_lines(meta))
         return "\n".join(lines)
     if args.command == "close":
         if not args.dry_run and is_admin(restaurant.meta):

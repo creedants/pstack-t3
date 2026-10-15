@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.compact import SETTINGS_MODE, SETTINGS_RELATIVE, settings_cap_only
 from brigade_lib.shared import BrigadeError, command_words, fence_close, fence_open
 
 EDITS_SECTION = (2, "Edits")
@@ -314,11 +315,35 @@ def apply_edits(contents, edits, sha):
     return changed, []
 
 
-def compared_paths(before, after, extracted, edited, built):
-    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted."""
-    return sorted(path for path in before.keys() | after.keys()
-                  if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
-                  or edited.get(path) != built.get(path))
+def _cap_only(project_root, before, after):
+    """True when the settings file's two tree states differ by nothing but the autoCompactWindow member.
+
+    Every tree entry that holds the settings file must be in SETTINGS_MODE, the mode of the file sync_meta writes, so
+    a symbolic link and an executable file are compared whatever else they hold. An earlier state that holds no file
+    is a settings file that was created, and a later state that holds no file gets no allowance. The later state must
+    hold exactly the cap splice written over the earlier one, or hold nothing but the cap when the earlier holds no
+    file.
+    """
+    if (after is None or after.mode != SETTINGS_MODE
+            or (before is not None and before.mode != after.mode)):
+        return False
+    earlier = None if before is None else git(project_root, "cat-file", "blob", before.oid).stdout
+    return settings_cap_only(earlier, git(project_root, "cat-file", "blob", after.oid).stdout)
+
+
+def compared_paths(project_root, before, after, extracted, edited, built):
+    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted.
+
+    The settings file is compared like every other path, except that it is left out when its two tree states
+    differ by nothing but the cap splice and the scratch copy agrees at that path at every stage, meaning the
+    extracted, edited, and built digests there are equal.
+    """
+    found = {path for path in before.keys() | after.keys()
+             if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
+             or edited.get(path) != built.get(path)}
+    return sorted(path for path in found
+                  if path != SETTINGS_RELATIVE or not _cap_only(project_root, before.get(path), after.get(path))
+                  or extracted.get(path) != edited.get(path) or edited.get(path) != built.get(path))
 
 
 def path_lines(paths, edited, built, head, sha):
@@ -410,7 +435,7 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
             if code:
                 return [f"FAIL build: {build} exited {code}"], False
         built = digests(scratch)
-        paths = compared_paths(before, after, extracted, edited, built)
+        paths = compared_paths(project_root, before, after, extracted, edited, built)
         head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
         lines, clean = path_lines(paths, edited, built, head, sha)
         if clean and check != NO_COMMAND:

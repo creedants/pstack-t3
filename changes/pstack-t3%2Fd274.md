@@ -1,0 +1,16 @@
+- kind feature
+- `brigade.py open` and `brigade.py set` take `--context-cap N` and `--coordinator-provider claude|other`
+- `restaurant.json` holds optional `contextCap` and `coordinatorProvider`; a missing `contextCap` reads as 300000 and a missing `coordinatorProvider` reads as claude
+- `--context-cap` refuses a non-integer and any value below 50000 with exit 1
+- On provider claude, `brigade.py open` writes `autoCompactWindow` into `<projectRoot>/.claude/settings.local.json`, and `brigade.py set` writes it only for `--context-cap` and `--coordinator-provider`
+- The write keeps every other byte of the file, including its spacing and its other numbers, and replaces or inserts only the `autoCompactWindow` member
+- A settings file that is tracked by git, that holds invalid JSON or the NaN, Infinity, or -Infinity constants, or that holds no JSON object refuses the write with exit 1 and changes no file
+- A settings directory reached through a symbolic link, and a git command that cannot say whether the file is tracked, refuse the write the same way; a project in no repository is written
+- A repository whose git fails both the tracked lookup and the repository lookup for a reason other than no repository refuses the write, because only a rev-parse error that names not a git repository reads as no repository
+- A refused open of a new store leaves no store directory and claims no intake, and a refused write to an existing store changes no store file
+- `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
+- `edits verify` compares `.claude/settings.local.json` like every other path and passes a head whose only change there is the `autoCompactWindow` member
+- A settings file that is a symbolic link refuses the write when the link itself or the file it points at is tracked by git, and the link, its target text, and its target bytes stay unchanged
+- A settings write the file system refuses, such as an unwritable `.claude` directory, exits 1 with a `brigade:` line naming the settings path and the system's reason, and a refused open of a new store leaves no store directory
+- `edits verify` applies the cap exemption only when every tree entry holding the settings file is a regular file in mode 100644, so a created symbolic link, a created executable file, and a cap change on a committed symbolic link are compared
+- `edits verify` leaves the settings path out of its comparison only when the two trees differ by the cap splice alone and the scratch copy holds equal digests there; a review edit or build that changes the settings file uses the normal tree comparison

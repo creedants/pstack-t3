@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.compact import effective_provider, sync_meta
 from brigade_lib.shared import BrigadeError, MalformedTable, slug, stored
 
 
@@ -588,7 +589,8 @@ def refuse_owned_intake(directory, project_root, sources):
             raise BrigadeError(f"{owner} already owns intake from {source}; move tickets to it instead")
 
 
-def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None):
+def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None,
+                  context_cap=None, coordinator_provider=None):
     project_root = Path(project_root).resolve()
     if admin:
         name = ADMIN_NAME
@@ -613,13 +615,6 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
     except BrigadeError:
         directory.rmdir()
         raise
-    for filename, template in (("menu.md", ADMIN_MENU if admin else MENU), ("house-rules.md", HOUSE_RULES)):
-        seam.write_atomic(directory / filename, template.format(restaurant=name))
-    for table in TABLES:
-        if table == "rulings.tsv" and not admin:
-            continue
-        header = TABLES[table]
-        seam.write_atomic(directory / table, "\t".join(header) + "\n")
     meta = {"restaurant": name, "projectRoot": str(project_root),
             "reporting": reporting, "openedAt": seam.now(), "lastActivityAt": seam.now(),
             "lastReportAt": None, "thread": None, "schedules": {}, "intake": list(intake)}
@@ -627,8 +622,26 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["workers"] = workers
     if mode is not None:
         meta["mode"] = mode
+    if context_cap is not None:
+        meta["contextCap"] = context_cap
+    if coordinator_provider is not None:
+        meta["coordinatorProvider"] = coordinator_provider
     if admin:
         meta["role"] = "admin"
+    # The settings file is written before the store is published, so a refusal leaves no store behind and claims no intake.
+    if effective_provider(meta) == "claude":
+        try:
+            sync_meta(meta)
+        except BrigadeError:
+            directory.rmdir()
+            raise
+    for filename, template in (("menu.md", ADMIN_MENU if admin else MENU), ("house-rules.md", HOUSE_RULES)):
+        seam.write_atomic(directory / filename, template.format(restaurant=name))
+    for table in TABLES:
+        if table == "rulings.tsv" and not admin:
+            continue
+        header = TABLES[table]
+        seam.write_atomic(directory / table, "\t".join(header) + "\n")
     seam.write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     return Restaurant(directory), True
 
