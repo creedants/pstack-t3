@@ -397,6 +397,15 @@ class BriefsTest(BrigadeTest):
         write = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         self.assertTrue(write.endswith("Name each file a follow-up touches by its repository path in backticks."))
 
+    def test_the_threads_section_lists_only_t3_threads_and_names_a_harness_child_in_the_body(self):
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        threads = next(line for line in text.splitlines() if line.startswith("- Hold a `## Threads`"))
+        self.assertIn("List only T3 threads started with `delegate_task` or `t3_thread_launch`", threads)
+        self.assertIn("Name a child run inside the worker's own harness in the report body instead, never in the section.", threads)
+        self.assertIn("code delegate, claims check, and architect runner", threads)
+        self.assertIn("A missing section adds no row and is not an error.", threads)
+
     def test_an_orchestrate_brief_carries_the_same_bounded_wait(self):
         self.coordinator(station="orchestrate", mode="full")
         text = self.brigade(*self.BRIEF)
