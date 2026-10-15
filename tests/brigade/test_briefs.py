@@ -55,6 +55,68 @@ class BriefsTest(BrigadeTest):
         self.assertNotIn("Run builds and tests through", verify)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
+    def test_the_standing_rules_paste_the_failed_test_and_small_change_rules_between_verify_and_timebox(self):
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        rules = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertEqual(rules.split("\n\n")[-1].rstrip("\n"), "\n".join([
+            "STANDING RULES:",
+            f"- Save the full output of any failed test run to a file under {self.at}/reports/ before you rerun it, "
+            "and name that file in the report.",
+            "- You may write the change yourself when it changes one file outside tests, the added and removed lines "
+            "outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee "
+            "safety, privacy, or integrity. Count those lines from `git diff --numstat origin/main...HEAD`, quote that "
+            "output in the report, and treat every round and commit as one diff. Past that size, or more than one file "
+            "outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.",
+        ]))
+        self.assertNotIn("mktemp -d -p", rules)
+
+    def test_the_standing_rules_paste_the_scratch_rule_only_when_the_store_records_a_parent(self):
+        self.coordinator()
+        parent = str(Path.home().resolve())
+        self.brigade("set", "--scratch-dir", parent)
+        text = self.brigade(*self.BRIEF)
+        self.assertIn(
+            f"- Make every scratch directory, archive copy, and saved output with `mktemp -d -p {parent}`, never "
+            "directly under `/tmp`. Delete that directory when you are done. A test suite's own temporary files stay "
+            "where the tests put them. Do not set TMPDIR.", text)
+        self.brigade("set", "--scratch-dir", "")
+        self.assertNotIn("mktemp -d -p", self.brigade(*self.BRIEF))
+
+    def test_a_rule_the_context_or_verify_already_states_is_dropped_and_the_heading_goes_with_it(self):
+        self.coordinator()
+        reports = f"{self.at}/reports"
+        dropped = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                   "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
+        one = self.brigade(*dropped, "--verify", f"Save the full output under {reports}/ after a failed test run, before you rerun it")
+        self.assertIn("STANDING RULES:", one)
+        self.assertNotIn("- Save the full output of any failed test run", one)
+        self.assertIn("- You may write the change yourself", one)
+        every = self.brigade(*dropped, "--verify",
+                             f"Save the full output under {reports}/ after a failed test run, before you rerun it. "
+                             "You may write the change yourself, without the playbook's code delegate, when it touches "
+                             "one file and is about 40 lines or fewer outside tests. Never skip the claims check.")
+        self.assertNotIn("STANDING RULES:", every)
+        self.assertNotIn("- You may write the change yourself", every)
+
+    def test_a_pointer_to_a_failed_run_output_is_not_the_rule_and_the_line_stays(self):
+        self.coordinator()
+        reports = f"{self.at}/reports"
+        dropped = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                   "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
+        text = self.brigade(*dropped, "--verify",
+                            f"The first attempt's failed test run output is at {reports}/D1-fail.txt. "
+                            "Read it before you rerun the suite.")
+        self.assertIn("STANDING RULES:", text)
+        self.assertIn("- Save the full output of any failed test run", text)
+
+    def test_the_built_skill_ships_the_verdict_protocol(self):
+        text = (ROOT / "skills/brigade/verdict-protocol.md").read_text()
+        self.assertIn("Rare:", text)
+        self.assertIn("is not one the coordinator may accept as limit", text)
+        self.assertIn("mktemp -d -p", text)
+        self.assertNotIn("/home/", text)
+
     def test_brief_refuses_when_no_coordinator_thread_is_recorded(self):
         self.open()
         self.fire_one(station="bug-fix")
