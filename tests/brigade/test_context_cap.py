@@ -309,6 +309,28 @@ class ContextCapTest(BrigadeTest):
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
 
+    def test_open_refuses_a_tracked_settings_file_symlink_target_a_linked_project_root_path_hides(self):
+        self.git_project()
+        self.commit_files({".claude/settings.json": '{"keep":true}'})
+        self.settings().parent.mkdir(exist_ok=True)
+        os.symlink("settings.json", self.settings())
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
+                       capture_output=True)
+        linked = Path(self.temporary.name) / "linked-root"
+        linked.symlink_to(self.project)
+        target = self.settings().parent / "settings.json"
+        before = target.read_bytes()
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      "open", "--project-root", str(linked), "--name", "Perf"])
+        self.assertEqual((outcome.code, outcome.stderr_text().strip()),
+                         (1, f"brigade: {target} is tracked by the repository that holds the project root; "
+                             "untrack it there before brigade writes autoCompactWindow"))
+        self.assertTrue(self.settings().is_symlink())
+        self.assertEqual(os.readlink(self.settings()), "settings.json")
+        self.assertEqual(target.read_bytes(), before)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
     def test_a_failed_settings_write_on_open_leaves_no_store_and_claims_no_intake(self):
         if os.geteuid() == 0:
             self.skipTest("root writes through file permissions")

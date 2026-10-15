@@ -107,13 +107,14 @@ def _git_refusal(real, project_root):
 
     The repository that holds the nearest existing directory at or above real answers first. A repository nested
     between the project root and real answers only for its own index, so the repository that holds the project root
-    answers too whenever that directory sits below the project root. Either repository that tracks real, or cannot
-    say, refuses. A directory in no repository leaves the entry writable.
+    answers too whenever that directory resolves below the project root. Either repository that tracks real, or
+    cannot say, refuses. A directory in no repository leaves the entry writable.
     """
     directory = _existing(real.parent)
     lookups = [(directory, False)]
-    if project_root in directory.parents:
-        lookups.append((Path(project_root), True))
+    root = Path(os.path.realpath(project_root))
+    if root in Path(os.path.realpath(directory)).parents:
+        lookups.append((root, True))
     for base, outer in lookups:
         state = _git_state(real, base)
         if state == "tracked":
@@ -134,9 +135,9 @@ def _load(project_root):
 
     The directory that holds the settings file must sit below the project root with no symbolic link at any component
     on the way. The entry at the settings path, which os.replace replaces, and the file the path resolves to when the
-    two differ, must each be a path that the repository holding it and the repository holding the project root both
-    leave writable. A file that exists must hold a strict JSON object. A refusal raises BrigadeError and changes no
-    file.
+    two differ, must each be a path git leaves writable in the repository that holds its own directory and in the
+    repository that holds the project root. A file that exists must hold a strict JSON object. A refusal raises
+    BrigadeError and changes no file.
     """
     path = settings_path(project_root)
     directory = Path(project_root)
@@ -225,10 +226,10 @@ def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
-    resolved file that the repository holding it or the repository holding the project root reports as tracked or
-    cannot report on, and a git command that cannot start all refuse with exit 1 and change no file. A filesystem
-    failure while the directory, the temporary file, or the replacement is made refuses the same way with the
-    system's reason, so every caller sees one BrigadeError.
+    resolved file that the repository holding its own directory or the repository holding the project root reports as
+    tracked or cannot report on, and a git command that cannot start all refuse with exit 1 and change no file. A
+    filesystem failure while the directory, the temporary file, or the replacement is made refuses the same way with
+    the system's reason, so every caller sees one BrigadeError.
     """
     cap = effective_cap(meta)
     path, text = _load(meta["projectRoot"])
