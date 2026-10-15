@@ -963,6 +963,95 @@ def _finish_reaped(process):
             process.returncode = -1
 
 
+def _ps_line(pid, columns):
+    """Stdout from ps for these columns, or None when ps cannot answer. Does not reap."""
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    try:
+        result = subprocess.run(
+            ["ps", "-o", columns, "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout or ""
+
+
+def _leader_is_permitted_zombie(pid):
+    """True when this exited unreaped leader is a signal target this process may signal.
+
+    The caller has not reaped pid, so the kernel cannot reuse that pid and the credentials stay frozen.
+    os.waitid with WNOHANG and WNOWAIT returns a result once the child has exited and None while it lives.
+    An alive result stops here and does not run ps.
+    Without os.waitid, ps must print a state that starts with Z.
+    os.kill returns success for every zombie on Darwin and does not check the signal permission,
+    so os.kill(pid, 0) cannot show that this process may signal the leader.
+    Root may signal any leader. Otherwise the real or the effective uid of this process must match the
+    leader's real or saved uid.
+    A failed or unreadable probe is not a permitted target.
+    """
+    if hasattr(os, "waitid"):
+        try:
+            exited = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except OSError:
+            return False
+        if exited is None:
+            return False
+    else:
+        state = _ps_line(pid, "stat=")
+        if state is None or not state.strip().startswith("Z"):
+            return False
+    if os.geteuid() == 0:
+        return True
+    text = _ps_line(pid, "uid=,ruid=,svuid=")
+    if text is None:
+        return False
+    fields = text.split()
+    if len(fields) != 3:
+        return False
+    try:
+        _effective, real, saved = (int(field) for field in fields)
+    except ValueError:
+        return False
+    callers = (os.getuid(), os.geteuid())
+    return real in callers or saved in callers
+
+
+def _killpg_like_linux(process, sig):
+    """Signal the command's group the way Linux killpg does.
+
+    Linux killpg succeeds when some member of the group is a permitted signal target and raises
+    EPERM when no member is. macOS raises EPERM when a zombie is the only permitted member.
+    Treat that EPERM as a successful killpg only when this process observed its own exited unreaped
+    leader as a permitted signal target before the attempt.
+    On Darwin an alive leader costs one waitid and does not run ps.
+    ps runs only after that leader has exited, or when os.waitid is absent.
+    A live leader, an unknown leader state, a leader this process may not signal, and any
+    PermissionError on another platform raise the original EPERM again.
+    A leader that exits after a negative observation and before the attempt raises the original
+    EPERM again.
+    ProcessLookupError propagates.
+    The EPERM is not proof that the group is empty.
+    """
+    if sys.platform != "darwin":
+        os.killpg(process.pid, sig)
+        return
+    # Witness first. A permitted zombie found after the attempt cannot establish permission for it.
+    # A leader that exits in the gap before killpg is a conservative miss, and the original EPERM is raised again.
+    witness = _leader_is_permitted_zombie(process.pid)
+    try:
+        os.killpg(process.pid, sig)
+    except PermissionError:
+        if not witness:
+            raise
+
+
 def exclusive_command(command, repo, for_text, reason_text):
     """Hold every slot, run command, and stop its process group at the cap.
 
@@ -985,7 +1074,7 @@ def exclusive_command(command, repo, for_text, reason_text):
         if process.returncode is not None:
             return
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            _killpg_like_linux(process, signal.SIGTERM)
         except ProcessLookupError:
             if process.returncode is None:
                 process.wait()
@@ -1020,14 +1109,14 @@ def exclusive_command(command, repo, for_text, reason_text):
                     _real_sleep(min(0.05, remaining))
         except BaseException:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                _killpg_like_linux(process, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             if process.returncode is None:
                 process.wait()
             raise
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            _killpg_like_linux(process, signal.SIGKILL)
         except ProcessLookupError:
             pass
         if process.returncode is None:
@@ -1080,7 +1169,7 @@ def supervised(command, cwd, timeout):
         output, _ = process.communicate(timeout=timeout)
         return process.returncode, output.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        _killpg_like_linux(process, signal.SIGKILL)
         try:
             output, _ = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
@@ -1097,15 +1186,41 @@ def supervised(command, cwd, timeout):
 class Store:
     def __init__(self, directory):
         self.dir = Path(directory)
-        self.db = sqlite3.connect(self.dir / "land.db", timeout=60, isolation_level=None)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(SCHEMA)
-        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(entry)")}
-        for column in ("title", "body", "onto"):
-            if column not in columns:
-                self.db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        migrate_entry_ids(self.db)
+        self.db = None
+        db = sqlite3.connect(self.dir / "land.db", timeout=60, isolation_level=None)
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.executescript(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(entry)")}
+            for column in ("title", "body", "onto"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            migrate_entry_ids(db)
+        except BaseException:
+            try:
+                db.close()
+            except sqlite3.Error:
+                pass
+            raise
+        self.db = db
+
+    def close(self):
+        """Close the landing database. A later call does nothing."""
+        db = self.db
+        if db is None:
+            return
+        self.db = None
+        try:
+            db.close()
+        except sqlite3.ProgrammingError:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
 
     @classmethod
     def for_repo(cls, path):
@@ -1114,8 +1229,12 @@ class Store:
         if not (directory / "land.db").exists():
             raise LandError(f"{common.parent} has no landing contract; run land.py init in it")
         store = cls(directory)
-        if Path(store.contract["commonDir"]) != common:
-            raise LandError(f"store {directory} belongs to {store.contract['commonDir']}, not {common}")
+        try:
+            if Path(store.contract["commonDir"]) != common:
+                raise LandError(f"store {directory} belongs to {store.contract['commonDir']}, not {common}")
+        except BaseException:
+            store.close()
+            raise
         return store
 
     @contextlib.contextmanager
@@ -1558,36 +1677,36 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         merge_method = pick_merge_method(merge_method, allowed_merge_methods(repo))
     else:
         merge_method = "merge"
-    store = Store(directory)
-    wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
-              "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
-    fixed = ("commonDir", "trunk", "mode", "remote")
+    with Store(directory) as store:
+        wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
+                  "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
+        fixed = ("commonDir", "trunk", "mode", "remote")
 
-    def refuse_clash(current):
-        current = {**current, "mode": LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
-        clash = [key for key in fixed if key in current and current[key] != wanted[key]]
-        if clash:
-            raise LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
-                            "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
+        def refuse_clash(current):
+            current = {**current, "mode": LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
+            clash = [key for key in fixed if key in current and current[key] != wanted[key]]
+            if clash:
+                raise LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
+                                "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
 
-    refuse_clash(store.contract)
-    if mode in REMOTE_MODES:
-        if not git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
-            raise LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
-        git("fetch", remote, trunk, cwd=repo)
-    with store.tx() as db:
-        current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
-        refuse_clash(current)
-        for key, value in wanted.items():
-            if key != "paused" or key not in current:
-                db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
-        if cap is not None:
-            set_cap(db, cap)
-    if mode == "local" and git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
-        if not base:
-            raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
-        git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
-    return f"{'updated' if current else 'created'} {directory}"
+        refuse_clash(store.contract)
+        if mode in REMOTE_MODES:
+            if not git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
+                raise LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
+            git("fetch", remote, trunk, cwd=repo)
+        with store.tx() as db:
+            current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
+            refuse_clash(current)
+            for key, value in wanted.items():
+                if key != "paused" or key not in current:
+                    db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
+            if cap is not None:
+                set_cap(db, cap)
+        if mode == "local" and git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
+            if not base:
+                raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
+            git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
+        return f"{'updated' if current else 'created'} {directory}"
 
 
 def set_cap(db, cap):
@@ -3427,54 +3546,54 @@ def run(argv):
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
                     args.merge_method, args.cap), 0
-    store = Store.for_repo(args.repo)
-    if args.command == "cap":
-        return change_cap(store, args.count), 0
-    if args.command == "owner":
-        return raise_floor(store, args.prefix, args.generation), 0
-    if args.command == "lease":
-        if args.action == "claim":
-            return lease_claim(store, args.holder, args.paths, args.ttl_hours, args.owner), 0
-        if args.action == "check":
-            return lease_check(store, args.holder, args.paths)
-        if args.action == "list":
-            return lease_list(store), 0
-        if args.action == "reserve":
-            return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
-        if args.action == "unreserve":
-            return lease_unreserve(store, reservation_id(args.id), args.owner), 0
-        number = lease_id(args.id)
-        if args.action == "renew":
-            return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
-        return lease_release(store, number, args.owner), 0
-    if args.command == "mode":
-        return change_mode(store, args.mode, args.merge_method), 0
-    if args.command == "share":
-        return change_share(store, args.prefix, args.count, args.clear, args.owner), 0
-    if args.command == "contest":
-        if (args.settle is None) != (args.first is None):
-            raise LandError("--settle and --first go together")
-        return contest(store, args.owner, args.holders, args.settle, args.first, args.cancel), 0
-    if args.command == "submit":
-        body = Path(args.body_file).read_text() if args.body_file else ""
-        return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body, args.owner), 0
-    if args.command == "land":
-        return land(store), 0
-    if args.command == "resume":
-        with store.tx() as db:
-            if (store.contract.get("paused") or "").startswith(IDENTITY_PAUSE):
-                db.execute("DELETE FROM contract WHERE key = 'identity'")
-            db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', '\"\"')")
-            db.execute("DELETE FROM contract WHERE key = 'tip'")
-            store.log(db, "queue", 0, "resumed")
-        return "queue resumed", 0
-    if args.holder:
-        if args.id:
-            raise LandError("status takes an entry id or --holder, not both")
-        return holder_status(store, args.holder, args.sha), 0
-    if args.sha:
-        raise LandError("status --sha needs --holder")
-    return status(store, args.id), 0
+    with Store.for_repo(args.repo) as store:
+        if args.command == "cap":
+            return change_cap(store, args.count), 0
+        if args.command == "owner":
+            return raise_floor(store, args.prefix, args.generation), 0
+        if args.command == "lease":
+            if args.action == "claim":
+                return lease_claim(store, args.holder, args.paths, args.ttl_hours, args.owner), 0
+            if args.action == "check":
+                return lease_check(store, args.holder, args.paths)
+            if args.action == "list":
+                return lease_list(store), 0
+            if args.action == "reserve":
+                return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
+            if args.action == "unreserve":
+                return lease_unreserve(store, reservation_id(args.id), args.owner), 0
+            number = lease_id(args.id)
+            if args.action == "renew":
+                return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
+            return lease_release(store, number, args.owner), 0
+        if args.command == "mode":
+            return change_mode(store, args.mode, args.merge_method), 0
+        if args.command == "share":
+            return change_share(store, args.prefix, args.count, args.clear, args.owner), 0
+        if args.command == "contest":
+            if (args.settle is None) != (args.first is None):
+                raise LandError("--settle and --first go together")
+            return contest(store, args.owner, args.holders, args.settle, args.first, args.cancel), 0
+        if args.command == "submit":
+            body = Path(args.body_file).read_text() if args.body_file else ""
+            return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body, args.owner), 0
+        if args.command == "land":
+            return land(store), 0
+        if args.command == "resume":
+            with store.tx() as db:
+                if (store.contract.get("paused") or "").startswith(IDENTITY_PAUSE):
+                    db.execute("DELETE FROM contract WHERE key = 'identity'")
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', '\"\"')")
+                db.execute("DELETE FROM contract WHERE key = 'tip'")
+                store.log(db, "queue", 0, "resumed")
+            return "queue resumed", 0
+        if args.holder:
+            if args.id:
+                raise LandError("status takes an entry id or --holder, not both")
+            return holder_status(store, args.holder, args.sha), 0
+        if args.sha:
+            raise LandError("status --sha needs --holder")
+        return status(store, args.id), 0
 
 
 def main(argv=None):

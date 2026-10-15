@@ -16,6 +16,7 @@ import shlex
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -80,18 +81,63 @@ class _Saved:
     fds: dict
 
 
-def _descriptors():
-    probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+def _open_fd_directory():
+    """Open the descriptor directory and return it with the descriptor that reads it.
+
+    The directory is /proc/self/fd when this host provides it, and /dev/fd otherwise.
+    """
+    try:
+        return "/proc/self/fd", os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+    except FileNotFoundError:
+        return "/dev/fd", os.open("/dev/fd", os.O_RDONLY | os.O_DIRECTORY)
+
+
+def _fd_numbers():
+    """Return the descriptor directory and every descriptor number it lists except the probe.
+
+    The probe is the descriptor that reads the directory, and its number is left out.
+    """
+    directory, probe = _open_fd_directory()
     try:
         names = os.listdir(probe)
     finally:
         os.close(probe)
-    found = {}
+    numbers = set()
     probe_name = str(probe)
     for name in names:
         if name == probe_name or not name.isdigit():
             continue
-        number = int(name)
+        numbers.add(int(name))
+    return directory, numbers
+
+
+def _fd_paths():
+    """Return the descriptor directory and the path of every open descriptor it can read except the probe.
+
+    The probe is the descriptor that reads the directory, and its number is left out. An entry under
+    /proc/self/fd is a symlink. An entry under /dev/fd is not, and F_GETPATH names it.
+    """
+    directory, numbers = _fd_numbers()
+    found = {}
+    for number in numbers:
+        try:
+            if directory == "/proc/self/fd":
+                found[number] = os.readlink(f"/proc/self/fd/{number}")
+            else:
+                found[number] = fcntl.fcntl(number, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode()
+        except OSError:
+            continue
+    return directory, found
+
+
+def _descriptors():
+    """Return the device and inode of every listed descriptor at or above 3 that it can fstat.
+
+    No pathname is read, so a descriptor whose pathname query would fail is still listed.
+    """
+    _, numbers = _fd_numbers()
+    found = {}
+    for number in numbers:
         if number < 3:
             continue
         try:
@@ -597,6 +643,96 @@ READY_MAIN = (
     "sys.exit(land.main(sys.argv[5:]))\n"
 )
 
+# A witness probe that cannot answer. os.waitid is gone, so land.py falls back to ps, and every ps
+# call raises.
+FAILED_WITNESS_PROBE = (
+    "import os, subprocess\n"
+    "vars(os).pop('waitid', None)\n"
+    "_real_run = subprocess.run\n"
+    "def _ps(*args, **kwargs):\n"
+    "    command = args[0] if args else kwargs.get('args')\n"
+    "    if isinstance(command, (list, tuple)) and command[:1] == ['ps']:\n"
+    "        raise OSError('ps is unavailable')\n"
+    "    return _real_run(*args, **kwargs)\n"
+    "subprocess.run = _ps\n"
+)
+
+# A witness probe that reports a zombie leader this process may not signal. The host's waitid or ps
+# answers the exit question, and a ps uid query prints a uid line that matches no uid of this process.
+# land.py sees an effective uid that is not root, so root does not short circuit the check.
+FOREIGN_UID_WITNESS_PROBE = (
+    "import os, subprocess\n"
+    "land.os.geteuid = lambda: 1000\n"
+    "_real_run = subprocess.run\n"
+    "_uid = next(uid for uid in (1, 2, 3) if uid not in (os.getuid(), 1000))\n"
+    "_line = '%d %d %d\\n' % (_uid, _uid, _uid)\n"
+    "def _ps(*args, **kwargs):\n"
+    "    command = args[0] if args else kwargs.get('args')\n"
+    "    if isinstance(command, (list, tuple)) and any('uid=' in str(part) for part in command):\n"
+    "        return subprocess.CompletedProcess(list(command), 0, stdout=_line)\n"
+    "    return _real_run(*args, **kwargs)\n"
+    "subprocess.run = _ps\n"
+)
+
+# A stub for os.killpg. "after-term" delivers the first signal and raises EPERM for every later one.
+# It does not deliver those later signals, even if the group still has a live permitted member.
+# "always" raises EPERM for every signal, and kills the leader itself first when kills is set.
+# These seams exercise the witness check. Native macOS killpg can still signal live permitted members
+# when the leader is a zombie.
+EPERM_KILLPG_STUB = (
+    "import errno, os, signal\n"
+    "_real_killpg = os.killpg\n"
+    "_sent = []\n"
+    "_leader = []\n"
+    "def _killpg(pid, sig):\n"
+    "    _leader.append(pid)\n"
+    "    if {kills!r}:\n"
+    "        os.kill(pid, signal.SIGKILL)\n"
+    "    if {mode!r} == 'always' or ({mode!r} == 'after-term' and _sent):\n"
+    "        raise PermissionError(errno.EPERM, 'Operation not permitted')\n"
+    "    _sent.append(sig)\n"
+    "    _real_killpg(pid, sig)\n"
+    "os.killpg = _killpg\n"
+)
+
+# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child this process
+# may signal. The probe is land._leader_is_permitted_zombie, the witness the killpg wrapper uses, and
+# it never reaps, so the interrupt lands after the SIGTERM has killed the leader.
+INTERRUPT_AFTER_THE_LEADER_EXITS = (
+    "import os, time\n"
+    "_real_time_sleep = time.sleep\n"
+    "def _interrupt(seconds):\n"
+    "    if _leader and land._leader_is_permitted_zombie(_leader[0]):\n"
+    "        raise KeyboardInterrupt()\n"
+    "    _real_time_sleep(seconds)\n"
+    "land._real_sleep = _interrupt\n"
+)
+
+
+def _darwin_eperm_main(mode="after-term", kills=False, probe="waitid", darwin=True, after=""):
+    """Return EXCLUSIVE_MAIN with os.killpg replaced by a stub, forcing the Darwin platform when darwin is true.
+
+    mode picks the signals that raise EPERM, and kills kills the leader itself first. probe picks the witness probe, and is one of
+    waitid, failed, or foreign. darwin False leaves the platform alone, so the Linux branch runs on a Linux host.
+    after holds extra lines the wrapper runs after the killpg stub, and may read that stub's state.
+    """
+    lines = ["import land\n"]
+    if darwin:
+        lines.append("land.sys.platform = 'darwin'\n")
+    if probe == "failed":
+        lines.append(FAILED_WITNESS_PROBE)
+    elif probe == "foreign":
+        lines.append(FOREIGN_UID_WITNESS_PROBE)
+    lines.append(EPERM_KILLPG_STUB.format(mode=mode, kills=kills))
+    lines.append(after)
+    return EXCLUSIVE_MAIN.replace("import land\n", "".join(lines), 1)
+
+
+def cap_line(cap):
+    return (f"land: stopped the command at the {cap}s exclusive cap. "
+            f"--for sets a longer cap and needs --reason past {cap}s.\n")
+
+
 # A command that forks one child in the same process group and writes both pids.
 GROUP_SLEEP = (
     "import os, sys, time\n"
@@ -619,6 +755,24 @@ IGNORING_GROUP = (
     "if child == 0:\n"
     "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
     "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    time.sleep(3600)\n"
+    "time.sleep(3600)\n"
+)
+
+# The same command with a child that closes the standard streams, so a child that outlives the command
+# does not hold the capture pipes of the caller that waits for it.
+SURVIVING_IGNORING_GROUP = (
+    "import os, signal, sys, time\n"
+    "from pathlib import Path\n"
+    "parent_path, child_path = sys.argv[1], sys.argv[2]\n"
+    "Path(parent_path).write_text(str(os.getpid()))\n"
+    "child = os.fork()\n"
+    "if child == 0:\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "    Path(child_path).write_text(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+    "    os.close(0)\n"
+    "    os.close(1)\n"
+    "    os.close(2)\n"
     "    time.sleep(3600)\n"
     "time.sleep(3600)\n"
 )
@@ -1752,19 +1906,13 @@ exit 0
         self.assertEqual(self.land("lease", "renew", "L9", ok=False), "land: no L9")
 
     def lease_row(self, number):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return tuple(store.db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone())
-        finally:
-            store.db.close()
 
     def owner_state(self):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return ([tuple(row) for row in store.db.execute("SELECT * FROM owner")],
                     store.db.execute("SELECT count(*) FROM log").fetchone()[0])
-        finally:
-            store.db.close()
 
     def test_an_owner_floor_rises_and_never_lowers(self):
         self.init()
@@ -1784,20 +1932,10 @@ exit 0
         fired = {"done": False}
 
         def _open_land_db(database):
-            prefix = os.fspath(database)
+            directory, paths = _fd_paths()
+            prefix = os.fspath(database) if directory == "/proc/self/fd" else os.path.realpath(database)
             found = []
-            probe = os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                names = os.listdir(probe)
-            finally:
-                os.close(probe)
-            for name in names:
-                if not name.isdigit():
-                    continue
-                try:
-                    target = os.readlink(f"/proc/self/fd/{name}")
-                except OSError:
-                    continue
+            for target in paths.values():
                 if target.startswith(prefix):
                     found.append(target)
             for obj in gc.get_objects():
@@ -1839,6 +1977,44 @@ exit 0
         code, out, err = drive(SCRIPT, argv, env=env)
         self.assertEqual(code, 0, out + err)
         self.assertEqual(_open_land_db(database), [])
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test lists a real /proc/self/fd as /dev/fd")
+    def test_descriptor_cleanup_keeps_a_pipe_whose_path_query_fails(self):
+        """Pin that a pipe whose path query fails stays listed, and a later pipe is still cleaned up.
+
+        The F_GETPATH mock raises for a FIFO, which models Darwin's rejection of a non-vnode
+        descriptor. The second pipe is opened after the snapshot, and the cleanup closes it.
+        """
+        read_first, write_first = os.pipe()
+        opened = [read_first, write_first]
+
+        def labeled_directory():
+            return "/dev/fd", os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+
+        def get_path(descriptor, cmd, buffer):
+            if stat.S_ISFIFO(os.fstat(descriptor).st_mode):
+                raise OSError(errno.EINVAL, "Inappropriate ioctl for device")
+            return os.readlink(f"/proc/self/fd/{descriptor}").encode()
+
+        try:
+            # Linux fcntl has no F_GETPATH, so the seam names its own command.
+            with mock.patch.multiple(fcntl, fcntl=get_path, F_GETPATH=9999, create=True), \
+                    mock.patch.object(sys.modules[__name__], "_open_fd_directory", labeled_directory):
+                before = _descriptors()
+                read_second, write_second = os.pipe()
+                opened.extend((read_second, write_second))
+                _close_new_fds(before)
+            self.assertIn(read_first, before)
+            self.assertIn(write_first, before)
+            for number in (read_second, write_second):
+                with self.assertRaises(OSError):
+                    os.fstat(number)
+        finally:
+            for number in opened:
+                try:
+                    os.close(number)
+                except OSError:
+                    pass
 
     def test_a_retained_interrupt_cannot_close_a_descriptor_a_later_open_reused(self):
         self.init()
@@ -2218,8 +2394,7 @@ exit 0
 
     def rebuild_entry_without_autoincrement(self):
         """Rewrite entry as an older database: the same rows, and no AUTOINCREMENT."""
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             rows = [dict(row) for row in store.db.execute("SELECT * FROM entry")]
             store.db.execute("DROP TABLE entry")
             store.db.executescript(land.SCHEMA.replace(" AUTOINCREMENT", ""))
@@ -2231,8 +2406,6 @@ exit 0
                     [row[name] for name in present])
             if store.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
                 store.db.execute("DELETE FROM sqlite_sequence WHERE name = 'entry'")
-        finally:
-            store.db.close()
 
     def test_a_bounced_entry_resubmitted_gets_a_new_id(self):
         self.init()
@@ -2419,15 +2592,15 @@ exit 0
         sha = self.worker("w1", {"a.txt": "agent\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
-        store = land.Store.for_repo(self.work)
         real = land.publish
 
         def publish_then_crash(*args):
             real(*args)
             raise KeyboardInterrupt
 
-        with mock.patch.object(land, "publish", publish_then_crash), self.assertRaises(KeyboardInterrupt):
-            land.land(store)
+        with land.Store.for_repo(self.work) as store:
+            with mock.patch.object(land, "publish", publish_then_crash), self.assertRaises(KeyboardInterrupt):
+                land.land(store)
         self.assertEqual(self.land_in_another_process("status", "E1").split(" (")[0], "E1 landing")
         self.assertEqual(self.land_in_another_process("land"), "nothing to land")
         self.assertIn("E1 landed", self.land_in_another_process("status", "E1"))
@@ -2436,44 +2609,44 @@ exit 0
 
     def subprocesses_during_land(self):
         """Commands this land run starts while a write transaction is open."""
-        store = land.Store.for_repo(self.work)
-        depth = {"n": 0}
-        hits = []
-        original_tx = land.Store.tx
-        original_run = land.subprocess.run
-        original_popen = land.subprocess.Popen
+        with land.Store.for_repo(self.work) as store:
+            depth = {"n": 0}
+            hits = []
+            original_tx = land.Store.tx
+            original_run = land.subprocess.run
+            original_popen = land.subprocess.Popen
 
-        @contextlib.contextmanager
-        def watching_tx(store_self):
-            depth["n"] += 1
-            try:
-                with original_tx(store_self) as db:
-                    yield db
-            finally:
-                depth["n"] -= 1
+            @contextlib.contextmanager
+            def watching_tx(store_self):
+                depth["n"] += 1
+                try:
+                    with original_tx(store_self) as db:
+                        yield db
+                finally:
+                    depth["n"] -= 1
 
-        def record(command):
-            if isinstance(command, (list, tuple)):
-                hits.append(" ".join(str(part) for part in command))
-            else:
-                hits.append(str(command))
+            def record(command):
+                if isinstance(command, (list, tuple)):
+                    hits.append(" ".join(str(part) for part in command))
+                else:
+                    hits.append(str(command))
 
-        def watching_run(*args, **kwargs):
-            if depth["n"]:
-                record(args[0] if args else kwargs.get("args"))
-            return original_run(*args, **kwargs)
+            def watching_run(*args, **kwargs):
+                if depth["n"]:
+                    record(args[0] if args else kwargs.get("args"))
+                return original_run(*args, **kwargs)
 
-        def watching_popen(*args, **kwargs):
-            # subprocess.run calls Popen for the same command. Record a direct Popen only.
-            if depth["n"] and inspect.stack()[1].function != "run":
-                record(args[0] if args else kwargs.get("args"))
-            return original_popen(*args, **kwargs)
+            def watching_popen(*args, **kwargs):
+                # subprocess.run calls Popen for the same command. Record a direct Popen only.
+                if depth["n"] and inspect.stack()[1].function != "run":
+                    record(args[0] if args else kwargs.get("args"))
+                return original_popen(*args, **kwargs)
 
-        with mock.patch.object(land.Store, "tx", watching_tx), \
-             mock.patch.object(land.subprocess, "run", watching_run), \
-             mock.patch.object(land.subprocess, "Popen", watching_popen):
-            land.land(store)
-        return hits
+            with mock.patch.object(land.Store, "tx", watching_tx), \
+                 mock.patch.object(land.subprocess, "run", watching_run), \
+                 mock.patch.object(land.subprocess, "Popen", watching_popen):
+                land.land(store)
+            return hits
 
     def test_a_land_run_runs_no_subprocess_inside_a_write_transaction(self):
         self.init()
@@ -2497,14 +2670,14 @@ exit 0
 
     def test_a_held_queue_lock_reports_busy(self):
         self.init()
-        store = land.Store.for_repo(self.work)
-        import fcntl
-        with open(store.dir / ".queue.lock", "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            result = real_process(
-                ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("queue busy", result.stdout)
+        with land.Store.for_repo(self.work) as store:
+            import fcntl
+            with open(store.dir / ".queue.lock", "a") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                result = real_process(
+                    ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("queue busy", result.stdout)
 
     def test_local_mode_lands_on_a_queue_owned_ref_and_never_moves_a_branch(self):
         self.init(mode="local", trunk="perf", base="main")
@@ -2865,7 +3038,8 @@ os.execv(real, [real, *args])
         }))
 
     def stored_merge_method(self):
-        return land.Store.for_repo(self.work).contract["mergeMethod"]
+        with land.Store.for_repo(self.work) as store:
+            return store.contract["mergeMethod"]
 
     def arm_auto_merge(self):
         (self.base / "auto-merge-request.json").write_text(
@@ -3338,10 +3512,10 @@ os.execv({real!r}, [{real!r}, *args])
 
     def leave_awaiting_merge_without_a_pr(self):
         """Push landing/e<n>, mark the entry awaiting merge, and die before gh pr create."""
-        store = land.Store.for_repo(self.work)
-        with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                land.land(store)
+        with land.Store.for_repo(self.work) as store:
+            with mock.patch.object(land, "ensure_pr", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    land.land(store)
         status = self.land_in_another_process("status", "E1")
         self.assertIn("awaiting-merge", status)
         self.assertNotIn("pull/", status)
@@ -3467,7 +3641,8 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertFalse((self.base / "merge-calls").exists())
 
     def absent_marker(self):
-        return land.Store.for_repo(self.work).contract.get("absentDrain") or {}
+        with land.Store.for_repo(self.work) as store:
+            return store.contract.get("absentDrain") or {}
 
     def test_merge_mode_does_not_merge_a_just_opened_pr_with_zero_posted_checks(self):
         with self.fake_gh():
@@ -3588,14 +3763,16 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", first)
             self.assertNotIn("queue paused", first)
             self.assertNotIn("landed", first)
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
             self.assertIn("waiting for required checks", self.land("status", "E1"))
             self.assertNotIn("Paused", self.land("status"))
             self.assertIn("protection/required_status_checks", (self.base / "gh-calls").read_text())
             (self.base / "pr-checks.json").unlink()
             (self.base / "checks").write_text("passed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
 
     def test_merge_mode_pauses_when_policy_refuses_and_every_required_check_is_posted(self):
         with self.fake_gh():
@@ -3616,9 +3793,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
@@ -3638,9 +3816,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
 
@@ -3660,9 +3839,10 @@ os.execv({real!r}, [{real!r}, *args])
             self.assertIn("queue paused", first)
             self.assertIn("the base branch policy prohibits the merge", first)
             self.assertNotIn("landed", first)
-            self.assertIn(
-                "the base branch policy prohibits the merge",
-                land.Store.for_repo(self.work).contract["paused"])
+            with land.Store.for_repo(self.work) as store:
+                self.assertIn(
+                    "the base branch policy prohibits the merge",
+                    store.contract["paused"])
             second = self.land("land")
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
@@ -3679,7 +3859,8 @@ os.execv({real!r}, [{real!r}, *args])
             first = self.land("land")
             self.assertNotIn("queue paused", first)
             self.assertIn("landed E1 (r/D1)", first)
-            self.assertEqual(land.Store.for_repo(self.work).contract.get("paused"), "")
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract.get("paused"), "")
             self.assertEqual(self.land("land"), "nothing to land")
 
     def test_merge_mode_does_not_merge_when_a_pending_check_appears_between_reads(self):
@@ -3967,31 +4148,31 @@ os.execv({real!r}, [{real!r}, *args])
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
-            store = land.Store.for_repo(self.work)
-            with store.tx() as db:
-                db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps("push"),))
-            store = land.Store.for_repo(self.work)
-            self.assertEqual(store.contract["mode"], "push")
-            remote = self.base / "origin.git"
-            self.merged_queue_branch()
-            sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
-            sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
-            sh("git", "config", "push.followTags", "true", cwd=self.work)
-            (self.base / "branch-query-fails").write_text("x")
-            entry = store.entries("awaiting-merge")[0]
-            log = self.record_pushes()
-            try:
-                landed, bounced = [], []
-                self.assertTrue(land.take_pr(store, entry, landed, bounced))
-            finally:
-                self.stop_recording_pushes()
-            self.assertEqual(landed, [entry["id"]])
-            self.assertEqual(bounced, [])
-            self.assertEqual(
-                log.read_text().splitlines(),
-                ["push --no-follow-tags origin --delete landing/e1"])
-            self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
-            self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
+            with land.Store.for_repo(self.work) as store:
+                with store.tx() as db:
+                    db.execute("INSERT OR REPLACE INTO contract VALUES ('mode', ?)", (json.dumps("push"),))
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract["mode"], "push")
+                remote = self.base / "origin.git"
+                self.merged_queue_branch()
+                sh("git", "update-ref", "-d", "refs/heads/landing/e1", cwd=remote)
+                sh("git", "tag", "-a", "private-local-tag", "-m", "local tag", cwd=self.work)
+                sh("git", "config", "push.followTags", "true", cwd=self.work)
+                (self.base / "branch-query-fails").write_text("x")
+                entry = store.entries("awaiting-merge")[0]
+                log = self.record_pushes()
+                try:
+                    landed, bounced = [], []
+                    self.assertTrue(land.take_pr(store, entry, landed, bounced))
+                finally:
+                    self.stop_recording_pushes()
+                self.assertEqual(landed, [entry["id"]])
+                self.assertEqual(bounced, [])
+                self.assertEqual(
+                    log.read_text().splitlines(),
+                    ["push --no-follow-tags origin --delete landing/e1"])
+                self.assertNotIn("branches/", (self.base / "gh-calls").read_text())
+                self.assertFalse(self.ref_exists("refs/tags/private-local-tag", remote))
             self.assertEqual(self.land_in_another_process("status", "E1").splitlines()[0].split(". ")[0], "E1 landed (r/D1, w1)")
             self.assertEqual(self.land_in_another_process("lease", "list"), "no leases held")
 
@@ -5253,13 +5434,72 @@ os.execv({real!r}, [{real!r}, *args])
 
     def test_a_store_from_before_pr_text_columns_is_migrated(self):
         self.init()
-        store = land.Store.for_repo(self.work)
-        store.db.execute("DROP TABLE entry")
-        store.db.executescript(land.SCHEMA)
-        self.assertNotIn("title", {row["name"] for row in store.db.execute("PRAGMA table_info(entry)")})
-        store.db.close()
+        with land.Store.for_repo(self.work) as store:
+            store.db.execute("DROP TABLE entry")
+            store.db.executescript(land.SCHEMA)
+            self.assertNotIn("title", {row["name"] for row in store.db.execute("PRAGMA table_info(entry)")})
         self.assertEqual(self.queue_one(), "E1")
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_a_command_leaves_no_open_landing_database_after_it_returns(self):
+        self.init()
+        database = os.path.realpath(next((self.base / "state").glob("pstack-t3/landing/*/land.db")))
+        opened = []
+        real_connect = land.sqlite3.connect
+
+        def connect(path, *args, **kwargs):
+            connection = real_connect(path, *args, **kwargs)
+            opened.append((connection, os.path.realpath(path)))
+            return connection
+
+        def call(argv):
+            opened.clear()
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(land.sqlite3, "connect", connect), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = land.main(argv)
+            return code, out.getvalue(), err.getvalue()
+
+        def assert_closed():
+            self.assertTrue(opened, "the command opened no landing database")
+            for connection, path in opened:
+                self.assertEqual(path, database)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
+
+        base = ["--repo", str(self.work)]
+        clash = ("land: the contract already sets trunk='main'; change the mode with land.py mode; "
+                 "changing trunk or remote needs a new repository contract\n")
+        self.assertEqual(call([*base, "status", "E9"]), (1, "", "land: no E9\n"))
+        assert_closed()
+        self.assertEqual(call([*base, "init", "--trunk", "other", "--mode", "auto"]), (1, "", clash))
+        assert_closed()
+
+        with land.Store.for_repo(self.work) as store:
+            directory = store.dir
+            common = store.contract["commonDir"]
+            store.db.execute("INSERT OR REPLACE INTO contract VALUES ('commonDir', ?)", (json.dumps(str(self.base)),))
+        opened.clear()
+        with mock.patch.object(land.sqlite3, "connect", connect):
+            with self.assertRaises(land.LandError) as caught:
+                land.Store.for_repo(self.work)
+        assert_closed()
+        self.assertEqual(str(caught.exception), f"store {directory} belongs to {self.base}, not {common}")
+        with land.Store(directory) as store:
+            store.db.execute("INSERT OR REPLACE INTO contract VALUES ('commonDir', ?)", (json.dumps(common),))
+
+        opened.clear()
+        broken = OSError("migration refused")
+        with mock.patch.object(land.sqlite3, "connect", connect), \
+                mock.patch.object(land, "migrate_entry_ids", side_effect=broken):
+            with self.assertRaises(OSError) as failed:
+                land.Store(directory)
+        self.assertIs(failed.exception, broken)
+        assert_closed()
+
+        self.assertEqual(call([*base, "init", "--trunk", "main", "--mode", "auto"]),
+                         (0, f"updated {directory}\n", ""))
+        assert_closed()
 
     def entry_columns(self):
         with self.raw_db() as db:
@@ -6257,6 +6497,12 @@ os.execv({real!r}, [{real!r}, *args])
             time.sleep(0.02)
         self.fail(f"pid {pid} is still running")
 
+    def assert_live(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            self.fail(f"pid {pid} is not running")
+
     def assert_worker_holder_keeps_the_slot(self, holder):
         self.assertIsNone(holder.poll())
         record = json.loads((land.governor_dir() / "holds" / "worker-0").read_text())
@@ -6603,10 +6849,6 @@ os.execv({real!r}, [{real!r}, *args])
     def test_cap_cases_without_os_waitid(self):
         self.governor(1)
 
-        def cap_line(cap):
-            return (f"land: stopped the command at the {cap}s exclusive cap. "
-                    f"--for sets a longer cap and needs --reason past {cap}s.\n")
-
         result = self.run_exclusive(
             ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
             cap=0.4, grace=0.05, timeout=10, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
@@ -6719,6 +6961,115 @@ os.execv({real!r}, [{real!r}, *args])
                     except ProcessLookupError:
                         break
                     time.sleep(0.02)
+
+    def test_an_exclusive_cap_stops_when_darwin_eperm_follows_an_exited_leader(self):
+        """A killpg that macOS refuses for an exited leader still stops the command at its cap."""
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.05, timeout=20, main=_darwin_eperm_main("after-term"))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (124, "", cap_line("0.4")))
+        self.assert_slots_free()
+
+    def test_an_exclusive_darwin_eperm_is_reraised_when_the_witness_is_not_a_permitted_target(self):
+        """Each witness that is not a permitted target fails the command, and the Linux branch does the same."""
+        self.governor(1)
+        rows = (
+            ("live leader", dict(mode="always", probe="waitid"), True),
+            ("unknown witness", dict(mode="always", probe="failed"), True),
+            ("foreign uid", dict(mode="after-term", probe="foreign"), True),
+            ("leader exits after a negative witness", dict(mode="always", kills=True, probe="waitid"), True),
+            # darwin False keeps the host platform, so this row reaches the Linux branch on a Linux host.
+            ("linux", dict(mode="always", probe="waitid"), False),
+        )
+        for label, options, darwin in rows:
+            with self.subTest(witness=label):
+                # The command ends on its own, so a caller that never signals it cannot outlive the test.
+                result = self.run_exclusive(
+                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(0.6)"],
+                    cap=0.2, grace=0.05, timeout=20,
+                    main=_darwin_eperm_main(darwin=darwin, **options))
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("PermissionError", result.stderr)
+                self.assertNotIn("exclusive cap", result.stderr)
+                self.assert_slots_free()
+
+    def test_an_exclusive_darwin_eperm_leaves_a_sigterm_ignoring_member_alive_after_the_cap(self):
+        """An injected EPERM after the leader exits leaves a SIGTERM-ignoring member running.
+
+        The command still stops at its cap and frees the slots, so the caller never learns that the
+        group has a live member.
+        """
+        self.governor(1)
+        parent_path = self.base / "member-parent.pid"
+        child_path = self.base / "member-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", SURVIVING_IGNORING_GROUP,
+             str(parent_path), str(child_path)],
+            cap=1, grace=0.15, main=_darwin_eperm_main("after-term"))
+        try:
+            child_line = self.wait_for_line(child_path)
+            code = process.wait(timeout=20)
+            parent_pid = int(parent_path.read_text())
+            child_pid, child_group = (int(part) for part in child_line.split())
+            self.assertEqual(child_group, parent_pid)
+            self.assert_dead(parent_pid)
+            self.assertEqual((code, process.stderr.read()), (124, cap_line("1")))
+            self.assert_slots_free()
+            self.assert_live(child_pid)
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=20)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
+
+    def test_an_interrupt_during_the_exclusive_grace_survives_a_darwin_eperm(self):
+        """The interrupt that ends the grace wait is the error the caller sees, not the EPERM."""
+        self.governor(1)
+        result = self.run_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+            cap=0.4, grace=0.4, timeout=20,
+            main=_darwin_eperm_main("after-term", after=INTERRUPT_AFTER_THE_LEADER_EXITS))
+        self.assertNotEqual(result.returncode, 124, result.stderr)
+        self.assertIn("KeyboardInterrupt", result.stderr)
+        self.assertNotIn("PermissionError", result.stderr)
+        self.assert_slots_free()
+
+    def test_the_interrupt_fixture_needs_no_os_waitid(self):
+        """Pin that the interrupt fixture needs no os.waitid.
+
+        Removing os.waitid from the child models macOS Python before 3.13, which does not expose it.
+        """
+        self.governor(1)
+        original = _darwin_eperm_main
+
+        def without_waitid(*args, **kwargs):
+            return "import os\nvars(os).pop('waitid', None)\n" + original(*args, **kwargs)
+
+        with mock.patch.object(sys.modules[__name__], "_darwin_eperm_main", without_waitid):
+            result = self.run_exclusive(
+                ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                cap=0.4, grace=0.4, timeout=20,
+                main=_darwin_eperm_main("after-term", after=INTERRUPT_AFTER_THE_LEADER_EXITS))
+        self.assertNotEqual(result.returncode, 124, result.stderr)
+        self.assertIn("KeyboardInterrupt", result.stderr)
+        self.assertNotIn("PermissionError", result.stderr)
+        self.assert_slots_free()
+
+    def test_supervised_treats_darwin_eperm_for_a_witnessed_zombie_like_a_successful_killpg(self):
+        """A timed out command reports no status when macOS refuses the killpg for an exited leader."""
+        self.governor(1)
+        # The shell exits at once and leaves a member that holds the capture pipe, so the leader is an
+        # unreaped zombie when the killpg runs and the member ends on its own.
+        command = f"{sys.executable} -c 'import time; time.sleep(2)' & exit 0"
+        with mock.patch.object(land.sys, "platform", "darwin"), \
+                mock.patch.object(land.os, "killpg",
+                                  side_effect=PermissionError(errno.EPERM, "Operation not permitted")):
+            code, output = land.supervised(command, str(self.base), 0.4)
+        self.assertIsNone(code)
+        self.assertEqual(output, "")
 
     def test_an_exclusive_deadline_is_when_every_slot_is_locked(self):
         self.governor(1)
@@ -7172,7 +7523,7 @@ os.execv({real!r}, [{real!r}, *args])
             time.sleep(0.01)
         self.assertTrue(marker.exists(), "the reporting probe did not pause holding the free slot")
 
-        landing = slots.start("landing", pool="landing")
+        landing = slots.start("landing", pool="landing", stepped=True)
         slots.wait(lambda: (landing.directory / "blocking").exists() or landing.started,
                    "the landing caller blocks on the turn mutex the paused probe holds")
         self.assertTrue((landing.directory / "blocking").exists())
@@ -7180,10 +7531,14 @@ os.execv({real!r}, [{real!r}, *args])
 
         os.write(gate, b"x")
         stop_reporter()
+        # The landing caller ran on its own clock, so its next attempt could have taken the free slot
+        # before the exclusive stepped. Settling it first shows its attempt ended without starting.
+        self.assertEqual(slots.settle(landing), "waiting")
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
         slots.release(exclusive)
-        slots.release(slots.enter(landing))
+        self.assertEqual(slots.step(landing), "started")
+        slots.release(landing)
         self.assertEqual(slots.entries(), ["holder", "exclusive", "landing"])
 
     def test_a_worker_waiter_names_the_worker_holder_and_not_the_landing_holder(self):
@@ -7610,11 +7965,8 @@ os.execv({real!r}, [{real!r}, *args])
         return self.land("contest", *args, *ADMIN, ok=ok)
 
     def ruling_rows(self, table):
-        store = land.Store.for_repo(self.work)
-        try:
+        with land.Store.for_repo(self.work) as store:
             return [dict(row) for row in store.db.execute(f"SELECT * FROM {table} ORDER BY 1")]
-        finally:
-            store.db.close()
 
     def reserved_until(self, number):
         return next(row for row in self.ruling_rows("reservation") if row["id"] == number)["expires"][:16]
@@ -7911,15 +8263,12 @@ os.execv({real!r}, [{real!r}, *args])
         self.share("engine/", 2)
 
         def snapshot():
-            store = land.Store.for_repo(self.work)
-            try:
+            with land.Store.for_repo(self.work) as store:
                 shares = [(row["prefix"], row["count"]) for row in store.db.execute(
                     "SELECT prefix, count FROM share ORDER BY prefix")]
                 log = [(row["kind"], row["id"], row["state"], row["note"]) for row in store.db.execute(
                     "SELECT kind, id, state, note FROM log ORDER BY at")]
                 return store.contract.get("cap"), shares, log
-            finally:
-                store.db.close()
 
         before = snapshot()
         refusal = "land: shares add up to 4 (docs/ 2, engine/ 2), over the cap of 3"
@@ -8078,18 +8427,17 @@ os.execv({real!r}, [{real!r}, *args])
     def test_a_contest_waits_for_a_running_land_to_release_the_queue_lock(self):
         import fcntl
         self.init()
-        store = land.Store.for_repo(self.work)
-        with open(store.dir / ".queue.lock", "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            proc = real_popen(
-                ProcessReason.LOCK,
-                [sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
-                env=os.environ.copy())
-            time.sleep(1)
-            self.assertIsNone(proc.poll())
-            self.assertEqual(self.ruling_rows("contest"), [])
-        out, err = proc.communicate(timeout=20)
-        store.db.close()
+        with land.Store.for_repo(self.work) as store:
+            with open(store.dir / ".queue.lock", "a") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                proc = real_popen(
+                    ProcessReason.LOCK,
+                    [sys.executable, str(SCRIPT), "--repo", str(self.work), "contest", "--holders", "docs/D7,engine/D3", *ADMIN],
+                    env=os.environ.copy())
+                time.sleep(1)
+                self.assertIsNone(proc.poll())
+                self.assertEqual(self.ruling_rows("contest"), [])
+            out, err = proc.communicate(timeout=20)
         self.assertEqual((proc.returncode, out.strip()), (0, "C1"), err)
 
     def test_every_ruling_write_needs_an_owner(self):
@@ -8395,7 +8743,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def identity_pause(self, now, before="Owner <owner@example.com>"):
         return (f"the configured git identity is now {now} and the queue last ran as {before}; "
-                f"check git config --show-origin user.email in {self.work}, then run land.py resume")
+                f"check git config --show-origin user.email in {os.path.realpath(self.work)}, then run land.py resume")
 
     UNSET = "unset (user.name and user.email do not both have a non-empty value)"
 
