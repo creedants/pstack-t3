@@ -837,10 +837,15 @@ class BrigadeTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def brigade(self, *args, ok=True, stdin=None, owner=True):
-        return self.run_at(self.at, *args, ok=ok, stdin=stdin, owner=owner)
+    def brigade(self, *args, ok=True, stdin=None, owner=True, code=None):
+        return self.run_at(self.at, *args, ok=ok, stdin=stdin, owner=owner, code=code)
 
-    def run_at(self, directory, *args, ok=True, stdin=None, owner=True):
+    def run_at(self, directory, *args, ok=True, stdin=None, owner=True, code=None):
+        """Run brigade at directory.
+
+        The call must exit 0 when ok and must not exit 0 otherwise, unless code
+        names the one exit status it must return.
+        """
         if owner and "--owner" not in args:
             args = (*_owner_words(directory), *args)
         outcome = call(
@@ -848,8 +853,11 @@ class BrigadeTest(unittest.TestCase):
             ["--store", str(self.store), "--at", str(directory), *(str(arg) for arg in args)],
             stdin=stdin,
         )
-        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
-        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
+        if code is None:
+            self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+            return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
+        self.assertEqual(outcome.code, code, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if code == 0 else outcome.stderr_text()).strip()
 
     def assert_refused_choice(self, output, flag, value, choices):
         refusal = f"argument {flag}: invalid choice: '{value}'"
