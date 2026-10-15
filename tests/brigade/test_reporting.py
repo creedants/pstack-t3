@@ -718,7 +718,7 @@ CLOSE_AT = "2026-10-01T02:00:00+00:00"
 
 
 class _SpendFixture:
-    """`fill`, `put`, `dish`, and `dish_close` follow `SpendTest` in tests/brigade/test_spend.py. `goal_row`, `thread_row`, `token_database`, and `advance_report` are new."""
+    """`fill`, `put`, and `dish` follow `SpendTest` in tests/brigade/test_spend.py, and `dish_close` renames its `close`. `goal_row`, `thread_row`, `token_database`, and `advance_report` are new."""
 
     def fill(self, dishes, passes=(), threads=(), logs=(), goals=()):
         self.open()
