@@ -1,0 +1,3 @@
+- kind polish
+- Step 6 of the brigade skill tells the coordinator to include `verdict-protocol.md` in the verifier brief for the worth-a-fix-round test, the `Rare:` mark, and the `## Edits` shape.
+- Step 6 tells the coordinator to copy the `scratchDir` value from `restaurant.json` into the verifier brief as the `mktemp -d -p` parent, and to say so in the brief when none is set.
