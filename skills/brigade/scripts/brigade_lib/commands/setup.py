@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.compact import effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import AUTOFIRE, MODES, REPORTING, SCRATCH_KEY, is_admin, open_restaurant, sibling_lines, siblings, scratch_parent_text
@@ -112,6 +112,10 @@ def handle_open(args, root):
         lines.append(f"intake stays {', '.join(intake) or 'empty'}; change it with set --intake")
     if not created and args.mode is not None and args.mode != meta.get("mode"):
         lines.append(f"mode stays {meta.get('mode') or 'unset'}; change it with set --mode")
+    if not created and context_cap is not None and context_cap != effective_cap(meta):
+        lines.append(f"context-cap stays {effective_cap(meta)}; change it with set --context-cap")
+    if not created and coordinator_provider is not None and coordinator_provider != effective_provider(meta):
+        lines.append(f"coordinator-provider stays {effective_provider(meta)}; change it with set --coordinator-provider")
     lines.extend(sibling_lines(restaurant))
     if siblings(restaurant.dir, restaurant.meta.get("projectRoot")) and not is_admin(meta):
         cap = repository_cap(restaurant.meta["projectRoot"])

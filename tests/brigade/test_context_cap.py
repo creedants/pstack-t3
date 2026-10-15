@@ -43,11 +43,48 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(
             self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
                          "--context-cap", "80000"),
-            f"exists {self.at}")
+            f"exists {self.at}\ncontext-cap stays 90000; change it with set --context-cap")
         self.assertEqual(self.meta()["contextCap"], 90000)
         self.settings().unlink()
         self.assertEqual(self.open(), f"exists {self.at}")
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 90000\n}\n')
+
+    def test_reopen_reports_an_ignored_context_cap_and_keeps_the_store(self):
+        self.open()
+        self.brigade("set", "--context-cap", "90000")
+        before = self.store_files()
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                         "--context-cap", "80000"),
+            f"exists {self.at}\ncontext-cap stays 90000; change it with set --context-cap")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.meta()["contextCap"], 90000)
+
+    def test_reopen_reports_an_ignored_coordinator_provider_and_keeps_the_store(self):
+        self.open()
+        self.brigade("set", "--coordinator-provider", "other")
+        before = self.store_files()
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                         "--coordinator-provider", "claude"),
+            f"exists {self.at}\ncoordinator-provider stays other; change it with set --coordinator-provider")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.meta()["coordinatorProvider"], "other")
+
+    def test_reopen_reports_both_ignored_flags_and_keeps_the_store(self):
+        self.open()
+        self.brigade("set", "--context-cap", "90000")
+        self.brigade("set", "--coordinator-provider", "other")
+        before = self.store_files()
+        self.assertEqual(
+            self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                         "--context-cap", "80000", "--coordinator-provider", "claude"),
+            f"exists {self.at}\n"
+            "context-cap stays 90000; change it with set --context-cap\n"
+            "coordinator-provider stays other; change it with set --coordinator-provider")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.meta()["contextCap"], 90000)
+        self.assertEqual(self.meta()["coordinatorProvider"], "other")
 
     def test_set_stores_the_cap_and_prints_the_full_new_meta(self):
         self.open()
