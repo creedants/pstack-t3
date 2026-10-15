@@ -593,7 +593,10 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     """Write one holder record for each slot just taken, before the turn mutex unlocks.
 
     Returns the locked record descriptors, one per slot whose write succeeded.
-    Stores cap and reason only when kind is exclusive.
+    Stores cap and reason only when kind is exclusive. When the rename fails with FileNotFoundError,
+    the write retries with a fresh temporary
+    record, up to three attempts per slot. The failed descriptor closes before the retry,
+    releasing its record lock. Previously published record locks and slot flocks stay held.
     """
     if kind != "exclusive":
         cap = None
@@ -603,10 +606,14 @@ def _publish(kind, handles, taken, repo, command, cap=None, reason=None):
     for name, handle in handles.items():
         if handle not in taken:
             continue
-        try:
-            records.append(_dump_holder(_hold_path(name), holder))
-        except OSError:
-            pass
+        for _ in range(3):
+            try:
+                records.append(_dump_holder(_hold_path(name), holder))
+                break
+            except FileNotFoundError:
+                continue
+            except OSError:
+                break
     return records
 
 
@@ -839,7 +846,7 @@ def _admit(demand, repo=None, command=None, cap=None, reason=None):
     """Take the slots demand needs, or wait for them behind a ticket named with demand.kind. Returns an _Admission.
 
     handles are every opened slot file. names are the locked ones.
-    acquired is time.monotonic() taken after the slot flocks succeed and before the holder records are written.
+    acquired is _cap_monotonic() taken after the slot flocks succeed and before the holder records are written.
     A worker demand whose count passes the governor's worker slots during the wait removes its ticket and raises LandError.
     """
     kind = demand.kind
@@ -867,7 +874,7 @@ def _admit(demand, repo=None, command=None, cap=None, reason=None):
             if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
                 taken = _try_take(demand, handles, slots)
             if taken is not None:
-                acquired = time.monotonic()
+                acquired = _cap_monotonic()
             if taken is None and not _ticket_named(ticket):
                 if ticket is not None:
                     ticket.close()
@@ -928,7 +935,14 @@ def exclusive_slot(repo=None, command=None, cap=None, reason=None):
             _hide_hold()
 
 
+_cap_monotonic = time.monotonic
 _real_sleep = time.sleep
+
+
+def _exclusive_ready_ack():
+    """Run once the command starts, after the slots are locked and the holder records are written.
+    Production does nothing. A test swaps in a function that marks a ready file, so the signal test can prove the supervisor reached the hook just before its protected wait before it signals."""
+    return None
 
 
 def _pid_reserved(pid):
@@ -1020,14 +1034,15 @@ def exclusive_command(command, repo, for_text, reason_text):
             process.wait()
 
     with exclusive_slot(repo=repo, command=" ".join(command), cap=seconds, reason=reason) as acquired:
-        if seconds - (time.monotonic() - acquired) <= 0:
+        if seconds - (_cap_monotonic() - acquired) <= 0:
             _report_cap(seconds)
             return EXCLUSIVE_CAP_STATUS
         process = subprocess.Popen(command, start_new_session=True)
         try:
+            _exclusive_ready_ack()
             if hasattr(process, "_sigint_wait_secs"):
                 process._sigint_wait_secs = 0  # CPython waits 0.25s on SIGINT after setsid, and the child did not see that signal.
-            remaining = seconds - (time.monotonic() - acquired)
+            remaining = seconds - (_cap_monotonic() - acquired)
             try:
                 wait_with_real_sleep(process, max(0.0, remaining))
             except subprocess.TimeoutExpired:
@@ -1212,14 +1227,20 @@ KINDS = ("feature", "fix", "polish", "upkeep", "study")
 def _table_rows(path):
     """The rows of one coordinator store table, each keyed by the cell names of its header line.
 
-    A table that does not exist, cannot be read, or is not UTF-8 has no rows. A line that holds more
-    cells than its header empties the whole table. A final line with no newline after it is not a row.
+    A table that does not exist or cannot be read has no rows. Finished bytes that are not UTF-8
+    have no rows. A line that holds more cells than its header empties the whole table. Bytes after
+    the last newline are dropped before decoding and are never a row.
     """
     try:
-        text = path.read_bytes().decode()
-    except (OSError, ValueError):
+        data = path.read_bytes()
+    except OSError:
         return []
-    lines = text.split("\n")[:-1]
+    finished = data.split(b"\n")[:-1]
+    try:
+        text = b"\n".join(finished).decode()
+    except ValueError:
+        return []
+    lines = text.split("\n") if finished else []
     header = lines[0].split("\t") if lines else []
     rows = []
     for line in lines[1:]:
