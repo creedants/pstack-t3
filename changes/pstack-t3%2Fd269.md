@@ -1,5 +1,5 @@
 - kind feature
-- A brief pastes the failed-test-output rule and the small-change rule in a STANDING RULES section between VERIFY and TIMEBOX, and pastes the scratch rule only when the restaurant records a scratch parent.
+- A brief pastes the failed-test-output rule and the small-change rule in a STANDING RULES section between VERIFY and TIMEBOX, and pastes the scratch rule only when the restaurant records a scratch parent, and drops a rule when the coordinator context plus verify text already holds all its anchors.
 - `brigade.py set --scratch-dir <dir>` records that parent under the `scratchDir` key as the resolved absolute directory, and an empty value clears the key. A value that is relative, holds a tilde or a newline, or resolves to /tmp or inside /tmp is refused.
 - The failed-test rule tells the worker to save the full output of a failed test run to a file under the restaurant's reports directory before a rerun and to name that file in the report.
 - The small-change rule lets the worker write a change that touches one file outside tests, at about 40 or fewer added and removed lines outside tests, and no safety, privacy, or integrity guarantee. The worker counts the lines from `git diff --numstat <base>...HEAD` and quotes that output. The claims check and the gate review always run.
@@ -8,7 +8,7 @@
 - The `_Standing` docstring names the placeholders in `text` and the anchors.
 - The small-change dedupe anchors are `write the change yourself`, `one file`, and `claims check`.
 - The failed-test dedupe anchors add `Save the full output` as a fourth anchor.
-- The shipped protocol names the project's build command and never a generated file.
+- The shipped protocol refers to the project's build command without naming it, and never for a file the build generates.
 - The shipped protocol says `/tmp` is memory-backed and small on many systems.
 - The scratch-dir test passes an unresolved path and asserts the resolved form.
 - The dedupe test uses the coordinator small-change sentence and keeps the line for a pointer-only sentence.
