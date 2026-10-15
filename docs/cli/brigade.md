@@ -95,7 +95,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
-| `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch |
+| `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch; given once |
 | `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the kind of work; a ticket added with --summary is refused without it |
 | `--goal G<n>` |  |  |  | with --summary: the goal this ticket belongs to, which must be open or paused; without it the ticket is unassigned |
@@ -123,7 +123,7 @@ brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PAT
 | `id` | yes |  |  |  |
 | `--state STATE` |  | `waiting`, `assigned`, `done`, `dropped` |  |  |
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  |  |
-| `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them |
+| `--paths PATHS` |  |  |  | replaces the recorded paths; "" clears them; given once |
 | `--decision, --no-decision` |  |  |  | mark or unmark the ticket as one that asks the owner to decide |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
 | `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
@@ -236,7 +236,7 @@ group tickets into one dish and assign it to a station
 | `--thread THREAD` |  |  |  |  |
 | `--branch BRANCH` |  |  |  |  |
 | `--timebox TIMEBOX` |  |  | `60` | minutes before the liveness check flags the dish |
-| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one |
+| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one; given once |
 | `--mode MODE` |  |  |  | full, to start the dish in full mode; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |
@@ -259,7 +259,7 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--acceptance ACCEPTANCE` (repeatable) |  |  |  | a checkable criterion; repeatable, at least one |
 | `--contract CONTRACT` |  |  |  | the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
 | `--verify VERIFY` |  |  |  | exact commands that prove it, plus known gotchas |
-| `--paths PATHS` |  |  |  | leased paths, when fire did not claim them |
+| `--paths PATHS` |  |  |  | leased paths, when fire did not claim them; given once |
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
@@ -378,7 +378,7 @@ update a dish
 | `--reported` |  |  |  | record that this attempt's report-back arrived |
 | `--worker-ended WORKER_ENDED` |  |  |  | record that this attempt's worker ended or failed and wrote no report |
 | `--lease LEASE` |  |  |  | record a lease id claimed again |
-| `--paths PATHS` |  |  |  | record the paths that lease covers |
+| `--paths PATHS` |  |  |  | record the paths that lease covers; given once |
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |
 | `--mode MODE` |  |  |  | full, to move open work to full mode once; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish moves to full mode |

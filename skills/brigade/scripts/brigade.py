@@ -82,6 +82,14 @@ BUILT_ROLES = Path(__file__).resolve().parents[2] / "pstack-runtime" / "scripts"
 SOURCE_ROLES = Path(__file__).resolve().parents[3] / "scripts" / "roles.py"
 
 
+class _OncePaths(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, "_paths_seen", False):
+            raise BrigadeError("--paths given twice. Pass one comma-separated value.")
+        namespace._paths_seen = True
+        setattr(namespace, self.dest, values)
+
+
 def parser():
     top = argparse.ArgumentParser(prog="brigade.py", description=__doc__.splitlines()[0])
     top.add_argument("--store", help="store root (default $BRIGADE_STORE or $XDG_STATE_HOME/pstack-t3/brigade)")
@@ -156,7 +164,7 @@ def parser():
                         "do not count")
     a.add_argument("--priority", choices=PRIORITIES_BY_RANK,
                    help="missing reads as urgent from upstream, low from report, and normal from every other source")
-    a.add_argument("--paths", default="", help="comma-separated files and directories the work will touch")
+    a.add_argument("--paths", default="", action=_OncePaths, help="comma-separated files and directories the work will touch; given once")
     a.add_argument("--decision", action="store_true",
                    help="the ticket asks the owner to decide; the startable command never lists it as startable")
     a.add_argument("--kind", choices=KINDS, help="the kind of work; a ticket added with --summary is refused without it")
@@ -169,7 +177,7 @@ def parser():
     a.add_argument("id")
     a.add_argument("--state", choices=[state for state in TICKET_STATES if state != "moved"])
     a.add_argument("--priority", choices=PRIORITIES_BY_RANK)
-    a.add_argument("--paths", help='replaces the recorded paths; "" clears them')
+    a.add_argument("--paths", action=_OncePaths, help='replaces the recorded paths; "" clears them; given once')
     a.add_argument("--decision", action=argparse.BooleanOptionalAction, default=None,
                    help="mark or unmark the ticket as one that asks the owner to decide")
     a.add_argument("--kind", choices=KINDS, help="replaces the kind of a waiting ticket; refused on a ticket in another state, "
@@ -242,7 +250,7 @@ def parser():
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
-    p.add_argument("--paths", default="", help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one")
+    p.add_argument("--paths", default="", action=_OncePaths, help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one; given once")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
     p.add_argument("--kind", choices=KINDS,
@@ -266,7 +274,7 @@ def parser():
                    help="the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no "
                         "safety, privacy, or integrity property; a brief with no contract is refused")
     p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
-    p.add_argument("--paths", default=None, help="leased paths, when fire did not claim them")
+    p.add_argument("--paths", default=None, action=_OncePaths, help="leased paths, when fire did not claim them; given once")
     p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
     p.add_argument("--base", default=None, help="the trunk ref the worker's branch starts from, such as origin/main")
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
@@ -311,7 +319,7 @@ def parser():
     p.add_argument("--reported", action="store_true", help="record that this attempt's report-back arrived")
     p.add_argument("--worker-ended", help="record that this attempt's worker ended or failed and wrote no report")
     p.add_argument("--lease", help="record a lease id claimed again")
-    p.add_argument("--paths", help="record the paths that lease covers")
+    p.add_argument("--paths", action=_OncePaths, help="record the paths that lease covers; given once")
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
     p.add_argument("--mode", help="full, to move open work to full mode once; needs --reason")
     p.add_argument("--reason", help="one line: why the dish moves to full mode")
