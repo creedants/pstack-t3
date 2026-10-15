@@ -99,9 +99,9 @@ def parser():
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
     p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
     p.add_argument("--context-cap", default=None,
-                   help="the auto-compact window written to .claude/settings.local.json; missing reads as 300000")
+                   help="on creation, set the context cap; missing uses 300000; an existing store syncs its saved cap")
     p.add_argument("--coordinator-provider", default=None,
-                   help="claude or other; missing reads as claude; other writes no settings file")
+                   help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
 
     p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
     p.add_argument("--thread")

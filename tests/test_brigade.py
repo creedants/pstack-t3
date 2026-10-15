@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from tests import in_process
-from tests.brigade.support import BrigadeTest, setUpModule
+from tests.brigade.support import BrigadeTest, ProcessReason, SCRIPT, real_process, setUpModule
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts/release.py"
@@ -151,6 +151,32 @@ class SpendControlsTest(BrigadeTest):
             "T3 normal fix G1, 0m: startable; 3.txt", "  Fix 3",
             "T4 normal fix G1, 0m: the G1 share holds (3 of 3); 4.txt",
         ])
+
+
+class OpenFlagHelpTest(BrigadeTest):
+    """The two creation-only flags, as the open help states them to a user reopening a store."""
+
+    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing uses 300000; "
+                "an existing store syncs its saved cap")
+    PROVIDER_HELP = ("--coordinator-provider COORDINATOR_PROVIDER on creation, choose claude or other; "
+                     "missing uses claude; an existing store uses its saved provider")
+
+    def test_open_help_states_the_two_flags_take_effect_on_creation_only(self):
+        # -h output
+        result = real_process(ProcessReason.HELP, SCRIPT, ["open", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        words = " ".join(result.stdout.split())
+        self.assertIn(self.CAP_HELP, words)
+        self.assertIn(self.PROVIDER_HELP, words)
+
+    def test_set_help_still_promises_the_settings_file_write(self):
+        result = real_process(ProcessReason.HELP, SCRIPT, ["set", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        words = " ".join(result.stdout.split())
+        self.assertIn('--context-cap CONTEXT_CAP the auto-compact window written to .claude/settings.local.json; '
+                      '"" clears it to 300000', words)
+        self.assertIn('--coordinator-provider COORDINATOR_PROVIDER claude or other; "" clears it to claude; '
+                      'other writes no settings file', words)
 
 
 class ReleaseSectionsTest(unittest.TestCase):
