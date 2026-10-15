@@ -1,0 +1,6 @@
+- kind upkeep
+- `t3/added/brigade/scripts/brigade_lib/startable.py` owns the classifier that turns waiting tickets into `Standing` values.
+- `t3/added/brigade/scripts/brigade_lib/watch.py` owns the liveness sentences and the log rows those sentences read.
+- `t3/added/brigade/scripts/brigade_lib/wake.py` keeps the sheet engine and re exports the moved names callers import.
+- Callers keep `from brigade_lib.wake import` with no edit to `brigade.py` or commands.
+- Tests move with no body change and every command output stays byte identical.
