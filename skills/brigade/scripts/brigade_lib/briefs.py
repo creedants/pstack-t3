@@ -288,6 +288,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
         "List each follow-up as one top-level list item under a `## Follow-ups` heading, or write `None.` there. "
         "Name each file a follow-up touches by its repository path in backticks.",
+        "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. List the code delegate, claims check, and architect runner threads it used. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
         "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
