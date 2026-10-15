@@ -294,4 +294,4 @@ First, for every dish that still holds an active lease, run the three drop steps
 
 ## Reporting to an executive admin
 
-While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you send that thread anything, and follow it in place of step 9's levels. A restaurant whose `status` prints no `reports to` line never reads it. What the admin does, and its limits, are in the [brigade-admin skill](../brigade-admin/SKILL.md). A `from-user` request becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
+While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you send that thread anything, and follow it in place of step 9's levels. A restaurant whose `status` prints no `reports to` line never reads it. What the admin does, and its limits, are in the [brigade-admin skill](../brigade-admin/SKILL.md). Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.

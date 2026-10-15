@@ -54,12 +54,12 @@ ITEM_DECISION = (
     "brigade: an item decision's default must be one of its options, "
     "with at least one other option that closes it"
 )
-# The brigade skill ships as an ordered doc set. Later items append to this tuple.
+# The brigade reporting docs join in BRIGADE_DOCS order. Later items append to this tuple.
 BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md")
 
 
 def brigade_docs():
-    """Every brigade doc joined in BRIGADE_DOCS order, read from the built skills tree."""
+    """The BRIGADE_DOCS members joined in order, read from the built skills tree."""
     return "\n".join((ROOT / "skills/brigade" / name).read_text() for name in BRIGADE_DOCS)
 
 
