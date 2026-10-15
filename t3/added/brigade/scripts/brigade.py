@@ -54,7 +54,7 @@ _bw = _sys.dont_write_bytecode
 _sys.dont_write_bytecode = True
 try:
     from brigade_lib import seam as _seam_bootstrap
-    from brigade_lib.compact import effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, status_lines, sync_settings
+    from brigade_lib.compact import effective_provider, parse_context_cap, parse_coordinator_provider, status_lines, sync_meta
     from brigade_lib.briefs import ESCALATED, MEASURING_STATIONS, MODE_RESOLUTIONS, ModeInputs, ModeLines, SEAT_RULE, WAIT_RULE, brief, brief_dish, contract_file, mode_inputs, roles_mode, stored_contract, write_brief
     from brigade_lib.edits import BLANK, BLOB_MODES, Digest, EDITS_REFUSED, EDITS_SECTION, EDIT_FAILS, EDIT_MARKS, EDIT_TITLE, Edit, EditsRefused, FILE_LINE, HEADING, LABELS, NEEDS_COMMANDS, NESTED, NO_COMMAND, PATH_LINES, TreeEntry, UNDERLINE, UNREAD, apply_edits, commit_tree, compared_paths, digests, edit_mark, exit_code, git, head_digest, occurrences, one_edit, parse_edits, path_lines, replay, report_edits, report_parts
     from brigade_lib.items import ATTEMPT_AFTER, DocAllowed, DocRefused, PreparedDocFire, _CATALOG, _SharedDoc, _can_cover_catalog, _covers, _fixed_docs, _gate_inventory, _held_from_tracked, _is_skill_file, _lease_parts, _skill_roots, _walk_opaque, attempt_kind, attempt_starts, block_note, checked_fire_label, drop, fire, fire_label, item_escalation, latest_mode_note, menu_purpose, prepare_doc_fire, record_blocked, record_escalation, retired_worker_threads, unfireable, workers_full, write_lead_kind
@@ -737,8 +737,8 @@ def run(argv):
             if cap is not None and workers >= cap:
                 lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
         meta = restaurant.meta
-        if effective_provider(meta) == "claude":
-            sync_settings(meta["projectRoot"], effective_cap(meta))
+        if not created and effective_provider(meta) == "claude":
+            sync_meta(meta)
         return "\n".join(lines)
     if args.command == "walk":
         text, failures = walk(root, args.stale_hours, args.repo)
@@ -961,7 +961,7 @@ def command(restaurant, args, contract=None, rails=None):
             for key in drop:
                 prospective.pop(key, None)
             if effective_provider(prospective) == "claude":
-                sync_settings(prospective["projectRoot"], effective_cap(prospective))
+                sync_meta(prospective)
         meta = restaurant.change_meta(drop, **changes)
         return json.dumps(meta, indent=2)
 

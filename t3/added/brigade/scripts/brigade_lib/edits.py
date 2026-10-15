@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import is_managed
+from brigade_lib.compact import SETTINGS_RELATIVE, settings_cap_only
 from brigade_lib.shared import BrigadeError, command_words, fence_close, fence_open
 
 EDITS_SECTION = (2, "Edits")
@@ -315,13 +315,30 @@ def apply_edits(contents, edits, sha):
     return changed, []
 
 
-def compared_paths(before, after, extracted, edited, built):
-    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted."""
-    # open and set write the managed settings file into the project, so a head that sweeps it in is not a worker change.
-    return sorted(path for path in before.keys() | after.keys()
-                  if not is_managed(path)
-                  and (before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
-                       or edited.get(path) != built.get(path)))
+def _cap_only(project_root, before, after):
+    """True when the settings file's two tree states differ by nothing but the autoCompactWindow member.
+
+    A state that holds no file is a settings file that was created. Two states that hold a file must hold the same
+    mode, because a change of kind or of the execute bit is a change of file property. The later state must hold
+    exactly the cap splice written over the earlier one, or hold nothing but the cap when the earlier holds no file.
+    """
+    if after is None or (before is not None and before.mode != after.mode):
+        return False
+    earlier = None if before is None else git(project_root, "cat-file", "blob", before.oid).stdout
+    return settings_cap_only(earlier, git(project_root, "cat-file", "blob", after.oid).stdout)
+
+
+def compared_paths(project_root, before, after, extracted, edited, built):
+    """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted.
+
+    The settings file is compared like every other path, except that a head whose version of it holds the cap splice
+    written over the reviewed version, or holds nothing but the cap when the reviewed version holds no file, is left out.
+    """
+    found = {path for path in before.keys() | after.keys()
+             if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
+             or edited.get(path) != built.get(path)}
+    return sorted(path for path in found
+                  if path != SETTINGS_RELATIVE or not _cap_only(project_root, before.get(path), after.get(path)))
 
 
 def path_lines(paths, edited, built, head, sha):
@@ -413,7 +430,7 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
             if code:
                 return [f"FAIL build: {build} exited {code}"], False
         built = digests(scratch)
-        paths = compared_paths(before, after, extracted, edited, built)
+        paths = compared_paths(project_root, before, after, extracted, edited, built)
         head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
         lines, clean = path_lines(paths, edited, built, head, sha)
         if clean and check != NO_COMMAND:

@@ -16,11 +16,6 @@ SETTINGS_RELATIVE = ".claude/settings.local.json"
 SETTINGS_KEY = "autoCompactWindow"
 
 
-def is_managed(path):
-    """True for a project path brigade writes itself. Tree comparisons skip these paths."""
-    return path == SETTINGS_RELATIVE
-
-
 def effective_cap(meta):
     """The cap this restaurant enforces. A missing or non-integer contextCap reads as the default."""
     value = meta.get("contextCap")
@@ -60,49 +55,158 @@ def settings_path(project_root):
     return Path(project_root) / SETTINGS_RELATIVE
 
 
-def _tracked(project_root):
+def _reject_constant(name):
+    """NaN, Infinity, and -Infinity are not JSON, so a document holding one is not read."""
+    raise ValueError(name)
+
+
+def _object(raw):
+    """The JSON object the settings bytes hold, or None when they hold no strict JSON object."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(project_root), "ls-files", "--error-unmatch", "--", SETTINGS_RELATIVE],
-            capture_output=True)
-    except OSError:
-        return False
-    return result.returncode == 0
+        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
-def sync_settings(project_root, cap):
-    """Write autoCompactWindow into the settings file and keep every other key.
+def _git_refusal(real):
+    """Why brigade refuses to write the resolved destination, or None when git leaves it writable.
 
-    A tracked file and a file holding invalid JSON refuse with exit 1 and stay unchanged.
-    A file holding valid JSON that is not an object holds no keys, so the write starts from an empty object.
+    A pathspec that matches no tracked file, and a directory in no repository, both leave it writable. A git command
+    that fails for any other reason refuses, because an untracked state that cannot be established is not one.
+    """
+    directory = real.parent
+    while not directory.is_dir():
+        directory = directory.parent
+    words = ["git", "-C", str(directory)]
+    try:
+        listed = subprocess.run([*words, "ls-files", "--error-unmatch", "--", str(real.relative_to(directory))],
+                                capture_output=True)
+        if listed.returncode == 0:
+            state = "tracked"
+        elif listed.returncode == 1:
+            state = "untracked"
+        elif subprocess.run([*words, "rev-parse", "--git-dir"], capture_output=True).returncode == 0:
+            state = "unreadable"
+        else:
+            state = "no repository"
+    except OSError as error:
+        return f"cannot run git in {directory}: {error.strerror}"
+    if state in ("untracked", "no repository"):
+        return None
+    if state == "unreadable":
+        return f"git cannot say whether {real} is tracked; fix that repository and run this again"
+    return f"{real} is tracked by git; untrack it before brigade writes {SETTINGS_KEY}"
+
+
+def _load(project_root):
+    """The settings path and the text its file holds, or None when it holds none.
+
+    The directory that holds the settings file must sit below the project root with no symbolic link at any component
+    on the way. The file's real destination must be one git leaves writable. A file that exists must hold a strict
+    JSON object. A refusal raises BrigadeError and changes no file.
     """
     path = settings_path(project_root)
-    if _tracked(project_root):
-        raise BrigadeError(f"{path} is tracked by git; untrack it before brigade writes {SETTINGS_KEY}")
+    directory = Path(project_root)
+    for part in Path(SETTINGS_RELATIVE).parent.parts:
+        directory = directory / part
+        if directory.is_symlink():
+            raise BrigadeError(f"{directory} is a symbolic link; brigade writes {SETTINGS_RELATIVE} through no link")
+    refusal = _git_refusal(path.resolve())
+    if refusal:
+        raise BrigadeError(refusal)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
-        data = {}
+        return path, None
     except OSError as error:
         raise BrigadeError(f"cannot read {path}: {error}") from error
-    else:
-        try:
-            data = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            raise BrigadeError(f"{path} holds invalid JSON; fix or remove it") from None
-        if not isinstance(data, dict):
-            data = {}
-    data[SETTINGS_KEY] = cap
+    try:
+        text = raw.decode("utf-8")
+        value = json.loads(text, parse_constant=_reject_constant)
+    except (UnicodeDecodeError, ValueError):
+        raise BrigadeError(f"{path} holds invalid JSON; fix or remove it") from None
+    if not isinstance(value, dict):
+        raise BrigadeError(f"{path} holds no JSON object; fix or remove it")
+    return path, text
+
+
+def _space(text, index):
+    """The index of the first character at or after index that is not JSON whitespace."""
+    while index < len(text) and text[index] in " \t\n\r":
+        index += 1
+    return index
+
+
+def _members(text):
+    """(name, the start of its value, the end of its value) for every member of one top-level JSON object, and the
+    index of that object's closing brace.
+
+    A name that occurs more than once keeps every member. None when the text is not one JSON object.
+    """
+    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    opening = _space(text, 0)
+    if text[opening:opening + 1] != "{":
+        return None
+    index = _space(text, opening + 1)
+    members = []
+    while text[index:index + 1] != "}":
+        name, index = decoder.raw_decode(text, index)
+        index = _space(text, index)
+        if text[index:index + 1] != ":":
+            return None
+        index = _space(text, index + 1)
+        _, end = decoder.raw_decode(text, index)
+        members.append((name, index, end))
+        index = _space(text, end)
+        if text[index:index + 1] == ",":
+            index = _space(text, index + 1)
+        elif text[index:index + 1] != "}":
+            return None
+    return members, index
+
+
+def _with_cap(text, cap):
+    """The document text with one autoCompactWindow member holding cap and every other byte of it kept.
+
+    The value of the last member named autoCompactWindow is replaced, or one member is placed after the last member
+    there is, in the document's own spacing, when it holds none.
+    """
+    members, closing = _members(text)
+    member = f'"{SETTINGS_KEY}": {cap}'
+    for name, start, end in reversed(members):
+        if name == SETTINGS_KEY:
+            return text[:start] + str(cap) + text[end:]
+    opening = _space(text, 0)
+    at = members[-1][2] if members else closing
+    spacing = text[opening + 1:_space(text, opening + 1)]
+    return text[:at] + ("," if members else "") + spacing + member + text[at:]
+
+
+def sync_meta(meta):
+    """Write autoCompactWindow into the project's settings file and keep every other byte of it.
+
+    A file that holds no strict JSON object, a settings directory reached through a symbolic link, a destination that
+    git reports as tracked or cannot report on, and a git command that cannot start all refuse with exit 1 and change
+    no file.
+    """
+    cap = effective_cap(meta)
+    path, text = _load(meta["projectRoot"])
+    published = json.dumps({SETTINGS_KEY: cap}, indent=2) + "\n" if text is None else _with_cap(text, cap)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=str(path.parent), delete=False, suffix=".tmp",
-                                     encoding="utf-8") as handle:
+                                     encoding="utf-8", newline="") as handle:
         try:
-            handle.write(json.dumps(data, indent=2) + "\n")
+            handle.write(published)
         except BaseException:
             handle.close()
             os.unlink(handle.name)
             raise
-    os.replace(handle.name, path)
+    try:
+        os.replace(handle.name, path)
+    except OSError:
+        os.unlink(handle.name)
+        raise
 
 
 def _drift(path, cap):
@@ -119,10 +223,24 @@ def status_lines(meta):
         raw = path.read_bytes()
     except OSError:
         return [_drift(path, cap)]
-    try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return [_drift(path, cap)]
-    if not isinstance(data, dict) or data.get(SETTINGS_KEY) != cap:
+    value = _object(raw)
+    if value is None or value.get(SETTINGS_KEY) != cap:
         return [_drift(path, cap)]
     return []
+
+
+def settings_cap_only(before, after):
+    """Whether two settings file states differ by nothing but the autoCompactWindow member.
+
+    Either byte string is None when that state holds no file. The later state must hold a strict JSON object with a
+    top-level autoCompactWindow member holding an integer, and, when the earlier state is a file, must be exactly what
+    the cap splice writes over it. A state that holds no file is a settings file that was created, so it differs from
+    a document that holds nothing but the cap and from nothing else.
+    """
+    value = None if after is None else _object(after)
+    cap = None if value is None else value.get(SETTINGS_KEY)
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        return False
+    if before is None:
+        return list(value) == [SETTINGS_KEY]
+    return after == _with_cap(before.decode("utf-8"), cap).encode("utf-8")

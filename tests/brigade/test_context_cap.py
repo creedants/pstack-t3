@@ -1,7 +1,9 @@
 from .support import (
     setUpModule,
     BrigadeTest,
+    SCRIPT,
     Path,
+    call,
     json,
     os,
     subprocess,
@@ -14,6 +16,14 @@ class ContextCapTest(BrigadeTest):
 
     def meta(self):
         return json.loads((self.at / "restaurant.json").read_text())
+
+    def write_settings(self, text):
+        """Write this text into the project's settings file, making the directory that holds it."""
+        self.settings().parent.mkdir(parents=True, exist_ok=True)
+        self.settings().write_text(text)
+
+    def open(self, *extra, ok=True):
+        return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok)
 
     def test_open_writes_the_default_cap_when_the_settings_file_is_missing(self):
         self.assertEqual(self.open(), f"opened {self.at}")
@@ -52,6 +62,24 @@ class ContextCapTest(BrigadeTest):
         self.brigade("set", "--context-cap", "80000")
         self.assertEqual(self.settings().read_text(),
                          '{\n  "other": true,\n  "autoCompactWindow": 80000\n}\n')
+
+    def test_set_updates_the_cap_without_rewriting_the_numbers_around_it(self):
+        self.open()
+        self.settings().write_text('{\n  "overflow": 1e400,\n  "rounded": 1.0000000000000001,\n'
+                                   '  "autoCompactWindow": 300000\n}\n')
+        self.brigade("set", "--context-cap", "80000")
+        self.assertEqual(self.settings().read_text(),
+                         '{\n  "overflow": 1e400,\n  "rounded": 1.0000000000000001,\n'
+                         '  "autoCompactWindow": 80000\n}\n')
+
+    def test_set_inserts_the_cap_in_the_documents_own_spacing(self):
+        self.open()
+        self.write_settings('{"keep":true}')
+        self.brigade("set", "--context-cap", "80000")
+        self.assertEqual(self.settings().read_text(), '{"keep":true,"autoCompactWindow": 80000}')
+        self.write_settings('{\n  "keep": true\n}\n')
+        self.brigade("set", "--context-cap", "90000")
+        self.assertEqual(self.settings().read_text(), '{\n  "keep": true,\n  "autoCompactWindow": 90000\n}\n')
 
     def test_set_accepts_the_floor_value_and_refuses_anything_below_it(self):
         self.open()
@@ -110,6 +138,96 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertNotIn("contextCap", self.meta())
 
+    def test_open_refuses_a_settings_directory_that_is_a_symbolic_link(self):
+        self.git_project()
+        tracked = self.project / "config" / "settings.local.json"
+        self.commit_files({"config/settings.local.json": '{\n  "keep": true\n}\n'})
+        run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True)
+        self.assertEqual(run("git", "ls-files", "--error-unmatch", "--", "config/settings.local.json").returncode, 0)
+        before = tracked.read_bytes()
+        (self.project / ".claude").symlink_to("config")
+        error = self.open(ok=False)
+        self.assertEqual(error, f"brigade: {self.project / '.claude'} is a symbolic link; "
+                                "brigade writes .claude/settings.local.json through no link")
+        self.assertEqual(tracked.read_bytes(), before)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
+    def test_open_refuses_a_repository_whose_index_git_cannot_read(self):
+        self.git_project()
+        self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})
+        (self.project / ".git" / "index").write_bytes(b"not an index")
+        before = self.settings().read_bytes()
+        error = self.open(ok=False)
+        self.assertEqual(error, f"brigade: git cannot say whether {self.settings()} is tracked; "
+                                "fix that repository and run this again")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertFalse(self.at.exists())
+
+    def test_open_refuses_a_project_whose_git_cannot_start(self):
+        self.git_project()
+        self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})
+        before = self.settings().read_bytes()
+        empty = Path(self.temporary.name) / "no-git"
+        empty.mkdir()
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      "open", "--project-root", str(self.project), "--name", "Perf"],
+                       env={"PATH": str(empty)})
+        self.assertEqual((outcome.code, outcome.stderr_text().strip()),
+                         (1, f"brigade: cannot run git in {self.settings().parent}: No such file or directory"))
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertFalse(self.at.exists())
+
+    def test_a_refused_open_of_a_new_store_leaves_no_store_and_claims_no_intake(self):
+        self.write_settings('{"autoCompactWindow":')
+        refusal = f"brigade: {self.settings()} holds invalid JSON; fix or remove it"
+        self.assertEqual(self.open("--intake", "github", ok=False), refusal)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+        # No coordinator claimed github, so the next open reaches the same refusal instead of an intake dispute.
+        self.assertEqual(self.run_at(self.store / "bridge-kit" / "replacement",
+                                     "open", "--project-root", str(self.project), "--name", "Replacement",
+                                     "--intake", "github", ok=False), refusal)
+        self.assertFalse((self.store / "bridge-kit" / "replacement").exists())
+
+    def test_a_refused_open_of_an_existing_store_changes_no_store_file(self):
+        self.open()
+        before = self.store_files()
+        self.write_settings('[1, {"keep": true}]\n')
+        self.assertEqual(self.open(ok=False), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
+        self.assertEqual(self.store_files(), before)
+
+    def test_set_refuses_a_settings_file_that_holds_no_json_object(self):
+        self.open()
+        self.write_settings('[1, {"keep": true}]\n')
+        before, store = self.settings().read_bytes(), self.store_files()
+        error = self.brigade("set", "--context-cap", "120000", ok=False)
+        self.assertEqual(error, f"brigade: {self.settings()} holds no JSON object; fix or remove it")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertEqual(self.store_files(), store)
+        self.assertNotIn("contextCap", self.meta())
+
+    def test_open_and_set_refuse_a_settings_file_holding_a_non_json_constant(self):
+        for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
+            with self.subTest(text=text):
+                self.write_settings(text)
+                self.assertEqual(self.open(ok=False),
+                                 f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
+                self.assertEqual(self.settings().read_text(), text)
+                self.assertFalse(self.at.exists())
+
+    def test_set_refuses_a_settings_file_holding_a_non_json_constant(self):
+        self.open()
+        store = self.store_files()
+        for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
+            with self.subTest(text=text):
+                self.write_settings(text)
+                self.assertEqual(self.brigade("set", "--context-cap", "120000", ok=False),
+                                 f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
+                self.assertEqual(self.settings().read_text(), text)
+                self.assertEqual(self.store_files(), store)
+                self.assertNotIn("contextCap", self.meta())
+
     def test_set_refuses_invalid_json_and_changes_nothing(self):
         self.open()
         self.settings().write_text('{"autoCompactWindow":')
@@ -118,12 +236,6 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(error, f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertNotIn("contextCap", self.meta())
-
-    def test_set_replaces_a_settings_file_holding_a_json_array(self):
-        self.open()
-        self.settings().write_text('[1]\n')
-        self.brigade("set", "--context-cap", "120000")
-        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 120000\n}\n')
 
     def test_status_reports_a_drifted_missing_or_broken_settings_file(self):
         self.open()
@@ -135,10 +247,16 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
         self.settings().unlink()
         self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
-        self.settings().write_text('{"autoCompactWindow":')
+        self.write_settings('{"autoCompactWindow":')
         self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
         self.settings().write_text('[1]\n')
         self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
+        for text in ('{\n  "keep": NaN,\n  "autoCompactWindow": 300000\n}\n',
+                     '{\n  "keep": Infinity,\n  "autoCompactWindow": 300000\n}\n',
+                     '{\n  "keep": -Infinity,\n  "autoCompactWindow": 300000\n}\n'):
+            with self.subTest(text=text):
+                self.write_settings(text)
+                self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
 
     def test_edits_verify_ignores_the_managed_settings_file_swept_into_a_head_commit(self):
         reviewed = self.edits_store()
