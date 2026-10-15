@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.compact import is_managed
 from brigade_lib.shared import BrigadeError, command_words, fence_close, fence_open
 
 EDITS_SECTION = (2, "Edits")
@@ -316,9 +317,11 @@ def apply_edits(contents, edits, sha):
 
 def compared_paths(before, after, extracted, edited, built):
     """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted."""
+    # open and set write the managed settings file into the project, so a head that sweeps it in is not a worker change.
     return sorted(path for path in before.keys() | after.keys()
-                  if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
-                  or edited.get(path) != built.get(path))
+                  if not is_managed(path)
+                  and (before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
+                       or edited.get(path) != built.get(path)))
 
 
 def path_lines(paths, edited, built, head, sha):

@@ -1,0 +1,8 @@
+- kind feature
+- `brigade.py open` and `brigade.py set` take `--context-cap N` and `--coordinator-provider claude|other`
+- `restaurant.json` holds optional `contextCap` and `coordinatorProvider`; a missing `contextCap` reads as 300000 and a missing `coordinatorProvider` reads as claude
+- `--context-cap` refuses a non-integer and any value below 50000 with exit 1
+- On provider claude, open and set write `autoCompactWindow` into `<projectRoot>/.claude/settings.local.json` and keep every other key
+- A settings file tracked by git or holding invalid JSON refuses the write with exit 1 and stays unchanged
+- `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
+- `edits verify` skips the managed settings file

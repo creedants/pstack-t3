@@ -23,7 +23,7 @@ Bookkeeping for brigade restaurants.
 ## brigade.py open
 
 ```text
-brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE]
+brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 create a restaurant, or print an existing one
@@ -37,11 +37,13 @@ create a restaurant, or print an existing one
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review; missing reads as 2 |
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
+| `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; missing reads as 300000 |
+| `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; missing reads as claude; other writes no settings file |
 
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -64,6 +66,8 @@ record the head chef thread, a schedule id, or the reporting level
 | `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
+| `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
+| `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
 ## brigade.py ticket
 
