@@ -1,0 +1,4 @@
+- kind feature
+- `land.py times` reports submit-to-landed minutes for the last landed entries as `n=<count> median=<m> p90=<m> max=<m> skipped=<k>`, with `--last`, `--holder`, and `--json`.
+- `times` opens `land.db` through `mode=ro`, adding `immutable=1` when no write-ahead log sits beside it, so the command takes no lock and writes nothing.
+- `tests/landing/test_times.py` pins the exact text and JSON, the skipped count, `--last`, `--holder`, the empty case, and an unchanged store directory.

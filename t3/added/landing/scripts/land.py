@@ -64,8 +64,9 @@ try:
     import landing_lib.merge as _merge_mod
     import landing_lib.contests as _contests_mod
     import landing_lib.drain as _drain_mod
+    import landing_lib.times as _times_mod
     for _mod in (_governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod,
-                _merge_mod, _contests_mod, _drain_mod):
+                _merge_mod, _contests_mod, _drain_mod, _times_mod):
         globals().update({k: v for k, v in vars(_mod).items() if not k.startswith("__") and k != "seam"})
 finally:
     _sys.dont_write_bytecode = _bw
@@ -73,7 +74,7 @@ finally:
     _sys.modules.update(_prior_landing)
 del _bw, _drop_cached_landing, _pkg, _alias, _libdir, _types, _uuid, _prior_landing
 del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod
-del _merge_mod, _contests_mod, _drain_mod, _seam_bootstrap, _mod
+del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod
 
 def parser():
     top = argparse.ArgumentParser(prog="land.py", description=__doc__.splitlines()[0])
@@ -102,6 +103,20 @@ def parser():
     p = sub.add_parser("mode", help=mode_help, description=mode_help)
     p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
     p.add_argument("--merge-method", choices=MERGE_METHODS)
+
+    times_help = ("report submit-to-landed minutes for the last N landed entries, one line per entry then a summary line. "
+                  "A line holds the entry's id, holder, PR, and minutes to one decimal, and the PR prints - when the entry has none. "
+                  "The summary line is n=<count> median=<m> p90=<m> max=<m> skipped=<k>, where median and p90 are the "
+                  "nearest-rank 50th and 90th percentiles. An entry in state landed with no landed log row is skipped and "
+                  "counted in skipped. With nothing landed the three statistics print - and the command exits 0")
+    p = sub.add_parser("times", help=times_help, description=times_help)
+    p.add_argument("--last", type=int, default=30, metavar="N",
+                   help="report at most this many of the most recently landed entries (default: 30)")
+    p.add_argument("--holder", metavar="PREFIX",
+                   help="report this holder's entries; a value ending in / matches every holder under it")
+    p.add_argument("--json", action="store_true",
+                   help="print one JSON object instead of the lines; it holds entries, n, median, p90, max, and skipped, "
+                        "an empty PR is null, and the statistics are null when nothing landed")
 
     owner_help = "<holder prefix>@<generation> of the coordinator writing; refused below that prefix's floor"
     ruling_help = "<prefix>@<generation> of the writer, such as .admin/@2; refused below that prefix's floor"
@@ -203,6 +218,8 @@ def run(argv):
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
                     args.merge_method, args.cap), 0
+    if args.command == "times":
+        return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
         if args.command == "cap":
             return change_cap(store, args.count), 0

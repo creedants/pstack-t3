@@ -16,7 +16,7 @@ Land many agents' work on one repository through one queue.
 | --- | --- | --- | --- | --- |
 | `--repo REPO` |  |  | `.` | any checkout of the repository (default: current directory) |
 
-`<command>` is one of `init`, `cap`, `mode`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `slot`.
+`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `slot`.
 
 ## land.py init
 
@@ -63,6 +63,20 @@ switch human, merge, or push when the queue is empty. --merge-method may change 
 | --- | --- | --- | --- | --- |
 | `mode` | yes | `human`, `merge`, `push`, `local`, `auto` |  |  |
 | `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  |  |
+
+## land.py times
+
+```text
+land.py [flags] times [--last N] [--holder PREFIX] [--json]
+```
+
+report submit-to-landed minutes for the last N landed entries, one line per entry then a summary line. A line holds the entry's id, holder, PR, and minutes to one decimal, and the PR prints - when the entry has none. The summary line is n=\<count> median=\<m> p90=\<m> max=\<m> skipped=\<k>, where median and p90 are the nearest-rank 50th and 90th percentiles. An entry in state landed with no landed log row is skipped and counted in skipped. With nothing landed the three statistics print - and the command exits 0
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--last N` |  |  | `30` | report at most this many of the most recently landed entries (default: 30) |
+| `--holder PREFIX` |  |  |  | report this holder's entries; a value ending in / matches every holder under it |
+| `--json` |  |  |  | print one JSON object instead of the lines; it holds entries, n, median, p90, max, and skipped, an empty PR is null, and the statistics are null when nothing landed |
 
 ## land.py owner
 
