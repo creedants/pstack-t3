@@ -197,6 +197,15 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.open(ok=False), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
         self.assertEqual(self.store_files(), before)
 
+    def test_set_refuses_invalid_json_and_changes_nothing(self):
+        self.open()
+        self.write_settings('{"autoCompactWindow":')
+        before = self.settings().read_bytes()
+        error = self.brigade("set", "--context-cap", "120000", ok=False)
+        self.assertEqual(error, f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertNotIn("contextCap", self.meta())
+
     def test_set_refuses_a_settings_file_that_holds_no_json_object(self):
         self.open()
         self.write_settings('[1, {"keep": true}]\n')
@@ -228,15 +237,6 @@ class ContextCapTest(BrigadeTest):
                 self.assertEqual(self.store_files(), store)
                 self.assertNotIn("contextCap", self.meta())
 
-    def test_set_refuses_invalid_json_and_changes_nothing(self):
-        self.open()
-        self.settings().write_text('{"autoCompactWindow":')
-        before = self.settings().read_bytes()
-        error = self.brigade("set", "--context-cap", "120000", ok=False)
-        self.assertEqual(error, f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
-        self.assertEqual(self.settings().read_bytes(), before)
-        self.assertNotIn("contextCap", self.meta())
-
     def test_status_reports_a_drifted_missing_or_broken_settings_file(self):
         self.open()
         clean = ("thread not recorded\nreporting: milestones, no landing contract\n"
@@ -258,7 +258,38 @@ class ContextCapTest(BrigadeTest):
                 self.write_settings(text)
                 self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
 
-    def test_edits_verify_ignores_the_managed_settings_file_swept_into_a_head_commit(self):
+    def edits_store_with_settings(self, settings):
+        """The edits fixture with .claude/settings.local.json in every commit and a coordinator that writes no file."""
+        self.git_project()
+        reviewed = self.commit_files({"src/greeting.txt": self.SOURCE, "out/greeting.txt": self.SOURCE.upper(),
+                                      "tools/build.py": self.BUILD, "tools/check.py": self.CHECK,
+                                      ".claude/settings.local.json": settings})
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
+                     "--coordinator-provider", "other")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.brigade("set", "--build-command", self.BUILD_COMMAND, "--check-command", self.CHECK_COMMAND)
+        return reviewed
+
+    def test_edits_verify_compares_a_committed_settings_file_and_allows_only_a_cap_change(self):
+        reviewed = self.edits_store_with_settings('{\n  "autoCompactWindow": 300000,\n  "keep": true\n}\n')
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        cap_only = self.head_commit(self.FIXED, **{".claude/settings.local.json":
+                                                   '{\n  "autoCompactWindow": 90000,\n  "keep": true\n}\n'})
+        self.assertEqual(self.verify(reviewed, cap_only),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n"
+                             f"{self.verified(reviewed, cap_only)}", ""))
+        self.assertEqual(len(self.edits_rows()), 1)
+        changed = self.head_commit(self.FIXED, **{".claude/settings.local.json":
+                                                  '{\n  "autoCompactWindow": 90000,\n  "keep": false\n}\n'})
+        self.assertEqual(self.verify(reviewed, changed),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, changed)))
+        self.assertEqual(len(self.edits_rows()), 1)
+
+    def test_edits_verify_passes_the_coordinators_own_settings_file_swept_into_a_head_commit(self):
         reviewed = self.edits_store()
         self.two_edits()
         self.record_edits(reviewed, "--edits", "D1-review-1.md")
@@ -266,6 +297,14 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.verify(reviewed, head),
                          (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n"
                              f"{self.verified(reviewed, head)}", ""))
+        self.assertEqual(len(self.edits_rows()), 1)
+        smuggled = self.head_commit(self.FIXED, **{".claude/settings.local.json":
+                                                    '{\n  "autoCompactWindow": 90000,\n  "keep": false\n}\n'})
+        self.assertEqual(self.verify(reviewed, smuggled),
+                         (1, f"FAIL .claude/settings.local.json: differs from {reviewed} with the edits applied\n"
+                             f"built out/greeting.txt\nedited src/greeting.txt",
+                          self.not_verified(reviewed, smuggled)))
+        self.assertEqual(len(self.edits_rows()), 1)
 
     def test_status_reports_an_unreadable_settings_file(self):
         if os.geteuid() == 0:
