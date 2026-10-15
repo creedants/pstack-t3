@@ -92,7 +92,7 @@ def _open_fd_directory():
 
 
 def _fd_paths():
-    """Return the descriptor directory and the path of every open descriptor except the probe.
+    """Return the descriptor directory and the path of every open descriptor it can read except the probe.
 
     The probe is the descriptor that reads the directory, and its number is left out. An entry under
     /proc/self/fd is a symlink. An entry under /dev/fd is not, and F_GETPATH names it.
@@ -693,10 +693,10 @@ INTERRUPT_AFTER_THE_LEADER_EXITS = (
 
 
 def _darwin_eperm_main(mode="after-term", kills=False, probe="waitid", darwin=True, after=""):
-    """Return EXCLUSIVE_MAIN with the Darwin kill path forced and os.killpg replaced by a stub.
+    """Return EXCLUSIVE_MAIN with os.killpg replaced by a stub, forcing the Darwin platform when darwin is true.
 
-    mode and kills pick the signals that raise EPERM. probe picks the witness probe, and is one of
-    waitid, failed, or foreign. darwin False leaves the platform alone, so the Linux path runs.
+    mode picks the signals that raise EPERM, and kills kills the leader itself first. probe picks the witness probe, and is one of
+    waitid, failed, or foreign. darwin False leaves the platform alone, so the Linux branch runs on a Linux host.
     after holds extra lines the wrapper runs after the killpg stub, and may read that stub's state.
     """
     lines = ["import land\n"]
@@ -6924,6 +6924,7 @@ os.execv({real!r}, [{real!r}, *args])
             ("unknown witness", dict(mode="always", probe="failed"), True),
             ("foreign uid", dict(mode="after-term", probe="foreign"), True),
             ("leader exits after a negative witness", dict(mode="always", kills=True, probe="waitid"), True),
+            # darwin False keeps the host platform, so this row reaches the Linux branch on a Linux host.
             ("linux", dict(mode="always", probe="waitid"), False),
         )
         for label, options, darwin in rows:
@@ -7455,7 +7456,7 @@ os.execv({real!r}, [{real!r}, *args])
         os.write(gate, b"x")
         stop_reporter()
         # The landing caller ran on its own clock, so its next attempt could have taken the free slot
-        # before the exclusive stepped. Stepping it first proves it saw the earlier exclusive and yielded.
+        # before the exclusive stepped. Settling it first proves it saw the earlier exclusive and yielded.
         self.assertEqual(slots.settle(landing), "waiting")
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
