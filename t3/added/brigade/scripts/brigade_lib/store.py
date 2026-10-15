@@ -588,7 +588,8 @@ def refuse_owned_intake(directory, project_root, sources):
             raise BrigadeError(f"{owner} already owns intake from {source}; move tickets to it instead")
 
 
-def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None):
+def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None,
+                  context_cap=None, coordinator_provider=None):
     project_root = Path(project_root).resolve()
     if admin:
         name = ADMIN_NAME
@@ -627,6 +628,10 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["workers"] = workers
     if mode is not None:
         meta["mode"] = mode
+    if context_cap is not None:
+        meta["contextCap"] = context_cap
+    if coordinator_provider is not None:
+        meta["coordinatorProvider"] = coordinator_provider
     if admin:
         meta["role"] = "admin"
     seam.write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
