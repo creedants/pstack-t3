@@ -759,8 +759,10 @@ def run(argv):
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)
     admin = is_admin(restaurant.meta)
-    if admin and (args.command in WORK_COMMANDS or args.command == "model"):
+    if admin and args.command in WORK_COMMANDS:
         raise BrigadeError("the executive admin routes work and never runs it")
+    if admin and args.command == "model":
+        raise BrigadeError("model works only in a coordinator's store")
     if not admin and args.command in ADMIN_COMMANDS:
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
     if args.command == "spend":

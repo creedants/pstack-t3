@@ -285,7 +285,7 @@ def recovery_lines(dish, error):
     # The record needs a thread, but the cell can be cleared afterwards without starting another attempt.
     steps.append(f"  archive the dead thread {shlex.quote(dish['thread'])}" if dish["thread"]
                  else "  archive the dead worker")
-    return [f"{ident}: worker ended with no report; the provider error is {error}", *steps]
+    return [f"{ident}: worker ended with no report; the recorded reason is {error}", *steps]
 
 
 def dish_progress(restaurant, dish, moment, held=False):
@@ -492,7 +492,7 @@ def record_worker_end(restaurant, ident, error):
     """
     reason = clean(error)
     if not reason:
-        raise BrigadeError("--worker-ended needs the provider error")
+        raise BrigadeError("--worker-ended needs a reason")
     _, dish = restaurant.find("dishes.tsv", ident)
     if dish["state"] != "in-progress":
         raise BrigadeError(f"{ident} is {dish['state']}; --worker-ended records an in-progress dish")
@@ -509,7 +509,7 @@ def record_worker_end(restaurant, ident, error):
                 return f"{ident}: worker end already recorded"
             raise BrigadeError(f"{ident} already records a different worker end for this attempt")
     restaurant.log("ended", ident, attempt, reason)
-    return f"{ident}: worker ended with no report; the provider error is {reason}"
+    return f"{ident}: worker ended with no report; the recorded reason is {reason}"
 
 
 @dataclass(frozen=True)

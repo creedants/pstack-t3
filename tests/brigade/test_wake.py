@@ -1623,15 +1623,15 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(see, ["see Run startable and take the first ticket it prints as startable, "
                                "with every ticket it prints as rides with that ticket."])
 
-    def test_watch_names_a_worker_that_ended_with_no_report_and_the_provider_error(self):
+    def test_watch_names_a_worker_that_ended_with_no_report_and_the_recorded_reason(self):
         self.open()
         self.fire_one(timebox="60")
         error = "rate limit from grok/grok-4.7"
         self.assertEqual(self.brigade("dish", "D1", "--worker-ended", error),
-                         f"D1: worker ended with no report; the provider error is {error}")
+                         f"D1: worker ended with no report; the recorded reason is {error}")
         self.assertEqual(self.brigade("watch"), "\n".join([
             "workers: 1 of 2 running, 1 idle, auto-start: normal",
-            f"D1: worker ended with no report; the provider error is {error}",
+            f"D1: worker ended with no report; the recorded reason is {error}",
             "  keep the commits on perf/d1 and record no new branch; the dish keeps its lease",
             "  write the continuation brief: brief D1 with --base <trunk ref>, "
             f"--context {shlex.quote(error)}, and the goal, acceptance, verify, and contract it needs",
@@ -1722,7 +1722,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n"
                                                 "D1: running 0m of 60m (thread thread-10)")
         self.brigade("dish", "D1", "--worker-ended", "worker died on attempt 2")
-        self.assertIn("D1: worker ended with no report; the provider error is worker died on attempt 2",
+        self.assertIn("D1: worker ended with no report; the recorded reason is worker died on attempt 2",
                       self.brigade("watch"))
         self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "ended"],
                          [("1", "worker died on attempt 1"), ("2", "worker died on attempt 2")])
@@ -1733,7 +1733,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("dish", "D1", "--worker-ended", "worker died")
         self.brigade("dish", "D1", "--thread", "")
         lines = self.brigade("watch").splitlines()
-        self.assertEqual(lines[1], "D1: worker ended with no report; the provider error is worker died")
+        self.assertEqual(lines[1], "D1: worker ended with no report; the recorded reason is worker died")
         self.assertEqual(lines[-1], "  archive the dead worker")
 
     def test_a_held_dish_does_not_print_the_ended_line(self):
@@ -1809,7 +1809,7 @@ class WakeTest(BrigadeTest, _WakeRace):
 
     def test_the_executive_admin_store_refuses_model_skip_and_clear(self):
         self.open_admin()
-        refusal = "brigade: the executive admin routes work and never runs it"
+        refusal = "brigade: model works only in a coordinator's store"
         self.assertEqual(self.admin("model", "skip", "grok/grok-4.7", "--cause", "rate-limit", ok=False), refusal)
         self.assertEqual(self.admin("model", "clear", "grok/grok-4.7", ok=False), refusal)
         rows = [line.split("\t") for line in
