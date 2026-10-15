@@ -88,16 +88,27 @@ class BriefsTest(BrigadeTest):
         reports = f"{self.at}/reports"
         dropped = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
                    "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
-        one = self.brigade(*dropped, "--verify", f"Save output under {reports}/ after a failed test run, before you rerun it")
+        one = self.brigade(*dropped, "--verify", f"Save the full output under {reports}/ after a failed test run, before you rerun it")
         self.assertIn("STANDING RULES:", one)
         self.assertNotIn("- Save the full output of any failed test run", one)
         self.assertIn("- You may write the change yourself", one)
         every = self.brigade(*dropped, "--verify",
-                             f"Save output under {reports}/ after a failed test run, before you rerun it. "
-                             "Count lines from `git diff --numstat origin/main...HEAD` in one file outside tests, "
-                             "and run the claims check.")
+                             f"Save the full output under {reports}/ after a failed test run, before you rerun it. "
+                             "You may write the change yourself, without the playbook's code delegate, when it touches "
+                             "one file and is about 40 lines or fewer outside tests. Never skip the claims check.")
         self.assertNotIn("STANDING RULES:", every)
         self.assertNotIn("- You may write the change yourself", every)
+
+    def test_a_pointer_to_a_failed_run_output_is_not_the_rule_and_the_line_stays(self):
+        self.coordinator()
+        reports = f"{self.at}/reports"
+        dropped = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                   "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
+        text = self.brigade(*dropped, "--verify",
+                            f"The first attempt's failed test run output is at {reports}/D1-fail.txt. "
+                            "Read it before you rerun the suite.")
+        self.assertIn("STANDING RULES:", text)
+        self.assertIn("- Save the full output of any failed test run", text)
 
     def test_the_built_skill_ships_the_verdict_protocol(self):
         text = (ROOT / "skills/brigade/verdict-protocol.md").read_text()

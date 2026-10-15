@@ -5,3 +5,10 @@
 - The small-change rule lets the worker write a change that touches one file outside tests, at about 40 or fewer added and removed lines outside tests, and no safety, privacy, or integrity guarantee. The worker counts the lines from `git diff --numstat <base>...HEAD` and quotes that output. The claims check and the gate review always run.
 - The scratch rule tells the worker to make scratch directories, archive copies, and saved outputs with `mktemp -d -p <scratch>`, never directly under /tmp, and to delete them when done.
 - `skills/brigade/verdict-protocol.md` is new. It carries the gate review protocol and the house rule that a blocker the reviewer does not mark `Rare:` is not one the coordinator may accept as limit.
+- The `_Standing` docstring names the placeholders in `text` and the anchors.
+- The small-change dedupe anchors are `write the change yourself`, `one file`, and `claims check`.
+- The failed-test dedupe anchors add `Save the full output` as a fourth anchor.
+- The shipped protocol names the project's build command and never a generated file.
+- The shipped protocol says `/tmp` is memory-backed and small on many systems.
+- The scratch-dir test passes an unresolved path and asserts the resolved form.
+- The dedupe test uses the coordinator small-change sentence and keeps the line for a pointer-only sentence.

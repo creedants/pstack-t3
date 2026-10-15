@@ -48,7 +48,7 @@ TEST_STANDARD = (
 class _Standing:
     """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it.
 
-    `text` and each anchor hold the placeholders `<reports>`, `<base>`, or `<scratch>`. A rule whose
+    The placeholders in `text` and the anchors are `<reports>`, `<base>`, and `<scratch>`. A rule whose
     placeholder has no value is not rendered. A rule is dropped when the coordinator's context and verify
     text already hold every one of its anchors.
     """
@@ -61,7 +61,7 @@ _RULES = (
     _Standing(
         "Save the full output of any failed test run to a file under <reports>/ before you rerun it, "
         "and name that file in the report.",
-        ("<reports>/", "failed test run", "before you rerun"),
+        ("<reports>/", "failed test run", "before you rerun", "Save the full output"),
     ),
     _Standing(
         "You may write the change yourself when it changes one file outside tests, the added and removed lines "
@@ -69,7 +69,7 @@ _RULES = (
         "safety, privacy, or integrity. Count those lines from `git diff --numstat <base>...HEAD`, quote that "
         "output in the report, and treat every round and commit as one diff. Past that size, or more than one file "
         "outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.",
-        ("git diff --numstat <base>...HEAD", "one file outside tests", "claims check"),
+        ("write the change yourself", "one file", "claims check"),
     ),
     _Standing(
         "Make every scratch directory, archive copy, and saved output with `mktemp -d -p <scratch>`, never "

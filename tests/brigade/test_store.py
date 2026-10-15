@@ -75,7 +75,7 @@ class StoreTest(BrigadeTest):
     def test_set_scratch_dir_reads_back_stores_the_resolved_path_and_a_clear_removes_the_key(self):
         self.open()
         parent = str(Path.home().resolve())
-        meta = json.loads(self.brigade("set", "--scratch-dir", parent))
+        meta = json.loads(self.brigade("set", "--scratch-dir", f"{parent}/./x/.."))
         self.assertEqual(meta["scratchDir"], parent)
         meta = json.loads(self.brigade("set", "--scratch-dir", ""))
         self.assertNotIn("scratchDir", meta)
