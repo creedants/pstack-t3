@@ -929,6 +929,29 @@ class BrigadeTest(unittest.TestCase):
         path.write_text(body)
         return path
 
+    def attempt_report(self, body, dish="D1"):
+        """Write reports/<dish>.md and stamp its mtime at or after that dish's last attempt start.
+
+        Watch counts the file for this attempt only when that mtime is at or after the last attempt start.
+        The stamp is the clock after the write, or the start when the clock is earlier.
+        """
+        path = self.at / "reports" / f"{dish}.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(body)
+        starts = [row["at"] for row in self.log_rows()
+                  if row["kind"] == "dish" and row["id"] == dish and row["state"] == "in-progress"]
+        if not starts:
+            starts = [self.table_row(self.at, "dishes.tsv", dish)["at"]]
+        start = datetime.fromisoformat(starts[-1])
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        moment = datetime.now(timezone.utc)
+        if moment < start:
+            moment = start
+        stamp = moment.timestamp()
+        os.utime(path, (stamp, stamp))
+        return path
+
     def dish_fields(self, *keys):
         row = self.table_row(self.at, "dishes.tsv", "D1")
         return tuple(row[key] for key in keys)

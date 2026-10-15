@@ -31,8 +31,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         log = self.at / "log.tsv"
         log.write_text(log.read_text().replace(f"{__import__('datetime').date.today().year}-", "2020-"))
         self.assertIn("D1: over its 30m timebox", self.brigade("watch"))
-        (self.at / "reports").mkdir()
-        (self.at / "reports/D1.md").write_text("done")
+        self.attempt_report("done")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-9)")
         self.assertEqual(self.brigade("dish", "D1", "--reported"), "D1 in-progress")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
@@ -40,7 +39,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in progress with no worker thread; launch a fresh worker")
         self.brigade("dish", "D1", "--thread", "thread-10")
-        (self.at / "reports/D1.md").write_text("second attempt")
+        self.attempt_report("second attempt")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-10)")
 
     def test_replacing_an_in_progress_worker_starts_a_new_attempt(self):
@@ -48,13 +47,11 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.fire_one(timebox="60")
         log = self.at / "log.tsv"
         log.write_text(log.read_text().replace(f"{__import__('datetime').date.today().year}-", "2020-"))
-        report = self.at / "reports" / "D1.md"
-        report.parent.mkdir()
-        report.write_text("partial from the overdue worker")
+        self.attempt_report("partial from the overdue worker")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread thread-9)")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker"), "D1 in-progress")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: running 0m of 60m (thread fresh-worker)")
-        report.write_text("partial from the fresh worker")
+        self.attempt_report("partial from the fresh worker")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread fresh-worker)")
         self.brigade("dish", "D1", "--timebox", "90", "--task", "t-2")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread fresh-worker)")
@@ -67,7 +64,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual(self.brigade("dish", "D1", "--thread", "thread-9", ok=False),
                          "brigade: thread thread-9 is an earlier attempt of D1; a send-back launches a fresh worker")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "worker-3")
-        report.write_text("partial from worker-3")
+        self.attempt_report("partial from worker-3")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written, no report-back (thread worker-3)")
 
     def test_an_idle_replacement_with_an_earlier_report_reaches_the_nudge(self):
@@ -92,9 +89,7 @@ class WakeTest(BrigadeTest, _WakeRace):
     def test_watch_flags_a_reported_run_still_open_past_ten_minutes(self):
         self.open()
         self.fire_one()
-        report = self.at / "reports" / "D1.md"
-        report.parent.mkdir()
-        report.write_text("done")
+        report = self.attempt_report("done")
         self.brigade("dish", "D1", "--reported")
         self.assertEqual(self.brigade("watch"),
                          "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: report written 0m ago; review it even if the worker's run is still open (thread thread-9)")
@@ -364,7 +359,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         before = (self.at / "restaurant.json").read_text()
         (Path(self.temporary.name) / "state").rename(Path(self.temporary.name) / "moved")
         self.assertEqual(self.brigade("watch"),
-                         f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
+                         f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: could not renew L1: {self.project.resolve()} has no landing contract; run land.py init in it")
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
 
     def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line_and_renew(self):
@@ -1532,10 +1527,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.brigade("set", "--reporting", "digest")
         self.brigade("dish", "D1", "--thread", "thread-9")
         self.brigade("dish", "D1", "--reported")
-        reports = self.at / "reports"
-        reports.mkdir()
-        current_path = reports / "D1.md"
-        current_path.write_text("done\n")
+        current_path = self.attempt_report("done\n")
         current = self.next_sheet()
         self.assertIn("see D1: report written ", current)
         self.assertNotIn("reports/D1.md is absent", current)
@@ -1581,9 +1573,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         ])
         self.fresh()
         self.brigade("dish", "D1", "--reported")
-        reports = self.at / "reports"
-        reports.mkdir()
-        (reports / "D1.md").write_text("current\n")
+        self.attempt_report("current\n")
         stamp_attempt("2020-01-01T00:00:00")
         code, out, err = self.run_raw("next")
         self.assertEqual(code, 0)
