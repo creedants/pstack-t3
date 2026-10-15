@@ -1,0 +1,3 @@
+- kind fix
+- `tests/brigade/support.py` adds `attempt_report` which writes `reports/<dish>.md` and sets its mtime to the later of now and the dish's last attempt start.
+- `tests/brigade/test_wake.py` writes eight current-attempt reports with `attempt_report`.
