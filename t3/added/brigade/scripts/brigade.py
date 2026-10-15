@@ -124,7 +124,7 @@ def parser():
                    help="comma-separated kind=mode pairs, the default mode for a new item of that kind, full or "
                         "light; a pair with no mode clears that kind's depth; an empty value clears every depth")
     p.add_argument("--scratch-dir", metavar="DIR",
-                   help="the parent directory worker briefs pass to mktemp -d -p; an absolute directory outside "
+                   help="the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside "
                         "/tmp; \"\" clears the setting")
 
     p = sub.add_parser("ticket", help="add, list, update, move, take, or record paths on tickets on the rail")

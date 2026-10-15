@@ -114,7 +114,7 @@ NOTHING_HANDED = "nothing handed to you"
 NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contract key in --fields, and write none when the item has no safety, privacy, or integrity property")
 # The restaurant.json key that holds the parent directory worker briefs pass to mktemp -d -p.
 SCRATCH_KEY = "scratchDir"
-SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory outside /tmp, or empty string to clear it"
+SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it"
 SNAPSHOT_CHUNK = 1 << 16
 
 MENU = """# Menu: {restaurant}
@@ -172,7 +172,7 @@ def store_root(flag=None):
 def scratch_parent_text(value):
     """The parent directory briefs pass to mktemp -d -p, or empty string when the setting is unset.
 
-    None, empty string, and whitespace-only mean unset. Any other value must be an absolute directory outside /tmp.
+    None, empty string, and whitespace-only mean unset. Any other value must be an absolute path outside /tmp, and an existing path must be a directory.
     """
     if value is None:
         return ""

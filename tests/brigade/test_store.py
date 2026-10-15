@@ -83,7 +83,7 @@ class StoreTest(BrigadeTest):
     def test_set_scratch_dir_refuses_a_relative_tilde_or_tmp_value_and_changes_nothing(self):
         self.open()
         before = (self.at / "restaurant.json").read_bytes()
-        refusal = "brigade: --scratch-dir takes an absolute directory outside /tmp, or empty string to clear it"
+        refusal = "brigade: --scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it"
         for bad in ("scratch", "~/scratch", "/tmp", "/tmp/scratch", "/home\n"):
             with self.subTest(bad=bad):
                 self.assertEqual(self.brigade("set", "--scratch-dir", bad, ok=False), refusal)

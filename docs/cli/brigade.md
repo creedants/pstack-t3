@@ -63,7 +63,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
 | `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
-| `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory outside /tmp; "" clears the setting |
+| `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
 
 ## brigade.py ticket
 
