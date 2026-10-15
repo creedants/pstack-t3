@@ -6508,7 +6508,7 @@ os.execv({real!r}, [{real!r}, *args])
     def assert_live(self, pid):
         # A zombie answers os.kill(pid, 0) too, so the member's state read is the liveness witness.
         state = land._ps_line(pid, "stat=")
-        self.assertIsNotNone(state, f"pid {pid} is not running")
+        self.assertIsNotNone(state, f"ps could not read pid {pid}")
         self.assertFalse(state.strip().startswith("Z"), f"pid {pid} is a zombie")
 
     def assert_worker_holder_keeps_the_slot(self, holder):
