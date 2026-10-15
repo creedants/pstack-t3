@@ -76,6 +76,8 @@ def _brief_fields(args):
                     raise BrigadeError(f"brief fields: {key} must be a list of strings")
             elif not isinstance(value, str):
                 raise BrigadeError(f"brief fields: {key} must be a string")
+        if not payload["base"].strip():
+            raise BrigadeError("brief --base takes a trunk ref, such as origin/main")
         return {
             "goal": payload["goal"],
             "acceptance": payload["acceptance"],
@@ -88,6 +90,8 @@ def _brief_fields(args):
         }
     if args.goal is None or args.verify is None or args.base is None:
         raise BrigadeError("brief needs --fields, or --goal, --verify, and --base")
+    if not args.base.strip():
+        raise BrigadeError("brief --base takes a trunk ref, such as origin/main")
     return {
         "goal": args.goal,
         "acceptance": args.acceptance,

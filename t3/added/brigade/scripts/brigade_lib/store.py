@@ -181,8 +181,10 @@ def scratch_parent_text(value):
     if not text.strip():
         return ""
     resolved = Path(text).resolve() if Path(text).is_absolute() else None
+    tmp = Path("/tmp").resolve()
     refused = (any(bad in text for bad in ("\n", "\r", "~")) or resolved is None
                or resolved == Path("/tmp") or Path("/tmp") in resolved.parents
+               or resolved == tmp or tmp in resolved.parents
                or (resolved.exists() and not resolved.is_dir()))
     if refused:
         raise BrigadeError(SCRATCH_REFUSAL)
