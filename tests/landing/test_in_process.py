@@ -76,7 +76,7 @@ class LandingTest(LandingTestBase):
             if fired["done"] or event != "call":
                 return trace
             filename = frame.f_globals.get("__file__", "")
-            if frame.f_code.co_name == "status" and filename.endswith("land.py"):
+            if frame.f_code.co_name == "status" and filename.endswith("drain.py"):
                 fired["done"] = True
                 raise KeyboardInterrupt
             return trace
@@ -141,8 +141,8 @@ class LandingTest(LandingTestBase):
         self.init()
         target = next(
             number
-            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
-            if line == "    out = Outcome([], [], [], [], [])"
+            for number, line in enumerate((SCRIPT.parent / "landing_lib" / "drain.py").read_text().splitlines(), 1)
+            if line == "    out = seam.Outcome([], [], [], [], [])"
         )
         captured = []
         opened = []
@@ -150,7 +150,7 @@ class LandingTest(LandingTestBase):
         def trace(frame, event, arg):
             if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
                 return trace
-            if not frame.f_code.co_filename.endswith("land.py"):
+            if not frame.f_code.co_filename.endswith("drain.py"):
                 return trace
             captured.append(frame.f_locals["handle"].fileno())
             raise KeyboardInterrupt
@@ -215,8 +215,8 @@ class LandingTest(LandingTestBase):
 
         target = next(
             number
-            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
-            if line == "    out = Outcome([], [], [], [], [])"
+            for number, line in enumerate((SCRIPT.parent / "landing_lib" / "drain.py").read_text().splitlines(), 1)
+            if line == "    out = seam.Outcome([], [], [], [], [])"
         )
         captured = []
         opened = []
@@ -224,7 +224,7 @@ class LandingTest(LandingTestBase):
         def trace(frame, event, arg):
             if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
                 return trace
-            if not frame.f_code.co_filename.endswith("land.py"):
+            if not frame.f_code.co_filename.endswith("drain.py"):
                 return trace
             captured.append(frame.f_locals["handle"].fileno())
             raise KeyboardInterrupt
@@ -273,8 +273,8 @@ class LandingTest(LandingTestBase):
 
         target = next(
             number
-            for number, line in enumerate(SCRIPT.read_text().splitlines(), 1)
-            if line == "    out = Outcome([], [], [], [], [])"
+            for number, line in enumerate((SCRIPT.parent / "landing_lib" / "drain.py").read_text().splitlines(), 1)
+            if line == "    out = seam.Outcome([], [], [], [], [])"
         )
         captured = []
         opened = []
@@ -282,7 +282,7 @@ class LandingTest(LandingTestBase):
         def trace(frame, event, arg):
             if event != "line" or frame.f_lineno != target or frame.f_code.co_name != "land":
                 return trace
-            if not frame.f_code.co_filename.endswith("land.py"):
+            if not frame.f_code.co_filename.endswith("drain.py"):
                 return trace
             captured.append(frame.f_locals["handle"])
             raise KeyboardInterrupt

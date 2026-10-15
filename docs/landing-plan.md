@@ -13,7 +13,7 @@ landing lets 10 to 100 agents write to one repository at once. Writing scales fr
 
 ## Implementation
 
-`t3/added/landing/scripts/land.py`, Python standard library only. Tests: `tests/test_landing.py`.
+`t3/added/landing/scripts/land.py`, Python standard library only. Tests: `tests/landing/`.
 
 - **Identity.** A store belongs to one git common directory, so every worktree of a clone shares it and another clone cannot. `init` refuses to change trunk, mode, or remote on an existing contract.
 - **State.** SQLite in WAL mode under `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/landing/<repo>-<hash>/land.db`. Every change is one short `BEGIN IMMEDIATE` transaction. No git command or check runs inside a transaction.
@@ -33,7 +33,7 @@ landing lets 10 to 100 agents write to one repository at once. Writing scales fr
 
 ## Design review
 
-Codex (gpt-6.1-sol) reviewed the design before the build and raised 14 blockers. Each is addressed above. Grok (grok-4.7) then reviewed the implementation and reproduced 10 defects, each fixed with a regression test in `tests/test_landing.py`: a queued entry briefly without its pin, a check escaping its process group, a human-mode crash after PR creation, policy rejections retried as trunk moves, non-UTF-8 check output and file contents, no rewind check in human mode, PRs merged with an unchecked head, quoted non-ASCII paths, and a missing git identity. The design decisions:
+Codex (gpt-6.1-sol) reviewed the design before the build and raised 14 blockers. Each is addressed above. Grok (grok-4.7) then reviewed the implementation and reproduced 10 defects, each fixed with a regression test in `tests/landing/`: a queued entry briefly without its pin, a check escaping its process group, a human-mode crash after PR creation, policy rejections retried as trunk moves, non-UTF-8 check output and file contents, no rewind check in human mode, PRs merged with an unchecked head, quoted non-ASCII paths, and a missing git identity. The design decisions:
 
 | Finding | Decision |
 | --- | --- |
