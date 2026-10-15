@@ -1661,6 +1661,19 @@ class WakeTest(BrigadeTest, _WakeRace):
         self.assertEqual([row["note"] for row in self.log_rows() if row["kind"] == "ended"],
                          ["rate limit from grok/grok-4.7"])
 
+    def test_worker_ended_refuses_every_other_dish_flag(self):
+        self.open()
+        self.fire_one(timebox="60")
+        others = (("--state", "sent-back"), ("--state", "dropped"), ("--thread", "thread-10"), ("--thread", ""),
+                  ("--task", "t-2"), ("--branch", "perf/d2"), ("--pr", "https://x/1"), ("--sha", "abc"),
+                  ("--timebox", "90"), ("--reported",), ("--lease", "L1"), ("--paths", "README.md"),
+                  ("--stopped", "idle"), ("--mode", "full", "--reason", "why"))
+        for extra in others:
+            self.assertEqual(self.brigade("dish", "D1", "--worker-ended", "worker died", *extra, ok=False),
+                             "brigade: --worker-ended takes no other dish flag", extra)
+        self.assertEqual([row for row in self.log_rows() if row["kind"] == "ended"], [])
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], "thread-9")
+
     def test_worker_ended_refuses_a_dish_that_is_not_in_progress_has_no_thread_or_already_has_a_report(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "4")
         for number in range(1, 5):
@@ -1712,6 +1725,15 @@ class WakeTest(BrigadeTest, _WakeRace):
                       self.brigade("watch"))
         self.assertEqual([(row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "ended"],
                          [("1", "worker died on attempt 1"), ("2", "worker died on attempt 2")])
+
+    def test_a_cleared_thread_cell_does_not_name_an_empty_dead_thread(self):
+        self.open()
+        self.fire_one(timebox="60")
+        self.brigade("dish", "D1", "--worker-ended", "worker died")
+        self.brigade("dish", "D1", "--thread", "")
+        lines = self.brigade("watch").splitlines()
+        self.assertEqual(lines[1], "D1: worker ended with no report; the provider error is worker died")
+        self.assertEqual(lines[-1], "  archive the dead worker")
 
     def test_a_held_dish_does_not_print_the_ended_line(self):
         self.open()
