@@ -679,13 +679,13 @@ EPERM_KILLPG_STUB = (
     "os.killpg = _killpg\n"
 )
 
-# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child. The wait is
-# the same waitid the grace uses, so the interrupt lands after the SIGTERM has killed the leader.
+# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child. The probe is
+# land._leader_is_permitted_zombie, the witness the killpg wrapper uses, and it never reaps the child.
 INTERRUPT_AFTER_THE_LEADER_EXITS = (
     "import os, time\n"
     "_real_time_sleep = time.sleep\n"
     "def _interrupt(seconds):\n"
-    "    if _leader and os.waitid(os.P_PID, _leader[0], os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:\n"
+    "    if _leader and land._leader_is_permitted_zombie(_leader[0]):\n"
     "        raise KeyboardInterrupt()\n"
     "    _real_time_sleep(seconds)\n"
     "land._real_sleep = _interrupt\n"
@@ -6977,6 +6977,27 @@ os.execv({real!r}, [{real!r}, *args])
             ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
             cap=0.4, grace=0.4, timeout=20,
             main=_darwin_eperm_main("after-term", after=INTERRUPT_AFTER_THE_LEADER_EXITS))
+        self.assertNotEqual(result.returncode, 124, result.stderr)
+        self.assertIn("KeyboardInterrupt", result.stderr)
+        self.assertNotIn("PermissionError", result.stderr)
+        self.assert_slots_free()
+
+    def test_the_interrupt_fixture_needs_no_os_waitid(self):
+        """Pin that the interrupt fixture needs no os.waitid.
+
+        Removing os.waitid from the child models macOS Python before 3.13, which does not expose it.
+        """
+        self.governor(1)
+        original = _darwin_eperm_main
+
+        def without_waitid(*args, **kwargs):
+            return "import os\nvars(os).pop('waitid', None)\n" + original(*args, **kwargs)
+
+        with mock.patch.object(sys.modules[__name__], "_darwin_eperm_main", without_waitid):
+            result = self.run_exclusive(
+                ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                cap=0.4, grace=0.4, timeout=20,
+                main=_darwin_eperm_main("after-term", after=INTERRUPT_AFTER_THE_LEADER_EXITS))
         self.assertNotEqual(result.returncode, 124, result.stderr)
         self.assertIn("KeyboardInterrupt", result.stderr)
         self.assertNotIn("PermissionError", result.stderr)
