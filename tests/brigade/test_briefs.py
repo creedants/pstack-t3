@@ -406,6 +406,34 @@ class BriefsTest(BrigadeTest):
         self.assertIn("code delegate, claims check, and architect runner", threads)
         self.assertIn("A missing section adds no row and is not an error.", threads)
 
+    def test_threads_sentence_bars_a_seat_suffix_backticks_and_a_how_explainer(self):
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        threads = next(line for line in text.splitlines() if line.startswith("- Hold a `## Threads`"))
+        self.assertIn("one bare provider/model token with nothing after it and no backticks around it", threads)
+        self.assertIn("no reasoning level, no note, and no effort word after the seat", threads)
+        self.assertIn("The role is one of code delegate, claims check, and architect runner, named literally", threads)
+        self.assertIn("such as a how explainer", threads)
+        self.assertIn("List only T3 threads started with `delegate_task` or `t3_thread_launch`", threads)
+
+    def test_template_example_thread_item_parses_as_one_child_with_no_unreadable_line(self):
+        import re
+        self.coordinator()
+        text = self.brigade(*self.BRIEF)
+        match = re.search(r"- (code delegate|claims check|architect runner) `([^`]+)` (\S+) parses as one child "
+                          r"with no unreadable line", text)
+        self.assertIsNotNone(match, "no example thread item in the brief template")
+        role, thread, seat = match.groups()
+        self.assertNotIn("`", seat)
+        self.assertIn("/", seat)
+        line = "- {} `{}` {}".format(role, thread, seat)
+        report_threads = runpy.run_path(str(SCRIPT))["report_threads"]
+        children, unreadable = report_threads("findings\n\n## Threads\n\n" + line + "\n")
+        self.assertEqual(unreadable, ())
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0]["role"], role)
+        self.assertEqual(children[0]["seat"], seat)
+
     def test_an_orchestrate_brief_carries_the_same_bounded_wait(self):
         self.coordinator(station="orchestrate", mode="full")
         text = self.brigade(*self.BRIEF)
