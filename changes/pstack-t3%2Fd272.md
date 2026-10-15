@@ -1,2 +1,3 @@
 - kind fix
 - land.py slot --exclusive stops the command at its cap when macOS killpg returns EPERM for a zombie leader this process may signal, and the same EPERM for a live leader still fails the command.
+- A landing command closes its database before it returns, so a refusal on Python 3.13 or later does not print an unclosed-database warning ahead of the refusal line.

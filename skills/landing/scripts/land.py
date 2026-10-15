@@ -1186,15 +1186,41 @@ def supervised(command, cwd, timeout):
 class Store:
     def __init__(self, directory):
         self.dir = Path(directory)
-        self.db = sqlite3.connect(self.dir / "land.db", timeout=60, isolation_level=None)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(SCHEMA)
-        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(entry)")}
-        for column in ("title", "body", "onto"):
-            if column not in columns:
-                self.db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        migrate_entry_ids(self.db)
+        self.db = None
+        db = sqlite3.connect(self.dir / "land.db", timeout=60, isolation_level=None)
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.executescript(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(entry)")}
+            for column in ("title", "body", "onto"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE entry ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            migrate_entry_ids(db)
+        except BaseException:
+            try:
+                db.close()
+            except sqlite3.Error:
+                pass
+            raise
+        self.db = db
+
+    def close(self):
+        """Close the landing database. A later call does nothing."""
+        db = self.db
+        if db is None:
+            return
+        self.db = None
+        try:
+            db.close()
+        except sqlite3.ProgrammingError:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
 
     @classmethod
     def for_repo(cls, path):
@@ -1203,8 +1229,12 @@ class Store:
         if not (directory / "land.db").exists():
             raise LandError(f"{common.parent} has no landing contract; run land.py init in it")
         store = cls(directory)
-        if Path(store.contract["commonDir"]) != common:
-            raise LandError(f"store {directory} belongs to {store.contract['commonDir']}, not {common}")
+        try:
+            if Path(store.contract["commonDir"]) != common:
+                raise LandError(f"store {directory} belongs to {store.contract['commonDir']}, not {common}")
+        except BaseException:
+            store.close()
+            raise
         return store
 
     @contextlib.contextmanager
@@ -1647,36 +1677,36 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         merge_method = pick_merge_method(merge_method, allowed_merge_methods(repo))
     else:
         merge_method = "merge"
-    store = Store(directory)
-    wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
-              "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
-    fixed = ("commonDir", "trunk", "mode", "remote")
+    with Store(directory) as store:
+        wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
+                  "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
+        fixed = ("commonDir", "trunk", "mode", "remote")
 
-    def refuse_clash(current):
-        current = {**current, "mode": LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
-        clash = [key for key in fixed if key in current and current[key] != wanted[key]]
-        if clash:
-            raise LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
-                            "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
+        def refuse_clash(current):
+            current = {**current, "mode": LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
+            clash = [key for key in fixed if key in current and current[key] != wanted[key]]
+            if clash:
+                raise LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
+                                "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
 
-    refuse_clash(store.contract)
-    if mode in REMOTE_MODES:
-        if not git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
-            raise LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
-        git("fetch", remote, trunk, cwd=repo)
-    with store.tx() as db:
-        current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
-        refuse_clash(current)
-        for key, value in wanted.items():
-            if key != "paused" or key not in current:
-                db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
-        if cap is not None:
-            set_cap(db, cap)
-    if mode == "local" and git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
-        if not base:
-            raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
-        git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
-    return f"{'updated' if current else 'created'} {directory}"
+        refuse_clash(store.contract)
+        if mode in REMOTE_MODES:
+            if not git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
+                raise LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
+            git("fetch", remote, trunk, cwd=repo)
+        with store.tx() as db:
+            current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
+            refuse_clash(current)
+            for key, value in wanted.items():
+                if key != "paused" or key not in current:
+                    db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
+            if cap is not None:
+                set_cap(db, cap)
+        if mode == "local" and git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
+            if not base:
+                raise LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
+            git("update-ref", trunk_ref(wanted), git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
+        return f"{'updated' if current else 'created'} {directory}"
 
 
 def set_cap(db, cap):
@@ -3516,54 +3546,54 @@ def run(argv):
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
                     args.merge_method, args.cap), 0
-    store = Store.for_repo(args.repo)
-    if args.command == "cap":
-        return change_cap(store, args.count), 0
-    if args.command == "owner":
-        return raise_floor(store, args.prefix, args.generation), 0
-    if args.command == "lease":
-        if args.action == "claim":
-            return lease_claim(store, args.holder, args.paths, args.ttl_hours, args.owner), 0
-        if args.action == "check":
-            return lease_check(store, args.holder, args.paths)
-        if args.action == "list":
-            return lease_list(store), 0
-        if args.action == "reserve":
-            return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
-        if args.action == "unreserve":
-            return lease_unreserve(store, reservation_id(args.id), args.owner), 0
-        number = lease_id(args.id)
-        if args.action == "renew":
-            return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
-        return lease_release(store, number, args.owner), 0
-    if args.command == "mode":
-        return change_mode(store, args.mode, args.merge_method), 0
-    if args.command == "share":
-        return change_share(store, args.prefix, args.count, args.clear, args.owner), 0
-    if args.command == "contest":
-        if (args.settle is None) != (args.first is None):
-            raise LandError("--settle and --first go together")
-        return contest(store, args.owner, args.holders, args.settle, args.first, args.cancel), 0
-    if args.command == "submit":
-        body = Path(args.body_file).read_text() if args.body_file else ""
-        return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body, args.owner), 0
-    if args.command == "land":
-        return land(store), 0
-    if args.command == "resume":
-        with store.tx() as db:
-            if (store.contract.get("paused") or "").startswith(IDENTITY_PAUSE):
-                db.execute("DELETE FROM contract WHERE key = 'identity'")
-            db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', '\"\"')")
-            db.execute("DELETE FROM contract WHERE key = 'tip'")
-            store.log(db, "queue", 0, "resumed")
-        return "queue resumed", 0
-    if args.holder:
-        if args.id:
-            raise LandError("status takes an entry id or --holder, not both")
-        return holder_status(store, args.holder, args.sha), 0
-    if args.sha:
-        raise LandError("status --sha needs --holder")
-    return status(store, args.id), 0
+    with Store.for_repo(args.repo) as store:
+        if args.command == "cap":
+            return change_cap(store, args.count), 0
+        if args.command == "owner":
+            return raise_floor(store, args.prefix, args.generation), 0
+        if args.command == "lease":
+            if args.action == "claim":
+                return lease_claim(store, args.holder, args.paths, args.ttl_hours, args.owner), 0
+            if args.action == "check":
+                return lease_check(store, args.holder, args.paths)
+            if args.action == "list":
+                return lease_list(store), 0
+            if args.action == "reserve":
+                return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
+            if args.action == "unreserve":
+                return lease_unreserve(store, reservation_id(args.id), args.owner), 0
+            number = lease_id(args.id)
+            if args.action == "renew":
+                return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
+            return lease_release(store, number, args.owner), 0
+        if args.command == "mode":
+            return change_mode(store, args.mode, args.merge_method), 0
+        if args.command == "share":
+            return change_share(store, args.prefix, args.count, args.clear, args.owner), 0
+        if args.command == "contest":
+            if (args.settle is None) != (args.first is None):
+                raise LandError("--settle and --first go together")
+            return contest(store, args.owner, args.holders, args.settle, args.first, args.cancel), 0
+        if args.command == "submit":
+            body = Path(args.body_file).read_text() if args.body_file else ""
+            return submit(store, args.holder, args.branch, args.sha, args.lease, args.reviewer, args.title, body, args.owner), 0
+        if args.command == "land":
+            return land(store), 0
+        if args.command == "resume":
+            with store.tx() as db:
+                if (store.contract.get("paused") or "").startswith(IDENTITY_PAUSE):
+                    db.execute("DELETE FROM contract WHERE key = 'identity'")
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('paused', '\"\"')")
+                db.execute("DELETE FROM contract WHERE key = 'tip'")
+                store.log(db, "queue", 0, "resumed")
+            return "queue resumed", 0
+        if args.holder:
+            if args.id:
+                raise LandError("status takes an entry id or --holder, not both")
+            return holder_status(store, args.holder, args.sha), 0
+        if args.sha:
+            raise LandError("status --sha needs --holder")
+        return status(store, args.id), 0
 
 
 def main(argv=None):
