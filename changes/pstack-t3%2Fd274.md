@@ -6,6 +6,7 @@
 - The write keeps every other byte of the file, including its spacing and its other numbers, and replaces or inserts only the `autoCompactWindow` member
 - A settings file that is tracked by git, that holds invalid JSON or the NaN, Infinity, or -Infinity constants, or that holds no JSON object refuses the write with exit 1 and changes no file
 - A settings directory reached through a symbolic link, and a git command that cannot say whether the file is tracked, refuse the write the same way; a project in no repository is written
+- A repository whose git fails both the tracked lookup and the repository lookup for a reason other than no repository refuses the write, because only a rev-parse error that names not a git repository reads as no repository
 - A refused open of a new store leaves no store directory and claims no intake, and a refused write to an existing store changes no store file
 - `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
 - `edits verify` compares `.claude/settings.local.json` like every other path and passes a head whose only change there is the `autoCompactWindow` member

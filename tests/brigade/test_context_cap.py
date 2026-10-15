@@ -164,6 +164,18 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertFalse(self.at.exists())
 
+    def test_open_refuses_a_repository_where_both_git_lookups_fail(self):
+        self.git_project()
+        self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})
+        (self.project / ".git" / "config").write_bytes(b"not a config\n")
+        before = self.settings().read_bytes()
+        error = self.open(ok=False)
+        self.assertEqual(error, f"brigade: git cannot say whether {self.settings()} is tracked; "
+                                "fix that repository and run this again")
+        self.assertEqual(self.settings().read_bytes(), before)
+        self.assertFalse(self.at.exists())
+        self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
+
     def test_open_refuses_a_project_whose_git_cannot_start(self):
         self.git_project()
         self.commit_files({".claude/settings.local.json": '{\n  "keep": true\n}\n'})

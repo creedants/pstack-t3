@@ -72,8 +72,9 @@ def _object(raw):
 def _git_refusal(real):
     """Why brigade refuses to write the resolved destination, or None when git leaves it writable.
 
-    A pathspec that matches no tracked file, and a directory in no repository, both leave it writable. A git command
-    that fails for any other reason refuses, because an untracked state that cannot be established is not one.
+    A pathspec that matches no tracked file, and a directory in no repository, both leave it writable. A rev-parse
+    whose error names not a git repository is a directory in no repository. A git command that fails for any other
+    reason refuses, because an untracked state that cannot be established is not one.
     """
     directory = real.parent
     while not directory.is_dir():
@@ -86,10 +87,12 @@ def _git_refusal(real):
             state = "tracked"
         elif listed.returncode == 1:
             state = "untracked"
-        elif subprocess.run([*words, "rev-parse", "--git-dir"], capture_output=True).returncode == 0:
-            state = "unreadable"
         else:
-            state = "no repository"
+            found = subprocess.run([*words, "rev-parse", "--git-dir"], capture_output=True)
+            if found.returncode == 0 or b"not a git repository" not in found.stderr:
+                state = "unreadable"
+            else:
+                state = "no repository"
     except OSError as error:
         return f"cannot run git in {directory}: {error.strerror}"
     if state in ("untracked", "no repository"):
