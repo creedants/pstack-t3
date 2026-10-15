@@ -695,8 +695,9 @@ EPERM_KILLPG_STUB = (
     "os.killpg = _killpg\n"
 )
 
-# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child. The probe is
-# land._leader_is_permitted_zombie, the witness the killpg wrapper uses, and it never reaps the child.
+# A _real_sleep that raises KeyboardInterrupt once the leader is an unreaped exited child this process
+# may signal. The probe is land._leader_is_permitted_zombie, the witness the killpg wrapper uses, and
+# it never reaps, so the interrupt lands after the SIGTERM has killed the leader.
 INTERRUPT_AFTER_THE_LEADER_EXITS = (
     "import os, time\n"
     "_real_time_sleep = time.sleep\n"
@@ -1978,10 +1979,11 @@ exit 0
         self.assertEqual(_open_land_db(database), [])
 
     @unittest.skipUnless(os.path.isdir("/proc"), "the test lists a real /proc/self/fd as /dev/fd")
-    def test_descriptor_cleanup_closes_a_pipe_whose_path_query_fails(self):
-        """Pin that a descriptor whose pathname query fails still lands in the snapshot and is closed.
+    def test_descriptor_cleanup_keeps_a_pipe_whose_path_query_fails(self):
+        """Pin that a pipe whose path query fails stays listed, and a later pipe is still cleaned up.
 
-        The failing F_GETPATH models Darwin, which rejects a non-vnode descriptor such as a pipe.
+        The F_GETPATH mock raises for a FIFO, which models Darwin's rejection of a non-vnode
+        descriptor. The second pipe is opened after the snapshot, and the cleanup closes it.
         """
         read_first, write_first = os.pipe()
         opened = [read_first, write_first]
@@ -6970,7 +6972,7 @@ os.execv({real!r}, [{real!r}, *args])
         self.assert_slots_free()
 
     def test_an_exclusive_darwin_eperm_is_reraised_when_the_witness_is_not_a_permitted_target(self):
-        """Every witness that is not a permitted target fails the command instead of capping it."""
+        """Each witness that is not a permitted target fails the command, and the Linux branch does the same."""
         self.governor(1)
         rows = (
             ("live leader", dict(mode="always", probe="waitid"), True),
@@ -7530,7 +7532,7 @@ os.execv({real!r}, [{real!r}, *args])
         os.write(gate, b"x")
         stop_reporter()
         # The landing caller ran on its own clock, so its next attempt could have taken the free slot
-        # before the exclusive stepped. Settling it first proves it saw the earlier exclusive and yielded.
+        # before the exclusive stepped. Settling it first shows its attempt ended without starting.
         self.assertEqual(slots.settle(landing), "waiting")
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
