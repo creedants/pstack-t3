@@ -431,7 +431,7 @@ def fragment_findings(root):
 
     The scan covers every markdown file under the tree's brigade,
     brigade-admin, and pstack-runtime skill directories, at any depth. A link
-    is a markdown link target that holds a #. Code spans are removed before
+    is a markdown link target that holds a #. Single-line code spans are removed before
     link extraction. An optional title after the destination is recognized and
     excluded from the destination. A shared fence scanner hides fenced lines.
     It tracks marker character and opening length. It recognizes tilde and
