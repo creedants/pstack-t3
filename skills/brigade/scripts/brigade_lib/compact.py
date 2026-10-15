@@ -71,46 +71,72 @@ def _object(raw):
     return value if isinstance(value, dict) else None
 
 
-def _git_refusal(real):
-    """Why brigade refuses to write the resolved destination, or None when git leaves it writable.
-
-    A pathspec that matches no tracked file, and a directory in no repository, both leave it writable. A rev-parse
-    whose error names not a git repository is a directory in no repository. A git command that fails for any other
-    reason refuses, because an untracked state that cannot be established is not one.
-    """
-    directory = real.parent
+def _existing(directory):
+    """The nearest existing directory at or above this one."""
     while not directory.is_dir():
         directory = directory.parent
+    return directory
+
+
+def _git_state(real, directory):
+    """What the repository that holds directory says about real, which lies below directory.
+
+    The pathspec is real relative to directory, so it is asked of the repository git discovers from that directory.
+    An ls-files that exits 1 matched no tracked file. A rev-parse whose error names not a git repository is a
+    directory in no repository. Any other failure is unreadable, because an untracked state that cannot be
+    established is not one. A git that cannot start raises BrigadeError naming directory.
+    """
     words = ["git", "-C", str(directory)]
     try:
         listed = subprocess.run([*words, "ls-files", "--error-unmatch", "--", str(real.relative_to(directory))],
                                 capture_output=True)
         if listed.returncode == 0:
-            state = "tracked"
-        elif listed.returncode == 1:
-            state = "untracked"
-        else:
-            found = subprocess.run([*words, "rev-parse", "--git-dir"], capture_output=True)
-            if found.returncode == 0 or b"not a git repository" not in found.stderr:
-                state = "unreadable"
-            else:
-                state = "no repository"
+            return "tracked"
+        if listed.returncode == 1:
+            return "untracked"
+        found = subprocess.run([*words, "rev-parse", "--git-dir"], capture_output=True)
     except OSError as error:
-        return f"cannot run git in {directory}: {error.strerror}"
-    if state in ("untracked", "no repository"):
-        return None
-    if state == "unreadable":
-        return f"git cannot say whether {real} is tracked; fix that repository and run this again"
-    return f"{real} is tracked by git; untrack it before brigade writes {SETTINGS_KEY}"
+        raise BrigadeError(f"cannot run git in {directory}: {error.strerror}") from error
+    if found.returncode == 0 or b"not a git repository" not in found.stderr:
+        return "unreadable"
+    return "no repository"
+
+
+def _git_refusal(real, project_root):
+    """Why brigade refuses to write real, or None when git leaves it writable.
+
+    The repository that holds the nearest existing directory at or above real answers first. A repository nested
+    between the project root and real answers only for its own index, so the repository that holds the project root
+    answers too whenever that directory sits below the project root. Either repository that tracks real, or cannot
+    say, refuses. A directory in no repository leaves the entry writable.
+    """
+    directory = _existing(real.parent)
+    lookups = [(directory, False)]
+    if project_root in directory.parents:
+        lookups.append((Path(project_root), True))
+    for base, outer in lookups:
+        state = _git_state(real, base)
+        if state == "tracked":
+            if outer:
+                return (f"{real} is tracked by the repository that holds the project root; "
+                        f"untrack it there before brigade writes {SETTINGS_KEY}")
+            return f"{real} is tracked by git; untrack it before brigade writes {SETTINGS_KEY}"
+        if state == "unreadable":
+            if outer:
+                return (f"git cannot say whether the repository that holds the project root tracks {real}; "
+                        "fix that repository and run this again")
+            return f"git cannot say whether {real} is tracked; fix that repository and run this again"
+    return None
 
 
 def _load(project_root):
     """The settings path and the text its file holds, or None when it holds none.
 
     The directory that holds the settings file must sit below the project root with no symbolic link at any component
-    on the way. The entry at the settings path, which os.replace replaces, must be one git leaves writable, and so
-    must the file the path resolves to when the two differ. A file that exists must hold a strict JSON object. A
-    refusal raises BrigadeError and changes no file.
+    on the way. The entry at the settings path, which os.replace replaces, and the file the path resolves to when the
+    two differ, must each be a path that the repository holding it and the repository holding the project root both
+    leave writable. A file that exists must hold a strict JSON object. A refusal raises BrigadeError and changes no
+    file.
     """
     path = settings_path(project_root)
     directory = Path(project_root)
@@ -118,13 +144,13 @@ def _load(project_root):
         directory = directory / part
         if directory.is_symlink():
             raise BrigadeError(f"{directory} is a symbolic link; brigade writes {SETTINGS_RELATIVE} through no link")
-    refusal = _git_refusal(path)
+    refusal = _git_refusal(path, Path(project_root))
     if refusal:
         raise BrigadeError(refusal)
     # realpath never raises on a symbolic link loop, which the read below then refuses with ELOOP.
     resolved = Path(os.path.realpath(path)) if path.is_symlink() else path
     if resolved != path:
-        refusal = _git_refusal(resolved)
+        refusal = _git_refusal(resolved, Path(project_root))
         if refusal:
             raise BrigadeError(refusal)
     try:
@@ -199,9 +225,10 @@ def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
-    resolved file that git reports as tracked or cannot report on, and a git command that cannot start all refuse
-    with exit 1 and change no file. A filesystem failure while the directory, the temporary file, or the replacement
-    is made refuses the same way with the system's reason, so every caller sees one BrigadeError.
+    resolved file that the repository holding it or the repository holding the project root reports as tracked or
+    cannot report on, and a git command that cannot start all refuse with exit 1 and change no file. A filesystem
+    failure while the directory, the temporary file, or the replacement is made refuses the same way with the
+    system's reason, so every caller sees one BrigadeError.
     """
     cap = effective_cap(meta)
     path, text = _load(meta["projectRoot"])
@@ -251,8 +278,9 @@ def settings_cap_only(before, after):
 
     Either byte string is None when that state holds no file. The later state must hold a strict JSON object with a
     top-level autoCompactWindow member holding an integer, and, when the earlier state is a file, must be exactly what
-    the cap splice writes over it. A state that holds no file is a settings file that was created, so it differs from
-    a document that holds nothing but the cap and from nothing else.
+    the cap splice writes over it. An earlier state that is a file holding no strict JSON object is not a cap-only
+    change. A state that holds no file is a settings file that was created, so it differs from a document that holds
+    nothing but the cap and from nothing else.
     """
     value = None if after is None else _object(after)
     cap = None if value is None else value.get(SETTINGS_KEY)
@@ -260,4 +288,6 @@ def settings_cap_only(before, after):
         return False
     if before is None:
         return list(value) == [SETTINGS_KEY]
+    if _object(before) is None:
+        return False
     return after == _with_cap(before.decode("utf-8"), cap).encode("utf-8")
