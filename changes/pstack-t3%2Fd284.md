@@ -1,0 +1,4 @@
+- kind polish
+- Four nested-repository refusal tests in `tests/brigade/test_context_cap.py` assert an exit code of exactly 1, where they asserted only that the code was nonzero
+- Those four call the new `refused` helper on `ContextCapTest`, which returns the exit code and stderr of a brigade call on that test's store, and no other test in the module changes
+- Each of those refusals raises `BrigadeError`, and `main` in `t3/added/brigade/scripts/brigade.py` prints it and returns 1, so the tightened assertions hold with no product code change

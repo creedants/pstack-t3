@@ -3,6 +3,7 @@ from .support import (
     BrigadeTest,
     SCRIPT,
     Path,
+    _owner_words,
     call,
     json,
     os,
@@ -24,6 +25,12 @@ class ContextCapTest(BrigadeTest):
 
     def open(self, *extra, ok=True):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok)
+
+    def refused(self, *args):
+        """The exit code and stderr of a brigade call on this store that must refuse."""
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), *(str(arg) for arg in args)])
+        return outcome.code, outcome.stderr_text().strip()
 
     def test_open_writes_the_default_cap_when_the_settings_file_is_missing(self):
         self.assertEqual(self.open(), f"opened {self.at}")
@@ -245,9 +252,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before = self.settings().read_bytes()
-        self.assertEqual(self.open(ok=False),
-                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
+                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                             "untrack it there before brigade writes autoCompactWindow"))
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
@@ -262,9 +269,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before, store = self.settings().read_bytes(), self.store_files()
-        self.assertEqual(self.brigade("set", "--context-cap", "120000", ok=False),
-                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertEqual(self.refused("set", "--context-cap", "120000"),
+                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                             "untrack it there before brigade writes autoCompactWindow"))
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertEqual(self.store_files(), store)
         self.assertNotIn("contextCap", self.meta())
@@ -278,9 +285,9 @@ class ContextCapTest(BrigadeTest):
                        capture_output=True)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
-        self.assertEqual(self.open(ok=False),
-                         f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
-                         "untrack it there before brigade writes autoCompactWindow")
+        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
+                         (1, f"brigade: {self.settings()} is tracked by the repository that holds the project root; "
+                             "untrack it there before brigade writes autoCompactWindow"))
         self.assertTrue(self.settings().is_symlink())
         self.assertEqual(os.readlink(self.settings()), "../untracked.json")
         self.assertEqual((self.project / "untracked.json").read_text(), '{"keep":true}')
@@ -302,9 +309,9 @@ class ContextCapTest(BrigadeTest):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.settings().parent, check=True,
                        capture_output=True)
         before = self.settings().read_bytes()
-        self.assertEqual(self.open(ok=False),
-                         f"brigade: git cannot say whether the repository that holds the project root tracks "
-                         f"{self.settings()}; fix that repository and run this again")
+        self.assertEqual(self.refused("open", "--project-root", str(self.project), "--name", "Perf"),
+                         (1, f"brigade: git cannot say whether the repository that holds the project root tracks "
+                             f"{self.settings()}; fix that repository and run this again"))
         self.assertEqual(self.settings().read_bytes(), before)
         self.assertFalse(self.at.exists())
         self.assertEqual(list((self.store / "bridge-kit").iterdir()), [])
