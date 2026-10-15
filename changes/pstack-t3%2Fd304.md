@@ -4,4 +4,4 @@
 - The window is the UTC date of `lastReportAt`, which is the finest window `spend --since` takes, so a second close on the same UTC day repeats that day's goal rows
 - A `prices.json` that spend refuses still fails the close
 - `close --help` names the section, and `docs/cli/brigade.md` and the `skills/brigade/` copies regenerate
-- `tests/brigade/test_reporting.py` adds three close tests over fixture token stores, and `tests/brigade/test_briefs.py`, `tests/brigade/test_reviews.py`, `tests/brigade/test_items.py`, and `tests/brigade/test_tickets.py` carry the section in their exact report assertions
+- `tests/brigade/test_reporting.py` adds three close tests, two over a fixture token database with no rows and one with no token database, and `tests/brigade/test_briefs.py`, `tests/brigade/test_reviews.py`, `tests/brigade/test_items.py`, and `tests/brigade/test_tickets.py` carry the section in their exact report assertions
