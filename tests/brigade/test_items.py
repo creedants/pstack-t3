@@ -1027,7 +1027,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.brigade("ticket", "add", "--summary", "Paused rider", "--kind", "polish", "--paths", "d.txt", "--priority", "low", "--goal", "G1")
         self.brigade("goal", "set", "G1", "--state", "paused")
         before = self.tables()
-        self.assertEqual(self.brigade("fire", "--tickets", "T4,T5", "--ride-along", "T5", "--station", "feature", "--summary", "Add d", ok=False),
+        self.assertEqual(self.brigade("fire", "--tickets", "T4,T5", "--ride-along", "T5", "--station", "feature", "--summary", "Add d", code=1),
                          "brigade: nothing fired: its goal is paused")
         self.assertEqual(self.tables(), before)
         self.assertEqual(self.brigade("ticket", "list", "--state", "assigned"), "T1 assigned normal fix G1 [user] a")

@@ -103,8 +103,9 @@ class StoreTest(BrigadeTest):
                 meta = json.loads((self.at / "restaurant.json").read_text())
                 meta[key] = json.loads(stored)
                 (self.at / "restaurant.json").write_text(json.dumps(meta))
-                self.assertEqual(json.loads(self.brigade("set", *flag))[key], clean)
-                self.assertEqual(json.loads((self.at / "restaurant.json").read_text())[key], clean)
+                expected = dict(meta, **{key: clean})
+                self.assertEqual(self.brigade("set", *flag), json.dumps(expected, indent=2))
+                self.assertEqual((self.at / "restaurant.json").read_text(), json.dumps(expected, indent=2) + "\n")
 
     def test_dropping_an_item_returns_its_tickets_to_waiting(self):
         from unittest import mock
