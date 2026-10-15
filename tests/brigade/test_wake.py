@@ -359,7 +359,7 @@ class WakeTest(BrigadeTest, _WakeRace):
         before = (self.at / "restaurant.json").read_text()
         (Path(self.temporary.name) / "state").rename(Path(self.temporary.name) / "moved")
         self.assertEqual(self.brigade("watch"),
-                         f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: could not renew L1: {self.project} has no landing contract; run land.py init in it")
+                         f"workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: could not renew L1: {self.project.resolve()} has no landing contract; run land.py init in it")
         self.assertEqual((self.at / "restaurant.json").read_text(), before)
 
     def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line_and_renew(self):

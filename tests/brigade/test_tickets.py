@@ -586,7 +586,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         before = self.store_files()
         for flags in ((), ("--dry-run",)):
             self.assertEqual(self.brigade("ticket", "paths", *flags, ok=False),
-                             f"brigade: cannot list tracked files in {self.project}")
+                             f"brigade: cannot list tracked files in {self.project.resolve()}")
         self.assertEqual(self.store_files(), before)
 
     def test_ticket_paths_records_the_one_tracked_file_that_has_a_quoted_file_name_with_no_directory(self):
