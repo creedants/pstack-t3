@@ -791,6 +791,48 @@ class FragmentCheckTest(unittest.TestCase):
             [],
         )
 
+    def test_a_tilde_fence_hides_a_missing_link(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "~~~md\n[example](#missing)\n~~~\n"}),
+            [],
+        )
+
+    def test_a_longer_fence_hides_inner_fence_markers(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "````md\n```md\n[example](#missing)\n```\n````\n"}),
+            [],
+        )
+
+    def test_a_heading_inside_a_tilde_fence_does_not_count(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "~~~md\n## Missing\n~~~\n[bad](#missing)\n"}),
+            ["brigade/SKILL.md:4: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_fragment_link_inside_a_code_span_is_not_checked(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "Use `[example](#missing)` as syntax.\n"}),
+            [],
+        )
+
+    def test_a_titled_fragment_link_to_a_missing_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings({"pstack-runtime/SKILL.md": '## Terms\n[bad](#missing "title")\n'}),
+            ["pstack-runtime/SKILL.md:2: fragment #missing names no heading in pstack-runtime/SKILL.md"],
+        )
+
+    def test_a_fragment_link_to_a_second_duplicate_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings({"pstack-runtime/SKILL.md": "## Terms\n## Terms\n[second](#terms-1)\n"}),
+            [],
+        )
+
+    def test_a_suffix_collision_allocates_the_next_free_anchor(self):
+        self.assertEqual(
+            fragment_tree_findings({"pstack-runtime/SKILL.md": "## Terms\n## Terms-1\n## Terms\n[third](#terms-2)\n"}),
+            [],
+        )
+
     def test_check_tree_reports_a_fragment_that_names_no_heading(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

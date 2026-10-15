@@ -323,7 +323,8 @@ def catalog_heredoc_findings(rel, text):
 # The skill directories whose markdown links get their fragments checked.
 FRAGMENT_DIRS = ("brigade", "brigade-admin", "pstack-runtime")
 # A markdown link target holding a #, in-file (#x) or file-plus-fragment (other.md#x).
-FRAGMENT_LINK = re.compile(r"\]\(([^)\s]*#[^)\s]*)\)")
+# The destination holds no space. An optional title in double quotes, single quotes, or parens is excluded.
+FRAGMENT_LINK = re.compile(r"\]\(\s*([^\s)]*#[^\s)]*)\s*(?:\"[^\"]*\"|'[^']*'|\([^)]*\))?\s*\)")
 VENDOR_SKILLS_PATH = Path(__file__).resolve().parents[1] / "vendor/pstack/skills"
 
 
@@ -332,15 +333,90 @@ def heading_slug(heading):
     return kept.replace(" ", "-")
 
 
+def _fence_open(line):
+    if line.startswith("\t"):
+        return None
+    count = len(line) - len(line.lstrip(" "))
+    if count > 3:
+        return None
+    rest = line[count:]
+    if not rest.startswith("```") and not rest.startswith("~~~"):
+        return None
+    marker = rest[0]
+    run = 0
+    while run < len(rest) and rest[run] == marker:
+        run += 1
+    if run < 3:
+        return None
+    after = rest[run:]
+    if marker == "`" and "`" in after:
+        return None
+    return (marker, run)
+
+
+def _is_fence_close(line, marker, length):
+    if line.startswith("\t"):
+        return False
+    count = len(line) - len(line.lstrip(" "))
+    if count > 3:
+        return False
+    rest = line[count:]
+    if not rest.startswith(marker):
+        return False
+    run = 0
+    while run < len(rest) and rest[run] == marker:
+        run += 1
+    if run < length:
+        return False
+    return rest[run:].strip() == ""
+
+
+def _visible_lines(text):
+    marker = None
+    length = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        if marker is None:
+            opened = _fence_open(line)
+            if opened is not None:
+                marker, length = opened
+                continue
+            yield number, line
+        else:
+            if _is_fence_close(line, marker, length):
+                marker = None
+                length = 0
+            continue
+
+
+_CODE_SPAN = re.compile(r"(`+)(.+?)\1")
+
+
+def _strip_code_spans(line):
+    return _CODE_SPAN.sub("", line)
+
+
+def _fragment_link_targets(line):
+    return FRAGMENT_LINK.findall(_strip_code_spans(line))
+
+
 def _heading_slugs(text):
     slugs = set()
-    fenced = False
-    for line in text.splitlines():
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
+    for _number, line in _visible_lines(text):
+        if line.startswith("\t"):
             continue
-        if not fenced and line.startswith("#"):
-            slugs.add(heading_slug(line.lstrip("#").strip()))
+        count = len(line) - len(line.lstrip(" "))
+        if count > 3:
+            continue
+        stripped = line[count:]
+        if not stripped.startswith("#"):
+            continue
+        base = heading_slug(stripped.lstrip("#").strip())
+        slug = base
+        counter = 1
+        while slug in slugs:
+            slug = f"{base}-{counter}"
+            counter += 1
+        slugs.add(slug)
     return slugs
 
 
@@ -355,9 +431,14 @@ def fragment_findings(root):
 
     The scan covers every markdown file under the tree's brigade,
     brigade-admin, and pstack-runtime skill directories, at any depth. A link
-    is a markdown link target that holds a #. A line whose lstrip starts with
-    three backticks toggles the fence, and a link or heading inside a fence is
-    not seen. A link whose fragment is empty, as in (other.md) or (other.md#),
+    is a markdown link target that holds a #. Code spans are removed before
+    link extraction. An optional title after the destination is recognized and
+    excluded from the destination. A shared fence scanner hides fenced lines.
+    It tracks marker character and opening length. It recognizes tilde and
+    backtick fences. It closes only on a matching fence of sufficient length.
+    It allows up to three spaces indent. An unclosed fence hides the rest of
+    the file. A link or heading inside a fence is not seen. A link whose
+    fragment is empty, as in (other.md) or (other.md#),
     is skipped. A link whose path before the # is empty, as in (#terms), is
     checked against the file that holds it. Otherwise the path resolves against
     the holding file's directory. A path that does not resolve to an existing
@@ -367,10 +448,13 @@ def fragment_findings(root):
     vendor/pstack/skills in the checkout that holds this file. The heading slug
     lowercases the heading, keeps only alphanumeric characters, spaces, and
     hyphens, and replaces each space with a hyphen, after stripping the leading
-    # characters and surrounding whitespace. A fragment that is not one of the
+    # characters and surrounding whitespace. Anchors are allocated in document
+    order. The first heading keeps its slug. A duplicate appends -1, then -2,
+    until the anchor is free. A heading whose natural slug is taken gets the
+    next free suffix. A fragment that is not one of the
     target's slugs is a finding that names the holding file relative to the
-    tree, the line, the fragment, and the target file relative to the tree. An
-    empty list means every fragment link names a heading.
+    tree, the line, the fragment, and the target file relative to the tree.
+    An empty list means no checked fragment link failed.
     """
     root = Path(root).resolve()
     vendor = _vendor_skill_names()
@@ -381,14 +465,8 @@ def fragment_findings(root):
             if not file.is_file():
                 continue
             rel = file.relative_to(root).as_posix()
-            fenced = False
-            for number, line in enumerate(file.read_text().splitlines(), 1):
-                if line.lstrip().startswith("```"):
-                    fenced = not fenced
-                    continue
-                if fenced:
-                    continue
-                for target in FRAGMENT_LINK.findall(line):
+            for number, line in _visible_lines(file.read_text()):
+                for target in _fragment_link_targets(line):
                     path, fragment = target.split("#", 1)
                     if fragment == "":
                         continue
