@@ -3,6 +3,6 @@
 - `t3/added/brigade/SKILL.md` states that the context cap is stored in `restaurant.json` and reads as 300000 when no integer is stored there
 - `t3/added/brigade/SKILL.md` states that `open` writes it into the project's `.claude/settings.local.json` as `autoCompactWindow` when `coordinatorProvider` reads as `claude`, and that `set` writes it again whenever `--context-cap` or `--coordinator-provider` is passed and the resulting provider reads as `claude`
 - `t3/added/brigade/SKILL.md` states that a refused write exits 1 and leaves the settings file as it was
-- `t3/added/brigade/SKILL.md` states that reopening such a store creates the file or sets `autoCompactWindow` in it from that cap
+- `t3/added/brigade/SKILL.md` states that reopening a store whose `coordinatorProvider` reads as `claude` creates the file or sets `autoCompactWindow` in it from that cap
 - `t3/added/brigade/SKILL.md` states that a successful write replaces an untracked settings file symbolic link with a regular file and leaves the link's target unchanged
 - `t3/added/brigade/SKILL.md` states that on a host that is not Claude the context cap is not enforced and no settings file is written
