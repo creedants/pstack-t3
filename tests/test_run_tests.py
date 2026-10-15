@@ -1413,8 +1413,8 @@ class RunTestsTest(unittest.TestCase):
         self.assertTrue(any(test.module == "brigade.test_launch" for test in share))
         self.assertTrue(any(test.module == "brigade.test_handoff" for test in share))
         self.assertFalse(any(test.module == "brigade.test_admin" for test in share))
-        self.assertFalse(any(test.module == "test_landing" for test in share))
         self.assertFalse(any(test.module == "test_brigade" for test in share))
+        self.assertFalse(any(test.module.startswith("landing.") for test in share))
         extra = (run_tests.Test(0, "brigade_extra.T.test_x", "brigade_extra", "brigade_extra.T"),)
         self.assertEqual(run_tests.tests_in_real_process_share(extra), ())
 
