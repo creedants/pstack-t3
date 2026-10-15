@@ -11,4 +11,4 @@
 - The shipped protocol refers to the project's build command without naming it, and never for a file the build generates.
 - The shipped protocol says `/tmp` is memory-backed and small on many systems.
 - The scratch-dir test passes an unresolved path and asserts the resolved form.
-- The dedupe test uses the coordinator small-change sentence and keeps the line for a pointer-only sentence.
+- The dedupe test uses a small-change sentence like the coordinator's, without its line-count clause, and keeps the line for a pointer-only sentence.
