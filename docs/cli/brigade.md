@@ -229,7 +229,7 @@ group tickets into one dish and assign it to a station
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, and its kind when it has one |
+| `--tickets TICKETS` | yes |  |  | comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, and its kind when it has one; given once |
 | `--station STATION` | yes |  |  | the pstack playbook the worker runs |
 | `--summary SUMMARY` | yes |  |  |  |
 | `--task TASK` |  |  |  |  |
@@ -260,7 +260,7 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--contract CONTRACT` |  |  |  | the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no safety, privacy, or integrity property; a brief with no contract is refused |
 | `--verify VERIFY` |  |  |  | exact commands that prove it, plus known gotchas |
 | `--paths PATHS` |  |  |  | leased paths, when fire did not claim them; given once |
-| `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it |
+| `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it; given once |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
 
@@ -377,7 +377,7 @@ update a dish
 | `--timebox TIMEBOX` |  |  |  | minutes; raise it once for a worker that is still making progress |
 | `--reported` |  |  |  | record that this attempt's report-back arrived |
 | `--worker-ended WORKER_ENDED` |  |  |  | record that this attempt's worker ended or failed and wrote no report |
-| `--lease LEASE` |  |  |  | record a lease id claimed again |
+| `--lease LEASE` |  |  |  | record a lease id claimed again; given once |
 | `--paths PATHS` |  |  |  | record the paths that lease covers; given once |
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |
 | `--mode MODE` |  |  |  | full, to move open work to full mode once; needs --reason |

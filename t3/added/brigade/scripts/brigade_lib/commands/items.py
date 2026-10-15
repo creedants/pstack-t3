@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.briefs import brief, stored_contract
-from brigade_lib.commands.once import OncePaths
+from brigade_lib.commands.once import Once
 from brigade_lib.items import ATTEMPT_AFTER, drop, fire, item_escalation, record_escalation, retired_worker_threads, workers_full
 from brigade_lib.leases import fragment_lines
 from brigade_lib.reviews import fix_round_refusal, pass_check, write_threads
@@ -138,15 +138,15 @@ def worker_ended_alone(args):
 
 def register_fire(sub):
     p = sub.add_parser("fire", help="group tickets into one dish and assign it to a station")
-    p.add_argument("--tickets", required=True,
+    p.add_argument("--tickets", required=True, action=Once,
                    help="comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, "
-                        "and its kind when it has one")
+                        "and its kind when it has one; given once")
     p.add_argument("--station", required=True, help="the pstack playbook the worker runs")
     p.add_argument("--summary", required=True)
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
-    p.add_argument("--paths", default="", action=OncePaths, help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one; given once")
+    p.add_argument("--paths", default="", action=Once, help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one; given once")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
     p.add_argument("--kind", choices=KINDS,
@@ -172,8 +172,8 @@ def register_brief(sub):
                    help="the item's contract, rendered as given under CONTRACT: in the brief; write none when the item has no "
                         "safety, privacy, or integrity property; a brief with no contract is refused")
     p.add_argument("--verify", default=None, help="exact commands that prove it, plus known gotchas")
-    p.add_argument("--paths", default=None, action=OncePaths, help="leased paths, when fire did not claim them; given once")
-    p.add_argument("--lease", default=None, help="the landing lease id, when fire did not claim it")
+    p.add_argument("--paths", default=None, action=Once, help="leased paths, when fire did not claim them; given once")
+    p.add_argument("--lease", default=None, action=Once, help="the landing lease id, when fire did not claim it; given once")
     p.add_argument("--base", default=None, help="the trunk ref the worker's branch starts from, such as origin/main")
     p.add_argument("--context", action="append", default=[], help="a pointer to files, PRs, or upstream reports; repeatable")
 
@@ -192,8 +192,8 @@ def register_dish(sub):
     p.add_argument("--timebox", type=int, help="minutes; raise it once for a worker that is still making progress")
     p.add_argument("--reported", action="store_true", help="record that this attempt's report-back arrived")
     p.add_argument("--worker-ended", help="record that this attempt's worker ended or failed and wrote no report")
-    p.add_argument("--lease", help="record a lease id claimed again")
-    p.add_argument("--paths", action=OncePaths, help="record the paths that lease covers; given once")
+    p.add_argument("--lease", action=Once, help="record a lease id claimed again; given once")
+    p.add_argument("--paths", action=Once, help="record the paths that lease covers; given once")
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
     p.add_argument("--mode", help="full, to move open work to full mode once; needs --reason")
     p.add_argument("--reason", help="one line: why the dish moves to full mode")
