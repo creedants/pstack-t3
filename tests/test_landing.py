@@ -16,6 +16,7 @@ import shlex
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -91,23 +92,34 @@ def _open_fd_directory():
         return "/dev/fd", os.open("/dev/fd", os.O_RDONLY | os.O_DIRECTORY)
 
 
-def _fd_paths():
-    """Return the descriptor directory and the path of every open descriptor it can read except the probe.
+def _fd_numbers():
+    """Return the descriptor directory and every descriptor number it lists except the probe.
 
-    The probe is the descriptor that reads the directory, and its number is left out. An entry under
-    /proc/self/fd is a symlink. An entry under /dev/fd is not, and F_GETPATH names it.
+    The probe is the descriptor that reads the directory, and its number is left out.
     """
     directory, probe = _open_fd_directory()
     try:
         names = os.listdir(probe)
     finally:
         os.close(probe)
-    found = {}
+    numbers = set()
     probe_name = str(probe)
     for name in names:
         if name == probe_name or not name.isdigit():
             continue
-        number = int(name)
+        numbers.add(int(name))
+    return directory, numbers
+
+
+def _fd_paths():
+    """Return the descriptor directory and the path of every open descriptor it can read except the probe.
+
+    The probe is the descriptor that reads the directory, and its number is left out. An entry under
+    /proc/self/fd is a symlink. An entry under /dev/fd is not, and F_GETPATH names it.
+    """
+    directory, numbers = _fd_numbers()
+    found = {}
+    for number in numbers:
         try:
             if directory == "/proc/self/fd":
                 found[number] = os.readlink(f"/proc/self/fd/{number}")
@@ -119,9 +131,13 @@ def _fd_paths():
 
 
 def _descriptors():
-    _, paths = _fd_paths()
+    """Return the device and inode of every listed descriptor at or above 3 that it can fstat.
+
+    No pathname is read, so a descriptor whose pathname query would fail is still listed.
+    """
+    _, numbers = _fd_numbers()
     found = {}
-    for number in paths:
+    for number in numbers:
         if number < 3:
             continue
         try:
@@ -1960,6 +1976,43 @@ exit 0
         code, out, err = drive(SCRIPT, argv, env=env)
         self.assertEqual(code, 0, out + err)
         self.assertEqual(_open_land_db(database), [])
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test lists a real /proc/self/fd as /dev/fd")
+    def test_descriptor_cleanup_closes_a_pipe_whose_path_query_fails(self):
+        """Pin that a descriptor whose pathname query fails still lands in the snapshot and is closed.
+
+        The failing F_GETPATH models Darwin, which rejects a non-vnode descriptor such as a pipe.
+        """
+        read_first, write_first = os.pipe()
+        opened = [read_first, write_first]
+
+        def labeled_directory():
+            return "/dev/fd", os.open("/proc/self/fd", os.O_RDONLY | os.O_DIRECTORY)
+
+        def get_path(descriptor, cmd, buffer):
+            if stat.S_ISFIFO(os.fstat(descriptor).st_mode):
+                raise OSError(errno.EINVAL, "Inappropriate ioctl for device")
+            return os.readlink(f"/proc/self/fd/{descriptor}").encode()
+
+        try:
+            # Linux fcntl has no F_GETPATH, so the seam names its own command.
+            with mock.patch.multiple(fcntl, fcntl=get_path, F_GETPATH=9999, create=True), \
+                    mock.patch.object(sys.modules[__name__], "_open_fd_directory", labeled_directory):
+                before = _descriptors()
+                read_second, write_second = os.pipe()
+                opened.extend((read_second, write_second))
+                _close_new_fds(before)
+            self.assertIn(read_first, before)
+            self.assertIn(write_first, before)
+            for number in (read_second, write_second):
+                with self.assertRaises(OSError):
+                    os.fstat(number)
+        finally:
+            for number in opened:
+                try:
+                    os.close(number)
+                except OSError:
+                    pass
 
     def test_a_retained_interrupt_cannot_close_a_descriptor_a_later_open_reused(self):
         self.init()
