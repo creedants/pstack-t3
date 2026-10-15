@@ -1,0 +1,3 @@
+- kind fix
+- `hang` joins `WORK_COMMANDS` in `brigade_lib/store.py`, so the executive admin store refuses it with exit 1 and `brigade: the executive admin routes work and never runs it`, the same line it prints for the other work commands.
+- A test in `tests/brigade/test_admin.py` pins exit 1, that line, and an unchanged store when `hang` runs against the executive admin store.
