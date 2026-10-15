@@ -73,12 +73,15 @@ README_PATH = Path(__file__).resolve().parents[1] / "README.md"
 UPSTREAM_PATH = Path(__file__).resolve().parents[1] / "upstream.json"
 GUIDE_PATH = Path(__file__).resolve().parents[1] / "docs/guide.md"
 # Every tests/test_*.py must carry fence_git_environment as it is in the reference module, and a setUpModule that contains a call to it.
-FENCE_REFERENCE = "test_landing.py"
+FENCE_REFERENCE = "landing/support.py"
 FENCE_FUNCTION = "fence_git_environment"
 FENCE_SETUP = "setUpModule"
 FENCE_BRIGADE_DIR = "brigade"
 FENCE_BRIGADE_SUPPORT = "support.py"
 FENCE_BRIGADE_MODULE = "tests.brigade.support"
+FENCE_LANDING_DIR = "landing"
+FENCE_LANDING_SUPPORT = "support.py"
+FENCE_LANDING_MODULE = "tests.landing.support"
 LIGHT_HEADER_CELLS = frozenset({"light", "light mode", "light behavior", "in light mode"})
 LIGHT_MODE_NAME = re.compile(r"(?i:\blight mode\b)|Mode: light")
 TABLE_SEPARATOR = re.compile(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?")
@@ -444,7 +447,7 @@ def _module_fence_findings(module, rel, reference, sentence, label):
 
 def _is_support_import(node):
     relative = node.level == 1 and node.module == "support"
-    absolute = node.level == 0 and node.module == FENCE_BRIGADE_MODULE
+    absolute = node.level == 0 and node.module in (FENCE_BRIGADE_MODULE, FENCE_LANDING_MODULE)
     return relative or absolute
 
 
@@ -520,16 +523,16 @@ def _imports_only_support_classes(module, class_names):
     return True
 
 
-def _area_findings(module, rel, reference, sentence, label, class_names):
+def _area_findings(module, rel, reference, sentence, label, class_names, support_module):
     binding = _last_setup_binding(module)
     if binding == "import":
         return []
     if binding == "alias":
         return [f"{rel}: imports {FENCE_SETUP} under another name. {sentence}"]
     if binding == "wrong":
-        return [f"{rel}: binds {FENCE_SETUP} by an import that is not from {FENCE_BRIGADE_MODULE}. {sentence}"]
+        return [f"{rel}: binds {FENCE_SETUP} by an import that is not from {support_module}. {sentence}"]
     if binding == "assign":
-        return [f"{rel}: binds {FENCE_SETUP} to something other than an import from {FENCE_BRIGADE_MODULE}. {sentence}"]
+        return [f"{rel}: binds {FENCE_SETUP} to something other than an import from {support_module}. {sentence}"]
     if binding == "def":
         return _module_fence_findings(module, rel, reference, sentence, label)
     if _imports_only_support_classes(module, class_names):
@@ -537,34 +540,42 @@ def _area_findings(module, rel, reference, sentence, label, class_names):
     return [f"{rel}: has no {FENCE_SETUP} bound directly in the module body. {sentence}"]
 
 
-def _brigade_findings(tests_dir, label, reference, copy):
-    brigade = tests_dir / FENCE_BRIGADE_DIR
-    if not brigade.is_dir():
+def _package_findings(tests_dir, label, reference, copy, area_dir, area_support, area_module):
+    package = tests_dir / area_dir
+    if not package.is_dir():
         return []
-    sentence = f"Import {FENCE_SETUP} from {label}/{FENCE_BRIGADE_DIR}/{FENCE_BRIGADE_SUPPORT}"
-    support_rel = f"{label}/{FENCE_BRIGADE_DIR}/{FENCE_BRIGADE_SUPPORT}"
+    sentence = f"Import {FENCE_SETUP} from {label}/{area_dir}/{area_support}"
+    support_rel = f"{label}/{area_dir}/{area_support}"
     findings = []
-    support, error = _read_module(brigade / FENCE_BRIGADE_SUPPORT)
+    support, error = _read_module(package / area_support)
     if error is not None:
         findings.append(_unreadable_finding(support_rel, error))
         class_names = frozenset()
     else:
         class_names = frozenset(node.name for node in support.body if isinstance(node, ast.ClassDef))
         findings.extend(_module_fence_findings(support, support_rel, reference, copy, label))
-    for file in sorted(brigade.glob("test_*.py")):
+    for file in sorted(package.glob("test_*.py")):
         if not file.is_file():
             continue
-        rel = f"{label}/{FENCE_BRIGADE_DIR}/{file.name}"
+        rel = f"{label}/{area_dir}/{file.name}"
         module, error = _read_module(file)
         if error is not None:
             findings.append(_unreadable_finding(rel, error))
             continue
-        findings.extend(_area_findings(module, rel, reference, sentence, label, class_names))
+        findings.extend(_area_findings(module, rel, reference, sentence, label, class_names, area_module))
     return findings
 
 
+def _brigade_findings(tests_dir, label, reference, copy):
+    return _package_findings(tests_dir, label, reference, copy, FENCE_BRIGADE_DIR, FENCE_BRIGADE_SUPPORT, FENCE_BRIGADE_MODULE)
+
+
+def _landing_findings(tests_dir, label, reference, copy):
+    return _package_findings(tests_dir, label, reference, copy, FENCE_LANDING_DIR, FENCE_LANDING_SUPPORT, FENCE_LANDING_MODULE)
+
+
 def fence_findings(tests_dir):
-    """Name test modules whose git environment fence does not match tests/test_landing.py.
+    """Name test modules whose git environment fence does not match tests/landing/support.py.
 
     The comparison value is ast.dump of the last def fence_git_environment
     directly in the module body. That dump ignores comments, whitespace, and
@@ -572,7 +583,7 @@ def fence_findings(tests_dir):
     also needs a def setUpModule directly in the module body that calls the
     bare name fence_git_environment.
 
-    A missing or unreadable test_landing.py, or one with no such function,
+    A missing or unreadable landing/support.py, or one with no such function,
     returns that one finding and checks nothing else.
 
     An absent brigade directory adds no finding. When that directory is
@@ -582,9 +593,12 @@ def fence_findings(tests_dir):
     is FileNotFoundError. Each test_*.py file directly in that directory is an
     area module. Files in subdirectories are not checked.
 
+    A missing landing/support.py reference returns that one finding and checks nothing else. This includes an absent landing directory. When that directory is present, its support.py and its test_*.py area modules follow the same
+    rules as the brigade ones, with the landing support path in the findings.
+
     The last binding of the name setUpModule in an area module body decides.
-    A from-import of that name from tests.brigade.support at level 0, or from
-    .support at level 1, passes even when the import lists other names and the
+    A from-import of that name from tests.brigade.support or
+    tests.landing.support at level 0, or from .support at level 1, passes even when the import lists other names and the
     module defines a class with another name. A later statement that binds the
     name replaces that import. A from-import that binds the name setUpModule
     to a different imported name is an alias binding. A from-import that
@@ -598,7 +612,7 @@ def fence_findings(tests_dir):
     annotation with no value does not bind the name. A def setUpModule uses
     the top-level fence rules. An async def setUpModule or a class statement
     named setUpModule is a finding, including when a valid import came
-    earlier. Those findings end with Import setUpModule from the brigade
+    earlier. Those findings end with Import setUpModule from the area's
     support path.
 
     Only a statement in the module body can bind the name. An area module that
@@ -632,6 +646,7 @@ def fence_findings(tests_dir):
             continue
         findings.extend(_module_fence_findings(module, rel, reference, copy, label))
     findings.extend(_brigade_findings(tests_dir, label, reference, copy))
+    findings.extend(_landing_findings(tests_dir, label, reference, copy))
     return findings
 
 
