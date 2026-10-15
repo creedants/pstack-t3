@@ -140,6 +140,15 @@ class ContextCapTest(BrigadeTest):
         self.settings().write_text('[1]\n')
         self.assertEqual(self.brigade("status"), f"{clean}\n{drift}")
 
+    def test_edits_verify_ignores_the_managed_settings_file_swept_into_a_head_commit(self):
+        reviewed = self.edits_store()
+        self.two_edits()
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        head = self.head_commit(self.FIXED)
+        self.assertEqual(self.verify(reviewed, head),
+                         (0, f"built out/greeting.txt\nedited src/greeting.txt\nok check\n"
+                             f"{self.verified(reviewed, head)}", ""))
+
     def test_status_reports_an_unreadable_settings_file(self):
         if os.geteuid() == 0:
             self.skipTest("root reads through file permissions")

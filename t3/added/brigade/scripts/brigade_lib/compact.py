@@ -16,6 +16,11 @@ SETTINGS_RELATIVE = ".claude/settings.local.json"
 SETTINGS_KEY = "autoCompactWindow"
 
 
+def is_managed(path):
+    """True for a project path brigade writes itself. Tree comparisons skip these paths."""
+    return path == SETTINGS_RELATIVE
+
+
 def effective_cap(meta):
     """The cap this restaurant enforces. A missing or non-integer contextCap reads as the default."""
     value = meta.get("contextCap")
