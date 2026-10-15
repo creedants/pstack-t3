@@ -1030,8 +1030,8 @@ def _killpg_like_linux(process, sig):
     EPERM when no member is. macOS raises EPERM when a zombie is the only permitted member.
     Treat that EPERM as a successful killpg only when this process observed its own exited unreaped
     leader as a permitted signal target before the attempt.
-    On Darwin an alive leader costs one waitid and does not run ps.
-    ps runs only after that leader has exited, or when os.waitid is absent.
+    Where os.waitid exists, an alive leader on Darwin costs one waitid and does not run ps.
+    The ps query runs only after that leader has exited, or when os.waitid is absent.
     A live leader, an unknown leader state, a leader this process may not signal, and any
     PermissionError on another platform raise the original EPERM again.
     A leader that exits after a negative observation and before the attempt raises the original
@@ -1185,8 +1185,8 @@ def supervised(command, cwd, timeout):
 
 class Store:
     def __init__(self, directory):
-        self.dir = Path(directory)
         self.db = None
+        self.dir = Path(directory)
         db = sqlite3.connect(self.dir / "land.db", timeout=60, isolation_level=None)
         try:
             db.row_factory = sqlite3.Row
