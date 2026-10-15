@@ -593,8 +593,7 @@ def fence_findings(tests_dir):
     is FileNotFoundError. Each test_*.py file directly in that directory is an
     area module. Files in subdirectories are not checked.
 
-    An absent landing directory adds no finding. When that directory is
-    present, its support.py and its test_*.py area modules follow the same
+    A missing landing/support.py reference returns that one finding and checks nothing else. This includes an absent landing directory. When that directory is present, its support.py and its test_*.py area modules follow the same
     rules as the brigade ones, with the landing support path in the findings.
 
     The last binding of the name setUpModule in an area module body decides.
