@@ -251,6 +251,40 @@ def worker_where(dish):
     return "no worker recorded"
 
 
+def attempt_count(restaurant, dish):
+    """The attempt this dish is on, counted from 1."""
+    return len(attempt_starts(restaurant, dish))
+
+
+def ended_row(restaurant, dish):
+    """The log row that records this attempt's worker end, or None.
+
+    The attempt number is the row's state cell, so no row is rewritten when a
+    replacement worker starts another attempt.
+    """
+    number = str(attempt_count(restaurant, dish))
+    found = None
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "ended" and row["id"] == dish["id"] and row["state"] == number:
+            found = row
+    return found
+
+
+def recovery_lines(dish, error):
+    """The flag line and the four recovery steps for a dish whose worker ended with no report."""
+    branch = dish.get("branch") or ""
+    quoted = shlex.quote(branch)
+    if branch:
+        steps = [f"  keep the commits on {quoted} and record no new branch; the dish keeps its lease",
+                 f"  run brief {dish['id']} --base {quoted} --context {shlex.quote(error)}"]
+    else:
+        steps = ["  keep the commits on the dish branch and record no new branch; the dish keeps its lease",
+                 f"  run brief {dish['id']} --context {shlex.quote(error)}"]
+    steps += [f"  launch a fresh thread in the same worktree and record it with dish {dish['id']} --thread <new thread id>",
+              f"  archive the dead thread {shlex.quote(dish.get('thread') or '')}"]
+    return [f"{dish['id']}: worker ended with no report; the provider error is {error}", *steps]
+
+
 def dish_progress(restaurant, dish, moment, held=False):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
@@ -276,6 +310,10 @@ def dish_progress(restaurant, dish, moment, held=False):
                 return [f"{dish['id']}: reported {ago}m ago, not in review; read the thread ({where})"]
             return [f"{dish['id']}: report written {ago}m ago; review it even if the worker's run is still open ({where})"]
         return [f"{dish['id']}: report written, no report-back ({where})"]
+    # A dead worker is neither running nor over its timebox, so its lines come before both.
+    ended = ended_row(restaurant, dish)
+    if ended:
+        return recovery_lines(dish, ended["note"])
     if minutes > timebox:
         return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
     return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
@@ -393,6 +431,34 @@ def record_hang(restaurant, ident, provider, minutes, attempt=None):
     suffix = f" (attempt {attempt})" if attempt else ""
     restaurant.log("hang", ident, "open", f"{provider} {minutes}m{suffix}")
     return f"{ident}: {provider} open {minutes}m{suffix}"
+
+
+def record_worker_end(restaurant, ident, error):
+    """Record that this attempt's worker ended or failed and wrote no report.
+
+    The log row is the only write, so the dish keeps its lease, its branch, and
+    its thread cell.
+    """
+    reason = clean(error)
+    if not reason:
+        raise BrigadeError("--worker-ended needs the provider error")
+    _, dish = restaurant.find("dishes.tsv", ident)
+    if dish["state"] != "in-progress":
+        raise BrigadeError(f"{ident} is {dish['state']}; --worker-ended records an in-progress dish")
+    if not dish["thread"]:
+        raise BrigadeError(f"{ident} has no worker thread recorded")
+    if dish.get("reported") == "yes":
+        raise BrigadeError(f"{ident} has a report-back on this attempt")
+    if report_is_current(restaurant, dish):
+        raise BrigadeError(f"{ident} has a report file for this attempt")
+    attempt = str(attempt_count(restaurant, dish))
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] == "ended" and row["id"] == ident and row["state"] == attempt:
+            if row["note"] == reason:
+                return f"{ident}: worker end already recorded"
+            raise BrigadeError(f"{ident} already records a different worker end for this attempt")
+    restaurant.log("ended", ident, attempt, reason)
+    return f"{ident}: worker ended with no report; the provider error is {reason}"
 
 
 @dataclass(frozen=True)
