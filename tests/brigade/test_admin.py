@@ -191,6 +191,15 @@ class AdminTest(StoresTest, _AdminRace):
                          "thread not recorded\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\n"
                          "kinds: fix 1 waiting")
 
+    def test_the_admin_store_refuses_hang_and_leaves_the_store_unchanged(self):
+        self.open_admin()
+        before = self.files(".admin")
+        result = self.run_brigade(".admin", "hang", "D1", "--provider", "opencode-go/step-5-preview-free",
+                                  "--minutes", "30")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "brigade: the executive admin routes work and never runs it")
+        self.assertEqual(self.files(".admin"), before)
+
     def test_a_ref_moved_through_the_admin_frees_at_every_step_once_done(self):
         ref = "https://github.com/o/r/issues/7"
         self.open("core", "--intake", "github")
