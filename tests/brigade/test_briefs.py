@@ -410,8 +410,11 @@ class BriefsTest(BrigadeTest):
             "Playbook: playbooks/feature.md", "Mode: light", "Mode source: restaurant.json", "Attempt: first",
             "Waived by mode: Arena, Interrogate, Comment Sicko"))
         report = text.split("REPORT:\n", 1)[1].splitlines()
-        self.assertEqual(report[2:4], [self.REPEAT, self.CONTESTED])
-        self.assertTrue(report[4].startswith("- After that file is written, call t3_thread_send"), report[4])
+        self.assertIn("## Threads", report[2])
+        for role in ("code delegate", "claims check", "architect runner"):
+            self.assertIn(role, report[2])
+        self.assertEqual(report[3:5], [self.REPEAT, self.CONTESTED])
+        self.assertTrue(report[5].startswith("- After that file is written, call t3_thread_send"), report[5])
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
         self.assertEqual(self.mode_rows(), [])
 
