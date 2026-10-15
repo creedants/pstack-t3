@@ -51,6 +51,26 @@ def link_findings(*targets):
         return [finding for finding in check.check_tree(directory) if "broken link" in finding]
 
 
+def fragment_tree_findings(paths, vendor=()):
+    """Write a temporary skills tree from tree-relative path to text and return the fragment check's findings.
+
+    The vendor skill directory points at a temporary path with a directory per
+    name in vendor, so no finding depends on this checkout.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for rel, text in paths.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        vendored = root / "vendor/pstack/skills"
+        vendored.mkdir(parents=True)
+        for name in vendor:
+            (vendored / name).mkdir()
+        with mock.patch.object(check, "VENDOR_SKILLS_PATH", vendored):
+            return check.fragment_findings(root)
+
+
 FENCE_HEADER = "import os\nimport unittest\n\n\n"
 FENCE_SOURCE = inspect.getsource(fence_git_environment)
 SETUP_SOURCE = inspect.getsource(setUpModule)
@@ -689,6 +709,101 @@ class LinkCheckTest(unittest.TestCase):
                 "demo/SKILL.md: broken link t3-thread://v1/",
             ],
         )
+
+
+class FragmentCheckTest(unittest.TestCase):
+    def test_a_fragment_link_to_a_missing_skill_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "## Terms\n",
+                    "brigade/verdict-protocol.md": "[the script](SKILL.md#the-script)\n",
+                }
+            ),
+            ["brigade/verdict-protocol.md:1: fragment #the-script names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_fragment_link_to_a_present_skill_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "## Terms\n",
+                    "brigade/verdict-protocol.md": "[the terms](SKILL.md#terms)\n",
+                }
+            ),
+            [],
+        )
+
+    def test_a_fragment_link_to_a_missing_on_demand_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "[the protocol](verdict-protocol.md#verdict)\n",
+                    "brigade/verdict-protocol.md": "## Rule\n",
+                }
+            ),
+            ["brigade/SKILL.md:1: fragment #verdict names no heading in brigade/verdict-protocol.md"],
+        )
+
+    def test_a_fragment_link_to_a_present_on_demand_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "[the protocol](verdict-protocol.md#rule)\n",
+                    "brigade/verdict-protocol.md": "## Rule\n",
+                }
+            ),
+            [],
+        )
+
+    def test_an_in_file_fragment_link_to_a_missing_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings({"pstack-runtime/SKILL.md": "## Modes\n[the roles](#roles)\n"}),
+            ["pstack-runtime/SKILL.md:2: fragment #roles names no heading in pstack-runtime/SKILL.md"],
+        )
+
+    def test_an_in_file_fragment_link_to_a_present_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings({"pstack-runtime/SKILL.md": "## Modes\n[the modes](#modes)\n"}),
+            [],
+        )
+
+    def test_a_fragment_link_into_a_vendor_skill_is_not_checked(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "[the persona](../poteto-mode/agents/poteto-agent.md#missing-heading)\n",
+                    "poteto-mode/agents/poteto-agent.md": "## Persona\n",
+                },
+                vendor=("poteto-mode",),
+            ),
+            [],
+        )
+
+    def test_a_fragment_link_inside_a_fence_is_not_checked(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "## Terms\n\n```\n[the rule](verdict-protocol.md#the-script)\n```\n",
+                    "brigade/verdict-protocol.md": "## Rule\n",
+                }
+            ),
+            [],
+        )
+
+    def test_check_tree_reports_a_fragment_that_names_no_heading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "brigade"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: brigade\ndescription: d\n---\n\n## Terms\n\n[the rule](verdict-protocol.md#the-script)\n"
+            )
+            (skill / "verdict-protocol.md").write_text("## Rule\n")
+            self.assertIn(
+                "brigade/SKILL.md:8: fragment #the-script names no heading in brigade/verdict-protocol.md",
+                check.check_tree(root),
+            )
 
 
 class PlaybookBulletCheckTest(unittest.TestCase):

@@ -320,6 +320,99 @@ def catalog_heredoc_findings(rel, text):
     return findings
 
 
+# The skill directories whose markdown links get their fragments checked.
+FRAGMENT_DIRS = ("brigade", "brigade-admin", "pstack-runtime")
+# A markdown link target holding a #, in-file (#x) or file-plus-fragment (other.md#x).
+FRAGMENT_LINK = re.compile(r"\]\(([^)\s]*#[^)\s]*)\)")
+VENDOR_SKILLS_PATH = Path(__file__).resolve().parents[1] / "vendor/pstack/skills"
+
+
+def heading_slug(heading):
+    kept = "".join(char for char in heading.lower() if char.isalnum() or char in " -")
+    return kept.replace(" ", "-")
+
+
+def _heading_slugs(text):
+    slugs = set()
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced and line.startswith("#"):
+            slugs.add(heading_slug(line.lstrip("#").strip()))
+    return slugs
+
+
+def _vendor_skill_names():
+    if not VENDOR_SKILLS_PATH.is_dir():
+        return frozenset()
+    return frozenset(path.name for path in VENDOR_SKILLS_PATH.iterdir() if path.is_dir())
+
+
+def fragment_findings(root):
+    """Report a fragment link whose fragment names no heading in its target after slugging.
+
+    The scan covers every markdown file under the tree's brigade,
+    brigade-admin, and pstack-runtime skill directories, at any depth. A link
+    is a markdown link target that holds a #. A line whose lstrip starts with
+    three backticks toggles the fence, and a link or heading inside a fence is
+    not seen. A link whose fragment is empty, as in (other.md) or (other.md#),
+    is skipped. A link whose path before the # is empty, as in (#terms), is
+    checked against the file that holds it. Otherwise the path resolves against
+    the holding file's directory. A path that does not resolve to an existing
+    file, one whose target is not a .md file, one whose target is outside the
+    tree, and one whose target .md lives in a vendor-derived skill are skipped.
+    A skill is vendor-derived when its directory name is a directory name under
+    vendor/pstack/skills in the checkout that holds this file. The heading slug
+    lowercases the heading, keeps only alphanumeric characters, spaces, and
+    hyphens, and replaces each space with a hyphen, after stripping the leading
+    # characters and surrounding whitespace. A fragment that is not one of the
+    target's slugs is a finding that names the holding file relative to the
+    tree, the line, the fragment, and the target file relative to the tree. An
+    empty list means every fragment link names a heading.
+    """
+    root = Path(root).resolve()
+    vendor = _vendor_skill_names()
+    slugs_by_file = {}
+    findings = []
+    for name in FRAGMENT_DIRS:
+        for file in sorted((root / name).rglob("*.md")):
+            if not file.is_file():
+                continue
+            rel = file.relative_to(root).as_posix()
+            fenced = False
+            for number, line in enumerate(file.read_text().splitlines(), 1):
+                if line.lstrip().startswith("```"):
+                    fenced = not fenced
+                    continue
+                if fenced:
+                    continue
+                for target in FRAGMENT_LINK.findall(line):
+                    path, fragment = target.split("#", 1)
+                    if fragment == "":
+                        continue
+                    if path == "":
+                        target_file = file
+                    else:
+                        target_file = (file.parent / path).resolve()
+                        if not target_file.is_file() or target_file.suffix != ".md":
+                            continue
+                    try:
+                        target_rel = target_file.relative_to(root)
+                    except ValueError:
+                        continue
+                    if target_rel.parts[0] in vendor:
+                        continue
+                    if target_file not in slugs_by_file:
+                        slugs_by_file[target_file] = _heading_slugs(target_file.read_text())
+                    if fragment not in slugs_by_file[target_file]:
+                        findings.append(
+                            f"{rel}:{number}: fragment #{fragment} names no heading in {target_rel.as_posix()}"
+                        )
+    return findings
+
+
 def _witness_skills_are_files(root):
     return (root / "pstack-runtime/SKILL.md").is_file() and (root / "setup-pstack/SKILL.md").is_file()
 
@@ -394,6 +487,7 @@ def check_tree(root, guide=True):
                     continue
                 if path and not (file.parent / path).resolve().exists():
                     findings.append(f"{rel}: broken link {target}")
+    findings.extend(fragment_findings(root))
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
     if witness and not (root / RENDERED_MARKER).is_file():
