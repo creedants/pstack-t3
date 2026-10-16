@@ -3883,7 +3883,15 @@ class LiveTest(OutputCase):
             process.stderr.close()
 
         self.addCleanup(stop)
-        ready, _, _ = select.select([process.stdout], [], [], 30)
+        deadline = time.time() + 30
+        ready = []
+        while not ready and time.time() < deadline:
+            if process.poll() is not None:
+                break
+            ready, _, _ = select.select([process.stdout], [], [], min(1.0, max(0.0, deadline - time.time())))
+        if not ready and process.poll() is not None:
+            stderr = process.stderr.read()
+            self.fail(f"the live server exited with {process.returncode} before printing an address: {stderr.strip()[-500:]}")
         self.assertTrue(ready, "the live server printed no address")
         url = process.stdout.readline().strip()
         self.assertTrue(url.startswith("http://127.0.0.1:"), url)
@@ -3935,6 +3943,14 @@ class LiveTest(OutputCase):
         server = MOD["live_server"](settings, MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"]), 0)
         self.addCleanup(server.server_close)
         self.assertEqual(server.server_address[0], "127.0.0.1")
+
+    def test_the_server_binds_without_a_hostname_lookup(self):
+        fixture = one_running(self.fixture).write()
+        settings = MOD["Settings"](fixture.store, fixture.database, 3.0, MOD["BUDGET"])
+        with mock.patch("socket.getfqdn", side_effect=AssertionError("no hostname lookup")):
+            server = MOD["live_server"](settings, MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"]), 0)
+        self.addCleanup(server.server_close)
+        self.assertEqual(server.server_name, "127.0.0.1")
 
     def test_the_token_file_is_mode_0600_and_reused_across_restarts(self):
         fixture = one_running(self.fixture).write()

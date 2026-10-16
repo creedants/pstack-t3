@@ -76,6 +76,7 @@ import json
 import os
 import re
 import secrets
+import socketserver
 import sqlite3
 import stat
 import sys
@@ -2546,9 +2547,19 @@ def install_token(path, text):
         raise ActivityError(f"cannot write the live view's token file ({error.strerror}); check its permissions and run this again") from None
 
 
+class LiveServer(http.server.ThreadingHTTPServer):
+    """The HTTP server for one store's live view. It binds 127.0.0.1 without the hostname lookup HTTPServer.server_bind runs, which waits on DNS and delays the printed address under load."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
+
 def live_server(settings, secret, port):
     """The HTTP server for one store's live view. It binds 127.0.0.1 only."""
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), LiveHandler)
+    server = LiveServer(("127.0.0.1", port), LiveHandler)
     server.daemon_threads = True
     server.live_settings = settings
     server.live_secret = secret
