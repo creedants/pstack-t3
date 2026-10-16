@@ -1986,9 +1986,22 @@ class WorktreeAuditTest(unittest.TestCase):
         self.assertIn("replaces those settings roots", text)
 
 
+# The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
+RUNTIME_DOCS = ("SKILL.md", "threads.md")
+
+
+def runtime_docs():
+    """The RUNTIME_DOCS members joined in order, read from the built skills tree."""
+    return "\n".join((ROOT / "skills/pstack-runtime" / name).read_text() for name in RUNTIME_DOCS)
+
+
 def runtime_section(start, end="\n## "):
     text = (ROOT / "t3/runtime.md").read_text()
     return text.split(start, 1)[1].split(end, 1)[0]
+
+
+def runtime_docs_section(start, end="\n## "):
+    return runtime_docs().split("\n" + start, 1)[1].split(end, 1)[0]
 
 
 def runtime_bullet(section, prefix):
@@ -2495,7 +2508,7 @@ class AuthorSkillDocTest(unittest.TestCase):
 
 class ForkDocTest(unittest.TestCase):
     def setUp(self):
-        self.section = runtime_section("### Forks", "\n## ")
+        self.section = runtime_docs_section("## Forks")
 
     def test_forks_live_under_top_level_threads(self):
         launch = runtime_section("## Top-level threads")
@@ -2508,7 +2521,7 @@ class ForkDocTest(unittest.TestCase):
             "A fork never stands in for a child task, an Orchestrate sub-coordinator, or a fresh review round, "
             "and `task_status` does not apply to it.",
             "Fork only a read-only planner or investigation whose source context is the part it needs.",
-            "Writers stay isolated per [Isolation](#isolation).",
+            "Writers stay isolated per [Isolation](SKILL.md#isolation).",
         ):
             self.assertIn(sentence, self.section)
 
@@ -2528,7 +2541,7 @@ class ForkDocTest(unittest.TestCase):
             "Treat a checkout it shares with another thread as read-only.",
         ):
             self.assertIn(sentence, self.section)
-        self.assertIn("[Excluded seats](#excluded-seats)", self.section)
+        self.assertIn("[Excluded seats](SKILL.md#excluded-seats)", self.section)
 
     def test_merge_back_is_authorized_and_read_back(self):
         for sentence in (
@@ -2556,8 +2569,7 @@ class ForkDocTest(unittest.TestCase):
 
 class ConfigureOwnerDocTest(unittest.TestCase):
     def setUp(self):
-        launch = runtime_section("## Top-level threads", "\n### Forks")
-        self.bullet = runtime_bullet(launch, "- Change an existing launched thread's model with `t3_thread_configure`")
+        self.bullet = runtime_bullet(runtime_docs_section("## Configure an owner"), "- Change an existing launched thread's model with `t3_thread_configure`")
 
     def test_configure_runs_only_from_a_playbook_step(self):
         self.assertIn("only when a playbook step already calls for that owner to run on another model", self.bullet)
@@ -2565,9 +2577,9 @@ class ConfigureOwnerDocTest(unittest.TestCase):
 
     def test_seat_comes_from_roles_and_is_read_back(self):
         for sentence in (
-            "Resolve the seat per [Roles](#roles) with `roles.py show`.",
+            "Resolve the seat per [Roles](SKILL.md#roles) with `roles.py show`.",
             "Call it when `t3_thread_read` shows no `activeRunId`, or after `t3_thread_interrupt` and `t3_thread_wait` end the run.",
-            "compare `instanceId`, `model`, and every option per [Delegation](#delegation) step 3.",
+            "compare `instanceId`, `model`, and every option per [Delegation](SKILL.md#delegation) step 3.",
             "On a refusal or a mismatch, send nothing to the thread and report the tool's error text.",
         ):
             self.assertIn(sentence, self.bullet)
@@ -2577,7 +2589,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
             "`t3_thread_configure` requires a concrete `modelSelection`, so always pass one, even for an `inherit` seat.",
             "Build it from the resolved seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged.",
             "When the resolved seat is `inherit`, use this thread's own provider and model, `inheritedProviderInstanceId` and "
-            "`inheritedModel` from `orchestrator_capabilities`, as the concrete seat when it passes [Excluded seats](#excluded-seats).",
+            "`inheritedModel` from `orchestrator_capabilities`, as the concrete seat when it passes [Excluded seats](SKILL.md#excluded-seats).",
             "When it fails that check, do not configure the thread, and report that no replacement seat could be selected.",
         ):
             self.assertIn(sentence, self.bullet)
@@ -2589,7 +2601,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
             "The call does not change the thread's permission modes, and it keeps the thread's retry count, scope, standing orders, and gates.",
             "The thread keeps its history, so it never counts as a fresh worker or a fresh reviewer.",
             "Never configure a verifier or reviewer thread.",
-            "A failed child task gets a fresh child per [Failure handling](#failure-handling).",
+            "A failed child task gets a fresh child per [Failure handling](SKILL.md#failure-handling).",
             "A send-back and a usage-limit relaunch get the fresh worker their playbook or `roles.py backup` names.",
             "None of them uses `t3_thread_configure`.",
         ):
@@ -2613,7 +2625,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
 class PromoteQueuedCorrectionDocTest(unittest.TestCase):
     def setUp(self):
         self.launch = runtime_section("## Top-level threads", "\n### Forks")
-        self.bullet = runtime_bullet(self.launch, "- A correction you queued earlier")
+        self.bullet = runtime_bullet(runtime_docs_section("## Promote a queued correction"), "- A correction you queued earlier")
 
     def test_promote_sits_directly_under_the_auto_report_rule(self):
         lines = self.launch.splitlines()
@@ -2646,7 +2658,7 @@ class PromoteQueuedCorrectionDocTest(unittest.TestCase):
 
 class RunScheduleNowDocTest(unittest.TestCase):
     def setUp(self):
-        self.bullet = runtime_bullet(runtime_section("## Scheduling"), "- To run an enabled `interval` schedule's work now")
+        self.bullet = runtime_bullet(runtime_docs_section("## Run a schedule now"), "- To run an enabled `interval` schedule's work now")
 
     def test_run_now_takes_the_scheduled_task_id(self):
         self.assertIn("call `run_scheduled_task_now` with its ID as `taskId`.", self.bullet)

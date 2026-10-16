@@ -10,6 +10,7 @@ pstack-t3 is Lauren Tan's pstack, ported to run natively in T3 Code on any provi
 - `t3/setup.md` becomes `skills/setup-pstack/SKILL.md`.
 - `t3/overrides/<skill>/<path>` replaces `vendor/pstack/skills/<skill>/<path>` wholesale.
 - `t3/added/<skill>/<path>` adds files upstream lacks.
+- `t3/added/pstack-runtime/<name>.md` is an on-demand runtime file, copied next to `skills/pstack-runtime/SKILL.md`.
 - `t3/removed.txt` lists upstream paths pstack-t3 does not ship.
 - `t3/agents/` holds the personas copied into `skills/pstack-runtime/agents/`, keyed as `agents/<name>.md` in `t3/overrides.lock.json`. A persona belongs in `t3/agents` and never under `t3/overrides/agents`. Refreshing the lock omits a persona with no vendored counterpart, and a stale persona pin reports drift until the lock is refreshed. A skill override whose vendored counterpart is absent keeps its key with a null value.
 - `skills/` is generated. Never edit it by hand. Run `python3 scripts/build.py`.
