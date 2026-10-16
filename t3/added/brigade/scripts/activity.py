@@ -459,7 +459,7 @@ def parser():
     top.add_argument("--serve", nargs="?", const=DEFAULT_PORT, default=None, type=int, metavar="PORT",
                      help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped")
     top.add_argument("--live-page", nargs="?", const="", default=None, metavar="ORIGIN",
-                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render at the given address plus /activity/<token>; with no value the address is http://127.0.0.1:48731, with an http:// or https:// origin with no userinfo, path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin; the wrapper holds the token, so never share or commit it")
+                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render at the given address plus /activity/<token>; with no value the address is http://127.0.0.1:48731, with an http:// or https:// origin with a host and no userinfo, path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin; a value with whitespace, a backslash, ?, or #, or with a port that does not parse, is refused; the wrapper holds the token, so never share or commit it")
     return top
 
 
@@ -1431,7 +1431,7 @@ def format_attempt(attempts, ranks, counts):
 
 
 def brief_attempt(ranks, counts):
-    """One bounded summary line for folded earlier attempts. Ranks holds the distinct ranks of the earlier ledger rows. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when attempts are sparse. With no ranks the summary is counts plus state."""
+    """One bounded summary line for folded earlier attempts. Ranks holds the distinct ranks of the earlier ledger rows. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when the ranks are not one contiguous range or when the enumeration is long. With no ranks the summary is counts plus state."""
     tail = attempt_tail(counts)
     if not ranks:
         return tail
@@ -2092,7 +2092,7 @@ def briefed(page):
 def within_budget(page, budget, clean, render, brief=False):
     """The page, its render, and whether that render's UTF-8 length is at most budget.
     A page that already fits, or a page with no attempt line, is returned as it is.
-    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of sparse attempts no longer adds bytes beyond its count. Counts and state stay exact, and no lane is dropped. When even the briefed zero line form is over budget, that form is returned as it is.
+    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of attempts that are not one contiguous range no longer adds bytes beyond its count. Counts and state stay exact, and no lane is dropped. When even the briefed zero line form is over budget, that form is returned as it is.
     """
     text = render(page, clean)
     count = line_count(page)
@@ -2777,7 +2777,7 @@ LIVE_SCRIPT = squeezed("""
 
 
 def origin_of(value):
-    """The origin for --live-page. A value with whitespace or backslash or ? or # is refused. The rest must parse as http:// or https:// with a host and no userinfo, path, query, or fragment."""
+    """The origin for --live-page. A value with whitespace or backslash or ? or # is refused. A port that does not parse is refused. The rest must parse as http:// or https:// with a host and no userinfo, path, query, or fragment."""
     bad = "--live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
     if any(char.isspace() for char in value) or "\\" in value or "?" in value or "#" in value:
         raise ActivityError(bad)
