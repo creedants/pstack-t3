@@ -1,5 +1,5 @@
 - kind polish
-- `t3/runtime.md` moves most of its `## Roles` reference into the new `t3/added/pstack-runtime/roles.md`. Each of the five `###` sections in `## Roles` keeps its heading and a few sentences.
+- `t3/runtime.md` moves most of its `## Roles` reference into the new `t3/added/pstack-runtime/roles.md`. `### Built-in defaults`, `### Excluded seats`, `### Budget`, `### Fallback`, and `### Claude Haiku 5.5` each keep their heading and a few sentences.
 - Each of those five sections keeps the `roles.md` pointer sentence from the plan's Pointer sentences table. `### Resolve and carry the mode` keeps the last four sentences of its light-budget paragraph and gets no pointer.
 - `roles.md` holds `## Built-in defaults`, `## Excluded seats`, `## Budget`, `## Fallback`, and `## Claude Haiku 5.5`, with the rest of the light-budget paragraph at the end of `## Budget`.
 - The two Haiku 5.5 brief paragraphs leave the docs. `t3/scripts/roles.py` holds that text as `HAIKU_BRIEF`, which `roles.py show` prints as `haikuBrief`.
