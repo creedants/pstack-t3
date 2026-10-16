@@ -1043,7 +1043,7 @@ def _stop_tracked(process):
 
 
 def run_build(command, cwd, timeout, active=None):
-    """Run a shell command in its own process group and kill the whole group on timeout."""
+    """Run a shell command in its own process group and try to stop the group on timeout when the leader is still reserved."""
     if threading.current_thread() is not threading.main_thread():
         raise ValueError("signal only works in main thread of the main interpreter")
     try:
@@ -1117,5 +1117,5 @@ def run_build(command, cwd, timeout, active=None):
 
 
 def supervised(command, cwd, timeout):
-    """Run a shell command in its own process group and kill the whole group on timeout."""
+    """Run a shell command in its own process group and try to stop the group on timeout when the leader is still reserved."""
     return run_build(command, cwd, timeout)
