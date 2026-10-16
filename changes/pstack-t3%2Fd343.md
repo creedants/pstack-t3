@@ -1,0 +1,2 @@
+- kind polish
+- README opens with the pitch plus a screenshot of the activity page, and install plus policy detail now live in guide.
