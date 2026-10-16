@@ -221,44 +221,10 @@ class Integration:
         return sorted(set(names))
 
     def _stop_build(self, process):
-        if process is None or process.returncode is not None:
-            return
-        killpg = getattr(seam, "_killpg_like_linux", None)
-        try:
-            if killpg is not None:
-                killpg(process, signal.SIGKILL)
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        try:
-            process.wait()
-        except OSError:
-            pass
+        return seam._stop_tracked(process)
 
     def _run_build(self, command, timeout, active):
-        # Tracks the live build so the rebuild guard can stop it before cleanup.
-        try:
-            process = subprocess.Popen(command, cwd=self.path, shell=True, start_new_session=True,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        except Exception:
-            active["process"] = None
-            raise
-        active["process"] = process
-        try:
-            output, _ = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            self._stop_build(process)
-            try:
-                output, _ = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.stdout.close()
-                process.wait()
-                output = b""
-            active["process"] = None
-            return None, output.decode("utf-8", "replace")
-        active["process"] = None
-        return process.returncode, output.decode("utf-8", "replace")
+        return seam.run_build(command, self.path, timeout, active)
 
     def _rebuild(self, before):
         command = "python3 scripts/build.py"

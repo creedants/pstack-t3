@@ -1000,20 +1000,67 @@ def slot(pool="worker", repo=None, command=None, *, count=1):
             _hide_hold()
 
 
+def _stop_tracked(process):
+    """Stop the tracked process group while the leader is still unreaped, then reap. Never signal a reaped PID."""
+    if process is None or process.returncode is not None:
+        return
+    try:
+        _killpg_like_linux(process, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        process.wait()
+    except OSError:
+        pass
+
+
+def run_build(command, cwd, timeout, active=None):
+    """Run a shell command in its own process group and kill the whole group on timeout."""
+    try:
+        process = subprocess.Popen(command, cwd=cwd, shell=True, start_new_session=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except Exception:
+        if active is not None:
+            active["process"] = None
+        raise
+    if active is not None:
+        active["process"] = process
+    previous = signal.getsignal(signal.SIGINT)
+
+    def _on_sigint(signum, frame):
+        if process.returncode is None:
+            try:
+                _killpg_like_linux(process, signal.SIGKILL)
+            except OSError:
+                pass
+        if callable(previous):
+            previous(signum, frame)
+        else:
+            raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    try:
+        try:
+            output, _ = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop_tracked(process)
+            try:
+                output, _ = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # A descendant left the group with setsid and still holds the pipe. Stop waiting for it.
+                process.stdout.close()
+                process.wait()
+                output = b""
+            if active is not None:
+                active["process"] = None
+            return None, output.decode("utf-8", "replace")
+        if active is not None:
+            active["process"] = None
+        return process.returncode, output.decode("utf-8", "replace")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def supervised(command, cwd, timeout):
     """Run a shell command in its own process group and kill the whole group on timeout."""
-    process = subprocess.Popen(command, cwd=cwd, shell=True, start_new_session=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    try:
-        output, _ = process.communicate(timeout=timeout)
-        return process.returncode, output.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        _killpg_like_linux(process, signal.SIGKILL)
-        try:
-            output, _ = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            # A descendant left the group with setsid and still holds the pipe. Stop waiting for it.
-            process.stdout.close()
-            process.wait()
-            output = b""
-        return None, output.decode("utf-8", "replace")
+    return run_build(command, cwd, timeout)
