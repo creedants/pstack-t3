@@ -700,6 +700,10 @@ class LinkCheckTest(unittest.TestCase):
     def test_a_thread_link_with_an_id_is_not_a_file_link(self):
         self.assertEqual(link_findings("t3-thread://v1/abc-123", "other.md"), [])
 
+    def test_a_query_bearing_file_link_to_an_existing_file_is_not_broken(self):
+        self.assertEqual(link_findings("other.md?raw=1"), [])
+        self.assertEqual(link_findings("other.md?raw=1#x"), [])
+
     def test_other_targets_still_must_resolve(self):
         self.assertEqual(
             link_findings("missing.md", "t3-thread://v2/abc", "t3-thread://v1/"),

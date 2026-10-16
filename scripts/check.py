@@ -694,7 +694,7 @@ def check_tree(root, guide=True):
             for target in LINK.findall(text):
                 if THREAD_LINK.match(target):
                     continue
-                path = target.split("#", 1)[0]
+                path = target.split("#", 1)[0].split("?", 1)[0]
                 # Template placeholders such as (url) are not paths.
                 if "/" not in path and "." not in path:
                     continue
