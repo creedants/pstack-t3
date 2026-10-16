@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib.layout import _layout, _one
-from brigade_lib.leases import STANDINGS, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
+from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
 from brigade_lib.shared import age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, LOW_RESERVE, PRIORITIES_BY_RANK
 from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
@@ -128,14 +128,24 @@ def lease_refusals(meta, tickets, next_dish):
 def expanded_paths(tickets, lay):
     found = {}
     for ticket in tickets:
-        if not ticket.paths or lay is None:
+        if not ticket.paths:
             found[ticket.id] = ticket.paths
             continue
-        seen = set(ticket.paths)
-        extras = []
+        norms = []
+        seen = set()
         for raw in ticket.paths:
+            made = _claim_norm(raw)
+            if not made or made in seen:
+                continue
+            seen.add(made)
+            norms.append(made)
+        if lay is None:
+            found[ticket.id] = tuple(norms)
+            continue
+        extras = []
+        for made in norms:
             try:
-                got = _one(raw, lay, ticket.doc_item)
+                got = _one(made, lay, ticket.doc_item)
             except KeyboardInterrupt:
                 raise
             except Exception:
@@ -144,7 +154,7 @@ def expanded_paths(tickets, lay):
                 if one not in seen:
                     seen.add(one)
                     extras.append(one)
-        found[ticket.id] = tuple([*ticket.paths, *extras])
+        found[ticket.id] = tuple([*norms, *extras])
     return found
 
 
@@ -179,10 +189,14 @@ def startable(restaurant):
             note = notes.get(row["id"])
             if note is None:
                 tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
-            else:
-                saved = tuple(part for part in (note.get("paths") or "").split(",") if part)
-                tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
-                                              paths=saved))
+                continue
+            raw_parts = tuple(part for part in (note.get("paths") or "").split(",") if part)
+            valid = [made for part in raw_parts if (made := _claim_norm(part))]
+            if not valid:
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+                continue
+            tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
+                                          paths=raw_parts))
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:

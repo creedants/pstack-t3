@@ -451,3 +451,62 @@ class FireLayoutTest(BrigadeTest):
         refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
                                "--paths", saved, "--doc-item", ok=False)
         self.assertIn("paths overlap L2 held by engine/D1 on docs/skills.md", refused)
+
+    def test_startable_blocked_dot_path_normalizes_for_generated_overlap_and_derived_fire(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "first", "--paths", "skills/pstack-runtime/SKILL.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                                      "--paths", "./t3/runtime.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        text = self.brigade("startable")
+        self.assertIn("T1 normal fix, 0m: startable; skills/pstack-runtime/SKILL.md", text)
+        self.assertIn("T2 normal fix, 0m: blocked, starts after T1; ./t3/runtime.md --doc-item", text)
+        line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        raw = line.split("; ", 1)[1]
+        self.assertTrue(raw.endswith(" --doc-item"))
+        saved = raw[:-len(" --doc-item")]
+        self.assertEqual(saved, "./t3/runtime.md")
+        self.assertIn("D2 (lease", self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "first",
+                                                "--paths", "skills/pstack-runtime/SKILL.md"))
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                               "--paths", saved, "--doc-item", ok=False)
+        self.assertIn("paths overlap", refused)
+        self.assertIn("skills/pstack-runtime/SKILL.md", refused)
+
+    def test_startable_empty_blocked_note_falls_back_to_rail_and_ticket_set_repairs_it(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second", "--paths", "t3/runtime.md")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                                      "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.blocked_note(self.at, "T2")["paths"], "")
+        self.assertEqual(self.blocked_note(self.at, "T2")["doc_item"], True)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: startable; t3/runtime.md", text)
+        t2_line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        self.assertFalse(t2_line.endswith(" --doc-item"))
+        self.brigade("ticket", "set", "T2", "--paths", "t3/setup.md")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: startable; t3/setup.md", text)
+        t2_line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        self.assertFalse(t2_line.endswith(" --doc-item"))
