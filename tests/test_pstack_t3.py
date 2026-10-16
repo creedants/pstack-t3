@@ -1219,6 +1219,10 @@ class ModesTest(unittest.TestCase):
         self.assertNotIn("the row below", text)
         self.assertIn("the row in [light.md](light.md) that names it", text)
 
+    def test_gate_review_has_no_table(self):
+        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
+        self.assertFalse(any(line.startswith("|") for line in gate.splitlines()))
+
 
 class BuildTest(unittest.TestCase):
     def test_replace_tree_recovers_an_interrupted_swap_before_copying(self):
