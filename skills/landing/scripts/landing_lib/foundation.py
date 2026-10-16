@@ -232,7 +232,7 @@ def _header_paths(line):
 
 
 def fingerprint(repo, base, head):
-    """Hash of the source change. Sections both sides of which parse as generated paths are dropped. Unparseable headers are kept."""
+    """Hash of the source change. Sections either side of which parses as a generated path are dropped. Unparseable headers are kept."""
     diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff", "-U0", base, head, cwd=repo).stdout
     if not diff:
         return ""

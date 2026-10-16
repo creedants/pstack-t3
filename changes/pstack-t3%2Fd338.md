@@ -5,9 +5,9 @@
 - Generated only conflicts resolve with ours when file lists agree.
 - Source conflicts still bounce with trunk.
 - Empty source changes return already in trunk.
-- Rebuild restores generated output then runs build twice.
+- Rebuild restores each generated path from trunk, then runs build twice.
 - Failed builds bounce and never land.
 - Builds that dirty tracked sources bounce.
-- Builds that do not reproduce bounce.
+- Builds whose second run changes file bytes bounce.
 - Staged generated output amends the tip with no edit.
 - Fingerprint and author checks run after rebuild.
