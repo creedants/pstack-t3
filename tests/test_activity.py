@@ -7,13 +7,17 @@ import os
 import random
 import re
 import runpy
+import select
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.request
 import zlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -3864,6 +3868,103 @@ class LedgerTest(OutputCase):
         rank = MOD["attempt_rank"]
         self.assertEqual((rank("007"), rank("9" * 18)), ((0, 7), (0, int("9" * 18))))
         self.assertEqual((rank("9" * 19), rank(""), rank("٢")), ((1, "9" * 19), (1, ""), (1, "٢")))
+
+
+class LiveTest(OutputCase):
+    def serve(self, *args, **how):
+        """Start activity.py --serve 0 as a real interpreter and return its process and printed token address. A race: the server answers while this test fetches."""
+        process = in_process.spawn(in_process.Reason.RACE, self.fixture.command("--serve", "0", *args, **how))
+
+        def stop():
+            process.terminate()
+            process.wait(timeout=30)
+            process.stdout.close()
+            process.stderr.close()
+
+        self.addCleanup(stop)
+        ready, _, _ = select.select([process.stdout], [], [], 30)
+        self.assertTrue(ready, "the live server printed no address")
+        url = process.stdout.readline().strip()
+        self.assertTrue(url.startswith("http://127.0.0.1:"), url)
+        return process, url
+
+    def fetch(self, url, method=None, data=None):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, method=method, data=data)) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers, error.read()
+
+    def served(self):
+        one_running(self.fixture).write()
+        return self.serve()
+
+    def test_serves_the_page_only_at_its_token_path(self):
+        _, url = self.served()
+        port = url.split(":")[2].split("/")[0]
+        code, _, body = self.fetch(url)
+        self.assertEqual(code, 200)
+        self.assertTrue(body.startswith(b"<!doctype html>"), body[:80])
+        code, _, body = self.fetch(url + "?x=1")
+        self.assertEqual(code, 200)
+        self.assertTrue(body.startswith(b"<!doctype html>"), body[:80])
+        for target in (f"http://127.0.0.1:{port}/", url.rsplit("/", 1)[0] + "/wrong", url + "x"):
+            with self.subTest(target=target):
+                self.assertEqual(self.fetch(target)[0], 404)
+
+    def test_every_live_answer_carries_a_null_cors_origin_and_no_store(self):
+        _, url = self.served()
+        _, plain, _ = self.fetch(url)
+        _, missing, _ = self.fetch(url.rsplit("/", 1)[0] + "/wrong")
+        _, options, _ = self.fetch(url, method="OPTIONS")
+        for headers in (plain, missing, options):
+            with self.subTest(headers=dict(headers)):
+                self.assertEqual(headers.get("Access-Control-Allow-Origin"), "null")
+                self.assertEqual(headers.get("Cache-Control"), "no-store")
+
+    def test_only_get_and_options_are_answered(self):
+        _, url = self.served()
+        self.assertEqual(self.fetch(url, data=b"x")[0], 501)
+        self.assertEqual(self.fetch(url, method="OPTIONS")[0], 204)
+        self.assertEqual(self.fetch(url)[0], 200)
+
+    def test_the_server_binds_127_0_0_1_only(self):
+        fixture = one_running(self.fixture).write()
+        settings = MOD["Settings"](fixture.store, fixture.database, 3.0, MOD["BUDGET"])
+        server = MOD["live_server"](settings, MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"]), 0)
+        self.addCleanup(server.server_close)
+        self.assertEqual(server.server_address[0], "127.0.0.1")
+
+    def test_the_token_file_is_mode_0600_and_reused_across_restarts(self):
+        fixture = one_running(self.fixture).write()
+        first = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        path = fixture.store / "activity-token"
+        self.assertTrue(path.is_file())
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertGreaterEqual(len(first.token) * 8, 128)
+        os.chmod(path, 0o644)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertEqual((second.token, second.route, second.url), (first.token, first.route, first.url))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_the_live_wrapper_holds_the_token_url_the_collapse_rule_and_both_buttons(self):
+        fixture = one_running(self.fixture).write()
+        wrapper = self.out("--live-page")
+        token = (fixture.store / "activity-token").read_text().strip()
+        self.assertIn(f"http://127.0.0.1:48731/activity/{token}", wrapper)
+        self.assertIn("merged|dropped|done", wrapper)
+        self.assertIn("Expand all", wrapper)
+        self.assertIn("Collapse all", wrapper)
+        self.assertIn("30000", wrapper)
+
+    def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
+        fixture = one_running(self.fixture).write()
+        (fixture.store / "restaurant.json").unlink()
+        _, url = self.serve()
+        for _ in range(2):
+            code, _, body = self.fetch(url)
+            self.assertEqual(code, 503)
+            self.assertEqual(body, b"activity: that directory holds no coordinator's store; pass --at <store directory> or set BRIGADE_DIR")
 
 
 if __name__ == "__main__":
