@@ -2247,6 +2247,35 @@ class BrigadeAdminSplitDocTest(unittest.TestCase):
                 own = re.findall(r"\]\(#([^)\s]+)\)", text)
                 self.assertIn("filing-tracker-work" if name == "brigade" else "rulings", own)
                 self.assertEqual([fragment for fragment in own if fragment not in self.slugs(text)], [])
+        self.assert_split_doc_links(self.docs)
+
+    def assert_split_doc_links(self, docs):
+        from tests.test_pstack_t3 import heading_slug, unfenced_lines
+        slugs = {}
+        for name, text in docs.items():
+            slugs[name] = {heading_slug(line.lstrip("#").strip()) for line in unfenced_lines(text) if line.startswith("#")}
+        for name, text in docs.items():
+            unfenced = "\n".join(unfenced_lines(text))
+            for fragment in re.findall(r"\]\(#([^)\s]+)\)", unfenced):
+                self.assertIn(fragment, slugs[name], f"{name}#{fragment}")
+            for fragment in re.findall(r"\]\(SKILL\.md#([^)\s]+)\)", unfenced):
+                self.assertIn(fragment, slugs["SKILL.md"], f"{name} SKILL.md#{fragment}")
+            for fragment in re.findall(r"\]\(admin-reporting\.md#([^)\s]+)\)", unfenced):
+                self.assertIn(fragment, slugs["admin-reporting.md"], f"{name} admin-reporting.md#{fragment}")
+        skill_links = re.findall(r"\]\(SKILL\.md#([^)\s]+)\)", "\n".join(unfenced_lines(docs["admin-reporting.md"])))
+        self.assertGreater(len(skill_links), 0)
+        admin_links = re.findall(r"\]\(admin-reporting\.md#([^)\s]+)\)", "\n".join(unfenced_lines(docs["SKILL.md"])))
+        self.assertGreater(len(admin_links), 0)
+
+    def test_moved_skill_link_missing_fragment_fails(self):
+        docs = dict(self.docs)
+        mutated = docs["admin-reporting.md"].replace(
+            "(SKILL.md#reporting-to-an-executive-admin)", "(SKILL.md#missing-review-probe)", 1
+        )
+        self.assertIn("(SKILL.md#missing-review-probe)", mutated)
+        docs["admin-reporting.md"] = mutated
+        with self.assertRaises(AssertionError):
+            self.assert_split_doc_links(docs)
 
     def test_a_section_of_the_other_skill_is_named_only_as_a_link(self):
         from tests.test_pstack_t3 import heading_slug

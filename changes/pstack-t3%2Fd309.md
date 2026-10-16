@@ -1,5 +1,5 @@
 - kind polish
-- `t3/added/brigade/admin-reporting.md` is new and holds the moved `## Reporting to an executive admin` body, the moved Run a service step 9 remainder, the moved contest sentences, and the moved liveness sentences
+- `t3/added/brigade/admin-reporting.md` is new and holds the moved `## Reporting to an executive admin` body, the admin-only part of Run a service step 9, the moved contest sentences, and the moved liveness sentences
 - `t3/added/brigade/SKILL.md` keeps `## Reporting to an executive admin` as a stub with the pointer sentence, the `(../brigade-admin/SKILL.md)` link, and the `from-user` command, and keeps a one-line trigger stub at Run a service step 7, Liveness check step 1, and Liveness check step 5
 - `t3/added/brigade/SKILL.md` Run a service step 9 keeps its first sentence and links `admin-reporting.md#step-9`
 - an in-file link in moved text becomes `SKILL.md#<slug>` when its heading stays in `SKILL.md`
