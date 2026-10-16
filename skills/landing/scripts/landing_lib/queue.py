@@ -200,7 +200,7 @@ class Integration:
                 return f"rebuild failed. `{command}` {reason}. {_tail(second[1])}"
             if _tree_hashes(self.path) != snapshot:
                 self.git("reset", "--hard", before)
-                return "build did not reproduce generated paths"
+                return "build did not reproduce the tree"
         added = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
         if added.returncode != 0:
             self.git("reset", "--hard", before)

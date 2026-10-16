@@ -1,13 +1,13 @@
 - kind feature
 - Generated paths live in one registry in foundation.
-- Submit checks sources only and rejects generated only changes.
-- Fingerprint hashes sources only and empty stays empty.
+- Submit lease check covers sources only and rejects generated only changes.
+- Fingerprint drops generated sections with parseable headers. Empty stays empty.
 - Generated only conflicts resolve with ours when file lists agree.
 - Source conflicts still bounce with trunk.
 - Empty source changes return already in trunk.
 - Rebuild restores generated output then runs build twice.
 - Failed builds bounce and never land.
-- Builds that touch sources bounce.
+- Builds that dirty tracked sources bounce.
 - Builds that do not reproduce bounce.
 - Staged generated output amends the tip with no edit.
 - Fingerprint and author checks run after rebuild.
