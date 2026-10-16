@@ -875,7 +875,7 @@ class GeneratedTest(LandingTest):
 
     def test_reaped_leader_gets_no_killpg_on_interrupt(self):
         if not hasattr(os, "waitid"):
-            self.skipTest("reservation guard needs os.waitid")
+            self.skipTest("reaped boundary proof needs os.waitid")
         real_handle = subprocess.Popen._handle_exitstatus
         real_killpg = os.killpg
         previous = signal.getsignal(signal.SIGINT)
