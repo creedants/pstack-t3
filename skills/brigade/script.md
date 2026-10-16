@@ -34,7 +34,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 ### next
 
-`$B next`. `wake: <label>`, then `reporting: <level>`, then `reports to: <thread>` when one is set, then each cue as `run <argv>`, `see <words>`, or `if <cond>: <action>`, or the line `nothing else owed` when there is no cue, then `reply: yes|no (<occasion>: <detail>)`. `<label>` is the wake word, plus the dish or the request when the wake takes one. A wake left off prints `wake: unspecified`.
+**`$B next`.** `wake: <label>`, then `reporting: <level>`, then `reports to: <thread>` when one is set, then each cue as `run <argv>`, `see <words>`, or `if <cond>: <action>`, or the line `nothing else owed` when there is no cue, then `reply: yes|no (<occasion>: <detail>)`. `<label>` is the wake word, plus the dish or the request when the wake takes one. A wake left off prints `wake: unspecified`.
 
 ### status
 
