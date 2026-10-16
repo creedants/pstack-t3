@@ -1,0 +1,3 @@
+- kind fix
+- `scripts/install.py` tries `renameat2` then Darwin `renamex_np` with `RENAME_EXCL`, so macOS keeps a no-replace rename
+- `tests/test_install.py` drives the Darwin branch on Linux with a fake libc and no `/proc`, proving directory and file restores keep the backup until placed

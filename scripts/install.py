@@ -758,21 +758,36 @@ def skip_note(step):
 
 RENAME_NOREPLACE = 1
 AT_FDCWD = -100
+# Darwin renamex_np flag from stdio.
+RENAME_EXCL = 0x00000004
 
 
 def rename_noreplace(source, target):
     """Rename `source` to `target` only while `target` is empty. Return 0, or the errno that stopped it."""
-    if not sys.platform.startswith("linux"):
-        return errno.ENOSYS
     try:
-        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+        libc = ctypes.CDLL(None, use_errno=True)
     except (OSError, AttributeError):
         return errno.ENOSYS
-    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-    renameat2.restype = ctypes.c_int
-    if renameat2(AT_FDCWD, os.fsencode(source), AT_FDCWD, os.fsencode(target), RENAME_NOREPLACE) == 0:
-        return 0
-    return ctypes.get_errno()
+    raw_source = os.fsencode(source)
+    raw_target = os.fsencode(target)
+    rows = (
+        ("renameat2", (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint),
+         (AT_FDCWD, raw_source, AT_FDCWD, raw_target, RENAME_NOREPLACE)),
+        ("renamex_np", (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint),
+         (raw_source, raw_target, RENAME_EXCL)),
+    )
+    for symbol, argtypes, arguments in rows:
+        call = getattr(libc, symbol, None)
+        if call is None:
+            continue
+        call.argtypes = argtypes
+        call.restype = ctypes.c_int
+        if call(*arguments) == 0:
+            return 0
+        code = ctypes.get_errno()
+        if code != errno.ENOSYS:
+            return code
+    return errno.ENOSYS
 
 
 def place(source, path):
@@ -929,7 +944,10 @@ def same_entry(path, fd):
 
 
 def link_held(fd, path):
-    """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it."""
+    """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
+
+    Only Linux procfs serves `/proc/self/fd` as the held entry. Elsewhere it answers `ENOSYS`. Then `restore_backup` proves a private second name in `restore_aside`. The guarantee comes from an empty private `Holder` plus `same_entry` proof plus `place` into an empty path. The descriptor keeps the inode in use. No other actor writes inside the holder. The backup keeps its own name until the copy is placed. A foreign entry never reaches the user path.
+    """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS
     try:
