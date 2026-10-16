@@ -21,6 +21,7 @@ AUTHOR = {
     "GIT_COMMITTER_EMAIL": "outsider@example.com",
 }
 CANARY = "canary.txt"
+REQUIRED_STEPS = ("install", "doctor", "roles", "brigade", "land")
 
 
 def fence_git_environment():
@@ -90,6 +91,16 @@ class OutsiderSmokeTest(unittest.TestCase):
             expected = "".join(outsider_smoke.ok_line(name) for name in outsider_smoke.plan_names())
             self.assertEqual(result.stdout, expected)
             self.assertEqual(listing(Path(canary)), before)
+
+    def test_every_required_step_prints_its_ok_line(self):
+        # Review D306 round 1: a plan that dropped the roles step left every test green, because
+        # the expected lines came from the same plan. These five names come from this test.
+        with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
+            (Path(canary) / CANARY).write_text("keep\n")
+            result = run(canary, tmpdir)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in REQUIRED_STEPS:
+                self.assertIn(outsider_smoke.ok_line(name), result.stdout)
 
     def test_a_home_this_run_did_not_create_is_refused(self):
         with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
