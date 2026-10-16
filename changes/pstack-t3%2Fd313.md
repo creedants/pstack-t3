@@ -1,0 +1,4 @@
+- kind polish
+- `t3/runtime.md` moves the `t3_thread_configure` bullet, the queued-correction bullet, the `### Forks` body, and the `run_scheduled_task_now` and finite-program pause bullets into `t3/added/pstack-runtime/threads.md`. Each moved site keeps a stub with the never rule its contract pins and a link to its heading in `threads.md`.
+- `tests/test_pstack_t3.py` adds `RUNTIME_DOCS` and a reader that joins `skills/pstack-runtime/SKILL.md` with `skills/pstack-runtime/threads.md`. `ConfigureOwnerDocTest`, `ForkDocTest`, `PromoteQueuedCorrectionDocTest`, and `RunScheduleNowDocTest` read their moved text from that reader, and their in-file links now carry the `SKILL.md` prefix.
+- `AGENTS.md` records that `t3/added/pstack-runtime/<name>.md` builds to `skills/pstack-runtime/<name>.md`.
