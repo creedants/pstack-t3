@@ -351,13 +351,17 @@ When light mode applies, say so once, at the start, in two or three short senten
 
 Two writers never share a checkout (principle-separate-before-serializing-shared-state).
 
+Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
+
+Before you end a worktree turn that can settle, read [Settle on turn end](host.md#settle-on-turn-end).
+
+Before you delegate a child that needs a chosen branch or a different base, read [Older hosts](host.md#older-hosts).
+
 - Read-only children share the current checkout.
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
-- An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](#top-level-threads) allows it.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
 - T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
-- T3 runs the first effective project action with `runOnSettle: true` each time a thread settles in its own worktree, including auto-settlement. A thread in the main checkout skips it. The effective list is the project's override, else the environment defaults. Actions in a repository `t3.json` count only once imported into project settings, and either list can replace them. `t3_project_read` returns the project's saved `scripts`, which can differ from the effective list. Before you settle a worktree thread, read T3's `settings.json` (`~/.t3/userdata/settings.json` by default). Take `projectSettingsOverrides.<projectId>.defaultProjectScripts` when present, else `defaultProjectScripts`, and name its first `runOnSettle: true` action or none. When `projectSettingsFolded` is not `true`, older saved lists still count, so treat the action as unknown. The action can run beside another terminal command. Its terminal closes on success and stays open on failure. It is a cleanup hook, not a wake, so never schedule a tick to watch for it.
 
 ## Local command capacity
 
@@ -430,13 +434,9 @@ A T3 restart ends the old provider processes. On T3 Code 0.0.46-nightly.20261012
 
 ## Verification surfaces
 
-- Web or Electron UI: `preview_open` the dev server URL, then `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_evaluate`. Use `preview_hover` to reveal a menu or tooltip, `preview_drag` to drop one element on another, `preview_select` to choose an option in a native select, `preview_upload` to give the page files, and `preview_dialog` to accept or dismiss a browser dialog. Record proof with `preview_recording_start` and `preview_recording_stop`. Check `preview_status` first. A call can fail because no preview host is available. Call `preview_status` again. Call `preview_open` if it lists no tab. Report a failure that persists. Never count that check as verified. Close each preview you opened with `t3_preview_close` and its `tabId`.
-- Preview tabs. Pass the `tabId` that `preview_open` returns on every later preview call. Without it, T3 chooses the tab for you, which can be one you did not mean. The one exception is a new tab, which takes no `tabId` (see Clean state). Children that run in parallel on one provider session each open their own tab with `reuseExistingTab: false`. Act only on tabs you opened. Never act on a tab whose `owner` in `preview_status` is `human`, and treat another session's tab as read-only.
-- Preview images. Pass `includeImage` explicitly on every `preview_snapshot`, because its default differs between builds. Pass `includeImage: true` when you need to see the page. When the result holds no image, or you need a PNG file, pass `save: true` and open the file at the `screenshotPath` it returns.
-- Clean state. Do not assume a tab is logged out or logged in. Check. For a logged-out or first-run check, call `preview_open` with `reuseExistingTab: false`, no `tabId`, and an `incognito` `profileId` when `preview_status` lists one. Read the page with `preview_snapshot` and confirm it shows the state you need before you rely on it. Never clear storage in a profile a human uses.
-- Devices and simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`.
-- CLIs and TUIs: run them in the terminal and assert on output.
-- A project `verify-*` skill beats all of these when one exists.
+Before you verify a change in a UI, on a device, or in a CLI, read [verification.md](verification.md) and use the surface it names.
+
+A project `verify-*` skill beats all of these when one exists.
 
 ## Visual reports
 
@@ -453,14 +453,18 @@ A rendered page is a reply the user reads, even with no reply text. Render none 
 
 ## History
 
+Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
+
+Before you use a saved transcript file from another environment, read [History notes](host.md#history-notes).
+
+Before you read Claude conversation history, read [History notes](host.md#history-notes).
+
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
-- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. On T3 Code nightlies 20261012.3010 through 20261013.3042, Claude 5.1 or later can have pre-tool thinking stored as an assistant message, so the messages view can contain working notes as well as replies. On T3 Code nightlies 20261013.3053 through 20261014.3118, new native Claude thinking stays a reasoning item and is absent from the messages view. On T3 Code 0.0.46-nightly.20261014.3132 or later, a progress update that Claude 5.1 or later writes between tool calls is an assistant message. A lone thinking block before a tool call stays a reasoning item. Older threads can still contain assistant messages promoted before the upgrade. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
+- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
 - Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text. Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
-- On T3 Code 0.0.46-nightly.20261015.3145 or later, a thread dropped from another environment arrives as a saved transcript file. Read that file. It holds the history up to the drop and no later messages.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
 - `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
-- `t3_thread_list` and `t3_thread_read` report `snoozed` and `snoozedUntil`. Pass `snoozed: true` to `t3_thread_list` to find snoozed owners. `t3_thread_organize` with `action: "snooze"` requires `snoozedUntil`. The tool takes one optional `threadId`, acts on the calling thread when `threadId` is missing, and ignores unknown keys. Every call that targets another thread passes exactly one explicit `threadId`, one call per thread. Omitting `threadId` is only for acting on yourself. A snoozed thread wakes early when it asks for something, fails, or completes. Snooze is a sidebar state. It is not a schedule, a completion, or a settle. Wait with `schedule_task` or `watch_pull_request`, never with `snoozedUntil`.
 - Link a thread in a user-facing report as a Markdown link whose text is the thread's title and whose target is `t3-thread://v1/<threadId>`. Copy the `threadId` exactly as a tool returned it. Do not URL-encode it, decode its `%` escapes, or add an environment ID. T3 Code shows the thread's current title. List, read, and launch results carry no `link` field, so build the link from `threadId` or `childThreadId`.
 
 ## Pull requests
@@ -468,6 +472,8 @@ A rendered page is a reply the user reads, even with no reply text. Render none 
 After you open a PR or start driving an existing one, call `link_pull_request` with its full URL. For a stack, link every layer. Linking attaches the PR to the calling thread. When a child opens a PR, it links it and the parent links it too. When a launched thread opens a PR, it links it and the launcher or coordinator links it too. Linking twice is safe. Before finishing PR work, call `list_thread_pull_requests` and link any missing PR. Report a link failure instead of claiming the PR is linked.
 
 ## Pull request watching
+
+An owner that may already be settled reads [Settle on turn end](host.md#settle-on-turn-end) before calling `watch_pull_request`.
 
 Call `watch_pull_request` after `link_pull_request`, when this thread is waiting on that PR's checks, reviews, or conflicts. Pass the PR URL, or the repository and number. T3 links the PR first if this thread has not linked it yet.
 
@@ -483,7 +489,7 @@ Call `unwatch_pull_request` when this thread stops driving the PR and hands that
 
 A merge ends the watch and does not wake the thread. A close ends the watch and does wake the thread. Watching also ends when the thread settles or is archived, when the user stops the thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. A watch ends after 10 wakes in a row that bring only comments, and that end posts a wake. Call `watch_pull_request` again after that wake when the loop is still running.
 
-If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (no `threadId`, acting on the caller on purpose) first. A settled thread's new watch ends on the next pass and posts no wake. A pinned thread does not auto-settle. A pinned coordinator runs that action only when someone settled the thread by hand. `t3_thread_organize` with `action: "settle"` and no `threadId` settles this thread when the turn completes, and returns `settlesWhenTurnEnds: true`. A call that targets another thread follows the `threadId` rule in [History](#history). That return is an accepted request, not a settled thread. A failed or interrupted turn, or a queued message, leaves the thread active, and a T3 restart before the turn ends drops the request. Settle this thread only as the last call of a turn whose work is done. Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
+Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills. Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
 
 pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick that waits for CI, a review, or a conflict all become this call. The forge commands that classify a verdict stay. Run them after a wake. They are not the wait.
 
@@ -514,16 +520,9 @@ If neither the tools nor the ACP bridge exist, you are not running in T3. Use th
 
 ## Skill locations
 
-T3's `$` picker lists each provider's native skills, except Muse's. Muse still loads its own skills. Run `muse skills` in the terminal to manage them. A skill meant for every provider is written once and linked into each directory.
+Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
 
-| Provider | User | Project |
-| --- | --- | --- |
-| Claude | `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`) | `.claude/skills` |
-| Codex | `~/.agents/skills` | `.agents/skills` |
-| Grok | `~/.grok/skills` | `.grok/skills` |
-| Cursor | `~/.cursor/skills` | `.cursor/skills`, and it also reads `.agents/skills` and `.claude/skills` |
-
-Every child gets the `t3-code` server. Other MCP servers come from each provider's own configuration, so a child on another provider may lack one. A brief that needs a specific MCP server says so, and the child reports `MCP unavailable` instead of guessing.
+Before you write a child brief that needs a specific MCP server, read [Skill locations](host.md#skill-locations).
 
 ## Personas
 

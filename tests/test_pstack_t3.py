@@ -1987,12 +1987,18 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md")
 
 
 def runtime_docs():
     """The RUNTIME_DOCS members joined in order, read from the built skills tree."""
     return "\n".join((ROOT / "skills/pstack-runtime" / name).read_text() for name in RUNTIME_DOCS)
+
+
+def runtime_doc_section(name, start, end="\n## "):
+    """A section from one RUNTIME_DOCS member, read from the built skills tree."""
+    text = (ROOT / "skills/pstack-runtime" / name).read_text()
+    return text.split("\n" + start, 1)[1].split(end, 1)[0]
 
 
 def runtime_section(start, end="\n## "):
@@ -2037,7 +2043,7 @@ _WINDOW_OPTION = {
 
 class ThreadLifecycleDocTest(unittest.TestCase):
     def test_history_names_snooze_fields_and_filter(self):
-        section = runtime_section("## History")
+        section = runtime_doc_section("host.md", "## Snooze")
         for sentence in (
             "`t3_thread_list` and `t3_thread_read` report `snoozed` and `snoozedUntil`.",
             "Pass `snoozed: true` to `t3_thread_list` to find snoozed owners.",
@@ -2061,7 +2067,7 @@ class ThreadLifecycleDocTest(unittest.TestCase):
         self.assertFalse(any(target.startswith("t3-thread:") for target in targets))
 
     def test_self_settle_is_a_request_not_a_settle(self):
-        section = runtime_section("## Pull request watching")
+        section = runtime_doc_section("host.md", "## Settle on turn end") + runtime_section("## Pull request watching")
         for phrase in (
             "`settlesWhenTurnEnds: true`",
             "an accepted request, not a settled thread",
@@ -2072,7 +2078,7 @@ class ThreadLifecycleDocTest(unittest.TestCase):
             self.assertIn(phrase, section)
 
     def test_isolation_names_the_settle_action(self):
-        section = runtime_section("## Isolation")
+        section = runtime_section("## Isolation") + runtime_doc_section("host.md", "## Settle on turn end")
         for phrase in (
             "T3 runs the first effective project action with `runOnSettle: true`",
             "A thread in the main checkout skips it.",
@@ -2166,7 +2172,7 @@ class MuseDocTest(unittest.TestCase):
         self.assertIn("never lower it", permissions)
 
     def test_skill_locations_exclude_muse_from_the_picker(self):
-        section = runtime_section("## Skill locations")
+        section = runtime_doc_section("host.md", "## Skill locations")
         self.assertIn("except Muse's", section)
         self.assertIn("`muse skills`", section)
 
@@ -2184,7 +2190,7 @@ class PreviewToolDocTest(unittest.TestCase):
     def test_runtime_names_hover_drag_select_upload_and_dialog(self):
         text = (ROOT / "t3/runtime.md").read_text()
         row = next(line for line in text.splitlines() if "control-ui, browser MCP" in line)
-        bullet = next(line for line in text.splitlines() if line.startswith("- Web or Electron UI:"))
+        bullet = next(line for line in runtime_docs().splitlines() if line.startswith("- Web or Electron UI:"))
         for name in PREVIEW_TOOLS:
             self.assertIn(name, row)
             self.assertIn(name, bullet)
@@ -2697,7 +2703,7 @@ class VisualReportsDocTest(unittest.TestCase):
         text = (ROOT / "t3/runtime.md").read_text()
         self.assertLess(text.index("## Verification surfaces"), text.index("## Visual reports"))
         self.assertLess(text.index("## Visual reports"), text.index("## History"))
-        bullet = next(line for line in text.splitlines() if line.startswith("- Web or Electron UI:"))
+        bullet = next(line for line in runtime_docs().splitlines() if line.startswith("- Web or Electron UI:"))
         self.assertNotIn("html_", bullet)
 
     def test_vocabulary_row_points_at_the_section(self):
