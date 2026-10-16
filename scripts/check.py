@@ -404,13 +404,13 @@ def _is_fence_close(line, marker, length):
 def _visible_lines(text):
     """Yield source line numbers with container prefixes stripped, skipping fenced lines.
 
-    One record drives both headings and links. Each line carries stripped content
-    plus container context. At most one container level is stripped per line. That is
+    One scan drives both headings and links. It yields each visible line number
+    and content with the container prefix stripped. At most one container level is stripped per line. That is
     one blockquote marker plus one optional space, or one list indent through its
     content indent. Fence indentation is measured within the stripped content. A fence
     records its container kind and indent. It ends at its containing block boundary.
     A list fence ends at a new item at the same level or a line outside the item.
-    A blockquote fence ends at a line outside the quote. An unclosed fence outside
+    A blockquote fence ends at a non-blank line with no quote marker. An unclosed fence outside
     any container hides the rest of the file.
     """
     fence = None
@@ -558,7 +558,7 @@ def fragment_findings(root):
     length. An optional title after the destination is recognized and
     excluded from the destination. A title may hold escaped delimiters. A shared fence scanner hides fenced lines.
     It tracks marker character and opening length. It recognizes tilde and
-    backtick fences. It closes only on a matching fence of sufficient length.
+    backtick fences. It closes on a matching fence of sufficient length.
     It allows up to three spaces indent inside one blockquote or list level.
     An unclosed fence ends at its containing block boundary. Outside any container
     it hides the rest of the file. A link or heading inside a fence is not seen. A link whose
