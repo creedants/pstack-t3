@@ -1,0 +1,5 @@
+- kind fix
+- `LiveServer.server_bind` binds through `socketserver.TCPServer.server_bind` without calling `socket.getfqdn` and sets `server_name` to the bound host
+- `live_server` returns a `LiveServer` bound to 127.0.0.1
+- `LiveTest.serve` polls server output until a 30 second deadline and checks whether the server has exited before reading the address
+- `test_the_server_binds_without_a_hostname_lookup` fails when `live_server` calls `socket.getfqdn`
