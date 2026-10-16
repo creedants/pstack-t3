@@ -874,7 +874,7 @@ class GeneratedTest(LandingTest):
                     pass
 
     def test_reaped_leader_gets_no_killpg_on_interrupt(self):
-        """Runner signals only before it reaps."""
+        """Runner sends SIGKILL only before it reaps."""
         real_killpg = os.killpg
         real_waitpid = os.waitpid
         previous = signal.getsignal(signal.SIGINT)

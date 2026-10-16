@@ -1023,7 +1023,7 @@ _RESTORED = "restored"
 class _Build:
     """One shell command in its own process group, owned by exactly one runner.
 
-    Only the runner signals the group and only the runner reaps the leader. It signals only
+    Only the runner sends SIGKILL to the group and only the runner reaps the leader. It sends SIGKILL only
     before it reaps. The SIGINT handler records the interrupt and wakes the runner. It never
     signals, reaps, raises, or calls the entry disposition. The entry disposition receives the
     postponed SIGINT from deliver, after close restores the disposition.
@@ -1246,8 +1246,8 @@ class _Build:
 def run_build(command, cwd, timeout):
     """Run a shell command in its own process group. Returns a pair. Timeout returns None as the status.
 
-    One runner signals the group and reaps the leader, and it signals only before it reaps.
-    An interceptable SIGINT before the reap is postponed. The runner never signals after it reaps.
+    One runner sends SIGKILL to the group and reaps the leader, and it sends SIGKILL only before it reaps.
+    An interceptable SIGINT before the reap is postponed. The runner never sends SIGKILL after it reaps.
     It restores the entry disposition, and then delivers the SIGINT to it. SIG_IGN leaves the
     build running.
     """
