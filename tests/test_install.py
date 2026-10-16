@@ -857,7 +857,7 @@ def cross_device(backups, path, occupy=None, rename=None):
     A move that stays inside `backups` works. A hard link from a held descriptor counts as a move of the entry it holds.
 
     `occupy` is a "file" or a "directory" that fills `path` just before the first call that would write
-    anything else onto it. `rename` takes the no-replace rename away as in `put_back_race`. At exit the
+    anything else onto it. `rename` takes `/proc` away as in `put_back_race`. At exit the
     run records how many moves it failed, read back with `crossings`.
     """
     return (
