@@ -5,4 +5,4 @@
 - Step 9 keeps the 3132 two thinking block rule and points to History for older bounds.
 - Step 7 holds the three drop steps and other stops run their first two steps without the drop.
 - The executive view pointer fires only on walk and the status sentences moved to SKILL.md.
-- The skill drops 71 words.
+- SKILL.md drops 33 words and views.md drops 38 words, 71 in total.
