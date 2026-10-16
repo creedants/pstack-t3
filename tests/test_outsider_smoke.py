@@ -1,6 +1,7 @@
 """The outsider smoke catches a command a fresh HOME cannot run."""
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -117,3 +118,48 @@ class OutsiderSmokeTest(unittest.TestCase):
             expected = "".join(outsider_smoke.ok_line(name) for name in outsider_smoke.plan_names())
             self.assertEqual(result.stdout, expected)
             self.assertEqual(listing(Path(canary)), before)
+
+    def test_inherited_python_startup_overrides_cannot_reach_the_canary_home(self):
+        # Review D306 round 2 shows startup overrides escape the created home.
+        # The canary holds a cache directory, a comment only .pth file, and a docstring only site customization.
+        # The run stays in this process so recorded child output is the observer.
+        # The old code forwards verbose output. The new code drops it.
+        with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
+            (Path(canary) / CANARY).write_text("keep\n")
+            (Path(canary) / "python-cache").mkdir()
+            site = Path(canary) / "python-user" / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
+            site.mkdir(parents=True)
+            (site / "canary.pth").write_text("# canary\n")
+            (Path(canary) / "python-path").mkdir()
+            (Path(canary) / "python-path" / "sitecustomize.py").write_text('"""Canary site customization."""\n')
+            overrides = {
+                "PYTHONPYCACHEPREFIX": str(Path(canary) / "python-cache"),
+                "PYTHONUSERBASE": str(Path(canary) / "python-user"),
+                "PYTHONPATH": str(Path(canary) / "python-path"),
+                "PYTHONVERBOSE": "1",
+                "PYTHONDONTWRITEBYTECODE": "0",
+            }
+            before = listing(Path(canary))
+            original = subprocess.run
+            transcripts = []
+            real_process = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+
+            def recording(*args, **kwargs):
+                completed = original(*args, **kwargs)
+                transcripts.append(completed.stdout or "")
+                transcripts.append(completed.stderr or "")
+                return completed
+
+            subprocess.run = recording
+            try:
+                result = run(canary, tmpdir, overrides=overrides)
+            finally:
+                subprocess.run = original
+                if real_process is not None:
+                    os.environ["PSTACK_TEST_REAL_PROCESS"] = real_process
+            self.assertEqual(result.returncode, 0, result.stderr)
+            expected = "".join(outsider_smoke.ok_line(name) for name in outsider_smoke.plan_names())
+            self.assertEqual(result.stdout, expected)
+            self.assertEqual(listing(Path(canary)), before)
+            self.assertNotIn(str(canary), "".join(transcripts))
+            self.assertNotIn(str(canary), result.stdout + result.stderr)

@@ -21,9 +21,6 @@ from pathlib import Path
 CHECKOUT = Path(__file__).resolve().parents[1]
 FIXTURE_CATALOG = CHECKOUT / "tests" / "fixtures" / "catalog.json"
 AUTHOR_NAMES = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
-DROPPED = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-           "XDG_RUNTIME_DIR", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
-           "CLAUDE_CONFIG_DIR", "BRIGADE_STORE", "BRIGADE_DIR")
 README_TEXT = "# outsider smoke\n"
 # One prep command writes a file whose text is its second argument.
 WRITER = "import sys\nopen(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2])\n"
@@ -88,12 +85,13 @@ def _commands(layout):
     """Every step, in order. Each argv is absolute and each step runs in the checkout."""
     python = sys.executable
     return (
-        Step("install", (python, str(CHECKOUT / "scripts" / "install.py")), CHECKOUT),
-        Step("doctor", (python, str(CHECKOUT / "scripts" / "install.py"), "doctor"), CHECKOUT),
+        Step("install", (python, "-I", str(CHECKOUT / "scripts" / "install.py")), CHECKOUT),
+        Step("doctor", (python, "-I", str(CHECKOUT / "scripts" / "install.py"), "doctor"), CHECKOUT),
         Step(
             "roles",
             (
                 python,
+                "-I",
                 str(CHECKOUT / "skills" / "pstack-runtime" / "scripts" / "roles.py"),
                 "show",
                 "--catalog",
@@ -109,6 +107,7 @@ def _commands(layout):
             "brigade",
             (
                 python,
+                "-I",
                 str(CHECKOUT / "skills" / "brigade" / "scripts" / "brigade.py"),
                 "open",
                 "--project-root",
@@ -122,6 +121,7 @@ def _commands(layout):
             "land",
             (
                 python,
+                "-I",
                 str(CHECKOUT / "skills" / "landing" / "scripts" / "land.py"),
                 "--repo",
                 str(layout.repo),
@@ -183,12 +183,16 @@ def make_layout(root, home):
 def child_env(home, inherited):
     """The environment every command of the run inherits. HOME names the home this run made.
 
-    Git honors its own path, configuration, template, and tracing overrides independently of HOME,
-    so every GIT_* variable is dropped except the four that name the commit identity. System
+    Only PATH, LANG, LC_ names, and the four commit identity names survive. System
     configuration is off for the run.
     """
-    env = {name: value for name, value in inherited.items()
-           if name not in DROPPED and (not name.startswith("GIT_") or name in AUTHOR_NAMES)}
+    env = {}
+    for name in ("PATH", "LANG", *AUTHOR_NAMES):
+        if name in inherited:
+            env[name] = inherited[name]
+    for name, value in inherited.items():
+        if name.startswith("LC_"):
+            env[name] = value
     env["HOME"] = str(home)
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
@@ -219,9 +223,9 @@ def prepare(layout, env):
     """Write the catalog and the scratch commit. Prep is not a step, so it prints no ok line."""
     document = json.dumps(_catalog_document(), indent=2) + "\n"
     calls = (
-        (sys.executable, "-c", WRITER, str(layout.catalog), document),
+        (sys.executable, "-I", "-c", WRITER, str(layout.catalog), document),
         ("git", "init", "-b", "main", str(layout.repo)),
-        (sys.executable, "-c", WRITER, str(layout.repo / "README.md"), README_TEXT),
+        (sys.executable, "-I", "-c", WRITER, str(layout.repo / "README.md"), README_TEXT),
         ("git", "-C", str(layout.repo), "add", "README.md"),
         ("git", "-C", str(layout.repo), "commit", "--message", "outsider smoke"),
     )
