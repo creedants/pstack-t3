@@ -30,7 +30,7 @@ A change applies from the next brief, and a running worker keeps the mode its br
 
 ## Command output
 
-The text under each command is what its `#` comment in [the script](SKILL.md#the-script) said before this section held it.
+Each command's text below is the text that moved out of the command block in [the script](SKILL.md#the-script), word for word.
 
 ### status
 
@@ -110,11 +110,11 @@ The text under each command is what its `#` comment in [the script](SKILL.md#the
 
 ### watch
 
-**`$B watch`.** a line for every open dish; renews each live lease. A dish that owes its round decision gets `<n> send-backs, decision pending`.
+**`$B watch`.** a line for every open dish; renews each live lease.
 
 ### hang
 
-**`$B hang`.** one open run after report-back, once per attempt. Without a report-back it refuses with `brigade: no report-back on this attempt`.
+**`$B hang`.** one open run after report-back, once per attempt.
 
 ### model
 
@@ -138,7 +138,7 @@ The text under each command is what its `#` comment in [the script](SKILL.md#the
 
 ### pass
 
-**`$B pass record`.** `--reviewer-thread` writes the reviewer row of threads.tsv for this attempt. It takes its seat from `--verifier`. Each send-back it counts ends its line with `<n> send-backs, decision pending`.
+**`$B pass record`.** `--reviewer-thread` writes the reviewer row of threads.tsv for this attempt. It takes its seat from `--verifier`.
 
 **`$B pass check`.** exits 1 unless that SHA passed. `--json` prints verdict, author, verifier, note, and crossFamily.
 

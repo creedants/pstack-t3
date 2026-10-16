@@ -62,7 +62,7 @@ $B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a
 $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
-$B ticket paths [--dry-run]                  # records the tracked paths it finds in each waiting ticket's backtick quotes
+$B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
 $B startable                                 # the workers line, then each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. A ticket line reads startable, rides with, below auto-start, decision for the owner, held back, or unknown, no paths recorded
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
@@ -70,13 +70,13 @@ $B goal add --name "<name>" --purpose "<why>" --done "<test>" [--share <n>]   # 
 $B goal set G1 --state open|paused|done|dropped [--evidence "<one line>"]   # a move to done or dropped needs --evidence
 $B goal set G<n> --state paused   # no ticket of that goal starts, not even as a ride-along
 $B goal set G<n> --share N   # a ceiling of N worker slots holding that goal's items
-$B goal list [--all]   # each open or paused goal with its state, name, counts, purpose, and done test, then the counts of unassigned work
+$B goal list [--all]   # each open or paused goal, and each done or dropped goal that still has waiting work, with its state, name, counts, purpose, and done test, then the counts of unassigned work
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3] [--doc-item]   # claims the lease, prints D<n>
 $B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md
 $B brief D2 --goal '...' --acceptance '...' [--acceptance ...] --contract '...' --verify '...' --base main [--context ...]   # same brief. Single-quote every field
 $B contract D2                               # prints the contract the last brief of D2 stored
 $B watch                                     # a line for every open dish; renews each live lease. A dish that owes its round decision gets <n> send-backs, decision pending
-$B hang D1 --provider <provider> --minutes <n> [--attempt <n>]   # one open run after report-back, once per attempt. Without a report-back it refuses with brigade: no report-back on this attempt
+$B hang D1 --provider <provider> --minutes <n> [--attempt <n>]   # one open run after report-back, once per attempt
 $B model skip <provider/model> --cause rate-limit|failed   # records that seat as skipped
 $B model clear <provider/model>   # records a passing smoke test on that seat and clears its skip
 $B thread <dish> --role "panel member" --thread <id> --seat <provider/model>   # records one thread an item used, for a role no other command writes
@@ -84,7 +84,7 @@ $B dish D2 --state dropped [--stopped <run id>|idle]   # releases the dish's lea
 $B dish D2 --state in-progress|in-review|queued|merged [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>] [--reported] [--lease <id>] [--paths <paths>] [--branch <name>]   # --thread writes the open worker row of threads.tsv for the current attempt
 $B dish D2 --mode full --reason "<one line>"   # records the item's move to full once
 $B dish D1 --worker-ended "<reason>"   # records that this attempt's worker ended or failed and wrote no report
-$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. Each send-back it counts ends its line with <n> send-backs, decision pending
+$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. Once the dish owes its round decision, each send-back it counts ends its line with <n> send-backs, decision pending
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
 $B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
