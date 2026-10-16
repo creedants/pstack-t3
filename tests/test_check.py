@@ -909,6 +909,94 @@ class FragmentCheckTest(unittest.TestCase):
             [],
         )
 
+    def test_a_percent_encoded_fragment_to_a_present_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "## Caf\u00e9\n[ok](#caf%C3%A9)\n"}),
+            [],
+        )
+
+    def test_a_percent_encoded_fragment_to_a_missing_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "## Terms\n[bad](#caf%C3%A9)\n"}),
+            ["brigade/SKILL.md:2: fragment #caf\u00e9 names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_query_bearing_destination_to_a_present_heading_passes(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "[ok](verdict-protocol.md?raw=1#rule)\n",
+                    "brigade/verdict-protocol.md": "## Rule\n",
+                }
+            ),
+            [],
+        )
+
+    def test_a_query_bearing_destination_to_a_missing_heading_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings(
+                {
+                    "brigade/SKILL.md": "[bad](verdict-protocol.md?raw=1#missing)\n",
+                    "brigade/verdict-protocol.md": "## Rule\n",
+                }
+            ),
+            ["brigade/SKILL.md:1: fragment #missing names no heading in brigade/verdict-protocol.md"],
+        )
+
+    def test_a_quote_marker_inside_a_quoted_fence_stays_in_code(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> ```md\n> > ```\n> [example](#missing)\n> ```\n"}),
+            [],
+        )
+
+    def test_a_quoted_fence_ends_before_a_reported_link(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> ```md\n> > ```\n> ```\n> [bad](#missing)\n"}),
+            ["brigade/SKILL.md:4: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_quote_marker_inside_a_fenced_list_item_stays_in_code(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "- ```md\n  > ```\n  [example](#missing)\n  ```\n"}),
+            [],
+        )
+
+    def test_a_link_outside_a_fenced_list_item_is_still_reported(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "- ```md\n>   [bad](#missing)\n"}),
+            ["brigade/SKILL.md:2: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_document_fence_after_a_quoted_list_is_not_a_list_fence(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> - item\n\n  ```md\n[example](#missing)\n  ```\n"}),
+            [],
+        )
+
+    def test_a_list_indent_does_not_reach_into_a_later_quote(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "- item\n>   ```md\n> [example](#missing)\n> ```\n"}),
+            [],
+        )
+
+    def test_an_indented_heading_in_a_quoted_code_block_is_not_a_heading(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "- item\n>     ## Missing\n[bad](#missing)\n"}),
+            ["brigade/SKILL.md:3: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_link_in_a_nested_quote_after_a_blank_quote_line_is_reported(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> > ```md\n>\n> > [bad](#missing)\n"}),
+            ["brigade/SKILL.md:3: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_fence_in_a_parent_list_ends_at_the_parent_boundary(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "- - item\n\n  ```md\n[bad](#missing)\n  ```\n"}),
+            ["brigade/SKILL.md:4: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
     def test_check_tree_reports_a_fragment_that_names_no_heading(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

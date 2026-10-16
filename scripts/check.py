@@ -14,6 +14,7 @@ import pwd
 import re
 import socket
 import sys
+import urllib.parse
 
 try:
     import yaml
@@ -563,10 +564,14 @@ def fragment_findings(root):
     backtick fences. It closes on a matching fence of sufficient length.
     It allows up to three spaces indent inside one blockquote or list level.
     An unclosed fence ends at its containing block boundary. Outside any container
-    it hides the rest of the file. A link or heading inside a fence is not seen. A link whose
-    fragment is empty, as in (other.md) or (other.md#),
-    is skipped. A link whose path before the # is empty, as in (#terms), is
-    checked against the file that holds it. Otherwise the path resolves against
+    it hides the rest of the file. A link or heading inside a fence is not seen.
+    A percent-encoded fragment is decoded before matching. A destination query
+    is stripped before resolving. The finding names the decoded fragment and
+    the resolved file. A link whose
+    fragment is empty, as in (other.md#),
+    is skipped. A link with no # is not extracted. A link whose path before the # is empty or holds only a query,
+    as in (#terms) or (?raw=1#terms), is
+    checked against the file that holds it. Otherwise the query is stripped and the path resolves against
     the holding file's directory. A path that does not resolve to an existing
     file, one whose target is not a .md file, one whose target is outside the
     tree, and one whose target .md lives in a vendor-derived skill are skipped.
@@ -593,15 +598,20 @@ def fragment_findings(root):
             rel = file.relative_to(root).as_posix()
             for number, line in _visible_lines(file.read_text()):
                 for target in _fragment_link_targets(line):
-                    path, fragment = target.split("#", 1)
-                    if fragment == "":
+                    path, raw_fragment = target.split("#", 1)
+                    if raw_fragment == "":
                         continue
+                    fragment = urllib.parse.unquote(raw_fragment)
                     if path == "":
                         target_file = file
                     else:
-                        target_file = (file.parent / path).resolve()
-                        if not target_file.is_file() or target_file.suffix != ".md":
-                            continue
+                        clean_path = path.split("?", 1)[0]
+                        if clean_path == "":
+                            target_file = file
+                        else:
+                            target_file = (file.parent / clean_path).resolve()
+                            if not target_file.is_file() or target_file.suffix != ".md":
+                                continue
                     try:
                         target_rel = target_file.relative_to(root)
                     except ValueError:
