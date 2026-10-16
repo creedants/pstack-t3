@@ -11,6 +11,11 @@ from .support import (
 
 
 class ContextCapTest(BrigadeTest):
+    def setUp(self):
+        super().setUp()
+        # The product resolves the project root, so this fixture uses the resolved project directory.
+        self.project = Path(self.temporary.name).resolve() / "Bridge Kit"
+
     def settings(self):
         return Path(self.project) / ".claude" / "settings.local.json"
 
