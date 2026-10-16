@@ -2548,7 +2548,7 @@ def install_token(path, text):
 
 
 class LiveServer(http.server.ThreadingHTTPServer):
-    """The HTTP server for one store's live view. It binds 127.0.0.1 without the hostname lookup HTTPServer.server_bind runs, which waits on DNS and delays the printed address under load."""
+    """The HTTP server for one store's live view. It binds without the hostname lookup HTTPServer.server_bind runs, which waits on DNS and delays the printed address under load."""
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)

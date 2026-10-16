@@ -3890,6 +3890,9 @@ class LiveTest(OutputCase):
                 break
             ready, _, _ = select.select([process.stdout], [], [], min(1.0, max(0.0, deadline - time.time())))
         if not ready and process.poll() is not None:
+            final, _, _ = select.select([process.stdout], [], [], 0)
+            ready = final
+        if not ready and process.poll() is not None:
             stderr = process.stderr.read()
             self.fail(f"the live server exited with {process.returncode} before printing an address: {stderr.strip()[-500:]}")
         self.assertTrue(ready, "the live server printed no address")
