@@ -220,15 +220,11 @@ class Integration:
             names.extend(path for path in out.split("\0") if path)
         return sorted(set(names))
 
-    def _stop_build(self, process):
-        return seam._stop_tracked(process)
-
-    def _run_build(self, command, timeout, active):
-        return seam.run_build(command, self.path, timeout, active)
+    def _run_build(self, command, timeout):
+        return seam.run_build(command, self.path, timeout)
 
     def _rebuild(self, before):
         command = "python3 scripts/build.py"
-        active = {}
         try:
             failed = self._clear_generated()
             if failed:
@@ -241,7 +237,7 @@ class Integration:
                 slot = None
             holder = slot("landing", repo=self.path, command=command) if slot else contextlib.nullcontext()
             with holder:
-                first = self._run_build(command, timeout, active)
+                first = self._run_build(command, timeout)
                 if first[0] is None or first[0] != 0:
                     reason = "timed out" if first[0] is None else f"exited {first[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(first[1])}")
@@ -258,7 +254,7 @@ class Integration:
                 failed = self._clear_generated()
                 if failed:
                     return self._give_up(before, failed)
-                second = self._run_build(command, timeout, active)
+                second = self._run_build(command, timeout)
                 if second[0] is None or second[0] != 0:
                     reason = "timed out" if second[0] is None else f"exited {second[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(second[1])}")
@@ -283,7 +279,6 @@ class Integration:
                     return self._give_up(before, f"rebuild failed. `git commit --amend` exited {amend.returncode}. {_tail(amend.stderr + amend.stdout)}")
             return None
         except BaseException as error:
-            self._stop_build(active.pop("process", None))
             self._give_up(before, "")
             if isinstance(error, Exception):
                 return f"rebuild failed. `{command}` {type(error).__name__}: {error}"

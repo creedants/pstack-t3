@@ -728,7 +728,7 @@ class GeneratedTest(LandingTest):
                 time.sleep(0.05)
             if queue.poll() is not None:
                 out, err = queue.communicate()
-                self.fail(f"queue exited before the build slept: {out[-2000:]} {err[-2000:]}")
+                self.fail(f"queue exited before the interrupt: {out[-2000:]} {err[-2000:]}")
             self.assertTrue(marker.exists(), "fixture build never recorded readiness")
             queue.send_signal(signal.SIGINT)
             queue.wait(timeout=120)
@@ -806,7 +806,7 @@ class GeneratedTest(LandingTest):
                 time.sleep(0.05)
             if queue.poll() is not None:
                 out, err = queue.communicate()
-                self.fail(f"queue exited before the helper started: {out[-2000:]} {err[-2000:]}")
+                self.fail(f"queue exited before the interrupt: {out[-2000:]} {err[-2000:]}")
             self.assertTrue(marker.exists(), "fixture build never recorded readiness")
             self.assertIsNotNone(helper_pid)
             self.assertIsNotNone(build_pgid)
@@ -874,43 +874,40 @@ class GeneratedTest(LandingTest):
                     pass
 
     def test_reaped_leader_gets_no_killpg_on_interrupt(self):
-        if not hasattr(os, "waitid"):
-            self.skipTest("reaped boundary proof needs os.waitid")
-        real_handle = subprocess.Popen._handle_exitstatus
+        """Runner signals only before it reaps."""
         real_killpg = os.killpg
+        real_waitpid = os.waitpid
         previous = signal.getsignal(signal.SIGINT)
         attempts = []
-        proof = []
         injected = []
 
         def recording_killpg(pgid, sig):
             attempts.append((pgid, sig))
+            return real_killpg(pgid, sig)
 
-        def injecting_handle(self, sts, *args, **kwargs):
-            if not injected:
+        def injecting_waitpid(pid, options):
+            try:
+                result = real_waitpid(pid, options)
+            except ChildProcessError:
+                if not injected:
+                    injected.append(True)
+                    signal.raise_signal(signal.SIGINT)
+                raise
+            if result[0] != 0 and not injected:
                 injected.append(True)
-                try:
-                    os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                except ChildProcessError:
-                    proof.append("reaped")
-                except OSError:
-                    proof.append("unproven")
-                else:
-                    proof.append("reserved")
                 signal.raise_signal(signal.SIGINT)
-            return real_handle(self, sts, *args, **kwargs)
+            return result
 
-        subprocess.Popen._handle_exitstatus = injecting_handle
         os.killpg = recording_killpg
+        os.waitpid = injecting_waitpid
         try:
             with self.assertRaises(KeyboardInterrupt):
                 land.run_build("exit 0", str(self.work), 10)
         finally:
-            subprocess.Popen._handle_exitstatus = real_handle
             os.killpg = real_killpg
+            os.waitpid = real_waitpid
         self.assertEqual(injected, [True])
-        self.assertEqual(proof, ["reaped"])
-        self.assertEqual(attempts, [], "killpg ran after reap")
+        self.assertEqual(attempts, [])
         self.assertIs(signal.getsignal(signal.SIGINT), previous)
 
     def test_sigint_ignored_preserves_build_when_sig_ign(self):
@@ -918,18 +915,18 @@ class GeneratedTest(LandingTest):
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import signal, subprocess, sys",
+            "import select, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_IGN)",
-            "real = subprocess.Popen.communicate",
+            "real = select.select",
             "sent = []",
-            "def wrapping(self, *args, **kwargs):",
+            "def wrapping(*args, **kwargs):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(self, *args, **kwargs)",
-            "subprocess.Popen.communicate = wrapping",
+            "    return real(*args, **kwargs)",
+            "select.select = wrapping",
             f"try:\n    code, out = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -944,23 +941,23 @@ class GeneratedTest(LandingTest):
         self.assertIn("finished", result.stdout)
         self.assertNotIn("CAUGHT", result.stdout + result.stderr)
 
-    def test_sigint_default_terminates_build_when_sig_dfl(self):
+    def test_sigint_default_terminates_runner_when_sig_dfl(self):
         parent = str(SCRIPT.parent)
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import signal, subprocess, sys",
+            "import select, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_DFL)",
-            "real = subprocess.Popen.communicate",
+            "real = select.select",
             "sent = []",
-            "def wrapping(self, *args, **kwargs):",
+            "def wrapping(*args, **kwargs):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(self, *args, **kwargs)",
-            "subprocess.Popen.communicate = wrapping",
+            "    return real(*args, **kwargs)",
+            "select.select = wrapping",
             f"try:\n    result = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -976,10 +973,10 @@ class GeneratedTest(LandingTest):
         self.assertNotIn("CAUGHT", result.stdout + result.stderr)
 
     def test_install_race_restores_handler_after_interrupt(self):
+        """Restoration runs masked."""
         real_signal = signal.signal
         previous = signal.getsignal(signal.SIGINT)
         injected = []
-        active = {}
 
         def wrapping_signal(signum, handler):
             result = real_signal(signum, handler)
@@ -991,19 +988,184 @@ class GeneratedTest(LandingTest):
         signal.signal = wrapping_signal
         try:
             with self.assertRaises(KeyboardInterrupt):
-                land.run_build("sleep 30", str(self.work), 30, active)
+                land.run_build("sleep 30", str(self.work), 30)
         finally:
             signal.signal = real_signal
         self.assertEqual(injected, [True])
         self.assertIs(signal.getsignal(signal.SIGINT), previous)
-        proc = active.get("process")
-        if proc is not None:
+
+    def test_previous_callable_runs_after_the_reap(self):
+        """Previous runs after the reap."""
+        real_killpg = os.killpg
+        real_waitpid = os.waitpid
+        previous = signal.getsignal(signal.SIGINT)
+        order = []
+        calls = []
+        reaped = []
+
+        def recording_killpg(pgid, sig):
+            order.append("killpg")
+            signal.raise_signal(signal.SIGINT)
+            return real_killpg(pgid, sig)
+
+        def recording_waitpid(pid, options):
             try:
-                land._stop_tracked(proc)
-            except OSError:
-                pass
+                result = real_waitpid(pid, options)
+            except ChildProcessError:
+                if not reaped:
+                    reaped.append(True)
+                    order.append("reaped")
+                raise
+            if result[0] != 0 and not reaped:
+                reaped.append(True)
+                order.append("reaped")
+            return result
+
+        def returning_previous(signum, frame):
+            calls.append(order[:])
             try:
-                proc.stdout.close()
-            except (OSError, ValueError):
+                os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
                 pass
-            self.assertIsNotNone(proc.returncode)
+
+        os.killpg = recording_killpg
+        os.waitpid = recording_waitpid
+        signal.signal(signal.SIGINT, returning_previous)
+        try:
+            land.run_build("sleep 5", str(self.work), 0.1)
+            restored = signal.getsignal(signal.SIGINT)
+        finally:
+            os.killpg = real_killpg
+            os.waitpid = real_waitpid
+            signal.signal(signal.SIGINT, previous)
+        self.assertEqual(order, ["killpg", "reaped"])
+        self.assertEqual(calls, [["killpg", "reaped"]])
+        self.assertIs(restored, returning_previous)
+
+    def test_sigint_at_every_runner_line_keeps_the_ownership_contract(self):
+        """Ownership holds at every line."""
+        codes = {land.run_build.__code__}
+        for value in vars(land._Build).values():
+            if callable(value):
+                codes.add(value.__code__)
+
+        def line_events(command, timeout):
+            seen = []
+
+            def tracer(frame, event, arg):
+                if frame.f_code in codes:
+                    if event == "line":
+                        seen.append((frame.f_code.co_name, frame.f_lineno))
+                    return tracer
+                return None
+
+            sys.settrace(tracer)
+            try:
+                land.run_build(command, str(self.work), timeout)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                sys.settrace(None)
+            return seen
+
+        builds = [("exit 0", 5), ("sleep 5", 0.05), ("(sleep 30) & exit 0", 0.05)]
+        counts = [len(line_events(command, timeout)) for command, timeout in builds]
+        real_killpg = os.killpg
+        real_waitpid = os.waitpid
+        order = []
+        calls = []
+
+        def recording_killpg(pgid, sig):
+            order.append("killpg")
+            return real_killpg(pgid, sig)
+
+        def recording_waitpid(pid, options):
+            try:
+                result = real_waitpid(pid, options)
+            except ChildProcessError:
+                order.append("reaped")
+                raise
+            if result[0] != 0:
+                order.append("reaped")
+            return result
+
+        os.killpg = recording_killpg
+        os.waitpid = recording_waitpid
+        try:
+            for kind in ("raising", "returning"):
+                for (command, timeout), total in zip(builds, counts):
+                    for index in range(total):
+                        del order[:]
+                        del calls[:]
+
+                        def raising_previous(signum, frame):
+                            calls.append(1)
+                            raise KeyboardInterrupt
+
+                        def returning_previous(signum, frame):
+                            calls.append(1)
+
+                        entry = raising_previous if kind == "raising" else returning_previous
+                        signal.signal(signal.SIGINT, entry)
+                        fired = [0]
+
+                        def tracer(frame, event, arg):
+                            if frame.f_code in codes:
+                                if event == "line":
+                                    if fired[0] == index:
+                                        signal.raise_signal(signal.SIGINT)
+                                    fired[0] += 1
+                                return tracer
+                            return None
+
+                        started = time.monotonic()
+                        sys.settrace(tracer)
+                        try:
+                            land.run_build(command, str(self.work), timeout)
+                        except KeyboardInterrupt:
+                            pass
+                        finally:
+                            sys.settrace(None)
+                        elapsed = time.monotonic() - started
+                        kinds = [name for name in order]
+                        after = "reaped" in kinds and "killpg" in kinds[kinds.index("reaped"):]
+                        restored = signal.getsignal(signal.SIGINT) is entry
+                        self.assertFalse(after, f"{kind} {command} line {index}: {kinds}")
+                        self.assertTrue(restored, f"{kind} {command} line {index}")
+                        self.assertEqual(calls, [1], f"{kind} {command} line {index}")
+                        self.assertLess(elapsed, 6, f"{kind} {command} line {index}")
+        finally:
+            os.killpg = real_killpg
+            os.waitpid = real_waitpid
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    def test_timeout_kills_unreaped_then_waits_at_most_five_seconds(self):
+        """Timeout kills unreaped then waits at most five seconds."""
+        parent = str(SCRIPT.parent)
+        work = str(self.work)
+        lines = [
+            "import os, sys, time",
+            f"sys.path.insert(0, {parent!r})",
+            "import land",
+            "if hasattr(os, 'waitid'):",
+            "    try: del os.waitid",
+            "    except AttributeError: pass",
+            "os.environ['PATH'] = ''",
+            "build = sys.executable + \" -c 'import time; time.sleep(0.8)'\"",
+            "start = time.monotonic()",
+            "code, out = land.run_build(build, sys.argv[1], 0.05)",
+            "first = time.monotonic() - start",
+            "holder = object.__new__(land.Integration)",
+            "holder.path = sys.argv[1]",
+            "start = time.monotonic()",
+            "code2, out2 = land.Integration._run_build(holder, build, 0.05)",
+            "second = time.monotonic() - start",
+            "ok = code is None and code2 is None and first < 0.5 and second < 0.5",
+            "print('RESULT ' + repr((code, code2, round(first, 3), round(second, 3))))",
+            "raise SystemExit(0 if ok else 2)",
+        ]
+        result = subprocess.run(
+            [sys.executable, "-c", "\n".join(lines), work],
+            capture_output=True, text=True, timeout=60, cwd=work)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("RESULT (None, None", result.stdout)

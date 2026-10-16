@@ -1,3 +1,5 @@
 - kind fix
 - `governor.py` shares one runner between `supervised` and `Integration._run_build`.
-- The SIGINT handler attempts SIGKILL for the tracked group when the leader has no recorded return code.
+- The runner signals only before it reaps.
+- Restoration runs masked.
+- Timeout kills unreaped then waits at most five seconds.
