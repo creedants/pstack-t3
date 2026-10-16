@@ -1,0 +1,4 @@
+- kind upkeep
+- `vendor/pstack/` is the `pstack/` tree from the repository in `upstream.json` at 182f2ce414e83224915c190d2f63239c1608d0a5, and `upstream.json` pins that commit and version 0.15.25
+- between 99743e9c151c8537cbbf1f98bb38f34ef3368453 and 182f2ce414e83224915c190d2f63239c1608d0a5, upstream changes `pstack/README.md` and adds `pstack/docs/harness/claude-code.md`, and those are the only paths that differ under `vendor/pstack/`
+- no override or persona changed, `t3/overrides.lock.json` is unchanged, and `python3 scripts/build.py` regenerates nothing under `skills/`
