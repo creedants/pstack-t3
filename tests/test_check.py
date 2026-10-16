@@ -711,6 +711,52 @@ class LinkCheckTest(unittest.TestCase):
         )
 
 
+class LightTableExemptionTest(unittest.TestCase):
+    TABLE = (
+        "| Spawn | Light behavior |\n"
+        "| --- | --- |\n"
+        "| `swarm` | Spawn at most 3 workers. |\n"
+    )
+    SKILL = "---\nname: pstack-runtime\ndescription: d\n---\n\n## Gate review\n\nCall `watch_pull_request`. Call `unwatch_pull_request`.\n"
+
+    def test_a_light_table_in_light_md_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "pstack-runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "SKILL.md").write_text(self.SKILL)
+            (runtime / "light.md").write_text(
+                "# Light behavior\n\nRead this file before every spawn and run the row for that spawn.\n\n" + self.TABLE
+            )
+            self.assertEqual(check.check_tree(root), [])
+
+    def test_the_same_table_in_another_file_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "pstack-runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "SKILL.md").write_text(self.SKILL)
+            (runtime / "other.md").write_text(self.TABLE)
+            findings = check.check_tree(root)
+            self.assertTrue(
+                any("light table restated" in finding and "pstack-runtime/other.md" in finding for finding in findings),
+                findings,
+            )
+
+    def test_forbidden_patterns_still_apply_to_light_md(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "pstack-runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "SKILL.md").write_text(self.SKILL)
+            (runtime / "light.md").write_text("# Light behavior\n\nRun with run_in_background.\n")
+            findings = check.check_tree(root)
+            self.assertTrue(
+                any("pstack-runtime/light.md" in finding and "Cursor Task flag" in finding for finding in findings),
+                findings,
+            )
+
+
 class FragmentCheckTest(unittest.TestCase):
     def test_a_fragment_link_to_a_missing_skill_heading_is_reported(self):
         self.assertEqual(
