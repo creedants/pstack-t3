@@ -547,14 +547,16 @@ def other_items_threads(restaurant, dish_id):
     return held
 
 
-def announce_archive(restaurant, dish_id, occasion, thread="", replaced=""):
+def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None):
     """Print one `archive thread: <id>` line on standard error for each thread to archive at a finish point.
 
     `occasion` is "review" for the thread a `pass record` recorded, "replaced" for the worker a
     `dish --thread` replaced, and "closed" for every worker thread a merged or dropped item used.
     `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the dish's thread
-    cell read before that write. The coordinator's own thread, a thread another item in flight holds,
-    a blank id, and a repeated id are left out. The call writes no table.
+    cell read before that write. `only` holds ids seen before an unlocked step. None means no restriction.
+    A set means only ids in it print. The coordinator's own thread, a thread another item in flight holds,
+    a blank id, and a repeated id are left out. A review also leaves out the item's current worker and its
+    open worker rows. The call writes no table.
     """
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
     workers = [row["thread"] for row in rows if row["role"] in WORKER_ROLES and row["thread"]]
@@ -577,10 +579,21 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced=""):
             found.append(dish["thread"])
     own = clean(restaurant.meta.get("thread") or "")
     live = other_items_threads(restaurant, dish_id)
+    excluded = {own} | set(live)
+    if occasion == "review":
+        _, dish = restaurant.find("dishes.tsv", dish_id)
+        current = stored("dishes.tsv", "thread", dish["thread"])
+        if current:
+            excluded.add(current)
+        for row in rows:
+            if row["role"] in WORKER_ROLES and not row["end"] and row["thread"]:
+                excluded.add(stored("threads.tsv", "thread", row["thread"]))
     seen = set()
     for item in found:
         item = stored("threads.tsv", "thread", item)
-        if not item or item == own or item in live or item in seen:
+        if not item or item in excluded or item in seen:
+            continue
+        if only is not None and item not in only:
             continue
         seen.add(item)
         print(f"{ARCHIVE_PREFIX}{item}", file=sys.stderr)
@@ -595,6 +608,17 @@ def drop(restaurant, ident, stopped):
         if lease and dish["thread"] and not stopped:
             raise BrigadeError(f"{ident} holds {lease} and its worker may still be running; "
                                "wait for its run with t3_thread_wait, then pass --stopped <run id>")
+        observed = set()
+        current = stored("dishes.tsv", "thread", dish["thread"])
+        if current:
+            observed.add(current)
+        for row in restaurant.rows("threads.tsv"):
+            if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]:
+                observed.add(stored("threads.tsv", "thread", row["thread"]))
+        for item in retired_worker_threads(restaurant, ident):
+            item = stored("threads.tsv", "thread", item)
+            if item:
+                observed.add(item)
     if lease:
         result = seam.land_result(restaurant.meta["projectRoot"], "lease", "release", lease, *restaurant.land_owner())
         error = result.stderr.strip().removeprefix("land: ")
@@ -607,7 +631,7 @@ def drop(restaurant, ident, stopped):
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
         write_threads(restaurant, ident, (), closing=True)
-        announce_archive(restaurant, ident, "closed")
+        announce_archive(restaurant, ident, "closed", only=observed)
         rows = restaurant.rows("rail.tsv")
         back = [row for row in rows if row["state"] == "assigned" and row["dish"] == ident]
         for row in back:
