@@ -3872,6 +3872,12 @@ class LedgerTest(OutputCase):
 
 
 class LiveTest(OutputCase):
+    def drained(self, process):
+        ready, _, _ = select.select([process.stdout], [], [], 0)
+        if not ready:
+            return ""
+        return process.stdout.readline().strip()
+
     def serve(self, *args, **how):
         """Start activity.py --serve 0 as a real interpreter and return its process and printed token address. A race: the server answers while this test fetches."""
         process = in_process.spawn(in_process.Reason.RACE, self.fixture.command("--serve", "0", *args, **how))
@@ -3884,21 +3890,38 @@ class LiveTest(OutputCase):
 
         self.addCleanup(stop)
         deadline = time.time() + 30
-        ready = []
-        while not ready and time.time() < deadline:
+        while time.time() < deadline:
             if process.poll() is not None:
-                break
+                url = self.drained(process)
+                if url.startswith("http://127.0.0.1:"):
+                    return process, url
+                try:
+                    process.wait(timeout=max(0.0, deadline - time.time()))
+                except subprocess.TimeoutExpired:
+                    pass
+                url = self.drained(process)
+                if url.startswith("http://127.0.0.1:"):
+                    return process, url
+                if process.poll() is not None:
+                    stderr = process.stderr.read()
+                    self.fail(f"the live server exited with {process.returncode} before printing an address: {stderr.strip()[-500:]}")
+                continue
             ready, _, _ = select.select([process.stdout], [], [], min(1.0, max(0.0, deadline - time.time())))
-        if not ready and process.poll() is not None:
-            final, _, _ = select.select([process.stdout], [], [], 0)
-            ready = final
-        if not ready and process.poll() is not None:
+            if not ready:
+                continue
+            line = process.stdout.readline().strip()
+            if not line:
+                try:
+                    process.wait(timeout=min(1.0, max(0.0, deadline - time.time())))
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            self.assertTrue(line.startswith("http://127.0.0.1:"), line)
+            return process, line
+        if process.poll() is not None:
             stderr = process.stderr.read()
             self.fail(f"the live server exited with {process.returncode} before printing an address: {stderr.strip()[-500:]}")
-        self.assertTrue(ready, "the live server printed no address")
-        url = process.stdout.readline().strip()
-        self.assertTrue(url.startswith("http://127.0.0.1:"), url)
-        return process, url
+        self.fail("the live server printed no address")
 
     def fetch(self, url, method=None, data=None):
         try:
@@ -3954,6 +3977,23 @@ class LiveTest(OutputCase):
             server = MOD["live_server"](settings, MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"]), 0)
         self.addCleanup(server.server_close)
         self.assertEqual(server.server_name, "127.0.0.1")
+
+    def test_exit_before_output_reports_exit_status_and_stderr(self):
+        script = "import sys; sys.stderr.write('probe error\\n'); sys.stderr.flush(); sys.exit(7)"
+        proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with mock.patch.object(in_process, "spawn", return_value=proc):
+            with self.assertRaises(AssertionError) as ctx:
+                self.serve()
+        self.assertIn("the live server exited with 7 before printing an address: probe error", str(ctx.exception))
+
+    def test_buffered_address_is_kept_when_server_has_exited(self):
+        url = "http://127.0.0.1:1/activity/token"
+        proc = subprocess.Popen([sys.executable, "-c", f"print({url!r}, flush=True)"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc.wait(timeout=30)
+        with mock.patch.object(in_process, "spawn", return_value=proc):
+            got_proc, got_url = self.serve()
+        self.assertIs(got_proc, proc)
+        self.assertEqual(got_url, url)
 
     def test_the_token_file_is_mode_0600_and_reused_across_restarts(self):
         fixture = one_running(self.fixture).write()
