@@ -1,0 +1,2 @@
+- kind polish
+- The `reports-to` row in `t3/added/brigade/admin-reporting.md` links `[First service step 3](opening.md#first-service)` for the hourly service schedule. That step lives in `opening.md` after D312.

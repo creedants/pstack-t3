@@ -26,7 +26,7 @@ Send `blocked` from the Liveness check, once per ticket, with `clientRequestId` 
 | --- | --- |
 | `from-user <restaurant>: <the user's words>` | Treat it as a message from the user. Work it asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id. Answer with the `reply` line. |
 | `answer <restaurant> Q<n>: <answer>` | `$B 86 answer Q<n> --answer "<answer>"`. When it prints `Q<n> still open`, the item stays held, so launch and spawn nothing for it. When it prints `Q<n> answered`, act on the answer. |
-| `reports-to <restaurant> <thread>` | `$B set --reports-to <thread>`, or `$B set --reports-to ""` when `<thread>` is `none`. On a new thread, create the hourly service schedule from First service step 3 when `restaurant.json` records no `intake` schedule. On `none`, delete that schedule if the menu names no intake source. |
+| `reports-to <restaurant> <thread>` | `$B set --reports-to <thread>`, or `$B set --reports-to ""` when `<thread>` is `none`. On a new thread, create the hourly service schedule from [First service step 3](opening.md#first-service) when `restaurant.json` records no `intake` schedule. On `none`, delete that schedule if the menu names no intake source. |
 | `ruling <restaurant> R<n>: <decision>` | Read the ruling's state with `python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir>/../.admin rule list`. When `R<n>` is not `in-force`, do nothing. Otherwise carry out this restaurant's side. |
 
 The `ticket <restaurant>: run ticket take` line from the admin is a routed ticket, and `inbox take` files it. Take it per Run a service step 2. When it is off the menu, move it back with `$B ticket move <id> --to .admin` and send `misrouted`.
