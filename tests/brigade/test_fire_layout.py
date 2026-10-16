@@ -274,3 +274,239 @@ class FireLayoutTest(BrigadeTest):
                 self.assertEqual(out, row["out"])
                 self.assertEqual(dish, row["dish"])
                 self.assertEqual(lease, row["lease"])
+
+    def test_startable_doc_item_lease_omits_catalog_for_other_holder(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "a", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/setup.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        text = self.brigade("startable")
+        self.assertIn("T1 normal fix, 0m: blocked, waiting on L1 (engine/D1); t3/runtime.md", text)
+        self.assertIn("T2 normal fix, 0m: startable; t3/setup.md --doc-item", text)
+
+    def test_startable_doc_item_expansion_omits_catalog_for_overlap(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "a", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/setup.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        text = self.brigade("startable")
+        self.assertIn("T1 normal fix, 0m: startable; t3/runtime.md", text)
+        self.assertIn("T2 normal fix, 0m: startable; t3/setup.md --doc-item", text)
+
+    def test_blocked_doc_item_recheck_unblocks_with_other_catalog_holder(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/runtime.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.blocked_note(self.at, "T2"),
+                         {"kind": "workers", "tickets": ["T2"], "station": "bug-fix", "summary": "b",
+                          "paths": "t3/runtime.md", "timebox": 60, "doc_item": True})
+        self.brigade("dish", "D1", "--state", "sent-back")
+        line = next(part for part in self.brigade("watch").splitlines() if "unblocked; run" in part)
+        self.assertIn("--doc-item", line)
+        ran = self.bash_unblocked(self.at, line)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        dish = self.table_row(self.at, "dishes.tsv", "D2")["paths"]
+        self.assertEqual(dish, "t3/runtime.md,skills/pstack-runtime/SKILL.md,changes/perf%2Fd2.md")
+        leases = [entry for entry in self.lease_lines() if "perf/D2" in entry]
+        self.assertEqual(len(leases), 1)
+        self.assertNotIn("docs/skills.md", leases[0])
+
+    def test_blocked_legacy_note_without_doc_item_stays_blocked_on_catalog(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/runtime.md", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        note = self.blocked_note(self.at, "T2")
+        self.assertNotIn("doc_item", note)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        lines = self.brigade("watch").splitlines()
+        self.assertFalse(any(part.startswith("T2: unblocked") for part in lines))
+        self.assertTrue(any(part.startswith("T2: waiting on") for part in lines))
+
+    def test_blocked_doc_item_with_explicit_catalog_path_stays_blocked(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "docs/skills.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.blocked_note(self.at, "T2")["doc_item"], True)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        lines = self.brigade("watch").splitlines()
+        self.assertFalse(any(part.startswith("T2: unblocked") for part in lines))
+        self.assertTrue(any(part.startswith("T2: waiting on") for part in lines))
+
+    def test_startable_doc_item_flag_feeds_derived_fire_omits_catalog(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/runtime.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: startable; t3/runtime.md --doc-item", text)
+        line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        raw = line.split("; ", 1)[1]
+        self.assertTrue(raw.endswith(" --doc-item"))
+        paths = raw[:-len(" --doc-item")]
+        self.assertEqual(paths, "t3/runtime.md")
+        out = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                           "--paths", paths, "--doc-item")
+        self.assertIn("D2 (lease L3 held by perf/D2)", out)
+        self.assertIn("added skills/pstack-runtime/SKILL.md", out)
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D2")["paths"],
+                         "t3/runtime.md,skills/pstack-runtime/SKILL.md,changes/perf%2Fd2.md")
+        leases = [entry for entry in self.lease_lines() if "perf/D2" in entry]
+        self.assertEqual(len(leases), 1)
+        self.assertNotIn("docs/skills.md", leases[0])
+
+    def test_startable_blocked_note_paths_agree_with_watch_for_derived_fire(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "b", "--paths", "t3/runtime.md")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                                      "--paths", "t3/runtime.md,docs/skills.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.land("lease", "claim", "--holder", "engine/D1", "--paths", "docs/skills.md")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: blocked, waiting on L2 (engine/D1); t3/runtime.md,docs/skills.md --doc-item", text)
+        lines = self.brigade("watch").splitlines()
+        self.assertFalse(any(part.startswith("T2: unblocked") for part in lines))
+        self.assertTrue(any(part.startswith("T2: waiting on L2 (engine/D1)") for part in lines))
+        line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        raw = line.split("; ", 1)[1]
+        self.assertTrue(raw.endswith(" --doc-item"))
+        saved = raw[:-len(" --doc-item")]
+        self.assertEqual(saved, "t3/runtime.md,docs/skills.md")
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "b",
+                               "--paths", saved, "--doc-item", ok=False)
+        self.assertIn("paths overlap L2 held by engine/D1 on docs/skills.md", refused)
+
+    def test_startable_blocked_dot_path_normalizes_for_generated_overlap_and_derived_fire(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "first", "--paths", "skills/pstack-runtime/SKILL.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second", "--paths", "t3/runtime.md")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                                      "--paths", "./t3/runtime.md", "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        text = self.brigade("startable")
+        self.assertIn("T1 normal fix, 0m: startable; skills/pstack-runtime/SKILL.md", text)
+        self.assertIn("T2 normal fix, 0m: blocked, starts after T1; ./t3/runtime.md --doc-item", text)
+        line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        raw = line.split("; ", 1)[1]
+        self.assertTrue(raw.endswith(" --doc-item"))
+        saved = raw[:-len(" --doc-item")]
+        self.assertEqual(saved, "./t3/runtime.md")
+        self.assertIn("D2 (lease", self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "first",
+                                                "--paths", "skills/pstack-runtime/SKILL.md"))
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                               "--paths", saved, "--doc-item", ok=False)
+        self.assertIn("paths overlap", refused)
+        self.assertIn("skills/pstack-runtime/SKILL.md", refused)
+
+    def test_startable_empty_blocked_note_falls_back_to_rail_and_ticket_set_updates_rail_preview(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second", "--paths", "t3/runtime.md")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "README.md")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                                      "--doc-item", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.assertEqual(self.blocked_note(self.at, "T2")["paths"], "")
+        self.assertEqual(self.blocked_note(self.at, "T2")["doc_item"], True)
+        self.brigade("dish", "D1", "--state", "sent-back")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: startable; t3/runtime.md", text)
+        t2_line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        self.assertFalse(t2_line.endswith(" --doc-item"))
+        self.brigade("ticket", "set", "T2", "--paths", "t3/setup.md")
+        text = self.brigade("startable")
+        self.assertIn("T2 normal fix, 0m: startable; t3/setup.md", text)
+        t2_line = next(part for part in text.splitlines() if part.startswith("T2 "))
+        self.assertFalse(t2_line.endswith(" --doc-item"))

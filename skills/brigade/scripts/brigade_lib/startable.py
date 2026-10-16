@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib.layout import _layout, _one
-from brigade_lib.leases import STANDINGS, autofire_of, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
+from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
 from brigade_lib.shared import age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, LOW_RESERVE, PRIORITIES_BY_RANK
 from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
@@ -47,6 +47,7 @@ class Waiting:
     decision: bool
     summary: str
     label: Label = Label()
+    doc_item: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,11 +58,13 @@ class Standing:
     overdue: bool
 
 
-def waiting_ticket(row, label=Label()):
+def waiting_ticket(row, label=Label(), *, doc_item=False, paths=None):
     filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
     if filed.tzinfo is None:
         filed = filed.replace(tzinfo=timezone.utc)
-    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label)
+    effective = paths if paths is not None else paths_of(row)
+    return Waiting(row["id"], priority_of(row), filed, effective, row["decision"] == "yes", row["summary"], label,
+                   bool(doc_item))
 
 
 def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
@@ -112,25 +115,37 @@ def lease_refusals(meta, tickets, next_dish):
     for ticket in tickets:
         if ticket.decision or not ticket.paths:
             continue
-        if ticket.paths not in asked:
-            asked[ticket.paths] = lease_block(root, f"{prefix}/{ticket.id}",
-                                              claim_paths(root, ",".join(ticket.paths), f"{prefix}/{next_dish.lower()}").text)
-        if asked[ticket.paths]:
-            refusals[ticket.id] = clean(asked[ticket.paths][1])
+        key = (ticket.paths, ticket.doc_item)
+        if key not in asked:
+            asked[key] = lease_block(root, f"{prefix}/{ticket.id}",
+                                     claim_paths(root, ",".join(ticket.paths), f"{prefix}/{next_dish.lower()}",
+                                                 ticket.doc_item).text)
+        if asked[key]:
+            refusals[ticket.id] = clean(asked[key][1])
     return refusals
 
 
 def expanded_paths(tickets, lay):
     found = {}
     for ticket in tickets:
-        if not ticket.paths or lay is None:
+        if not ticket.paths:
             found[ticket.id] = ticket.paths
             continue
-        seen = set(ticket.paths)
-        extras = []
+        norms = []
+        seen = set()
         for raw in ticket.paths:
+            made = _claim_norm(raw)
+            if not made or made in seen:
+                continue
+            seen.add(made)
+            norms.append(made)
+        if lay is None:
+            found[ticket.id] = tuple(norms)
+            continue
+        extras = []
+        for made in norms:
             try:
-                got = _one(raw, lay)
+                got = _one(made, lay, ticket.doc_item)
             except KeyboardInterrupt:
                 raise
             except Exception:
@@ -139,7 +154,7 @@ def expanded_paths(tickets, lay):
                 if one not in seen:
                     seen.add(one)
                     extras.append(one)
-        found[ticket.id] = tuple([*ticket.paths, *extras])
+        found[ticket.id] = tuple([*norms, *extras])
     return found
 
 
@@ -154,6 +169,8 @@ def startable_lines(standings, meta, running, now):
         ticket = standing.ticket
         flag = " (over a week)" if standing.overdue else ""
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
+        if ticket.doc_item and ticket.paths:
+            paths += " --doc-item"
         words = STANDINGS[standing.kind].line_words.format(why=standing.why)
         lines.append(f"{ticket.id} {ticket.priority}{label_words(ticket.label)}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
@@ -164,7 +181,22 @@ def startable_lines(standings, meta, running, now):
 def startable(restaurant):
     with restaurant.checked():
         meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
-        tickets = [waiting_ticket(row, labels.tickets[row["id"]]) for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        notes = dict(blocked_waiting(restaurant))
+        tickets = []
+        for row in restaurant.rows("rail.tsv"):
+            if row["state"] != "waiting":
+                continue
+            note = notes.get(row["id"])
+            if note is None:
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+                continue
+            raw_parts = tuple(part for part in (note.get("paths") or "").split(",") if part)
+            valid = [made for part in raw_parts if (made := _claim_norm(part))]
+            if not valid:
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+                continue
+            tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
+                                          paths=raw_parts))
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:
