@@ -23,8 +23,8 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, refusal_kind, refill_of, release_lease, running_workers, worker_cap
 from brigade_lib.reviews import fix_round_refusal, write_threads
-from brigade_lib.shared import BrigadeError, clean, slug
-from brigade_lib.store import KIND_CHOICE, LEASED_STATES, STATION_KIND
+from brigade_lib.shared import BrigadeError, clean, slug, stored
+from brigade_lib.store import IN_FLIGHT_STATES, KIND_CHOICE, LEASED_STATES, STATION_KIND, WORKER_ROLES
 from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, read_labels, tracked_paths
 
 ATTEMPT_AFTER = {"sent-back": "fix", "queued": "bounce"}
@@ -533,6 +533,59 @@ def retired_worker_threads(restaurant, ident):
             if row["kind"] == "worker" and row["id"] == ident and row["state"] == "retired" and row["note"]]
 
 
+ARCHIVE_PREFIX = "archive thread: "
+
+
+def other_items_threads(restaurant, dish_id):
+    """The thread ids items other than `dish_id` hold while still in flight."""
+    flying = {row["id"] for row in restaurant.rows("dishes.tsv")
+              if row["id"] != dish_id and row["state"] in IN_FLIGHT_STATES}
+    held = {row["thread"] for row in restaurant.rows("dishes.tsv")
+            if row["id"] in flying and row["thread"]}
+    held.update(row["thread"] for row in restaurant.rows("threads.tsv")
+                if row["dish"] in flying and row["thread"])
+    return held
+
+
+def announce_archive(restaurant, dish_id, occasion, thread="", replaced=""):
+    """Print one `archive thread: <id>` line on standard error for each thread to archive at a finish point.
+
+    `occasion` is "review" for the thread a `pass record` recorded, "replaced" for the worker a
+    `dish --thread` replaced, and "closed" for every worker thread a merged or dropped item used.
+    `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the dish's thread
+    cell read before that write. The coordinator's own thread, a thread another item in flight holds,
+    a blank id, and a repeated id are left out. The call writes no table and raises nothing.
+    """
+    rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
+    workers = [row["thread"] for row in rows if row["role"] in WORKER_ROLES and row["thread"]]
+    if occasion == "review":
+        found = [thread]
+    elif occasion == "replaced":
+        if replaced and replaced != thread:
+            found = [replaced]
+        else:
+            back = [item for item in retired_worker_threads(restaurant, dish_id) if item and item != thread]
+            if not back:
+                back = [row["thread"] for row in rows
+                        if row["role"] in WORKER_ROLES and row["end"] and row["thread"] and row["thread"] != thread]
+            found = back[-1:]
+    else:
+        found = workers + [item for item in retired_worker_threads(restaurant, dish_id) if item not in workers]
+    if occasion == "closed":
+        _, dish = restaurant.find("dishes.tsv", dish_id)
+        if dish["thread"] and dish["thread"] not in found:
+            found.append(dish["thread"])
+    own = clean(restaurant.meta.get("thread") or "")
+    live = other_items_threads(restaurant, dish_id)
+    seen = set()
+    for item in found:
+        item = stored("threads.tsv", "thread", item)
+        if not item or item == own or item in live or item in seen:
+            continue
+        seen.add(item)
+        print(f"{ARCHIVE_PREFIX}{item}", file=sys.stderr)
+
+
 def drop(restaurant, ident, stopped):
     """Drop a dish and release its lease, only after its worker stopped. A requested interrupt is not a stop."""
     with restaurant.checked():
@@ -554,6 +607,7 @@ def drop(restaurant, ident, stopped):
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
         write_threads(restaurant, ident, (), closing=True)
+        announce_archive(restaurant, ident, "closed")
         rows = restaurant.rows("rail.tsv")
         back = [row for row in rows if row["state"] == "assigned" and row["dish"] == ident]
         for row in back:
