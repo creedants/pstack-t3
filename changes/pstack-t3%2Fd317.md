@@ -1,0 +1,6 @@
+- kind polish
+- `t3/runtime.md` moves most of its `## Roles` reference into the new `t3/added/pstack-runtime/roles.md`. `### Built-in defaults`, `### Excluded seats`, `### Budget`, `### Fallback`, and `### Claude Haiku 5.5` each keep their heading and a few sentences.
+- Each of those five sections keeps the `roles.md` pointer sentence from the plan's Pointer sentences table. `### Built-in defaults` also points there before seat resolution or weighing agreement. `### Resolve and carry the mode` keeps the last four sentences of its light-budget paragraph and points to `roles.md#budget` before light `roles.py show` or `roles.py backup` calls.
+- `roles.md` holds `## Built-in defaults`, `## Excluded seats`, `## Budget`, `## Fallback`, and `## Claude Haiku 5.5`, with the rest of the light-budget paragraph at the end of `## Budget`.
+- The two Haiku 5.5 brief paragraphs leave the docs. `t3/scripts/roles.py` holds that text as `HAIKU_BRIEF`, which `roles.py show` prints as `haikuBrief`.
+- `tests/test_pstack_t3.py` adds `roles.md` to `RUNTIME_DOCS`, points `FastGrokDocTest` at `## Excluded seats` and `LaunchingSkillTestDocTest` at `## Claude Haiku 5.5` in `roles.md`, and reads the Haiku brief text from `t3/scripts/roles.py`.
