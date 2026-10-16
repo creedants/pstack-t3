@@ -2467,7 +2467,7 @@ LIVE_SCRIPT = squeezed("""
 
 
 def secret_of(directory, port):
-    """The live view's secret for one store. A fresh token holds TOKEN_BYTES bytes from secrets. It lives in <store>/activity-token, a file created mode 0600 and reused across restarts while it stays valid and replaced otherwise."""
+    """The live view's secret for one store. A fresh token holds TOKEN_BYTES bytes from secrets. It lives in <store>/activity-token, a file created mode 0600 and reused across restarts while it stays valid, with the whitespace around the token ignored, and replaced otherwise."""
     path = directory / TOKEN_FILE_NAME
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -2492,7 +2492,7 @@ def secret_of(directory, port):
 
 
 def read_valid_token(path):
-    """The existing token when its file is a private regular file holding a generated token, else an empty string."""
+    """The existing token when its file is a private regular file holding a generated token, with the whitespace around the token ignored, else an empty string."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:

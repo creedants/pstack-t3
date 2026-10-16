@@ -3951,6 +3951,15 @@ class LiveTest(OutputCase):
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
 
+    def test_a_token_file_with_whitespace_around_the_token_is_reused(self):
+        fixture = one_running(self.fixture).write()
+        path = fixture.store / "activity-token"
+        token = "t" * 43
+        path.write_text(f" {token}\n\t")
+        os.chmod(path, 0o600)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertEqual(second.token, token.encode("ascii"))
+
     def test_short_token_is_replaced_with_a_private_regular_file(self):
         fixture = one_running(self.fixture).write()
         path = fixture.store / "activity-token"
