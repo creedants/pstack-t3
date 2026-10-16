@@ -2,7 +2,7 @@
 - Generated paths live in one registry in foundation.
 - Submit lease check covers sources only and rejects generated only changes.
 - Fingerprint lists sources with NUL-delimited names and hashes their diff with literal pathspecs. Empty stays empty.
-- Generated only conflicts resolve with ours without matching file lists.
+- Generated only conflicts resolve with ours, and paths ours lacks are removed, without matching file lists.
 - Source conflicts still bounce with trunk.
 - Empty source changes return already in trunk.
 - Rebuild removes all generated entries including branch additions and untracked files, restores trunk tracks, then runs build twice.
