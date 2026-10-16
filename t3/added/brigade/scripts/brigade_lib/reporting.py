@@ -225,16 +225,26 @@ def spend_section(restaurant, since):
     """The `## Spend` lines of a report, taken from `spend --by goal` for items fired at or after the UTC date of `since`.
 
     `since` is the ISO time of the last report, and its UTC date is the finest window `spend --since` takes, so a
-    second close on the same UTC day repeats that day's rows. One `spend_text` call runs under this store's held
-    lock, and its stderr stays off close's stderr. A token source that spend reports as unreadable or as another
-    schema keeps the goal rows and prints `tokens unavailable`, while a bad prices.json still fails the close.
+    second close on the same UTC day repeats that day's rows. Each `spend_text` call runs under this store's held
+    lock and its stderr stays off close's stderr. A token source spend reports as unreadable or as another schema
+    keeps the goal rows and prints `tokens unavailable`. A call that raises, from a refused prices.json or a raising
+    token read, is caught and rerun once with `tokens=False`; the section prints the goal rows that rerun renders
+    with one `tokens unavailable` line, so the report keeps every other section.
     """
     date = since[:10] if since else None
     args = argparse.Namespace(by="goal", item=None, since=date, json=False, tokens=True, t3_home=None)
     captured = io.StringIO()
     with redirect_stderr(captured):
-        text = spend.spend_text(restaurant, args)
-    failed = any(line in (spend.UNREADABLE, spend.SCHEMA) for line in captured.getvalue().splitlines())
+        try:
+            text = spend.spend_text(restaurant, args)
+        except Exception:
+            args.tokens = False
+            try:
+                text = spend.spend_text(restaurant, args)
+            except Exception:
+                text = ""
+        failed = not args.tokens or any(line in (spend.UNREADABLE, spend.SCHEMA)
+                                        for line in captured.getvalue().splitlines())
     return ["## Spend", "", *_spend_lines(text, failed), ""]
 
 

@@ -8,7 +8,10 @@ from .support import (
     Path,
     ProcessReason,
     SCRIPT,
+    call,
+    call_in_process,
     real_process,
+    run_globals,
     _ReportingRace,
     _owner_words,
     _shown_root,
@@ -833,3 +836,43 @@ class SpendReportTest(BrigadeTest, _SpendFixture):
             "tokens unavailable",
         ]))
         self.assertNotIn("  not recorded", out)
+
+    GOAL_ROWS_NO_TOKENS = "\n".join([
+        "## Spend", "",
+        "G1  wall 2h  rounds 0  send-backs 0  threads 1",
+        "G2  wall 2h  rounds 0  send-backs 0  threads 1",
+        "tokens unavailable",
+    ])
+
+    def each_close_form(self, expected, in_process=False):
+        """`close --dry-run`, `close`, and `close --to-file` each print this Spend block with empty stderr.
+
+        A writing close advances the report window, so the window is reset to every item before each form.
+        """
+        runner = call_in_process if in_process else call
+        for flags in (("--dry-run",), (), ("--to-file",)):
+            with self.subTest(flags=flags):
+                self.advance_report("")
+                outcome = runner(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                *_owner_words(self.at), "close", *flags])
+                self.assertEqual((outcome.code, outcome.stderr_text().strip()), (0, ""))
+                text = outcome.stdout_text().strip()
+                self.assertEqual(self.spend_block(Path(text).read_text().strip() if flags == ("--to-file",) else text), expected)
+
+    def test_close_keeps_the_goal_rows_and_says_tokens_unavailable_when_the_prices_file_is_refused(self):
+        base = self.token_database()
+        self.two_goal_store()
+        (self.at / "prices.json").write_text("{broken")
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}):
+            self.each_close_form(self.GOAL_ROWS_NO_TOKENS)
+
+    def test_close_keeps_the_goal_rows_and_says_tokens_unavailable_when_the_token_read_raises(self):
+        base = self.token_database()
+        self.two_goal_store()
+        space = run_globals(self, SCRIPT)["report"].__globals__["spend"].__dict__
+
+        def refused(question):
+            raise PermissionError("the token read was refused")
+
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}), mock.patch.dict(space, {"_open_tokens": refused}):
+            self.each_close_form(self.GOAL_ROWS_NO_TOKENS, in_process=True)
