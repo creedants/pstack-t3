@@ -758,3 +758,117 @@ class GeneratedTest(LandingTest):
                     pipe.close()
                 except OSError:
                     pass
+
+    def test_exited_leader_helper_dies_on_interrupt(self):
+        self._setup_generated()
+        self.init()
+        exited_build = BUILD_PY + (
+            "\nimport os as _os, time as _time\n"
+            "_marker = root / 'skills' / '.build_helper'\n"
+            "_forked = _os.fork()\n"
+            "if _forked == 0:\n"
+            "    _marker.write_text(f'{_os.getpid()} {_os.getpgrp()}')\n"
+            "    _time.sleep(60)\n"
+            "else:\n"
+            "    _os._exit(0)\n"
+        )
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "src/one.txt").write_text("reviewed-new\n")
+        (path / "scripts/build.py").write_text(exited_build)
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt,scripts/build.py")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        with land.Store.for_repo(self.work) as store:
+            integration = store.dir / "integration"
+        marker = integration / "skills" / ".build_helper"
+        queue = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True, env=os.environ.copy())
+        build_pgid = None
+        helper_pid = None
+        try:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if queue.poll() is not None:
+                    break
+                try:
+                    text = marker.read_text().strip()
+                except OSError:
+                    time.sleep(0.05)
+                    continue
+                if text:
+                    helper_pid, build_pgid = (int(part) for part in text.split()[:2])
+                    break
+                time.sleep(0.05)
+            if queue.poll() is not None:
+                out, err = queue.communicate()
+                self.fail(f"queue exited before the helper started: {out[-2000:]} {err[-2000:]}")
+            self.assertTrue(marker.exists(), "fixture build never recorded readiness")
+            self.assertIsNotNone(helper_pid)
+            self.assertIsNotNone(build_pgid)
+
+            def _zombie(pid):
+                try:
+                    with open(f"/proc/{pid}/stat") as handle:
+                        stat = handle.read()
+                except OSError:
+                    return False
+                return stat.rpartition(")")[2].split()[0] == "Z"
+
+            deadline = time.monotonic() + 10
+            while not _zombie(build_pgid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(_zombie(build_pgid), "the leader did not exit before the interrupt")
+            try:
+                os.kill(helper_pid, 0)
+            except ProcessLookupError:
+                self.fail("the helper did not survive until the interrupt")
+            queue.send_signal(signal.SIGINT)
+            queue.wait(timeout=120)
+            self.assertNotEqual(queue.returncode, 0)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(helper_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            try:
+                os.kill(helper_pid, 0)
+                self.fail("the helper survived the interrupt")
+            except ProcessLookupError:
+                pass
+            live = sh("git", "show", "main:src/one.txt", cwd=self.base / "origin.git")
+            self.assertEqual(live, "base1")
+            with land.Store.for_repo(self.work) as store:
+                status = sh("git", "status", "--porcelain", cwd=store.dir / "integration")
+            self.assertEqual(status, "")
+        finally:
+            if build_pgid is not None:
+                try:
+                    os.killpg(build_pgid, signal.SIGKILL)
+                except OSError:
+                    pass
+            if helper_pid is not None:
+                try:
+                    os.kill(helper_pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            if queue.poll() is None:
+                try:
+                    os.killpg(queue.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            try:
+                queue.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            for pipe in (queue.stdout, queue.stderr):
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
