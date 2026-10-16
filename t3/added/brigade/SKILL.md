@@ -43,8 +43,8 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
-$B status                                    # thread <id> or thread not recorded, the counts in progress, in review, passed review, and waiting to land, reports to <thread> when set, and owner <thread>@<generation> when a generation is recorded
-$B set --thread <id> [--replace] --schedule <name>=<id>   # records the thread and the schedule ids; --replace prints previousThread when a thread was recorded before the change
+$B status                                    # thread <id> or thread not recorded, the counts, reports to <thread> when set, and owner <thread>@<generation> when a generation is recorded
+$B set --thread <id> [--replace] --schedule <name>=<id>
 $B set --reporting every-turn|milestones|digest
 $B set --schedule <name>=                    # drops that name from restaurant.json
 $B set --intake github,<feed>                # the intake sources this restaurant owns
@@ -63,7 +63,7 @@ $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
 $B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
-$B startable                                 # the workers line, then each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. A ticket line reads startable, rides with, below auto-start, decision for the owner, held back, blocked, or unknown, no paths recorded
+$B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
 $B goal add --name "<name>" --purpose "<why>" --done "<test>" [--share <n>]   # prints G<n>
