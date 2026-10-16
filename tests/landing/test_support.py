@@ -49,8 +49,8 @@ class SupportTest(unittest.TestCase):
         self.assertFalse(os.path.exists(tmpname))
         self.assertFalse(os.path.exists(tmpdir))
 
-    def test_a_crashed_child_leaves_no_temp_file_behind(self):
-        """Pin T768. The child file lives in a parent owned directory, so the parent removes it after a crash."""
+    def test_a_child_that_exits_nonzero_leaves_no_temp_file_behind(self):
+        """Pin T768. The child file lives in a parent owned directory, so the parent removes it after a nonzero exit."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env = {**os.environ, "LAND_CHILD_DIR": tmpdir}
             child = subprocess.run([sys.executable, "-c", _CRASH_CHILD], capture_output=True, text=True, env=env)
