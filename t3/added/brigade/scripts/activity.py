@@ -65,7 +65,7 @@ A pull request link is printed only as https://host/owner/repository/pull/number
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 
---serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls that address for html_render. The token lives in activity-token under the store directory.
+--serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the default address for html_render. The token lives in activity-token under the store directory.
 """
 
 import argparse
@@ -445,7 +445,7 @@ def main(argv=None):
 
 
 def render_page(settings, text=False, out=None, store=None):
-    """The page output for one store. run() and each live view request share it, so both filter private text alike and refuse alike. run() passes the store it already read, keeping its refusal order."""
+    """The page output for one store. run() and each live view request share it, so both filter private text alike. run() passes the store it already read, keeping its refusal order."""
     if store is None:
         store = read_store(settings.store)
     path = settings.database
@@ -2465,7 +2465,7 @@ LIVE_SCRIPT = squeezed("""
 
 
 def secret_of(directory, port):
-    """The live view's secret for one store. The token holds TOKEN_BYTES bytes from secrets. It lives in <store>/activity-token, a file created mode 0600 and reused across restarts."""
+    """The live view's secret for one store. A fresh token holds TOKEN_BYTES bytes from secrets. It lives in <store>/activity-token, a file created mode 0600 and reused across restarts."""
     path = directory / TOKEN_FILE_NAME
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -2505,7 +2505,7 @@ def live_server(settings, secret, port):
 
 
 class LiveHandler(http.server.BaseHTTPRequestHandler):
-    """One live view request. GET at the secret route answers the current page. Every other path answers 404. Only GET and OPTIONS are answered."""
+    """One live view request. GET at the secret route answers the current page. GET at any other path answers 404. Only GET and OPTIONS are answered."""
 
     def live_send(self, code, kind, body):
         self.send_response(code)

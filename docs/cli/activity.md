@@ -24,7 +24,7 @@ Private text is also the request name of a delegated task when that name holds a
 
 The filter removes a word for no other reason. The filter leaves a work item id, a summary, a title, the store's name, and a model name as they are unless they hold private text. It leaves a relative path such as src/a.py. It leaves a word of one segment that starts with a slash, such as /review, unless it holds private text. A delegated task's own request name of two or more hyphen-separated parts is split into words for its label. A pull request link is printed only as https://host/owner/repository/pull/number. Userinfo, a query, and a fragment are dropped. A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note. Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 
---serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls that address for html_render. The token lives in activity-token under the store directory.
+--serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the default address for html_render. The token lives in activity-token under the store directory.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
