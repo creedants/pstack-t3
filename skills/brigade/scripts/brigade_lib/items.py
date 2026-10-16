@@ -548,7 +548,7 @@ def other_items_threads(restaurant, dish_id):
 
 
 def worker_bindings(restaurant, ident):
-    """The binding of each worker row of the item, the identity `write_threads` de-duplicates on."""
+    """The binding of each worker row of the item with a non-empty thread, the identity `write_threads` de-duplicates on."""
     return {thread_binding(row) for row in restaurant.rows("threads.tsv")
             if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]}
 
