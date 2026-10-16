@@ -1057,7 +1057,7 @@ class _Build:
         self._stdout = self._popen.stdout
 
     def run(self, timeout):
-        """Drive STARTED to REAPED. Returns a pair, or None with text on timeout."""
+        """Drive STARTED to REAPED. Returns a pair. Timeout returns None as the status."""
         deadline = time.monotonic() + timeout
         ended = self._drain(deadline)
         if ended == "eof":
@@ -1192,7 +1192,7 @@ class _Build:
             pass
 
     def _try_reap(self):
-        """Run one waitpid with WNOHANG. True when it reaped. Legal only in STARTED."""
+        """Run one waitpid with WNOHANG. True when the leader is gone. Records our reap or a foreign reap."""
         try:
             pid, status = os.waitpid(self._popen.pid, os.WNOHANG)
         except ChildProcessError:
@@ -1218,7 +1218,7 @@ class _Build:
         self.phase = _REAPED
 
     def _restore(self):
-        """Put the entry disposition back inside a SIGINT blocked window. Sets RESTORED."""
+        """Restore the interceptable entry disposition. Blocks SIGINT for the swap where pthread_sigmask exists."""
         blocked = hasattr(signal, "pthread_sigmask")
         old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT}) if blocked else None
         try:
