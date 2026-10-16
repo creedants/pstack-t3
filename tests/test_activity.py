@@ -1500,6 +1500,21 @@ class FoldTest(ActivityCase):
         self.assertEqual(list(drawn(again)), ["D7", "D1", "D6", "D8", "D9", None])
         self.assertEqual((again.hidden.dropped_items, again.hidden.dropped_agents, again.fold), (4, 11, 2))
 
+    def test_synthesized_summary_rows_keep_the_earlier_flag_through_the_budget_transforms(self):
+        lanes = [replace(row("earlier worker"), earlier=True), replace(row("a", depth=1), earlier=True), replace(row("b", depth=1), earlier=True)]
+        folded = MOD["fold_quiet_subagents"](page(group(item("D7"), *lanes)))
+        self.assertEqual([(each.label, each.earlier) for each in folded.groups[0].rows], [("earlier worker", True), ("2 sub-agents", True)])
+        mixed = MOD["fold_quiet_subagents"](page(group(item("D7"), *lanes[:2], row("c", depth=1))))
+        self.assertEqual([(each.label, each.earlier) for each in mixed.groups[0].rows], [("earlier worker", True), ("2 sub-agents", False)])
+        for grown in (folded, mixed):
+            for transform in (MOD["cap_everything"], lambda grown: MOD["framed"](grown, 1)):
+                carried = transform(grown)
+                left = [each for one in carried.groups for each in one.rows]
+                for each in [each for one in grown.groups for each in one.rows if each.earlier]:
+                    self.assertIn(each, left)
+        finished = MOD["fold_finished_items"](page(group(item("D7", in_flight=False), *lanes)))
+        self.assertEqual([(each.label, each.earlier) for each in finished.groups[0].rows], [("3 agents", True)])
+
     def test_folds_3_to_10_keep_24_16_12_8_6_4_2_and_0_finished_units_and_count_each_dropped_unit_once(self):
         folded = page(group(item("D99"), row("worker")), *[group(item(f"D{number}", in_flight=False), row("2 agents", stands_for=2)) for number in range(30)])
         left = []

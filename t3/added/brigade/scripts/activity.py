@@ -1699,7 +1699,7 @@ def summary(rows, depth, label):
     bars = union((span for span in spans if span.status is not Status.FAILED), Status.DONE) + union(failed, Status.FAILED)
     models, providers = {row.model for row in rows}, {row.provider for row in rows}
     return Row(depth, label, models.pop() if len(models) == 1 else "", providers.pop() if len(providers) == 1 else "", Status.DONE,
-               sum(row.seconds for row in rows), tuple(bars), None, agents_in(rows))
+               sum(row.seconds for row in rows), tuple(bars), None, agents_in(rows), all(row.earlier for row in rows))
 
 
 def families(rows):
