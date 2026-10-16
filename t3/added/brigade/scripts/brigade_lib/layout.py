@@ -417,7 +417,7 @@ def _needs_skills_doc(norm):
     return False
 
 
-def _one(norm, lay):
+def _one(norm, lay, doc_item=False):
     found = []
     for item in lay.copies:
         if isinstance(item, _Exact):
@@ -458,7 +458,7 @@ def _one(norm, lay):
         elif tool.startswith(norm + "/"):
             if head not in found:
                 found.append(head)
-    if _needs_skills_doc(norm):
+    if not doc_item and _needs_skills_doc(norm):
         if "docs/skills.md" not in found:
             found.append("docs/skills.md")
     return tuple(found)

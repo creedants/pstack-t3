@@ -236,7 +236,7 @@ def _claim_norm(raw):
     return made
 
 
-def claim_paths(project_root, paths, branch):
+def claim_paths(project_root, paths, branch, doc_item=False):
     if not paths:
         return Claim("", ())
     raw_list = [part for part in paths.split(",") if part]
@@ -261,7 +261,7 @@ def claim_paths(project_root, paths, branch):
         if not made:
             continue
         try:
-            found = _one(made, lay)
+            found = _one(made, lay, doc_item)
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -398,7 +398,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known).text, note.get("kind") or "lease")
+    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known, note.get("doc_item", False)).text, note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):

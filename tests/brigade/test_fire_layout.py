@@ -13,20 +13,23 @@ class FireLayoutTest(BrigadeTest):
         for name in ("build.py", "cli_reference.py"):
             (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
 
-    def layout_fire(self, paths):
+    def layout_fire(self, paths, doc_item=False):
         self.git_project()
         self.vendor_layout()
         self.init_landing()
         self.landing_env()
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        return self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
-                            "--paths", paths)
+        args = ["fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                "--paths", paths]
+        if doc_item:
+            args.append("--doc-item")
+        return self.brigade(*args)
 
     def dish_paths(self):
         return self.table_row(self.at, "dishes.tsv", "D1")["paths"]
 
-    def fresh_fire(self, given, with_layout):
+    def fresh_fire(self, given, with_layout, doc_item=False):
         base = Path(self.temporary.name) / f"case-{self.case_no}"
         self.case_no += 1
         store = base / "store"
@@ -41,8 +44,11 @@ class FireLayoutTest(BrigadeTest):
         self.landing_env()
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        out = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
-                           "--paths", given)
+        args = ["fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                "--paths", given]
+        if doc_item:
+            args.append("--doc-item")
+        out = self.brigade(*args)
         return out, self.dish_paths(), self.lease_lines()
 
     def test_source_under_each_mapped_root_adds_its_copy(self):
@@ -214,3 +220,57 @@ class FireLayoutTest(BrigadeTest):
         self.assertIn("waiting tickets: 2, startable: 1, blocked: 1", text)
         self.assertIn("T1 normal fix, 0m: startable; t3/added/teach", text)
         self.assertIn("T2 normal fix, 0m: blocked, starts after T1; t3/overrides/teach", text)
+
+    def test_doc_item_omits_docs_skills_md_for_runtime_and_skill(self):
+        self.case_no = 0
+        rows = [
+            {"name": "runtime without flag", "given": "t3/runtime.md", "doc_item": False,
+             "added": "skills/pstack-runtime/SKILL.md, docs/skills.md",
+             "dish": "t3/runtime.md,skills/pstack-runtime/SKILL.md,docs/skills.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/skills.md, skills/pstack-runtime/SKILL.md, t3/runtime.md"]},
+            {"name": "runtime with flag", "given": "t3/runtime.md", "doc_item": True,
+             "added": "skills/pstack-runtime/SKILL.md",
+             "dish": "t3/runtime.md,skills/pstack-runtime/SKILL.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, skills/pstack-runtime/SKILL.md, t3/runtime.md"]},
+            {"name": "added skill without flag", "given": "t3/added/teach/SKILL.md", "doc_item": False,
+             "added": "skills/teach/SKILL.md, docs/skills.md",
+             "dish": "t3/added/teach/SKILL.md,skills/teach/SKILL.md,docs/skills.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/skills.md, skills/teach/SKILL.md, t3/added/teach/SKILL.md"]},
+            {"name": "added skill with flag", "given": "t3/added/teach/SKILL.md", "doc_item": True,
+             "added": "skills/teach/SKILL.md",
+             "dish": "t3/added/teach/SKILL.md,skills/teach/SKILL.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, skills/teach/SKILL.md, t3/added/teach/SKILL.md"]},
+            {"name": "overrides skill with flag", "given": "t3/overrides/teach/SKILL.md", "doc_item": True,
+             "added": "skills/teach/SKILL.md",
+             "dish": "t3/overrides/teach/SKILL.md,skills/teach/SKILL.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, skills/teach/SKILL.md, t3/overrides/teach/SKILL.md"]},
+        ]
+        for row in rows:
+            with self.subTest(row["name"]):
+                out, dish, lease = self.fresh_fire(row["given"], True, doc_item=row["doc_item"])
+                self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {row['added']}")
+                self.assertEqual(dish, row["dish"])
+                self.assertEqual(lease, row["lease"])
+
+    def test_doc_item_keeps_explicit_docs_skills_md(self):
+        self.case_no = 0
+        rows = [
+            {"name": "explicit without flag", "given": "docs/skills.md", "doc_item": False,
+             "out": "D1 (lease L1 held by perf/D1)",
+             "dish": "docs/skills.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/skills.md"]},
+            {"name": "explicit with flag", "given": "docs/skills.md", "doc_item": True,
+             "out": "D1 (lease L1 held by perf/D1)",
+             "dish": "docs/skills.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/skills.md"]},
+            {"name": "runtime plus explicit with flag", "given": "t3/runtime.md,docs/skills.md", "doc_item": True,
+             "out": "D1 (lease L1 held by perf/D1)\nadded skills/pstack-runtime/SKILL.md",
+             "dish": "t3/runtime.md,docs/skills.md,skills/pstack-runtime/SKILL.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/skills.md, skills/pstack-runtime/SKILL.md, t3/runtime.md"]},
+        ]
+        for row in rows:
+            with self.subTest(row["name"]):
+                out, dish, lease = self.fresh_fire(row["given"], True, doc_item=row["doc_item"])
+                self.assertEqual(out, row["out"])
+                self.assertEqual(dish, row["dish"])
+                self.assertEqual(lease, row["lease"])

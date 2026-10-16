@@ -1,0 +1,3 @@
+- kind feature
+- `fire --doc-item` omits `docs/skills.md` from layout `added` and keeps every copy and every CLI page
+- An explicit `docs/skills.md` in `--paths` is still leased with and without `--doc-item` and never appears in `added`

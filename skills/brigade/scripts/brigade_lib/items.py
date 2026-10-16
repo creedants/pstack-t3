@@ -402,7 +402,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 raise BrigadeError(gate.line)
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
-            claimed = claim_paths(project_root, paths, known) if paths else Claim("", ())
+            claimed = claim_paths(project_root, paths, known, doc_item) if paths else Claim("", ())
             leased = claimed.text
             added = claimed.added
             label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
