@@ -1,4 +1,0 @@
-- kind fix
-- `fire`, `ticket add`, `ticket set`, `dish`, and `brief` refuse a second `--paths` with exit 1 and `brigade: --paths given twice. Pass one comma-separated value.`, before writing anything.
-- A single `--paths` behaves as before, including `""` where it clears.
-- Help text for each `--paths` says it is given once.

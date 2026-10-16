@@ -1,4 +1,0 @@
-- kind fix
-- Runtime, brigade, and brigade-admin skill text say `t3_thread_organize` takes one optional `threadId`, acts on the calling thread when it is missing, and ignores unknown keys. Every call targeting another thread passes one explicit `threadId`, one call per thread. Omitting `threadId` is only for acting on yourself.
-- `scripts/check.py` reports a plural `threadIds` key and an archive, settle, or snooze step that names `t3_thread_organize` without `threadId`.
-- Tests in `tests/test_check.py` cover both findings.

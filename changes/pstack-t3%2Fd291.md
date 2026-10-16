@@ -1,4 +1,0 @@
-- kind upkeep
-- `tests/brigade/test_store.py`'s `test_set_cap_and_review_repair_a_string_int_and_list_stored_map_and_write_a_clean_one` compares the whole `set` output and the whole stored `restaurant.json` against the expected map, instead of one key of each parsed map.
-- `tests/brigade/test_wake.py`'s `test_startable_never_lists_a_low_ticket_of_a_paused_goal_as_riding_with_another_ticket` and `test_startable_rides_a_low_ticket_of_an_open_goal_and_pauses_one_of_a_paused_goal` assert `store_files()` is unchanged across the `startable` call.
-- `tests/brigade/test_items.py`'s `test_fire_refuses_a_ride_along_ticket_of_a_paused_goal_and_starts_no_item` requires exit code exactly 1 through the `code=` option of `run_at`, instead of any nonzero exit.

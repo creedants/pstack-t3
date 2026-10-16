@@ -1,2 +1,0 @@
-- kind upkeep
-- The share holds every discovered test whose module starts with `brigade.test_launch` or `brigade.test_handoff` and no other test

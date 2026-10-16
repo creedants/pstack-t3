@@ -1,5 +1,358 @@
 # Changelog
 
+## 0.7.0 (2026-10-16)
+
+### New
+
+- `set --cap KIND=N` records a cap per kind, at most that many items of the kind holding a worker slot. `set --review KIND=MODE` records the default mode for a new item of that kind, full or light. Each flag merges its pairs into `restaurant.json`, so a second flag leaves the kinds it does not name as they were. A pair with no value clears that kind's setting, and an empty value for the whole flag clears every one of them. `set` prints the metadata as JSON, so both maps are read back there.
+- `set --cap` refuses a pair with no `=`, a kind outside the five, a value that is not a whole number of 1 or more, and a second pair for one kind. `set --review` refuses the same four shapes for a mode.
+- `goal set --state paused` and `goal set --share` now bind. `startable` and `fire` never start a ticket of a paused goal, a goal is also held back once that many worker slots hold the goal's items.
+- `startable` gains three wait reasons. A ticket of a paused goal waits with `its goal is paused` when it is not already a decision, unknown, or lease blocked. A kind at its cap waits with `the <kind> cap holds (<held> of <cap>)` and a goal at its share waits with `the <goal> share holds (<held> of <share>)` when it is not already a decision, unknown, lease blocked, paused, riding, starts after, or below auto-start. The count line names `goal paused`, `kind cap`, and `goal share` when they occur.
+- A ticket that starts in one pass takes the slot its kind and its goal consume, so the next ticket of that kind or goal waits behind it once a cap or share is reached.
+- `fire` refuses past the same three controls in both of its lock phases, after the label check and before the worker cap, with `nothing fired: ` and those words. A refused control claims no lease in the first phase, releases a lease the second phase claimed, writes no blocked-ticket log row, and leaves the ticket waiting.
+- `brief` reads the review depth recorded for the item's kind and passes it to `roles.py` as `--brief-mode`, so a kind's depth wins over `set --mode` and loses to a recorded escalation.
+- `scripts/release.py` reads each fragment's kind from a first bullet whose text, ignoring surrounding whitespace, is `kind <kind>`, removes that line, and treats a fragment with no such bullet as upkeep. A first bullet whose text starts with `kind` and names no kind is refused.
+- The changelog section groups the bullets under `### New` for feature, `### Fixed` for fix, and `### Changed` for upkeep, then the polish and study bullets with no heading of their own. A group with no bullet is absent.
+- When a released version exists, the version must be the next minor with patch 0 when a feature is in the release, and the next patch over the latest version when no feature is. (The version as given stands when the changelog names no released version yet.) A version that differs is refused with the one the kinds give.
+- `goal add --share` and `goal set --share` help text now name the refill (a ceiling of that many worker slots holding the goal's items). `goal set --state` help text now states that a paused goal starts no ticket of that goal, and its items in flight finish and land.
+- `_clear` also handles a name in governor/holds that ends in .tmp and is not this process's own record, and it does so while this process's slot flocks are still held. A holder that died before it renamed its file into place left that name behind, and so does a writer that opened its file and has not yet locked it.
+- Such a name is removed only when two nonblocking exclusive flocks on read-only opens both succeed on it, and the unlink runs while the second lock is still held, because a writer locks the file it opened before it writes the record and holds the lock until it lets the slot go. A failed open and a failed exclusive lock leave the name, since neither proves the writer is gone. A writer that has not locked by the second flock loses the name.
+- `pr_body` appends the work item's kind and goal line after one blank line when the item has a line and the body holds text, and returns that line alone when the body holds no text but whitespace. The body is the submitted one when there is one, and otherwise the message body of the reviewed commit, and its trailing whitespace is dropped before the line is appended.
+- The line reads `Kind: <kind>. Goal: <name>`. One part prints alone, and nothing new prints when the item has neither.
+- The kind prints only when it is one of feature, fix, polish, upkeep, and study. The goal prints as the name its id has in the store's goals.tsv, and a name that is empty or holds a carriage return or a line feed prints no goal part, as does a goal id that is empty or has no row there.
+- The store root is $BRIGADE_STORE when that variable holds a value, else `state_home()/brigade`. A store is a directory two levels under that root, and the stores are tried in sorted name order. The store read is the first one whose `restaurant.json` records a projectRoot that resolves to the same directory as `store.repo`. A store with no record, with an unreadable record, with a record that is not a JSON object, with `role` of `admin`, or with no reachable dishes table is skipped.
+- The work item row is the last row of dishes.tsv whose `branch` cell equals the entry's branch, and every cell is read by its header name. A table with a line wider than its header holds no rows at all.
+- A missing store root, a dishes table with a line wider than its header, and an empty result each give no line. The store lookup never raises.
+- `foreign_author` still scans every line of the body `pr_body` returns for CREDIT_LINE, so no line of text a caller submitted is lost. The body's trailing whitespace is dropped before the line is appended.
+- `_close_live_owners` skips an object whose fileno lookup or fileno call raises a BaseException other than KeyboardInterrupt, and it raises KeyboardInterrupt on. Such an object never reaches the owner list, so it is not closed. Its `depth` helper stops walking the file chain of an owner it already accepted when that walk raises such an exception, and that owner is still closed.
+- fire leases the generated copies and doc pages the build layout maps from each path it is given.
+- launch turns catalog and child parse exceptions into one stderr line.
+- frame filter applies after one error prefix strip.
+- A brief pastes the failed-test-output rule and the small-change rule in a STANDING RULES section between VERIFY and TIMEBOX, and pastes the scratch rule only when the restaurant records a scratch parent, and drops a rule when the coordinator context plus verify text already holds all its anchors.
+- `brigade.py set --scratch-dir <dir>` records that parent under the `scratchDir` key as the resolved absolute directory path, and an empty value clears the key. A value that is relative, holds a tilde or a newline, or resolves to /tmp or inside /tmp is refused.
+- The failed-test rule tells the worker to save the full output of a failed test run to a file under the restaurant's reports directory before a rerun and to name that file in the report.
+- The small-change rule lets the worker write a change that touches one file outside tests, at about 40 or fewer added and removed lines outside tests, and no safety, privacy, or integrity guarantee. The worker counts the lines from `git diff --numstat <base>...HEAD` and quotes that output. The claims check and the gate review always run.
+- The scratch rule tells the worker to make scratch directories, archive copies, and saved outputs with `mktemp -d -p <scratch>`, never directly under /tmp, and to delete them when done.
+- `skills/brigade/verdict-protocol.md` is new. It carries the gate review protocol and the house rule that a blocker the reviewer does not mark `Rare:` is not one the coordinator may accept as limit.
+- The `_Standing` docstring names the placeholders in `text` and the anchors.
+- The small-change dedupe anchors are `write the change yourself`, `one file`, and `claims check`.
+- The failed-test dedupe anchors add `Save the full output` as a fourth anchor.
+- The shipped protocol refers to the project's build command without naming it, and never for a file the build generates.
+- The shipped protocol says `/tmp` is memory-backed and small on many systems.
+- The scratch-dir test passes an unresolved path and asserts the resolved form.
+- The dedupe test uses a small-change sentence like the coordinator's, without its say-so-in-the-report clause, and keeps the line for a pointer-only sentence.
+- `brigade.py open` and `brigade.py set` take `--context-cap N` and `--coordinator-provider claude|other`
+- `restaurant.json` holds optional `contextCap` and `coordinatorProvider`; a missing `contextCap` reads as 300000 and a missing `coordinatorProvider` reads as claude
+- `--context-cap` refuses a non-integer and any value below 50000 with exit 1
+- On provider claude, `brigade.py open` writes `autoCompactWindow` into `<projectRoot>/.claude/settings.local.json`, and `brigade.py set` writes it only for `--context-cap` and `--coordinator-provider`
+- The write keeps every other byte of the file, including its spacing and its other numbers, and replaces or inserts only the `autoCompactWindow` member
+- A settings file that is tracked by git, that holds invalid JSON or the NaN, Infinity, or -Infinity constants, or that holds no JSON object refuses the write with exit 1 and changes no file
+- A settings directory reached through a symbolic link, and a git command that cannot say whether the file is tracked, refuse the write the same way; a project in no repository is written
+- A repository whose git fails both the tracked lookup and the repository lookup for a reason other than no repository refuses the write, because only a rev-parse error that names not a git repository reads as no repository
+- A refused open of a new store leaves no store directory and claims no intake, and a refused write to an existing store changes no store file
+- `status` appends one line when the file drifts and one line saying the cap is not enforced on another provider, and no line when the file matches
+- `edits verify` compares `.claude/settings.local.json` like every other path and passes a head whose only change there is the `autoCompactWindow` member
+- A settings file that is a symbolic link refuses the write when the link itself or the file it points at is tracked by git, and the link, its target text, and its target bytes stay unchanged
+- A settings write the file system refuses, such as an unwritable `.claude` directory, exits 1 with a `brigade:` line naming the settings path and the system's reason, and a refused open of a new store leaves no store directory
+- `edits verify` applies the cap exemption only when every tree entry holding the settings file is a regular file in mode 100644, so a created symbolic link, a created executable file, and a cap change on a committed symbolic link are compared
+- `edits verify` leaves the settings path out of its comparison only when the two trees differ by the cap splice alone and the scratch copy holds equal digests there; a review edit or build that changes the settings file uses the normal tree comparison
+- `watch` prints a flag line and four recovery steps for an in-progress dish whose current attempt `dish <id> --worker-ended <reason>` records as ended with no report, and a dish with no worker thread on its second or later attempt shows its `launch a fresh worker` line instead; a current report, a held dish, or a fresh worker removes the lines.
+- A model recorded with `model skip <seat> --cause rate-limit|failed` is listed in `watch` as skipped until `model clear <seat>` records a passing smoke test. A seat is the provider before the first slash and the whole model id after it, so `opencode-go/opencode-go/step-5-preview-free` is one seat.
+- `land.py times` reports submit-to-landed minutes for the last landed entries as `n=<count> median=<m> p90=<m> max=<m> skipped=<k>`, with `--last`, `--holder`, and `--json`.
+- `times` opens `land.db` through `mode=ro`, adding `immutable=1` when no write-ahead log sits beside it, so the command takes no lock that blocks the queue, creates no file beside it, and leaves its bytes unchanged.
+- `tests/landing/test_times.py` pins the exact text and JSON, the skipped count, `--last`, `--holder`, the empty case, and an unchanged store directory.
+- `fire --doc-item` omits `docs/skills.md` from layout `added` and keeps every copy and every CLI page
+- An explicit `docs/skills.md` in `--paths` is still leased with and without `--doc-item` and never appears in `added`
+- `check_tree` in `scripts/check.py` gains `fragment_findings`. In every `.md` file under the built `brigade/`, `brigade-admin/`, and `pstack-runtime/` skill directories, at any depth, each markdown link with a `#fragment` whose target is a `.md` file in the tree must name a heading in that target, by the slug rule `heading_slug` uses. `scripts/check.py` copies that slug function instead of importing the tests. An in-file `(#x)` link is checked against the file that holds it.
+- A shared fence scanner hides fenced lines. It tracks marker character and opening length. It recognizes tilde and backtick fences. It closes on a matching fence of sufficient length. It allows up to three spaces indent inside one blockquote or list level. A list fence ends at a new item at the same level or a line outside the item. A blockquote fence ends at a non-blank line with no quote marker. An unclosed fence outside any container hides the rest of the file. Single-line code spans are removed before link extraction. A span is removed only between complete runs of equal backtick length. An optional title after the destination is recognized and excluded from the destination. A title may hold escaped delimiters. Original line numbers are preserved.
+- Anchors are allocated in document order. The first heading keeps its slug. A duplicate appends `-1`, then `-2`, until the anchor is free. A heading whose natural slug is taken gets the next free suffix. A link with no fragment, a link inside a fenced code block including one inside a blockquote or list item or inside a single-line code span, a link whose path does not resolve, a link whose target is not a `.md` file, a link whose target is outside the tree, and a link into a vendor-derived skill are not checked. A skill is vendor-derived when its directory name is a directory name under `vendor/pstack/skills`, because `vendor/pstack/` cannot be edited.
+- A finding names the holding file, the line, the fragment, and the target file, and fails the build. An empty list means no checked fragment link failed. The check reads 169 fragment links on the current tree and reports none of them.
+- `tests/test_check.py` gains `FragmentCheckTest` cases for tilde fences, longer fences hiding inner markers, headings inside tilde fences, blockquote fences, list item fences, list item boundaries, code spans, code span delimiters, titled links, escaped title delimiters, duplicate anchors, and suffix collisions, and cases for on-demand, in-file, vendor, fence, and `check_tree` cases.
+- `scripts/outsider_smoke.py` runs the README Quick start commands, `roles.py show` on a catalog written from `tests/fixtures/catalog.json`, and `brigade.py open` plus `land.py init` on a scratch repository, each as one process, printing one `ok` line per step and exiting 1 on the first failure
+- Every step runs with `HOME` set to a home the run made and `GIT_CONFIG_NOSYSTEM=1`, keeping only `PATH`, `LANG`, `LC_*`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL` from the inherited environment, and every Python child runs with `-I`
+- It refuses a `--home` pointing at a directory the run did not create, and a missing git identity, before making anything
+- `.github/workflows/outsider.yml` runs the script on push to main and pull requests in a `python:3.12-slim` container that installs git
+- `tests/test_outsider_smoke.py` asserts the five step lines with exit 0 and an unchanged canary path listing, the refusal with exit 1, that `GIT_INDEX_FILE`, `GIT_TRACE`, and `GIT_CONFIG_SYSTEM` values pointing into the canary directory preserve its path listing, and that `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE`, and `PYTHONPATH` values pointing into the canary directory preserve its path listing with no canary path in captured child output
+- `close` appends a `## Spend` section after its other sections, from `spend_text` with `by="goal"`, `tokens=True`, and `since` the UTC date of `lastReportAt`, with standard error captured
+- The section drops spend's last line, and when a captured line equals `spend.UNREADABLE` or `spend.SCHEMA` it drops every line that starts with two spaces and appends one `tokens unavailable` line, and it prints `none` when no line remains
+- The window is the UTC date of `lastReportAt`, which is the finest window `spend --since` takes, so a second close on the same UTC day repeats that day's goal rows
+- A `spend_text` call that raises, from a refused `prices.json` or a raising token read, is caught and rerun with `tokens=False`, and the section prints the goal rows that rerun renders with one `tokens unavailable` line, so close keeps every other section and no spend stderr
+- The top-level `--help` command list names the section, and `docs/cli/brigade.md` and the `skills/brigade/` copies regenerate
+- `tests/brigade/test_reporting.py` adds five close tests over fixture stores, one goal row per goal, `none` for a window with no items, and the goal rows with `tokens unavailable` for an unreadable token source, a refused prices.json, and a raising token read, and `tests/brigade/test_briefs.py`, `tests/brigade/test_reviews.py`, `tests/brigade/test_items.py`, and `tests/brigade/test_tickets.py` carry the section in their exact report assertions
+- `t3/added/brigade/scripts/activity.py` `--serve [PORT]` binds 127.0.0.1 and serves this store's page rebuilt at most every 10 seconds. PORT defaults to 48731 and 0 picks an ephemeral port.
+- `t3/added/brigade/scripts/activity.py` GET answers the page only at the token path and every other GET path is 404, sends `Access-Control-Allow-Origin: null` with `Cache-Control: no-store`, and answers 503 with the one line message when the page build raises `ActivityError`.
+- `t3/added/brigade/scripts/activity.py` keeps the token in `activity-token` under the store directory, created mode 0600 and reused across restarts while valid and replaced otherwise.
+- `t3/added/brigade/scripts/activity.py` `--live-page` prints the wrapper that polls the default server address every 30 seconds, collapses items whose state chip reads merged, dropped, or done, and keeps an owner's open choice across refreshes.
+- `t3/added/brigade/SKILL.md` documents the detached server, the wrapper render, the restart rule, and the token warning.
+- `t3/added/brigade/SKILL.md` says `walk` prints a blocked count and links the brief-fields pointer at `script.md#brief-fields`.
+- `tests/test_activity.py` covers the token path, the null CORS origin, the 0600 reused token, the 127.0.0.1 bind, and the wrapper contents.
+- Run a service gains step 0. It runs `$B next` first with the wake that started the service.
+- The script block gains the `$B next` line. It prints the steps the wake owes and whether it is a reply.
+- Command output gains `next`. It prints `wake`, `reporting`, `reports to` when one is set, each cue, and `reply` in that order.
+
+### Fixed
+
+- Runtime, brigade, and brigade-admin skill text say `t3_thread_organize` takes one optional `threadId`, acts on the calling thread when it is missing, and ignores unknown keys. Every call targeting another thread passes one explicit `threadId`, one call per thread. Omitting `threadId` is only for acting on yourself.
+- `scripts/check.py` reports a plural `threadIds` key and an archive, settle, or snooze step that names `t3_thread_organize` without `threadId`.
+- Tests in `tests/test_check.py` cover both findings.
+- `.github/workflows/ci.yml` passes `timeout=60` on the second `select_browser` call and no timeout on the first
+- `tests/test_activity_render.py` gives `select_browser` a `timeout` argument defaulting to `PROBE_TIMEOUT` and probes with it
+- `measure` still passes `RENDER_TIMEOUT` to `confined_run`
+- A runner with no working browser spends at most 200 seconds more (five browsers times 40 seconds)
+- `_table_rows` drops bytes after the last newline before decoding, so a non-UTF-8 unfinished tail leaves finished rows.
+- `_publish` retries a `FileNotFoundError` from `_dump_holder` up to three attempts per slot, closing the failed descriptor first and keeping earlier record locks and slot flocks held.
+- The exclusive cap test drives a file backed clock past the 2s cap while the waiter holds a ticket, proving the deadline starts at acquire.
+- The exclusive supervisor calls the no-op `_exclusive_ready_ack` hook inside its protected try before its protected wait, production never reads `LAND_EXCLUSIVE_READY`, and the test launcher overrides the hook to touch a ready file before the signal test sends its signal.
+- The armed kill path has no unbounded loop, `waitid` uses `WNOHANG` and `WNOWAIT`, both grace loops check a monotonic deadline, then `SIGKILL` runs unless the leader is already reaped, and the leader is reaped.
+- `tests/brigade/support.py` adds `attempt_report` which writes `reports/<dish>.md` and sets its mtime to the later of now and the dish's last attempt start.
+- `tests/brigade/test_wake.py` writes eight current-attempt reports with `attempt_report`.
+- `tests/brigade/test_tickets.py` expects `self.project.resolve()` in `test_ticket_paths_refuses_a_project_that_is_not_a_git_repository_and_changes_no_store_file`.
+- `tests/brigade/test_wake.py` expects `self.project.resolve()` in `test_a_released_or_unreadable_lease_gets_its_own_line`.
+- land.py slot --exclusive stops the command at its cap when macOS killpg returns EPERM for a zombie leader this process may signal, and the same EPERM for a live leader still fails the command.
+- A landing command closes its database before it returns, so a refusal on Python 3.13 or later does not print an unclosed-database warning ahead of the refusal line.
+- The interrupt fixture witnesses the leader's exit with land._leader_is_permitted_zombie instead of a direct os.waitid call, so the fixture needs no os.waitid, which macOS Python before 3.13 does not expose.
+- The saved descriptor snapshot takes its descriptor numbers from the descriptor directory listing instead of from resolved paths, so a pipe whose path query fails stays in the snapshot and the cleanup closes a pipe opened after it.
+- `brigade.py open` and `set` refuse to write `.claude/settings.local.json` when the git repository that holds the project root tracks it, which a repository nested inside `.claude` used to hide, for a regular file and for a symbolic link
+- That refusal reads `brigade: <path> is tracked by the repository that holds the project root; untrack it there before brigade writes autoCompactWindow`, and an unreadable outer repository reads `brigade: git cannot say whether the repository that holds the project root tracks <path>; fix that repository and run this again`
+- The entry is asked of the repository git discovers from its own nearest existing directory first, so every current refusal keeps its text, and the project root's repository is asked only when that directory sits below the project root
+- A settings file a nested repository leaves untracked still writes, and an ordinary directory under a parent repository, a submodule, a linked worktree, and a project in no repository keep their current answers
+- `settings_cap_only` returns False when the earlier settings blob holds no strict JSON object, so `edits verify` compares that path like every other one
+- `fire`, `ticket add`, `ticket set`, `dish`, and `brief` refuse a second `--paths` with exit 1 and `brigade: --paths given twice. Pass one comma-separated value.`, before writing anything.
+- A single `--paths` behaves as before, including `""` where it clears.
+- Help text for each `--paths` says it is given once.
+- `hang` joins `WORK_COMMANDS` in `brigade_lib/store.py`, so the executive admin store refuses it with exit 1 and `brigade: the executive admin routes work and never runs it`, the same line it prints for the other work commands.
+- A test in `tests/brigade/test_admin.py` pins exit 1, that line, and an unchanged store when `hang` runs against the executive admin store.
+- The brief `## Threads` REPORT sentence lists only T3 threads started with `delegate_task` or `t3_thread_launch` for the code delegate, claims check, and architect runner threads.
+- A child run inside the worker's own harness is named in the report body instead, never in the section.
+- The brief `## Threads` sentence states the seat is one bare provider/model token with nothing after it and no backticks around it.
+- The role is one of code delegate, claims check, and architect runner, named literally.
+- Any other child, such as a how explainer, and any in-harness child is named in the report body instead.
+- The sentence gives an example item that `report_threads` parses as one child with no unreadable line.
+- `fire --tickets` given twice exits 1 with `brigade: --tickets given twice. Pass one comma-separated value.`
+- `brief --lease` given twice exits 1 with `brigade: --lease given twice. Pass one lease id.`
+- `dish --lease` given twice exits 1 with `brigade: --lease given twice. Pass one lease id.`
+- `t3/added/brigade/scripts/brigade_lib/layout.py` adds `docs/skills.md` when the leased path is `t3/runtime.md`, `t3/setup.md`, `t3/removed.txt`, `t3`, `t3/overrides`, `t3/added`, `vendor/pstack`, `vendor/pstack/skills`, any single name under `t3/overrides/`, `t3/added/`, or `vendor/pstack/skills/`, or `SKILL.md` as the second name under those bases, and not otherwise
+- `skills/brigade/scripts/brigade_lib/layout.py` regenerates from the added copy
+- `tests/brigade/test_fire_layout.py` adds `test_skill_source_adds_docs_skills_md_and_unrelated_omits_it` with vendor file, overrides file, added file, runtime file, setup file, overrides dir, added dir, vendor dir, removed list, and one unrelated tool script case
+- `spend --tokens` labels a Codex or OpenCode thread's turn totals with the model id at `orchestration_v2_projection_threads.payload_json.modelSelection.model` when that field holds a model id, where the label was `model not recorded` before.
+- `spend --tokens` reads that model through `_recorded_models`, which catches a missing thread table, a missing `thread_id` column, a missing `payload_json` column, or no index on `thread_id` and returns no model. A thread whose model cannot be read keeps its turn totals under `model not recorded`, and a Claude thread keeps its log attribution.
+- `tests/brigade/test_spend.py`'s `database()` fixture creates the thread table when it creates the other two, and its `thread_table` argument names the complete schema, a dropped table, a table without `thread_id`, a table without `payload_json`, and a table with no `thread_id` index. Four tests assert the model id for a Codex turn, the model id for an OpenCode turn, the `model not recorded` fallback, and the kept turn and Claude totals under each of the four unreadable variants.
+- `tests/test_activity_render.py` gives the browser a short TMPDIR from `tempfile.mkdtemp(dir="/tmp")` removed after the run, while HOME and XDG paths stay confined.
+- `tests/test_activity_render.py` skips with `chromium socket path too long` when the socket path passes 107 characters instead of launching.
+- `tests/test_activity_render.py` adds `test_confined_run_tmpdir_keeps_singleton_socket_path_within_107_characters` asserting the TMPDIR handed to the browser yields a socket path of at most 107 characters.
+- `t3/added/brigade/scripts/activity.py` gives the timeline group header `flex-wrap: wrap`, so an item's attempt lines take a line under its id, title, and state chip.
+- `tests/test_activity.py` adds `test_timeline_header_wraps_its_attempt_lines_instead_of_squeezing_the_id_and_title_to_no_width`, which renders an item with attempt lines and asserts the page's stylesheet gives `.tl>.grp` `flex-wrap: wrap`.
+- `tests/test_activity.py`'s `test_five_hundred_ledger_rows_stay_within_max_bytes_and_the_note_counts_the_lines_left_out` expects `15991` and `19989` bytes of HTML, 24 bytes more than before, because the stylesheet holds one more rule.
+- `tests/landing/support.py` calls `fileno` only on `io.IOBase` and `socket.socket` instances in `_close_live_owners`.
+- `tests/landing/test_support.py` plants `ctypes.PyDLL(None)` and `ctypes.pythonapi` with a `KeyboardInterrupt` canary and runs the helper in a child process.
+- `tests/test_outsider_smoke.py` asserts the run prints `ok install`, `ok doctor`, `ok roles`, `ok brigade`, and `ok land` in a new test, so a plan that dropped a required step fails it
+- `tests/test_outsider_smoke.py` leaves the three run tests' expected output derived from `outsider_smoke.plan_names()`, so a plan that added a step keeps them passing
+- `t3/added/brigade/scripts/activity.py` and `t3/added/brigade/views.md` say a token file is reused while it stays valid, with surrounding ASCII whitespace ignored.
+- `t3/added/brigade/views.md` says a T3 restart can stop a server launched from an agent shell, so check it after a restart and start it again if it stopped.
+- `tests/test_activity.py` pins that a private 0600 token file holding a token plus surrounding whitespace is reused.
+- `tests/landing/test_times.py` runs `--last 1` on the order fixture and expects `E3`, so ID selection fails.
+- `tests/landing/test_support.py` plants a real socket in the child and asserts cleanup closes it, so removing `socket.socket` from the filter fails the test.
+- `tests/landing/test_support.py` creates the child temp file inside a parent-owned `TemporaryDirectory`, so the parent removes it after success or a nonzero exit.
+- `fragment_findings` in `scripts/check.py` decodes a percent-encoded fragment before matching headings and strips a destination query before resolving the target file.
+- `tests/test_check.py` gains passing and failing fixtures for encoded fragments and query-bearing destinations, and regressions that pin the one-level container and fence scanning.
+- `failures.md` `## After a restart` states the gate the runtime pointer promises. Follow it before you read a saved child's result, replace a child, or use a saved worktree path.
+- The storage-cleanup sentence names the one-minute grace instead of pointing at an unnamed "grace below".
+- The `## Usage limit` panel sentence states what `t3/scripts/roles.py` does. A panel never seats the failed provider, seats the configured `review backups` seats it keeps, and parks when fewer than two usable seats remain.
+- `t3/added/brigade/scripts/brigade.py` keeps a unique loader alias and registers `spend` under both names, so each file executes once and seam metadata cannot resolve to a restored prior package.
+- `tests/brigade/test_loader.py` pins shared `spend` identity, single execution of all 28 files, and that `seam.set` does not resolve to a restored prior package.
+
+### Changed
+
+- ops config holds one required key ARCHIVE_T3_HOME and ops/t3-nightly-update.sh is gone
+- The share holds every discovered test whose module starts with `brigade.test_launch` or `brigade.test_handoff` and no other test
+- `tests/test_ops.py` pins default `--batch-size` 140 splitting 141 candidates into files of 140 and 1.
+- `tests/test_ops.py` pins `--batch-dir` with a missing parent failing with no file written.
+- `tests/test_ops.py` pins `--dry-run` with `--selection-only` printing the sorted JSON array.
+- `tests/test_ops.py` pins a direct run without `T3_CODE_MCP_AUTHORIZATION` exiting 1 with the summary on stdout and one stderr line naming the variable.
+- `tests/test_ops.py` pins an unknown flag exiting 2.
+- `t3/overrides/ketchup/SKILL.md` embeds upstream ketchup visuals text with `preview_snapshot`, `preview_recording_start`, `preview_recording_stop`, `html_preview`, and `html_render` in place of Cursor mechanics
+- `upstream.json` names commit `6ce45c59b9301a638c1fe1a7b8dc2a82b650898f` and version `0.15.25`. A later bullet in this section names commit `99743e9c151c8537cbbf1f98bb38f34ef3368453` and keeps version `0.15.25`.
+- upstream.json names commit e5136d82418d2db3165ea1050d17577cd618cc05 and keeps version 0.15.25. A later bullet in this section names commit `99743e9c151c8537cbbf1f98bb38f34ef3368453` and keeps version `0.15.25`.
+- vendor/pstack carries the sync of cursor/plugins pstack at e5136d82 for ticket T706, and rewrite of the version badge leaves README.md unchanged
+- t3/overrides/poteto-mode/SKILL.md takes the new upstream Principles bullets for Attack the Premise, Fix Root Causes, and Test Behavior Not Implementation
+- those three bullets name no Cursor mechanism, so no T3 mapping was needed and every other line of the override is unchanged
+- t3/overrides.lock.json moves the poteto-mode/SKILL.md pin to the hash of the new vendored file, which build.py records as the sha256 of vendor/pstack/skills/poteto-mode/SKILL.md
+- skills/poteto-mode/SKILL.md, skills/correct/SKILL.md, skills/principle-attack-the-premise/SKILL.md, skills/principle-fix-root-causes/SKILL.md, skills/principle-make-operations-idempotent/SKILL.md, and skills/principle-test-behavior-not-implementation/SKILL.md regenerate from vendor/pstack
+- `t3/runtime.md` records T3 Code nightly 20261015.3145 behavior. A delegated child's question for the user wakes this thread, and an approval request still sends no wake.
+- `hasPendingQuestion` is `true` on `task_status` while a question blocks the child, and a question that blocks the child also ends a `mode: "wait"` call with `hasPendingQuestion: true` and `waitTimedOut: false` while the task stays open.
+- The stalled-child step of Failure handling lists the child's pending requests with the child's `childThreadId` as `threadId` before it reads the child's last items, and Pending requests names that `threadId` on `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`.
+- History records that a progress update Claude 5.1 or later writes between tool calls is an assistant message from nightly 3132, and that a thread dropped from another environment arrives as a saved transcript file.
+- Local state records that a project can also remove a worktree a set number of days after its thread settles. No rule removes the worktree of a settled thread that still exists within a minute of that thread's last update.
+- The `t3_thread_organize` sentence that says the tool acts on the calling thread when `threadId` is missing is one sentence with no mid-sentence semicolon, and it appears once.
+- `skills/pstack-runtime/SKILL.md` is the regenerated copy of `t3/runtime.md`.
+- The brigade skill's Run a service step 9 gains a rule that at `milestones` and `digest` a delegated child's question is not a reply occasion by itself. It answers that question with `t3_pending_request_respond` only from facts and decisions the user already gave, per the pstack-runtime skill's Pending requests section, and parks a question that is a real decision with `86 add`, replying as that level replies to a decision.
+- Step 9's T3 Code version claim now ends at nightly 20261014.3118, where new native Claude thinking stays reasoning and does not create reply text. From 0.0.46-nightly.20261014.3132 or later, a progress update that Claude 5.1 or later writes between tool calls shows as reply text, so a wake that sends no reply writes no progress update between tool calls.
+- `tests/test_landing.py` moves into `tests/landing/`. `tests/landing/support.py` holds the shared helpers, the `LandingTest` base, and the git environment fence. `test_queue.py` holds submit land resume status batch conflict trunk crash local legacy and PR queue handling. `test_merge.py` holds merge mode checks auto merge policy stacked rebuild onto and awaiting merge state reads. `test_slot.py` holds the slot governor exclusive holders waiters records OFD flock publish and nested slots. `test_leases.py` holds lease claim renew release list check cap share owner and reserve. `test_contests.py` holds contest reservations rulings and mode checks. `test_identity.py` holds human push author based on co-authored identity pause resume worktree git directory and the git environment fence test. `test_in_process.py` holds refused command descriptor cleanup interrupts owner line plus store migration finished row database close.
+- Every test keeps its name. Bodies are unchanged except the paused child path, the fence child target, and the descriptor cleanup patch target. Three call sites name the new layout. The paused child runs `tests/landing/support.py` as a script. The fence child runs the queue module through `python -m unittest`. The descriptor cleanup test patches the support module that owns the helper.
+- `scripts/check.py` reads the fence reference from `tests/landing/support.py` and checks `tests/landing/` the way it checks `tests/brigade/`.
+- `tests/brigade/test_store.py`'s `test_set_cap_and_review_repair_a_string_int_and_list_stored_map_and_write_a_clean_one` compares the whole `set` output and the whole stored `restaurant.json` against the expected map, instead of one key of each parsed map.
+- `tests/brigade/test_wake.py`'s `test_startable_never_lists_a_low_ticket_of_a_paused_goal_as_riding_with_another_ticket` and `test_startable_rides_a_low_ticket_of_an_open_goal_and_pauses_one_of_a_paused_goal` assert `store_files()` is unchanged across the `startable` call.
+- `tests/brigade/test_items.py`'s `test_fire_refuses_a_ride_along_ticket_of_a_paused_goal_and_starts_no_item` requires exit code exactly 1 through the `code=` option of `run_at`, instead of any nonzero exit.
+- `upstream.json` names commit `99743e9c151c8537cbbf1f98bb38f34ef3368453` and keeps version `0.15.25`
+- `vendor/pstack` carries the sync of cursor/plugins `pstack` at `99743e9c` for ticket T730
+- `t3/overrides/swarm/SKILL.md` drops the intro sentence and the step 3 Set N line and the Keep a compact result table sentence to match upstream deletions in `vendor/pstack/skills/swarm/SKILL.md`
+- No new upstream line holds a Cursor mechanism so no new T3 mapping was needed and every other line of the override is unchanged except the retained Remove worker worktrees sentence
+- `t3/overrides.lock.json` moves the `swarm/SKILL.md` pin to the hash of the new vendored file
+- `skills/swarm/SKILL.md` regenerates from the override and `skills/interrogate/references/lead-judgment.md` and `skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md` and `skills/principle-type-system-discipline/SKILL.md` regenerate from vendor
+- `docs/skills.md` updates the `principle-type-system-discipline` description to match upstream
+- `t3/added/landing/scripts/land.py` splits into `t3/added/landing/scripts/landing_lib/` with `foundation`, `governor`, `store`, `policy`, `leases`, `queue`, `merge`, `contests`, `drain`, moved definitions unchanged except `seam.` prefixes, plus the new loader in `land.py` and `landing_lib/seam.py`, entry re-exports every `land.<name>`.
+- `tests/landing/test_in_process.py` follows moved names to `landing_lib/drain.py` for `status` and `land` traces.
+- `docs/landing-plan.md` and `docs/multi-coordinator.md` name `tests/landing/` instead of `tests/test_landing.py`.
+- `brigade.py` moves per-command parser wiring and handlers into `brigade_lib/commands/` with no behavior change; help and output stay byte-identical.
+- `t3/added/brigade/scripts/brigade_lib/startable.py` owns the classifier that turns waiting tickets into `Standing` values.
+- `t3/added/brigade/scripts/brigade_lib/watch.py` owns the liveness sentences and the log rows those sentences read.
+- `t3/added/brigade/scripts/brigade_lib/wake.py` keeps the sheet engine and re exports the moved names callers import.
+- Callers keep `from brigade_lib.wake import` with no edit to `brigade.py` or commands.
+- Tests move with no body change and every command output stays byte identical.
+- `.github/workflows/ci.yml` adds a `macos_312` job that runs `python3 -m unittest discover -s tests/landing -t .` and `python3 -m unittest tests.brigade.test_watch tests.brigade.test_wake tests.brigade.test_tickets` on `macos-latest`.
+- The job sets up Python 3.12 and pyyaml, and its test step carries `continue-on-error: true`.
+- That step appends the `Ran` summary lines, the `OK` or `FAILED` status lines, and any `FAIL:` or `ERROR:` name to `$GITHUB_STEP_SUMMARY`.
+- Existing jobs and their triggers are unchanged.
+- The `macos_312` job in `.github/workflows/ci.yml` carries `if: github.event_name == 'push'`, so it runs only on a push to main and never on a pull request.
+- The comment above the job's test step now reads that the job runs only on push to main and the step stays non-blocking.
+- `tests/test_run_tests.py` asserts the macOS job's parsed `if` equals `github.event_name == 'push'` in the yaml branch, and that its body holds the line `if: github.event_name == 'push'` in the no-yaml text branch.
+
+- landing skill Run writers through it step 2 now includes the runtime Isolation section link and the landing base note
+- `t3/added/brigade/SKILL.md` script block records `set --cap`, `set --review`, `goal set G<n> --state paused` with `--state open` to resume, and `goal set G<n> --share N`, and the `startable` wait reasons `its goal is paused`, `the <kind> cap holds (<held> of <cap>)`, and `the <goal> share holds (<held> of <share>)`.
+- `docs/operations.md` adds `--batch-dir` and `--batch-size` to the archiver flag table
+- `docs/operations.md` scopes the archiver output and exits to `--selection-only` with and without `--batch-dir`, `--batch-dir` without `--selection-only`, and a missing credential
+- step 4.1 of the brigade skill says fire claims a landing lease on those paths plus the generated copies and doc pages the build layout maps from them when the project has one.
+- Cut `docs/light-mode.md` to the design of the `light` setting as it works today
+- Drop the census, method, saving estimate, risks, build plan, trial record, and appendices, keeping a short Decision paragraph
+- Update `README.md` frozen list to two pieces after unfreezing the light-mode page
+- Step 6 of the brigade skill tells the coordinator to include `verdict-protocol.md` in the verifier brief for the worth-a-fix-round test, the `Rare:` mark, and the `## Edits` shape.
+- Step 6 tells the coordinator to copy the `scratchDir` value from `restaurant.json` into the verifier brief as the `mktemp -d -p` parent, and to say so in the brief when none is set.
+- land.py states that the Darwin alive-leader fast path runs where os.waitid exists and that the ps query runs otherwise or after that leader exits.
+- A landing Store assigns self.db before it converts its directory argument, so close after a constructor failure at that conversion raises nothing.
+- The exclusive cap's surviving-member assertion reads the member's process state, so a zombie member fails it where os.kill(pid, 0) succeeds.
+- `t3/added/brigade/SKILL.md` names `handoff.md` as `<restaurant dir>/handoff.md`, tells the coordinator to rewrite handoff.md at a quiet point before compaction, and says to read handoff.md, house-rules.md, and the memory index after any compaction
+- `t3/added/brigade/SKILL.md` states that the context cap is stored in `restaurant.json` and reads as 300000 when no integer is stored there
+- `t3/added/brigade/SKILL.md` states that `open` writes it into the project's `.claude/settings.local.json` as `autoCompactWindow` when `coordinatorProvider` reads as `claude`, and that `set` writes it again whenever `--context-cap` or `--coordinator-provider` is passed and the resulting provider reads as `claude`
+- `t3/added/brigade/SKILL.md` states that a refused write exits 1 and leaves the settings file as it was
+- `t3/added/brigade/SKILL.md` states that reopening a store whose `coordinatorProvider` reads as `claude` creates the file or sets `autoCompactWindow` in it from that cap
+- `t3/added/brigade/SKILL.md` states that a successful write replaces an untracked settings file symbolic link with a regular file and leaves the link's target unchanged
+- `t3/added/brigade/SKILL.md` states that on a host that is not Claude the context cap is not enforced and no settings file is written
+- `t3/runtime.md` Delegation step 5 states that a child with a question that blocks it is not stalled, per Failure handling. The sentence follows the ten-minute stall sentence in the wait bullet.
+- The wait bullet's handle instruction names a stalled child, so the added exception sentence is not the referent of its pronoun.
+- The explicit-target `t3_thread_organize` rule is stated once, in History, after the tool's `threadId` sentence. Pull request watching references it with a link to History instead of repeating it.
+- `skills/pstack-runtime/SKILL.md` is the regenerated copy of `t3/runtime.md`.
+- Four nested-repository refusal tests in `tests/brigade/test_context_cap.py` assert an exit code of exactly 1, where they asserted only that the code was nonzero
+- Those four call the new `refused` helper on `ContextCapTest`, which returns the exit code and stderr of a brigade call on that test's store, and no other test in the module changes
+- Each of those refusals raises `BrigadeError`, and `main` in `t3/added/brigade/scripts/brigade.py` prints it and returns 1, so the tightened assertions hold with no product code change
+- `run_at` in `tests/brigade/support.py` takes `code`, the one exit status the call must return, and a caller that passes no `code` keeps the `ok` check that accepts any nonzero status
+- Seventeen refusal calls in sixteen tests in `tests/brigade/test_context_cap.py` passed `ok=False` and accepted any nonzero status, and now pass `code=1` and assert exit code exactly 1
+- The four nested-repository refusal tests call that shared option, which removes the local `refused` helper on `ContextCapTest`
+- Every tightened refusal raises `BrigadeError`, and `main` in `t3/added/brigade/scripts/brigade.py` prints it and returns 1, so no product code changes
+- `dish --thread` writes the open worker row of threads.tsv for the current attempt with an empty seat and closes the previous open worker row
+- A later attempt is stored as fix worker and the same thread again writes no new row when the call has no --reported or state change
+- `pass record --reviewer-thread` writes the reviewer row for this attempt taking its seat from `--verifier`
+- `thread` records one panel member thread an item used and the other six roles are written by `dish --thread`, `pass record --reviewer-thread`, or a report
+- `model skip` needs cause rate-limit or failed and `model clear` records a passing smoke test and clears the skip
+- `dish --worker-ended` records that this attempt's worker ended or failed and wrote no report and writes one ended log row and changes no dish field
+- `watch` prints four recovery steps for a worker ended with no report, and the coordinator runs them in order. The first step keeps the commits on the dish branch with no new branch when the dish has one.
+- `watch` prints a `skipped` line for each skipped seat until `model clear` records a passing smoke test. No command refuses a launch on a skipped seat, so the coordinator must launch none on it.
+- The worker brief asks a worker that used a code delegate, claims check, or architect runner to write a `## Threads` section listing those threads. A report without the section adds no row and is not an error.
+- `brigade.py open` on an existing restaurant prints `context-cap stays N; change it with set --context-cap` when `--context-cap` differs from the stored cap, where a missing cap reads as 300000
+- `brigade.py open` on an existing restaurant prints `coordinator-provider stays P; change it with set --coordinator-provider` when `--coordinator-provider` differs from the stored provider, where a missing provider reads as claude
+- A scratch anchor matches only when the next character is not an ASCII letter or digit, underscore, dot, hyphen, or tilde.
+- `brief --base` refuses an empty or whitespace-only value with `brief --base takes a trunk ref, such as origin/main`.
+- An invalid stored `scratchDir` refusal names `restaurant.json` and the key and the value.
+- `scratch_parent_text` also refuses a path at or under the resolved `/tmp`.
+- `t3/added/brigade/admin-reporting.md` is new and holds the moved `## Reporting to an executive admin` body, the admin-only part of Run a service step 9, the moved contest sentences, and the moved liveness sentences
+- `t3/added/brigade/SKILL.md` keeps `## Reporting to an executive admin` as a stub with the pointer sentence, the `(../brigade-admin/SKILL.md)` link, and the `from-user` command, and keeps a one-line trigger stub at Run a service step 7, Liveness check step 1, and Liveness check step 5
+- `t3/added/brigade/SKILL.md` Run a service step 9 keeps its first sentence and links `admin-reporting.md#step-9`
+- an in-file link in moved text becomes `SKILL.md#<slug>` when its heading stays in `SKILL.md`
+- `tests/brigade/support.py` adds `BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md")` and `brigade_docs`, and holds the moved `BrigadeAdminSplitDocTest`. A later bullet in this section joins `script.md` to `BRIGADE_DOCS`. `tests/brigade/support.py` reads `views.md` through `BRIGADE_DOCS`. The tuple reads `("SKILL.md", "admin-reporting.md", "opening.md", "recovery.md", "script.md", "views.md")`.
+- `tests/brigade/test_docs.py` imports `BrigadeAdminSplitDocTest` with the other doc tests
+- `tests/brigade/test_store.py` reads the first `| Line |` table of the joined docs
+- `tests/test_pstack_t3.py` no longer reads `skills/brigade/`
+- `skills/brigade/SKILL.md` and `skills/brigade/admin-reporting.md` regenerate from the added copies
+- `t3/added/brigade/opening.md` holds the Open a restaurant steps, the First service steps, the Close a restaurant steps, and the Context cap paragraph. `t3/added/brigade/SKILL.md` keeps stub headings with pointer sentences for those three sections.
+- The Open a restaurant offer line names every-turn, milestones, and digest and points at Run a service step 9 in SKILL.md for what each level sends. Step 4 names the Context cap in opening.md.
+- The First service stub keeps the landing drain bullet, the liveness bullet, and the record-ID bullet. The opening.md First service holds the pin line, the roles line, the three schedule lines, and the rerun and run lines with a back link to First service in SKILL.md.
+- Run a service step 4.1 links First service step 3 in SKILL.md. The script section drops the context cap paragraph with no pointer. It lives in opening.md Context cap.
+- `BRIGADE_DOCS` in `tests/brigade/support.py` reads SKILL.md, admin-reporting.md, and opening.md in that order. A later bullet in this section joins `script.md` to `BRIGADE_DOCS`. `tests/brigade/support.py` reads `views.md` through `BRIGADE_DOCS`. The tuple reads `("SKILL.md", "admin-reporting.md", "opening.md", "recovery.md", "script.md", "views.md")`.
+- `t3/runtime.md` moves the `t3_thread_configure` bullet, the queued-correction bullet, the `### Forks` body, and the `run_scheduled_task_now` and finite-program pause bullets into `t3/added/pstack-runtime/threads.md`. Each moved site keeps a stub with the never rule its contract pins and a link to its heading in `threads.md`.
+- `tests/test_pstack_t3.py` adds `RUNTIME_DOCS` and a reader that joins `skills/pstack-runtime/SKILL.md` with `skills/pstack-runtime/threads.md`. `ConfigureOwnerDocTest`, `ForkDocTest`, `PromoteQueuedCorrectionDocTest`, and `RunScheduleNowDocTest` read their moved text from that reader, and their in-file links now carry the `SKILL.md` prefix. Later bullets in this section add `host.md`, `verification.md`, `roles.md`, `failures.md`, `light.md`, and `gate-review.md` to `RUNTIME_DOCS`. The tuple reads `("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md")`.
+- `AGENTS.md` records that `t3/added/pstack-runtime/<name>.md` builds to `skills/pstack-runtime/<name>.md`.
+- `t3/runtime.md` moves the Isolation `runOnSettle` bullet and older-host bullet, the History version notes and dropped-transcript bullet, the snooze bullet, the PR watching settle paragraph, the six Verification surfaces bullets, and the Skill locations body into `t3/added/pstack-runtime/host.md` and `t3/added/pstack-runtime/verification.md`.
+- `host.md` holds `## Settle on turn end`, `## Older hosts`, `## History notes`, `## Snooze`, and `## Skill locations`, and `verification.md` holds the six bullets verbatim. Each moved site keeps the pointer sentence from the plan's Pointer sentences table. `## Isolation` keeps its read-only, worktree-isolation, and uncommitted-changes bullets, `## Pull request watching` keeps the `Never settle an owner` sentence, and `## Verification surfaces` keeps the `verify-*` line with `## Visual reports` still after it.
+- `tests/test_pstack_t3.py` adds `host.md` and `verification.md` to `RUNTIME_DOCS` and a `runtime_doc_section` reader for one member. The three `ThreadLifecycleDocTest` tests that read a moved phrase, `MuseDocTest.test_skill_locations_exclude_muse_from_the_picker`, `PreviewToolDocTest`, and `VisualReportsDocTest.test_section_sits_after_verification_surfaces` read the file that holds each phrase, and no assertion changed.
+- `t3/runtime.md` adds six pre-action pointers that name an observable trigger and link the on-demand section that holds each moved rule, and keeps every pointer sentence from the plan.
+- Move nine rare recovery procedures from `t3/added/brigade/SKILL.md` into `t3/added/brigade/recovery.md` and leave a one-line stub with trigger text and a link at each site.
+- Point Run a service steps 4.3, 6, and 7 and Liveness check step 1 at `recovery.md` for any line those sections do not name.
+- Retarget `UsageLimitDocTest` and the round-budget pending-decision test to read the moved bullets from `recovery.md`.
+- `t3/runtime.md` moves most of its `## Roles` reference into the new `t3/added/pstack-runtime/roles.md`. `### Built-in defaults`, `### Excluded seats`, `### Budget`, `### Fallback`, and `### Claude Haiku 5.5` each keep their heading and a few sentences.
+- Each of those five sections keeps the `roles.md` pointer sentence from the plan's Pointer sentences table. `### Built-in defaults` also points there before seat resolution or weighing agreement. `### Resolve and carry the mode` keeps the last four sentences of its light-budget paragraph and points to `roles.md#budget` before light `roles.py show` or `roles.py backup` calls.
+- `roles.md` holds `## Built-in defaults`, `## Excluded seats`, `## Budget`, `## Fallback`, and `## Claude Haiku 5.5`, with the rest of the light-budget paragraph at the end of `## Budget`.
+- The two Haiku 5.5 brief paragraphs leave the docs. `t3/scripts/roles.py` holds that text as `HAIKU_BRIEF`, which `roles.py show` prints as `haikuBrief`.
+- `tests/test_pstack_t3.py` adds `roles.md` to `RUNTIME_DOCS`, points `FastGrokDocTest` at `## Excluded seats` and `LaunchingSkillTestDocTest` at `## Claude Haiku 5.5` in `roles.md`, and reads the Haiku brief text from `t3/scripts/roles.py`.
+- Move the paragraphs after the command block in `## The script` of `t3/added/brigade/SKILL.md` into new on-demand file `t3/added/brigade/script.md`. Leave a stub with a link at each moved site and refusal text where the paragraph had one. Priority stays with no new link.
+- Point a refused or unnamed `$B` line, or a flag the block does not show, at `script.md`. The pointer states `$B <command> --help`.
+- Join `script.md` to `BRIGADE_DOCS`. Keep the creation-only rule for `open --workers` in `script.md`. Drop flag and default descriptions already stated by command help or the command block.
+- `t3/runtime.md` moves the usage-limit recovery out of `### Failure handling` into new `t3/added/pstack-runtime/failures.md`. The bullet keeps one check sentence and points to `failures.md#usage-limit`.
+- `failures.md` holds `## Usage limit` with the `roles.py backup` block, the relaunch handling, and the ladder. In-file links now target `SKILL.md` and `respawn per the bullet above` now targets `SKILL.md#failure-handling`.
+- `t3/runtime.md` moves the T3 restart recovery out of `## Local state` into `failures.md`. The section keeps its first two paragraphs, two worktree sentences, and points to `failures.md#after-a-restart`.
+- `failures.md` holds `## After a restart` with the T3 restart paragraph and links its state-directory reference to `SKILL.md#local-state`.
+- `tests/test_pstack_t3.py` adds `failures.md` to `RUNTIME_DOCS` and points the three pinned tests at the file that holds each phrase.
+- `t3/runtime.md` moves the table under `### Light behavior` into new `t3/added/pstack-runtime/light.md`. The section keeps its intro paragraph and adds `In light mode, read [light.md](light.md) before every spawn and run the row for that spawn.`
+- `light.md` opens with `# Light behavior` and holds the header plus every row verbatim. In-file links now target `SKILL.md`.
+- `scripts/check.py` returns early from `light_table_findings` for `pstack-runtime/SKILL.md` and `pstack-runtime/light.md`. The forbidden pattern scan still applies to `light.md`.
+- `tests/test_pstack_t3.py` adds `light.md` to `RUNTIME_DOCS` and points the four row tests at `skills/pstack-runtime/light.md` with `SKILL.md#` links.
+- `tests/test_check.py` shows a light table in `pstack-runtime/light.md` passes and the same table in another file still fails. A forbidden pattern in `light.md` still fails.
+- `wc -w t3/runtime.md` reads 10068 before and 9188 after. A later bullet in this section reads 9188 before and 9013 after.
+- `t3/runtime.md` replaces `the row below` with `the row in [light.md](light.md) that names it` and points reuse at new `t3/added/pstack-runtime/gate-review.md`.
+- `wc -w t3/runtime.md` reads 9188 before and 9013 after. New `t3/added/pstack-runtime/gate-review.md` reads 309 words.
+- Gate links before, each resolves to `### Gate review` in `skills/pstack-runtime/SKILL.md`.
+  `t3/runtime.md` `[Gate review](#gate-review)` resolves in file to `### Gate review`.
+  `t3/added/pstack-runtime/light.md` nine `(SKILL.md#gate-review)` rows resolve to `SKILL.md` `### Gate review`.
+  `t3/added/pstack-runtime/failures.md` `[Gate review](SKILL.md#gate-review)` resolves to `SKILL.md` `### Gate review`.
+  `t3/added/brigade/SKILL.md` and `recovery.md` and `opening-a-pr.md` `SKILL.md#gate-review` links resolve to `skills/pstack-runtime/SKILL.md` `### Gate review`.
+- Gate links after keep every link above and add two that resolve.
+  `[Reusing a verdict](gate-review.md#reusing-a-verdict)` in `SKILL.md` resolves to `gate-review.md` `## Reusing a verdict`.
+  `[Gate review](SKILL.md#gate-review)` in `gate-review.md` resolves to `SKILL.md` `### Gate review`.
+  All `light.md` `(SKILL.md#gate-review)` rows still resolve to `SKILL.md` `### Gate review`.
+  `opening-a-pr.md` keeps `(../../pstack-runtime/SKILL.md#gate-review)` to `SKILL.md` `### Gate review`.
+- Moved Attempt lines still stated.
+  old `The lines include Attempt:.` still in `### Resolve and carry the mode` as `The printed lines include Attempt:.`.
+  old `Under Mode: light they also include any Waived by mode: line.` still in same bullet.
+  old `Under Mode: full there is no Waived by mode: line, and the brief must not add one.` still in same bullet.
+  `Delegation` step 4 now says `See [Resolve and carry the mode](#resolve-and-carry-the-mode) for the Attempt: and Waived by mode: lines.`.
+- Collapsed reuse sentences still stated in `gate-review.md` `## Reusing a verdict`.
+  old `Two sources can show both today.` kept verbatim.
+  old source 1 `brigade.py --at pass check` with `--json`, `crossFamily true`, `Never read pass.tsv`, `Never take without --json` kept verbatim.
+  old source 2 `A verdict this run launched at that exact SHA.` kept verbatim.
+  old four exclusion bullets kept verbatim (three state does not qualify).
+  old `Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.` kept verbatim.
+  old `Light mode keeps that policy for lane receipts only` kept verbatim with added `(See pstack-runtime/SKILL.md#gate-review for the lane receipt rule)` to satisfy the light-mode link check.
+  `SKILL.md` keeps `Launch a new gate unless a current qualifying verdict exists at the exact head SHA.`, `Current` and `Qualifying` bullets verbatim, one `pass check <item> --sha <head> --json` line, pointer to `gate-review.md`, and lane receipt sentences.
+- Tightened watch heartbeat still states every rule.
+  old `When the event you are waiting for is the merge itself, create a schedule_task heartbeat` still as `When the wait is for the merge itself, add a schedule_task heartbeat`.
+  old `A merge never wakes the thread, so the heartbeat is how you learn that the PR merged.` still as `A merge never wakes the thread.` and `The heartbeat is how you learn the PR merged.`.
+  `3600000`, `900000`, merge queue, human mode, merge mode exception, `required-checks wake runs land`, forge commands stay, `Run them after a wake`, `They are not the wait` all still stated.
+- `tests/test_pstack_t3.py` adds `gate-review.md` to `RUNTIME_DOCS` and asserts reuse text, bullet equality, no `the row below`, and no `|` line in `gate-review.md`.
+- The command comments in t3/added/brigade/SKILL.md name only what each command does and the output lines a later step acts on.
+- The rest of each comment moved word for word to script.md under a new "## Command output" section.
+- The bodies of "## Agent activity" and "## Executive chef's view" moved verbatim to the new t3/added/brigade/views.md behind pointer sentences.
+- tests/brigade/support.py reads views.md through BRIGADE_DOCS.
+- tests/test_activity.py skill_section() reads views.md for the "## Agent activity" section with its assertions unchanged.
+- The skill drops about 1,100 words.
+- Steps 4.1 and 6 state the timebox through the runtime Deadlines section and keep only the brigade differences.
+- Step 4.2 single-quotes flag values per The script and reads Brief fields before writing fields.
+- Step 7 states each not filed category in shorter sentences and keeps every rule.
+- Step 9 keeps the 3132 two thinking block rule and follows History notes through History for older bounds.
+- Step 7 holds the three drop steps. Its worker usage-limit path and Liveness lease-expiry and over-timebox paths run steps 1 and 2 without dropping the dish.
+- The executive view pointer fires only on walk and the status sentences moved to SKILL.md.
+- SKILL.md drops 18 words and views.md drops 38 words, 56 in total.
+- The `reports-to` row in `t3/added/brigade/admin-reporting.md` links `[First service step 3](opening.md#first-service)` for the hourly service schedule. That step lives in `opening.md` after D312.
+- `brigade.py spend`'s help text says that Codex and OpenCode turn totals print under the thread's current model selection, so turns taken before a mid-run model switch count under the later model.
+- The regenerated `docs/cli/brigade.md` carries that sentence, and `spend` behavior is unchanged.
+
 ## 0.6.0 (2026-10-14)
 
 - The verify rule says to run the claims check again after any later edit to prose, and to include `python3 -m unittest tests.test_pstack_t3` in the final run because that module checks the change note.

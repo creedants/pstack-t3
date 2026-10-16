@@ -1,6 +1,0 @@
-- kind fix
-- `brigade.py open` and `set` refuse to write `.claude/settings.local.json` when the git repository that holds the project root tracks it, which a repository nested inside `.claude` used to hide, for a regular file and for a symbolic link
-- That refusal reads `brigade: <path> is tracked by the repository that holds the project root; untrack it there before brigade writes autoCompactWindow`, and an unreadable outer repository reads `brigade: git cannot say whether the repository that holds the project root tracks <path>; fix that repository and run this again`
-- The entry is asked of the repository git discovers from its own nearest existing directory first, so every current refusal keeps its text, and the project root's repository is asked only when that directory sits below the project root
-- A settings file a nested repository leaves untracked still writes, and an ordinary directory under a parent repository, a submodule, a linked worktree, and a project in no repository keep their current answers
-- `settings_cap_only` returns False when the earlier settings blob holds no strict JSON object, so `edits verify` compares that path like every other one

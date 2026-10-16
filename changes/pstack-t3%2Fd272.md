@@ -1,5 +1,0 @@
-- kind fix
-- land.py slot --exclusive stops the command at its cap when macOS killpg returns EPERM for a zombie leader this process may signal, and the same EPERM for a live leader still fails the command.
-- A landing command closes its database before it returns, so a refusal on Python 3.13 or later does not print an unclosed-database warning ahead of the refusal line.
-- The interrupt fixture witnesses the leader's exit with land._leader_is_permitted_zombie instead of a direct os.waitid call, so the fixture needs no os.waitid, which macOS Python before 3.13 does not expose.
-- The saved descriptor snapshot takes its descriptor numbers from the descriptor directory listing instead of from resolved paths, so a pipe whose path query fails stays in the snapshot and the cleanup closes a pipe opened after it.

@@ -1,4 +1,0 @@
-- kind polish
-- Move nine rare recovery procedures from `t3/added/brigade/SKILL.md` into `t3/added/brigade/recovery.md` and leave a one-line stub with trigger text and a link at each site.
-- Point Run a service steps 4.3, 6, and 7 and Liveness check step 1 at `recovery.md` for any line those sections do not name.
-- Retarget `UsageLimitDocTest` and the round-budget pending-decision test to read the moved bullets from `recovery.md`.

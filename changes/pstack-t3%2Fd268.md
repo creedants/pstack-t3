@@ -1,4 +1,0 @@
-- kind polish
-- Cut `docs/light-mode.md` to the design of the `light` setting as it works today
-- Drop the census, method, saving estimate, risks, build plan, trial record, and appendices, keeping a short Decision paragraph
-- Update `README.md` frozen list to two pieces after unfreezing the light-mode page

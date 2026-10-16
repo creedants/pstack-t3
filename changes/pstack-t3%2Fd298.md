@@ -1,3 +1,0 @@
-- kind fix
-- The brief `## Threads` REPORT sentence lists only T3 threads started with `delegate_task` or `t3_thread_launch` for the code delegate, claims check, and architect runner threads.
-- A child run inside the worker's own harness is named in the report body instead, never in the section.

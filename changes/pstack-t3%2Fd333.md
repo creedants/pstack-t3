@@ -1,3 +1,0 @@
-- kind fix
-- `tests/test_outsider_smoke.py` asserts the run prints `ok install`, `ok doctor`, `ok roles`, `ok brigade`, and `ok land` in a new test, so a plan that dropped a required step fails it
-- `tests/test_outsider_smoke.py` leaves the three run tests' expected output derived from `outsider_smoke.plan_names()`, so a plan that added a step keeps them passing

@@ -1,6 +1,0 @@
-- kind polish
-- `t3/runtime.md` moves the usage-limit recovery out of `### Failure handling` into new `t3/added/pstack-runtime/failures.md`. The bullet keeps one check sentence and points to `failures.md#usage-limit`.
-- `failures.md` holds `## Usage limit` with the `roles.py backup` block, the relaunch handling, and the ladder. In-file links now target `SKILL.md` and `respawn per the bullet above` now targets `SKILL.md#failure-handling`.
-- `t3/runtime.md` moves the T3 restart recovery out of `## Local state` into `failures.md`. The section keeps its first two paragraphs, two worktree sentences, and points to `failures.md#after-a-restart`.
-- `failures.md` holds `## After a restart` with the T3 restart paragraph and links its state-directory reference to `SKILL.md#local-state`.
-- `tests/test_pstack_t3.py` adds `failures.md` to `RUNTIME_DOCS` and points the three pinned tests at the file that holds each phrase.

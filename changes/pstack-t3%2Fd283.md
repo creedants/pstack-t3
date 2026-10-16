@@ -1,5 +1,0 @@
-- kind polish
-- `t3/runtime.md` Delegation step 5 states that a child with a question that blocks it is not stalled, per Failure handling. The sentence follows the ten-minute stall sentence in the wait bullet.
-- The wait bullet's handle instruction names a stalled child, so the added exception sentence is not the referent of its pronoun.
-- The explicit-target `t3_thread_organize` rule is stated once, in History, after the tool's `threadId` sentence. Pull request watching references it with a link to History instead of repeating it.
-- `skills/pstack-runtime/SKILL.md` is the regenerated copy of `t3/runtime.md`.

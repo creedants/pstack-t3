@@ -1,2 +1,0 @@
-- kind upkeep
-- `brigade.py` moves per-command parser wiring and handlers into `brigade_lib/commands/` with no behavior change; help and output stay byte-identical.

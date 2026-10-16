@@ -1,8 +1,0 @@
-- kind polish
-- Steps 4.1 and 6 state the timebox through the runtime Deadlines section and keep only the brigade differences.
-- Step 4.2 single-quotes flag values per The script and reads Brief fields before writing fields.
-- Step 7 states each not filed category in shorter sentences and keeps every rule.
-- Step 9 keeps the 3132 two thinking block rule and follows History notes through History for older bounds.
-- Step 7 holds the three drop steps. Its worker usage-limit path and Liveness lease-expiry and over-timebox paths run steps 1 and 2 without dropping the dish.
-- The executive view pointer fires only on walk and the status sentences moved to SKILL.md.
-- SKILL.md drops 18 words and views.md drops 38 words, 56 in total.

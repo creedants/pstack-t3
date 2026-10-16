@@ -1,2 +1,0 @@
-- kind upkeep
-- ops config holds one required key ARCHIVE_T3_HOME and ops/t3-nightly-update.sh is gone

@@ -1,4 +1,0 @@
-- kind fix
-- `fire --tickets` given twice exits 1 with `brigade: --tickets given twice. Pass one comma-separated value.`
-- `brief --lease` given twice exits 1 with `brigade: --lease given twice. Pass one lease id.`
-- `dish --lease` given twice exits 1 with `brigade: --lease given twice. Pass one lease id.`
