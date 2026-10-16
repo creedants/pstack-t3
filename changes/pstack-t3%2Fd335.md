@@ -1,0 +1,4 @@
+- kind fix
+- `t3/added/brigade/scripts/activity.py` and `t3/added/brigade/views.md` say a token file is reused while it stays valid, with surrounding ASCII whitespace ignored.
+- `t3/added/brigade/views.md` says a T3 restart can stop a server launched from an agent shell, so check it after a restart and start it again if it stopped.
+- `tests/test_activity.py` pins that a private 0600 token file holding a token plus surrounding whitespace is reused.
