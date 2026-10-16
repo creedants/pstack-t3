@@ -2441,6 +2441,7 @@ LEDGER_HOOK = """
             details.appendChild(span);
           }
           block.appendChild(details);
+          details.setAttribute('data-item', itemId);
           const open = !!attemptMap[itemId];
           details.open = open;
           const rows = (gpos != null && domGroups[gpos]) ? domGroups[gpos].rows : [];
@@ -2452,6 +2453,7 @@ LEDGER_HOOK = """
             const isOpen = !!details.open;
             attemptMap[itemId] = isOpen;
             for (const r of earlierRows) { if (isOpen) dropEarlier(r); else addEarlier(r); }
+            if (typeof window !== 'undefined' && window.refreshAttempt) window.refreshAttempt(itemId);
           };
         }
         for (const phrase of current) {
@@ -2690,6 +2692,8 @@ LIVE_FOLD = squeezed("""
       }
       for (const {head, rows} of groups) {
         const id = (head.querySelector('.one') || {}).textContent || head.textContent;
+        const block = head.querySelector('.ldg details');
+        const key = (block && block.getAttribute('data-item')) || id;
         const state = (head.querySelector(':scope>b.chip') || {}).textContent || '';
         const byDefault = !/merged|dropped|done/.test(state);
         const caret = document.createElement('span');
@@ -2699,14 +2703,16 @@ LIVE_FOLD = squeezed("""
         const apply = () => {
           const open = id in openState ? openState[id] : byDefault;
           caret.textContent = open ? '\u25BE' : '\u25B8';
-          for (const r of rows) { const earlier = r.classList.contains('earlier'); const attemptOpen = !!attemptState[id]; r.style.display = !open ? 'none' : (earlier && !attemptOpen ? 'none' : ''); }
+          const attemptOpen = !!attemptState[key];
+          for (const r of rows) { const earlier = r.classList.contains('earlier'); r.style.display = !open ? 'none' : (earlier && !attemptOpen ? 'none' : ''); }
           const l = head.querySelector('.ldg');
           if (l) l.style.display = open ? '' : 'none';
         };
         head.onclick = (e) => { if (e.target.closest('a,summary,details')) return; openState[id] = !(id in openState ? openState[id] : byDefault); apply(); };
         apply();
-        appliers.push({id, apply});
+        appliers.push({id, key, apply});
       }
+      window.refreshAttempt = (itemId) => { for (const a of appliers) { if (a.key === itemId) a.apply(); } };
     }
 """)
 

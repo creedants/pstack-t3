@@ -1642,8 +1642,10 @@ PR6 = "https://example.test/o/r/pull/6"
 STUB = """
 const nodes = [];
 const make = tag => ({
-  tagName: tag.toUpperCase(), kids: [], style: {}, className: '', own: '',
+  tagName: tag.toUpperCase(), kids: [], style: {}, attrs: {}, className: '', own: '',
   appendChild(kid) { this.kids.push(kid); return kid; },
+  setAttribute(name, value) { this.attrs[name] = String(value); },
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; },
   insertBefore(node, ref) {
     const from = this.kids.indexOf(node);
     if (from >= 0) this.kids.splice(from, 1);
@@ -3785,17 +3787,17 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15983, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15969, 417))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
         self.assertEqual(data_of(html)["N"], [
-            "406 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "409 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
         self.assertEqual(summary, "attempts 1-499: 499 workers, all open")
-        self.assertEqual(payload, [phrase(number) for number in range(1, 94)])
+        self.assertEqual(payload, [phrase(number) for number in range(1, 91)])
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
@@ -3811,16 +3813,16 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19972, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19955, 417))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
         self.assertEqual(data_of(html)["N"], [
-            "321 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "324 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
-        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(1, 179)]))
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(1, 176)]))
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
