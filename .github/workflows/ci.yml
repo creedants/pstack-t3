@@ -187,13 +187,14 @@ jobs:
   macos_312:
     name: macOS (3.12)
     runs-on: macos-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install pyyaml
-      # This step stays non-blocking until it has passed on main.
+      # This job runs only on push to main, and this step stays non-blocking.
       - name: Landing and brigade tests
         continue-on-error: true
         run: |
