@@ -217,6 +217,7 @@ jobs:
           python3 scripts/build.py
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
+
   # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 2 of 4. No macOS part is in a needs list.
   macos_312_2:
     name: macOS (3.12, 2/4)
@@ -244,6 +245,7 @@ jobs:
             grep -E '^(FAIL|ERROR): ' "$log" || true
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
   # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 3 of 4. No macOS part is in a needs list.
   macos_312_3:
     name: macOS (3.12, 3/4)
@@ -271,6 +273,7 @@ jobs:
             grep -E '^(FAIL|ERROR): ' "$log" || true
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
   # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 4 of 4. No macOS part is in a needs list.
   macos_312_4:
     name: macOS (3.12, 4/4)
