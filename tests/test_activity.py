@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "t3/added/brigade/scripts/activity.py"
 MOD = runpy.run_path(str(SCRIPT))
 SKILL = ROOT / "t3/added/brigade/SKILL.md"
+VIEWS = ROOT / "t3/added/brigade/views.md"
 GUIDE = ROOT / "docs/guide.md"
 
 MARKERS = ("threadmarker", "nodemarker", "pathmarker", "homemarker", "projectmarker", "0a1b2c3")
@@ -2516,7 +2517,7 @@ class RendererTest(OutputCase):
                 self.assertIn(heading, self.render(self.document())["texts"])
 
 def skill_section():
-    return SKILL.read_text().split("\n## Agent activity\n", 1)[1].split("\n## ", 1)[0]
+    return ("\n" + VIEWS.read_text()).split("\n## Agent activity\n", 1)[1].split("\n## ", 1)[0]
 
 
 class SkillTest(OutputCase):

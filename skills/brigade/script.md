@@ -27,3 +27,135 @@ Workers write their reports to `<restaurant dir>/reports/<dish>.md`, and verifie
 ## Mode
 
 A change applies from the next brief, and a running worker keeps the mode its brief names. `brief` runs `roles.py mode` in the project root with that mode, the dish's leased paths, the station as the playbook, the attempt kind, and the count of `send-back` rows in `pass.tsv`, `--member` rows excluded. It writes the printed lines unchanged, then `Gate: brigade` and the runtime's seat rule. The attempt kind is `fix` after a send-back, `bounce` after a queue bounce, and `first` otherwise. A replaced worker keeps the kind. A station that is not a poteto-mode playbook, such as `correct`, gets only the `Mode:` and `Mode source:` lines. `roles.py` runs outside the store lock. The first time `roles.py` prints `Mode source: escalated: <reason>`, `brief` appends one `mode` row with state `full` to `log.tsv`. Every later brief passes that reason back, so no setting returns the item to light. `fire --mode full --reason` and `dish <id> --mode full --reason` append the same row. A second call appends nothing and prints the first reason.
+
+## Command output
+
+Each command's text below is the text that moved out of the command block in [the script](SKILL.md#the-script), word for word.
+
+### status
+
+**`$B status`.** thread <id> or thread not recorded, then reporting level, landing mode, and counts, then the workers line, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to <thread>, mode <full|light>, and owner <thread>@<generation> when set.
+
+### set
+
+**`$B set --schedule <name>=`.** drops that name from restaurant.json. A name that is not recorded is already absent, and the command still succeeds. Other names stay.
+
+**`$B set --intake`.** the intake sources this restaurant owns. Replaces the list. `--intake ""` clears it.
+
+**`$B set --workers`.** dishes in progress or in review at once. A missing value reads as 2.
+
+**`$B set --autofire`.** the lowest ticket priority startable lists as startable. A missing value reads as normal.
+
+**`$B set --reports-to`.** the executive admin this restaurant reports through. `--reports-to ""` clears it.
+
+**`$B set --mode`.** this restaurant's mode from the next brief. `--mode ""` returns it to the roles files.
+
+**`$B set --build-command --check-command`.** the two commands edits verify runs. none for one the project lacks.
+
+**`$B set --cap`.** at most that many items of the kind holding a worker slot. A pair with no number clears that kind's cap. An empty value clears every cap. Read back through the JSON that set prints.
+
+**`$B set --review`.** the default mode for a new item of that kind. A pair with no mode clears that kind's depth. An empty value clears every depth. Read back through the JSON that set prints.
+
+### ticket
+
+**`$B ticket add`.** prints T<n>. `--request` refuses a second ticket for that request. `--again` lifts the same-summary refusal in Filing tracker work step 4. `--kind` is required with `--summary`. `--goal` takes an open or paused goal, and without it the ticket is unassigned.
+
+**`$B ticket add --from-report`.** one waiting ticket per follow-up in that report, source report. Skips text already on the rail in any state. A run changes only the ticket table, the log, and `lastActivityAt`. `--dry-run` changes no table and no log. It takes no `--kind` and no `--goal`. Each ticket takes the goal of the report's item, whatever that goal's state. When that item has a kind, the ticket is polish, because a follow-up is filed with no priority and a report ticket with no priority is low. When the item has no kind, the ticket has no kind.
+
+**`$B ticket set T<n>`.** at least one flag. `--paths ""` clears the recorded paths.
+
+**`$B ticket set T<n> --kind`.** changes a waiting ticket. Refused on a ticket in another state, and on a waiting ticket that an item in flight names. `--goal` takes an open or paused goal.
+
+**`$B ticket move`.** hands a waiting ticket to a sibling. Prints the thread to tell.
+
+**`$B ticket take`.** files every ticket a sibling handed to this restaurant.
+
+**`$B ticket paths`.** on each waiting ticket that records no paths, records the tracked paths it finds in the summary's backtick quotes.
+
+### goal
+
+**`$B goal add`.** prints G<n>. `--share` is a whole number of 1 or more.
+
+**`$B goal set --state`.** a move to done or dropped needs `--evidence` and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. `--evidence` on open or paused is refused.
+
+**`$B goal set --state paused`.** no ticket of that goal starts, not even as a ride-along. Items in flight finish and land. `$B goal set G<n> --state open` resumes.
+
+**`$B goal set --share`.** a ceiling of N worker slots holding that goal's items. Clear with `--share ""`.
+
+**`$B goal list`.** each open or paused goal, and each done or dropped goal that still has a waiting ticket, an item in flight, or a ticket riding along, with its state, name, counts, purpose, and done test, then the counts of unassigned work. A ticket riding along is an assigned ticket of that goal that is not in an item of that goal. `--all` also prints each other done or dropped goal.
+
+### startable
+
+**`$B startable`.** the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. `startable` waits with `its goal is paused`, `the <kind> cap holds (<held> of <cap>)`, and `the <goal> share holds (<held> of <share>)`.
+
+### inbox
+
+**`$B inbox take`.** ticket take, then prints each request from the executive admin as `A<n>: <line>`.
+
+**`$B inbox done`.** records the request as acted on and deletes its file.
+
+### fire
+
+**`$B fire`.** claims the lease, prints D<n>. The item takes the first ticket's goal, and its kind when it has one. A `--kind` that differs from that kind is refused. Pass `--doc-item` when the item is about a shared document. It lets the fire through and records a doc item row in log.tsv.
+
+### brief
+
+**`$B brief --fields`.** JSON file, or `--fields -` for stdin. Writes briefs/D2.md.
+
+**`$B brief --goal ...`.** same brief. Single-quote every field.
+
+### contract
+
+**`$B contract`.** prints the contract the last brief of D2 stored.
+
+### watch
+
+**`$B watch`.** a line for every open dish; renews each live lease.
+
+### hang
+
+**`$B hang`.** one open run after report-back, once per attempt.
+
+### model
+
+**`$B model skip`.** records that seat as skipped. It needs `--cause rate-limit` or `failed`.
+
+**`$B model clear`.** records a passing smoke test on that seat and clears its skip.
+
+### thread
+
+**`$B thread`.** records one thread an item used, for a role no other command writes. The other six roles are written by `dish --thread`, `--reviewer-thread`, or a report.
+
+### dish
+
+**`$B dish --state dropped`.** releases the dish's lease, returns its tickets to waiting.
+
+**`$B dish --state in-progress`.** `--thread` writes the open worker row of threads.tsv for the current attempt with an empty seat. It closes the previous open worker row. A later attempt is stored as fix worker. The same thread again writes no new row. A call that also has `--reported`, or a state change to a state other than in-progress, closes the item's open worker row. A call that names a new thread leaves that new thread's row open.
+
+**`$B dish --mode full`.** records the item's move to full once. `--mode light` exits 1.
+
+**`$B dish --worker-ended`.** records that this attempt's worker ended or failed and wrote no report. It takes no other dish flag. It writes one ended log row and changes no dish field.
+
+### pass
+
+**`$B pass record`.** `--reviewer-thread` writes the reviewer row of threads.tsv for this attempt. It takes its seat from `--verifier`.
+
+**`$B pass check`.** exits 1 unless that SHA passed. `--json` prints verdict, author, verifier, note, and crossFamily.
+
+### edits
+
+**`$B edits verify`.** compares `<head>` with the reviewed commit that has that round's edits applied and the build run. Exits 1 when a compared path differs or the build or check command fails.
+
+### 86
+
+**`$B 86 add`.** prints Q<n>.
+
+**`$B 86 add --round-budget`.** the decision D2 owes at three send-backs. prints Q<n>.
+
+### close
+
+**`$B close`.** report of what changed since the last one. `--to-file` prints only the written file's path.
+
+### land
+
+**`$L`.** leases and the landing queue. Lease, submit, share, and contest writes pass `--owner <restaurant>/@<generation>`. cap and mode take none.
