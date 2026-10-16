@@ -6,6 +6,8 @@ This walks through installing pstack-t3, choosing models, and running real work 
 
 You need a [T3 Code nightly](https://github.com/pingdotgg/t3code/releases) with Orchestrator V2 and the pull request watching pstack-t3 relies on (`0.0.46-nightly.20261005.2702` or later). The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`). Nightlies are the pre-releases on the T3 Code releases page.
 
+You also need git and Python 3.10 or later.
+
 Complete each prerequisite before using the feature it names.
 
 - Install the GitHub CLI and run `gh auth login`. Reading GitHub issues or pull requests needs `gh`, and so does landing in `merge` and `human` modes. User requests need no `gh`.
