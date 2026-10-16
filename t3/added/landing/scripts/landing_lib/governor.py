@@ -1031,7 +1031,7 @@ class _Build:
     """
 
     def __init__(self, previous):
-        """Previous is what signal.getsignal(SIGINT) returned on entry. Allocates nothing."""
+        """Previous is what signal.getsignal(SIGINT) returned on entry. Opens no file descriptors."""
         self._previous = previous
         self._intercept = previous is signal.SIG_DFL or callable(previous)
         self.phase = None
@@ -1180,7 +1180,7 @@ class _Build:
             delay = min(max(delay * 2, 0.001), 0.05)
 
     def _kill_group(self):
-        """Move STARTED to GROUP_KILLED with one SIGKILL. A call after reap is a bug."""
+        """Move STARTED to GROUP_KILLED and attempt SIGKILL once. A call after reap is a bug."""
         if self.phase not in (_STARTED, _GROUP_KILLED):
             raise RuntimeError("signal after reap")
         if self.phase == _GROUP_KILLED:
@@ -1204,7 +1204,10 @@ class _Build:
         return True
 
     def _reap_killed(self):
-        """Run one blocking waitpid. Legal only in GROUP_KILLED after SIGKILL."""
+        """Run one blocking waitpid after the SIGKILL attempt in GROUP_KILLED.
+
+        This wait has no deadline. A pending SIGINT stays postponed until the leader exits.
+        """
         try:
             _, status = os.waitpid(self._popen.pid, 0)
         except ChildProcessError:
@@ -1266,5 +1269,5 @@ def run_build(command, cwd, timeout):
 
 
 def supervised(command, cwd, timeout):
-    """Run a shell command in its own process group and stop the group at the timeout."""
+    """Run a shell command in its own process group and attempt SIGKILL at the timeout."""
     return run_build(command, cwd, timeout)
