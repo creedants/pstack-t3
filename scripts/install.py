@@ -794,6 +794,7 @@ def place(source, path):
     """Move the entry at `source` to `path` only while `path` is still empty. Return 0, or the errno that stopped it.
 
     `source` is a name only the caller uses, because the link and the unlink each look it up again.
+    Once the link worked the entry is at `path`, so a source that is gone has no name left to remove.
     """
     try:
         # A hard link of the link itself fails on a taken path, where a rename would replace it.
@@ -806,7 +807,8 @@ def place(source, path):
             return errno.EXDEV
         # A directory cannot be hard linked. A plain rename would replace whatever took the path since.
         return rename_noreplace(source, path)
-    os.unlink(source)
+    with suppress(FileNotFoundError):
+        os.unlink(source)
     return 0
 
 

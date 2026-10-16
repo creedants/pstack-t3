@@ -2963,13 +2963,16 @@ class OwnershipTest(unittest.TestCase):
         self.assert_empty_records()
 
     def test_a_backup_whose_directory_vanishes_after_the_hard_link_is_restored(self):
-        a, swarm, rows = self.displaced_by("file")
-        backup = Path(rows[0]["backup"])
-        raced = self.backup_race_uninstall(a, swarm, backup, ("link", "onto", "after", "vanish"))
-        self.ok(raced, "removed 3 links, restored 1 entries")
-        self.assert_displaced(swarm, "file")
-        self.assertFalse(os.path.lexists(backup.parent))
-        self.assert_empty_records()
+        for proc in (True, False):
+            with self.subTest(proc=proc):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by("file")
+                backup = Path(rows[0]["backup"])
+                raced = self.backup_race_uninstall(a, swarm, backup, ("link", "onto", "after", "vanish"), proc=proc)
+                self.ok(raced, "removed 3 links, restored 1 entries")
+                self.assert_displaced(swarm, "file")
+                self.assertFalse(os.path.lexists(backup.parent))
+                self.assert_empty_records()
 
     def test_a_copy_across_filesystems_that_fails_keeps_the_backup_at_its_path(self):
         for kind in ("file", "link", "directory"):
