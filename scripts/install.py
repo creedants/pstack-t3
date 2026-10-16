@@ -946,7 +946,7 @@ def same_entry(path, fd):
 def link_held(fd, path):
     """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
 
-    Only Linux procfs serves `/proc/self/fd` as the held entry. Elsewhere it answers `ENOSYS`. Then `restore_backup` proves a private second name in `restore_aside`. The guarantee comes from an empty private `Holder` plus `same_entry` proof plus `place` into an empty path. The descriptor keeps the inode in use. No other actor writes inside the holder. The backup keeps its own name until the copy is placed. A foreign entry never reaches the user path.
+    It links through `/proc/self/fd`, so it answers `ENOSYS` where the platform is not Linux. Then `restore_backup` gives the backup a private name in `restore_aside`. The descriptor keeps the inode in use, so `same_entry` proves the entry at that name before `place` moves it to an empty path. A file that can be hard linked keeps its own backup name until the copy is placed. A directory, or a file that cannot be hard linked, is renamed to the private name. It goes back to its old name if that name is still free.
     """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS

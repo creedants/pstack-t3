@@ -742,8 +742,7 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
     """Hook code that swaps `path` for a foreign `swap` entry just before the move aside.
 
     `occupy` arrives at `path` when the put-back calls a rename onto it, after any check for vacancy.
-    `rename` takes the no-replace rename away: "platform" runs it as darwin, "symbol" gives it a libc
-    without `renameat2`, and "libc" makes loading libc fail. At exit the run records what that rename
+    `rename` takes `/proc` away. "platform" also sets `sys.platform` to darwin and leaves the no-replace rename working, "symbol" gives it a libc without `renameat2` or `renamex_np`, and "libc" makes loading libc fail. At exit the run records what that rename
     returned on a scratch pair, read back with `noreplace_result`.
     """
     return (
@@ -774,9 +773,9 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
 
 
 def without_noreplace(hooked, link_error, rename):
-    """Hook code that wraps the no-replace rename in `hooked` and takes it or hard links away, as `put_back_race` describes.
+    """Hook code that wraps the no-replace rename in `hooked`, takes hard links away when `link_error` is set, and takes the rename away for `"symbol"` and `"libc"`, as `put_back_race` describes.
 
-    A platform without that rename has no /proc either, so a hard link from a held descriptor finds nothing there.
+    A hook that sets `rename` has no `/proc` either, so a hard link from a held descriptor finds nothing there.
     """
     return (
         "noreplace = getattr(module, 'rename_noreplace', None)\n"
@@ -816,7 +815,7 @@ def restore_race(path, occupy, link_error=False, rename=None):
     """Hook code that fills `path` just before the first call that would write a backup onto it.
 
     `occupy` is a "file", a "directory", a "link", or a command line to run, such as another checkout's
-    installer. `link_error` and `rename` take hard links and the no-replace rename away as in `put_back_race`.
+    installer. `link_error` takes hard links away. `rename` takes `/proc` away as in `put_back_race`.
     """
     return (
         "import atexit, ctypes, errno, shutil, subprocess, tempfile\n"
@@ -2480,7 +2479,7 @@ class OwnershipTest(unittest.TestCase):
     def restore_tried(self, kind, link_error, rename):
         """Whether the restore reached a call that writes swarm, which is when the occupant arrives.
 
-        Darwin has a safe rename, so every restore reaches such a call.
+        Every restore reaches such a call, whatever the rename hook takes away.
         """
         return True
 
@@ -2769,8 +2768,8 @@ class OwnershipTest(unittest.TestCase):
         self.assertFalse(os.path.lexists(backup))
         self.assert_empty_records()
 
-    def test_a_file_restore_without_proc_restores_through_a_second_name(self):
-        """A file backup restores where `/proc` gives no held link, through a private second name."""
+    def test_a_file_restore_with_every_hard_link_refused_restores_through_renamex_np(self):
+        """A file backup restores through `renamex_np` where every hard link is refused."""
         a, swarm, rows = self.displaced_by("file")
         backup = Path(rows[0]["backup"])
         denied = (
