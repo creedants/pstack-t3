@@ -1,7 +1,7 @@
 - kind feature
 - `t3/added/brigade/scripts/activity.py` `--serve [PORT]` binds 127.0.0.1 and serves this store's page rebuilt at most every 10 seconds. PORT defaults to 48731 and 0 picks an ephemeral port.
 - `t3/added/brigade/scripts/activity.py` GET answers the page only at the token path and every other GET path is 404, sends `Access-Control-Allow-Origin: null` with `Cache-Control: no-store`, and answers 503 with the one line message when the page build raises `ActivityError`.
-- `t3/added/brigade/scripts/activity.py` keeps the token in `activity-token` under the store directory, created mode 0600 and reused across restarts.
+- `t3/added/brigade/scripts/activity.py` keeps the token in `activity-token` under the store directory, created mode 0600 and reused across restarts while valid and replaced otherwise.
 - `t3/added/brigade/scripts/activity.py` `--live-page` prints the wrapper that polls the default server address every 30 seconds, collapses items whose state chip reads merged, dropped, or done, and keeps an owner's open choice across refreshes.
 - `t3/added/brigade/SKILL.md` documents the detached server, the wrapper render, the restart rule, and the token warning.
 - `t3/added/brigade/SKILL.md` says `walk` prints a blocked count and links the brief-fields pointer at `script.md#brief-fields`.
