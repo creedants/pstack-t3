@@ -1,7 +1,7 @@
 - kind fix
 - `_visible_lines` in `scripts/check.py` holds one stack of open quotes, then open lists, then one fence. `_step` is its sole writer. Peel trims outside in and cuts at the first mismatch. Opened blocks precede any fence open.
-- A fence closes only on a line inside its owning containers. An extra `>` inside a fence stays code. A list indent never reaches into a later quote and never survives leaving one.
+- A fence closes only on a line inside its owning containers. A fence directly in a quote keeps an extra `>` as code. In a list inside a quote, an extra `>` left of the list content column ends the fence. A list indent never reaches into a later quote and never survives leaving one.
 - Returning from a nested list to a surviving parent list opens the fence in that parent. A lower-depth blank quote line ends the inner quote and its fence.
-- A fence inside a list inside a blockquote hides its link. A fence in a blockquote list ends at the next item.
+- A fence inside a list inside a blockquote hides its link. A fence in a blockquote list ends at the next list item whose marker sits at or left of the list content column.
 - `check_tree` in `scripts/check.py` strips a destination query before resolving the path. A file-plus-query link passes when the file exists.
 - `tests/test_check.py` covers both quoted list fence shapes and query-bearing file links.

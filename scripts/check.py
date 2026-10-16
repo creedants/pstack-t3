@@ -563,7 +563,9 @@ def _visible_lines(text):
 
     One stack holds open quotes, then open lists, then one fence. Peel trims
     outside in at the first mismatch. Opened blocks precede any fence open.
-    A fence closes only inside its owning containers. Extra markers stay code.
+    A fence closes only inside its owning containers. A fence directly in a
+    quote keeps an extra `>` as code. In a list inside a quote, an extra `>`
+    left of the list content column ends the fence.
     """
     stack = []
     for number, line in enumerate(text.splitlines(), 1):
