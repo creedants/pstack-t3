@@ -1,0 +1,3 @@
+- kind fix
+- `startable` reads a waiting ticket's blocked note and previews its lease and its expansion with that `doc_item` flag
+- `tests/brigade/test_fire_layout.py` pins a doc-item `startable` lease, a doc-item `startable` overlap, a blocked doc-item recheck with another `docs/skills.md` holder, a legacy note without the flag, and an explicit `docs/skills.md` path
