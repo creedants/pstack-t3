@@ -111,6 +111,15 @@ Give exactly one of `--left`, `--right`.
 Give at most one of `--dry-run`, `--to-file`.
 '''
 
+OPTIONAL = '''
+import argparse
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--serve", nargs="?", const=48731, default=None, type=int, metavar="PORT")
+    parser.parse_args(argv)
+'''
+
 HOSTILE = {"BRIGADE_DIR": "/tmp/SENTINEL", "FIXTURE_HOME": "/tmp/SENTINEL", "COLUMNS": "40"}
 
 
@@ -161,6 +170,11 @@ class CliReferenceTest(unittest.TestCase):
     def test_groups_optional_and_remainder_positionals(self):
         text, _ = render(GROUPS, "groups.py")
         self.assertEqual(text.split("\n\n", 4)[4], GROUPS_EXPECTED)
+
+    def test_optional_value_flag_renders_bracketed_value(self):
+        text, _ = render(OPTIONAL)
+        self.assertIn("[--serve [PORT]]", text)
+        self.assertIn("`--serve [PORT]`", text)
 
     def test_tool_that_never_parses_fails_the_render(self):
         with self.assertRaises(SystemExit) as raised:

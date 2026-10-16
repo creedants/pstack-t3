@@ -84,7 +84,11 @@ def token(action, names=None):
     if not action.option_strings:
         return POSITIONAL[action.nargs].format(value)
     names = names or action.option_strings[0]
-    return names if action.nargs == 0 else f"{names} {value}"
+    if action.nargs == 0:
+        return names
+    if action.nargs == "?":
+        value = f"[{value}]"
+    return f"{names} {value}"
 
 
 def usage(prefix, parser):
