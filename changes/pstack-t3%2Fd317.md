@@ -1,0 +1,6 @@
+- kind polish
+- `t3/runtime.md` moves the bodies of `### Built-in defaults`, `### Excluded seats`, `### Budget`, `### Fallback`, and `### Claude Haiku 5.5` into new `t3/added/pstack-runtime/roles.md`, and replaces the light-budget paragraph in `### Resolve and carry the mode` with one line.
+- Each of the five moved sites in `t3/runtime.md` keeps its heading and a stub with the pointer `Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.`.
+- The two Haiku 5.5 brief paragraphs are dropped from the docs and that text now lives in `t3/scripts/roles.py` as `haikuBrief`, printed by `roles.py show`.
+- `t3/added/pstack-runtime/roles.md` holds the moved reference verbatim except the Fallback `validate` sentence naming the section the heredoc stays in and the Haiku brief sentence no longer saying `both paragraphs`.
+- `tests/test_pstack_t3.py` adds `roles.md` to `RUNTIME_DOCS`, reads `## Excluded seats` and `## Claude Haiku 5.5` from `roles.md` in `FastGrokDocTest` and `LaunchingSkillTestDocTest`, and reads the Haiku brief text from `t3/scripts/roles.py`.

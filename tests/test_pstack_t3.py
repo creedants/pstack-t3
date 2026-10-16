@@ -1987,7 +1987,7 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md")
 
 
 def runtime_docs():
@@ -2134,12 +2134,12 @@ class FixedContextWindowTest(unittest.TestCase):
 
 class LaunchingSkillTestDocTest(unittest.TestCase):
     def test_haiku_section_send_a_seat_launching_test_through_launches_seats(self):
-        section = runtime_section("### Claude Haiku 5.5")
+        section = runtime_doc_section("roles.md", "## Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
         self.assertIn("never cursor", section)
         self.assertIn("cannot launch seats", section)
         self.assertIn("sends `target.options` as a JSON string", section)
-        self.assertIn(roles.HAIKU_BRIEF[0], section)
+        self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
 
@@ -2422,7 +2422,7 @@ class SeatLaunchDocTest(unittest.TestCase):
 
 class FastGrokDocTest(unittest.TestCase):
     def test_fast_grok_section_quotes_the_code_rule(self):
-        section = runtime_section("### Excluded seats", "\n### ")
+        section = runtime_doc_section("roles.md", "## Excluded seats")
         self.assertIn(roles.EXCLUDED_RULE + ".", section)
         for phrase in (
             "`grok-4.7-build-fast`",
@@ -2436,12 +2436,12 @@ class FastGrokDocTest(unittest.TestCase):
             'report `"seats": "catalog-required"` when `--parent` names an excluded id.',
         ):
             self.assertIn(phrase, section)
-        haiku = runtime_section("### Claude Haiku 5.5", "\n## ")
-        self.assertIn(roles.HAIKU_BRIEF[0], haiku)
-        self.assertIn(roles.HAIKU_BRIEF[1], haiku)
+        source = (ROOT / "t3/scripts/roles.py").read_text()
+        self.assertIn(roles.HAIKU_BRIEF[0], source)
+        self.assertIn(roles.HAIKU_BRIEF[1], source)
 
     def test_fast_grok_notes_match_roles_py(self):
-        section = runtime_section("### Excluded seats", "\n### ")
+        section = runtime_doc_section("roles.md", "## Excluded seats")
         source = (ROOT / "t3/scripts/roles.py").read_text()
         for phrase in (
             "inherit replaced by",
