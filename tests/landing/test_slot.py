@@ -1774,10 +1774,15 @@ class LandingTest(LandingTestBase):
         self.assertFalse(landing.started)
 
         os.write(gate, b"x")
-        stop_reporter()
-        # The landing caller ran on its own clock, so its next attempt could have taken the free slot
-        # before the exclusive stepped. Settling it first shows its attempt ended without starting.
+        # The probe unlocks the free slot inside its slow_busy probe and returns, and only after that
+        # does _admit unlock the turn mutex the landing caller is blocked on. Settling the landing
+        # caller before the probe is stopped keeps that order, so its first attempt wakes with the
+        # free slot already released and yields to the earlier exclusive instead of starting.
         self.assertEqual(slots.settle(landing), "waiting")
+        # Stopping the probe before that attempt leaves when each lock is released up to the
+        # kernel, so the attempt can land on either side of the free slot's release. On the
+        # early side it takes landing-0 instead of yielding to the earlier exclusive.
+        stop_reporter()
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
         slots.release(exclusive)
