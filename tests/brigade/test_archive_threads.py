@@ -14,7 +14,7 @@ from .support import (
 
 class ArchiveThreadsTest(BrigadeTest):
     def archived(self, *args):
-        """The archive lines a command prints on standard error, one per line."""
+        """Every line the command wrote to standard error."""
         outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                       *_owner_words(self.at), *(str(arg) for arg in args)])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
