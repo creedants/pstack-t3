@@ -1,6 +1,6 @@
 - kind polish
 - `t3/runtime.md` replaces `the row below` with `the row in [light.md](light.md) that names it` and points reuse at new `t3/added/pstack-runtime/gate-review.md`.
-- `wc -w t3/runtime.md` reads 9188 before and 9014 after. New `t3/added/pstack-runtime/gate-review.md` reads 309 words.
+- `wc -w t3/runtime.md` reads 9188 before and 9018 after. New `t3/added/pstack-runtime/gate-review.md` reads 314 words.
 - Gate links before, each resolves to `### Gate review` in `skills/pstack-runtime/SKILL.md`.
   `t3/runtime.md` `[Gate review](#gate-review)` resolves in file to `### Gate review`.
   `t3/added/pstack-runtime/light.md` nine `(SKILL.md#gate-review)` rows resolve to `SKILL.md` `### Gate review`.
