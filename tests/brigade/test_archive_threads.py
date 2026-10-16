@@ -170,3 +170,32 @@ class ArchiveThreadsTest(BrigadeTest):
         self.assertTrue(closed)
         for end in closed:
             self.assertEqual(end, "stamp")
+
+    def test_dropped_dish_omits_a_reused_worker_id_bound_during_lease_release(self):
+        # Covers a reused id bound during the lease release: the row identity, not the id, tells the bindings apart.
+        self.started()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.brigade("dish", "D1", "--thread", "")
+        self.brigade("dish", "D1", "--thread", THREAD_B)
+        glob = run_globals(self, SCRIPT)
+        original = glob["land_result"]
+
+        def stubbed(project_root, *args):
+            if args[:2] == ("lease", "release"):
+                inner = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                       *_owner_words(self.at), "dish", "D1",
+                                                       "--thread", THREAD_A])
+                self.assertEqual(inner.code, 0, inner.stdout_text() + inner.stderr_text())
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            return original(project_root, *args)
+
+        glob["land_result"] = stubbed
+        try:
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                     *_owner_words(self.at), "dish", "D1",
+                                                     "--state", "dropped", "--stopped", "run-B"])
+        finally:
+            glob["land_result"] = original
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stderr_text().splitlines(), [f"archive thread: {THREAD_B}"])
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "dropped")
