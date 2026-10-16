@@ -420,11 +420,11 @@ def _visible_lines(text):
 
     One scan drives both headings and links. It yields each visible line number
     and content with the leading container prefixes stripped. That is every leading
-    blockquote marker, then every leading list marker through its content indent,
-    each repeated. Fence indentation
+    blockquote marker, then every leading list marker through its content indent.
+    A blockquote marker after a list marker is not stripped. Fence indentation
     is measured within the fully stripped content. A fence records its container
     kind and its quote depth and list indent. It ends at the first non-blank line
-    outside its container.
+    outside its container. A line that starts with a tab does not end it.
     A list fence ends at a new item at the same level or a line outside the item.
     A list fence inside a blockquote also ends at a non-blank line whose quote depth drops.
     A blockquote fence ends at a non-blank line whose quote depth is lower. An unclosed fence
@@ -591,7 +591,8 @@ def fragment_findings(root):
     excluded from the destination. A title may hold escaped delimiters. A shared fence scanner hides fenced lines.
     It tracks marker character and opening length. It recognizes tilde and
     backtick fences. It closes on a matching fence of sufficient length.
-    It strips the leading blockquote markers, then the leading list markers, each repeated.
+    It strips the leading blockquote markers, then the leading list markers.
+    A blockquote marker after a list marker is not stripped.
     It allows up to three spaces indent at each level.
     An unclosed fence ends at its containing block boundary. Outside any container
     it hides the rest of the file. A link or heading inside a fence is not seen.
