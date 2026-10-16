@@ -15,7 +15,7 @@
 - Source entries bounce without scripts/build.py when generated output exists or the entry touches it.
 - Generated roots that traverse a symlink bounce without deleting outside the worktree.
 - Handled rebuild failures run `git reset --hard` at the pre-entry commit, then `git clean -ffdx` on generated paths when the roots stay inside the worktree.
-- Any Exception during rebuild bounces as a rebuild failure that names the build command and the exception.
-- Interrupts during rebuild stop the tracked build, reset to the pre-entry commit, then clean generated paths when the roots stay inside the worktree, and propagate without bouncing.
+- An ordinary exception caught by the rebuild guard returns a rebuild failure that names the build command and the exception after cleanup succeeds.
+- Caught interrupts run `_stop_build` and `_give_up`, then propagate without bouncing when cleanup succeeds.
 - Generated conflicts absent on ours are removed and only restored paths are staged with literal pathspecs.
 - Dirty and unmerged discovery reads NUL names with exact decoding.
