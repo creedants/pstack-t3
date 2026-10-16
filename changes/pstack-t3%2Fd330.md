@@ -1,3 +1,4 @@
 - kind fix
-- `startable` reads a waiting ticket's blocked note and previews its lease and its expansion with that `doc_item` flag
-- `tests/brigade/test_fire_layout.py` pins a doc-item `startable` lease, a doc-item `startable` overlap, a blocked doc-item recheck with another `docs/skills.md` holder, a legacy note without the flag, and an explicit `docs/skills.md` path
+- `startable` previews a blocked ticket with the saved fire paths and the saved `doc_item` flag from the same blocked note and prints `--doc-item` after its paths when the flag is set
+- a ticket with no blocked note keeps its rail paths and no flag
+- `tests/brigade/test_fire_layout.py` pins doc-item `startable` lines with the flag and the derived `fire` lease and refusal

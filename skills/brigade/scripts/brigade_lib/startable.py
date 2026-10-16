@@ -58,11 +58,12 @@ class Standing:
     overdue: bool
 
 
-def waiting_ticket(row, label=Label(), *, doc_item=False):
+def waiting_ticket(row, label=Label(), *, doc_item=False, paths=None):
     filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
     if filed.tzinfo is None:
         filed = filed.replace(tzinfo=timezone.utc)
-    return Waiting(row["id"], priority_of(row), filed, paths_of(row), row["decision"] == "yes", row["summary"], label,
+    effective = paths if paths is not None else paths_of(row)
+    return Waiting(row["id"], priority_of(row), filed, effective, row["decision"] == "yes", row["summary"], label,
                    bool(doc_item))
 
 
@@ -158,6 +159,8 @@ def startable_lines(standings, meta, running, now):
         ticket = standing.ticket
         flag = " (over a week)" if standing.overdue else ""
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
+        if ticket.doc_item and ticket.paths:
+            paths += " --doc-item"
         words = STANDINGS[standing.kind].line_words.format(why=standing.why)
         lines.append(f"{ticket.id} {ticket.priority}{label_words(ticket.label)}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
@@ -169,9 +172,17 @@ def startable(restaurant):
     with restaurant.checked():
         meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
         notes = dict(blocked_waiting(restaurant))
-        tickets = [waiting_ticket(row, labels.tickets[row["id"]],
-                                  doc_item=(notes.get(row["id"]) or {}).get("doc_item", False))
-                   for row in restaurant.rows("rail.tsv") if row["state"] == "waiting"]
+        tickets = []
+        for row in restaurant.rows("rail.tsv"):
+            if row["state"] != "waiting":
+                continue
+            note = notes.get(row["id"])
+            if note is None:
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+            else:
+                saved = tuple(part for part in (note.get("paths") or "").split(",") if part)
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
+                                              paths=saved))
         running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:
