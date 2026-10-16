@@ -1,0 +1,4 @@
+- kind fix
+- `startable` keeps a whole-repository component in a saved scope whose other parts normalize nonempty, instead of dropping it
+- the preview's overlap check reads an empty canonical path as the whole repository and overlaps it with every scope, so a saved scope that mixes `.` with named files blocks another saved scope and `fire` refuses that overlap
+- `tests/brigade/test_fire_layout.py` pins two saved scopes that each mix `.` with a different file, the second previewing `blocked, starts after T1` while its derived `fire` is refused on the first

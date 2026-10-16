@@ -510,3 +510,34 @@ class FireLayoutTest(BrigadeTest):
         self.assertIn("T2 normal fix, 0m: startable; t3/setup.md", text)
         t2_line = next(part for part in text.splitlines() if part.startswith("T2 "))
         self.assertFalse(t2_line.endswith(" --doc-item"))
+
+    def test_startable_saved_scope_with_whole_repository_component_blocks_the_second_scope(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler")
+        for ident in ("T1", "T2"):
+            self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix",
+                                          "--summary", ident, "--paths", f".,{ident.lower()}.txt", "--doc-item",
+                                          ok=False),
+                             "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        text = self.brigade("startable")
+        self.assertIn("waiting tickets: 2, startable: 1, blocked: 1", text)
+        self.assertIn("T1 normal fix, 0m: startable; .,t1.txt --doc-item", text)
+        self.assertIn("T2 normal fix, 0m: blocked, starts after T1; .,t2.txt --doc-item", text)
+        saved = {line[:2]: line.split("; ", 1)[1][:-len(" --doc-item")]
+                 for line in text.splitlines() if line.startswith(("T1 ", "T2 "))}
+        self.assertEqual(saved, {"T1": ".,t1.txt", "T2": ".,t2.txt"})
+        self.assertIn("D2 (lease", self.brigade("fire", "--tickets", "T1", "--station", "bug-fix",
+                                                "--summary", "one", "--paths", saved["T1"], "--doc-item"))
+        refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "two",
+                               "--paths", saved["T2"], "--doc-item", ok=False)
+        self.assertIn("paths overlap L1 held by perf/D2", refused)

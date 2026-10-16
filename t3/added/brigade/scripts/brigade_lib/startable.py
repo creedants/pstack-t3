@@ -78,7 +78,7 @@ def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
                                                      int(ticket.id[1:]) if ticket.id[1:].isdigit() else 0)):
         low = ticket.priority == "low"
         eff = expanded.get(ticket.id, ticket.paths) if expanded else ticket.paths
-        shared = [ident for ident, paths in started.items() if paths_overlap(eff, paths)]
+        shared = [ident for ident, paths in started.items() if scopes_overlap(eff, paths)]
         kind, why = "start", ""
         if ticket.decision:
             kind = "decision"
@@ -125,6 +125,11 @@ def lease_refusals(meta, tickets, next_dish):
     return refusals
 
 
+def scopes_overlap(first, second):
+    """`paths_overlap` for two effective scopes. An empty string is the whole repository, so it overlaps everything."""
+    return "" in first or "" in second or paths_overlap(first, second)
+
+
 def expanded_paths(tickets, lay):
     found = {}
     for ticket in tickets:
@@ -135,7 +140,8 @@ def expanded_paths(tickets, lay):
         seen = set()
         for raw in ticket.paths:
             made = _claim_norm(raw)
-            if not made or made in seen:
+            # An empty string is the whole repository, so keep it; only an escaping path reads as None.
+            if made is None or made in seen:
                 continue
             seen.add(made)
             norms.append(made)
@@ -144,6 +150,8 @@ def expanded_paths(tickets, lay):
             continue
         extras = []
         for made in norms:
+            if not made:
+                continue
             try:
                 got = _one(made, lay, ticket.doc_item)
             except KeyboardInterrupt:
