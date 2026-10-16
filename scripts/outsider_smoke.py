@@ -28,7 +28,10 @@ WRITER = "import sys\nopen(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2]
 
 @dataclass(frozen=True)
 class Layout:
-    """Every path one run uses. The catalog and the scratch repo are siblings of the home."""
+    """The root, home, catalog, repository, and checkout paths for one run.
+
+    The catalog and the scratch repo are siblings of the home.
+    """
 
     root: Path
     home: Path
@@ -67,12 +70,12 @@ def plan_names():
 
 
 def ok_line(name):
-    """The line a step that worked prints."""
+    """The success line run_steps prints after a command returns zero."""
     return f"ok {name}\n"
 
 
 def fail_line(name):
-    """The line a step that failed prints."""
+    """The failure line die prints after a command returns nonzero."""
     return f"fail {name}\n"
 
 
@@ -82,7 +85,7 @@ def _stand_in():
 
 
 def _commands(layout):
-    """Every step, in order. Each argv is absolute and each step runs in the checkout."""
+    """Every step, in order. Executable and script paths are absolute. Each step starts in the checkout."""
     python = sys.executable
     return (
         Step("install", (python, "-I", str(CHECKOUT / "scripts" / "install.py")), CHECKOUT),
@@ -183,8 +186,8 @@ def make_layout(root, home):
 def child_env(home, inherited):
     """The environment every command of the run inherits. HOME names the home this run made.
 
-    Only PATH, LANG, LC_ names, and the four commit identity names survive. System
-    configuration is off for the run.
+    Only PATH, LANG, LC_ names, and the four commit identity names survive.
+    GIT_CONFIG_NOSYSTEM=1 disables Git system configuration for the run.
     """
     env = {}
     for name in ("PATH", "LANG", *AUTHOR_NAMES):

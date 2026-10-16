@@ -123,7 +123,7 @@ class OutsiderSmokeTest(unittest.TestCase):
         # Review D306 round 2 shows startup overrides escape the created home.
         # The canary holds a cache directory, a comment only .pth file, and a docstring only site customization.
         # The run stays in this process so recorded child output is the observer.
-        # The old code forwards verbose output. The new code drops it.
+        # The old code inherits PYTHONVERBOSE. The new code drops that variable.
         with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
             (Path(canary) / CANARY).write_text("keep\n")
             (Path(canary) / "python-cache").mkdir()
