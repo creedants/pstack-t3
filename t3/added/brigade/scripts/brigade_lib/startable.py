@@ -109,7 +109,14 @@ def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
     return standings
 
 
-def lease_refusals(meta, tickets, next_dish):
+def lease_refusals(meta, tickets):
+    """The block on a waiting ticket's paths, or nothing when the landing queue would admit them.
+
+    The claim carries the ticket's saved paths and, when the project has a build layout, the generated copies the
+    layout maps from them. That is the claim `fire` builds for the same paths, minus the change note. The note is
+    named for the branch a `fire` runs on, which the preview does not know, so a guessed note blocks a ticket
+    whose paths are free.
+    """
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, refusals = {}, {}
     for ticket in tickets:
@@ -118,8 +125,7 @@ def lease_refusals(meta, tickets, next_dish):
         key = (ticket.paths, ticket.doc_item)
         if key not in asked:
             asked[key] = lease_block(root, f"{prefix}/{ticket.id}",
-                                     claim_paths(root, ",".join(ticket.paths), f"{prefix}/{next_dish.lower()}",
-                                                 ticket.doc_item).text)
+                                     claim_paths(root, ",".join(ticket.paths), "", ticket.doc_item).text)
         if asked[key]:
             refusals[ticket.id] = clean(asked[key][1])
     return refusals
@@ -205,7 +211,7 @@ def startable(restaurant):
                 continue
             tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
                                           paths=raw_parts))
-        running, next_dish = running_workers(restaurant), restaurant.next_id("dishes.tsv")
+        running = running_workers(restaurant)
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:
         lay = _layout(meta["projectRoot"])
@@ -214,6 +220,6 @@ def startable(restaurant):
     except Exception:
         lay = None
     expanded = expanded_paths(tickets, lay)
-    refusals = lease_refusals(meta, tickets, next_dish)
+    refusals = lease_refusals(meta, tickets)
     moment = datetime.now(timezone.utc)
     return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment, expanded), meta, running, moment)
