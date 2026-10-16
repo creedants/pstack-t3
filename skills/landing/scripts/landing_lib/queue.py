@@ -167,12 +167,14 @@ class Integration:
         for path in seam.GENERATED_PATHS:
             exists = self.git("rev-parse", "--verify", "--quiet", f"{before}:{path}", check=False)
             if exists.returncode == 0:
+                cmd = "git checkout"
                 done = self.git("checkout", before, "--", path, check=False)
             else:
+                cmd = "git rm -r"
                 done = self.git("rm", "-r", "--ignore-unmatch", "--", path, check=False)
             if done.returncode != 0:
                 self.git("reset", "--hard", before)
-                return f"rebuild failed. `git checkout` for {path} exited {done.returncode}"
+                return f"rebuild failed. `{cmd}` for {path} exited {done.returncode}"
         contract = self.store.contract
         timeout = contract.get("timeout") or 1800
         command = "python3 scripts/build.py"

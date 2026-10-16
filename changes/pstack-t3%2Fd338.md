@@ -5,7 +5,7 @@
 - Generated only conflicts resolve with ours when file lists agree.
 - Source conflicts still bounce with trunk.
 - Empty source changes return already in trunk.
-- Rebuild restores each generated path from trunk, then runs build twice.
+- Rebuild restores the files trunk tracks under each generated path, then runs build twice.
 - Failed builds bounce and never land.
 - Builds that dirty tracked sources bounce.
 - Builds whose second run changes file bytes bounce.
