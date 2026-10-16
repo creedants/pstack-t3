@@ -1,0 +1,3 @@
+- kind fix
+- `failures.md` `## After a restart` states the gate the runtime pointer promises. Follow it before you read a saved child's result, replace a child, or use a saved worktree path.
+- The storage-cleanup sentence names the one-minute grace instead of pointing at an unnamed "grace below".
