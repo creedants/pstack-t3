@@ -353,6 +353,10 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 
 Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
 
+Before you end a worktree turn that can settle, read [Settle on turn end](host.md#settle-on-turn-end).
+
+Before you delegate a child that needs a chosen branch or a different base, read [Older hosts](host.md#older-hosts).
+
 - Read-only children share the current checkout.
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
@@ -451,6 +455,10 @@ A rendered page is a reply the user reads, even with no reply text. Render none 
 
 Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
 
+Before you use a saved transcript file from another environment, read [History notes](host.md#history-notes).
+
+Before you read Claude conversation history, read [History notes](host.md#history-notes).
+
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
 - Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
 - Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text. Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
@@ -464,6 +472,8 @@ Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older 
 After you open a PR or start driving an existing one, call `link_pull_request` with its full URL. For a stack, link every layer. Linking attaches the PR to the calling thread. When a child opens a PR, it links it and the parent links it too. When a launched thread opens a PR, it links it and the launcher or coordinator links it too. Linking twice is safe. Before finishing PR work, call `list_thread_pull_requests` and link any missing PR. Report a link failure instead of claiming the PR is linked.
 
 ## Pull request watching
+
+An owner that may already be settled reads [Settle on turn end](host.md#settle-on-turn-end) before calling `watch_pull_request`.
 
 Call `watch_pull_request` after `link_pull_request`, when this thread is waiting on that PR's checks, reviews, or conflicts. Pass the PR URL, or the repository and number. T3 links the PR first if this thread has not linked it yet.
 
@@ -511,6 +521,8 @@ If neither the tools nor the ACP bridge exist, you are not running in T3. Use th
 ## Skill locations
 
 Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
+
+Before you write a child brief that needs a specific MCP server, read [Skill locations](host.md#skill-locations).
 
 ## Personas
 
