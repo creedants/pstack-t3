@@ -3912,7 +3912,7 @@ class LiveTest(OutputCase):
             with self.subTest(target=target):
                 self.assertEqual(self.fetch(target)[0], 404)
 
-    def test_every_live_answer_carries_a_null_cors_origin_and_no_store(self):
+    def test_get_page_get_missing_and_options_carry_null_cors_and_no_store(self):
         _, url = self.served()
         _, plain, _ = self.fetch(url)
         _, missing, _ = self.fetch(url.rsplit("/", 1)[0] + "/wrong")
@@ -3942,10 +3942,71 @@ class LiveTest(OutputCase):
         self.assertTrue(path.is_file())
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         self.assertGreaterEqual(len(first.token) * 8, 128)
-        os.chmod(path, 0o644)
         second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
         self.assertEqual((second.token, second.route, second.url), (first.token, first.route, first.url))
+        os.chmod(path, 0o644)
+        third = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertNotEqual(third.token, first.token)
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
+
+    def test_short_token_is_replaced_with_a_private_regular_file(self):
+        fixture = one_running(self.fixture).write()
+        path = fixture.store / "activity-token"
+        path.write_text("x")
+        os.chmod(path, 0o600)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertNotEqual(second.token, b"x")
+        self.assertTrue(re.fullmatch(r"[A-Za-z0-9_-]{43}", second.token.decode("ascii")))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
+
+    def test_exposed_token_file_is_replaced_not_reused(self):
+        fixture = one_running(self.fixture).write()
+        first = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        path = fixture.store / "activity-token"
+        os.chmod(path, 0o644)
+        bad = path.read_text().strip()
+        self.assertEqual(bad, first.token.decode("ascii"))
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertNotEqual(second.token.decode("ascii"), bad)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
+
+    def test_symlink_token_path_is_replaced_without_touching_its_target(self):
+        fixture = one_running(self.fixture).write()
+        path = fixture.store / "activity-token"
+        target = Path(self.fixture.root) / "symlink-target"
+        target.write_text("known")
+        os.chmod(target, 0o644)
+        before = (target.read_bytes(), stat.S_IMODE(os.stat(target).st_mode))
+        os.symlink(target, path)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertNotEqual(second.token, b"known")
+        self.assertFalse(path.is_symlink())
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual((target.read_bytes(), stat.S_IMODE(os.stat(target).st_mode)), before)
+
+    def test_invalid_utf8_token_file_is_replaced_with_a_private_regular_file(self):
+        fixture = one_running(self.fixture).write()
+        path = fixture.store / "activity-token"
+        path.write_bytes(b"\xff\xfe\x00bad")
+        os.chmod(path, 0o600)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertTrue(re.fullmatch(r"[A-Za-z0-9_-]{43}", second.token.decode("ascii")))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
+
+    def test_empty_token_file_is_replaced_with_a_private_regular_file(self):
+        fixture = one_running(self.fixture).write()
+        path = fixture.store / "activity-token"
+        path.write_text("")
+        os.chmod(path, 0o600)
+        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        self.assertTrue(re.fullmatch(r"[A-Za-z0-9_-]{43}", second.token.decode("ascii")))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
 
     def test_the_live_wrapper_holds_the_token_url_the_collapse_rule_and_both_buttons(self):
         fixture = one_running(self.fixture).write()

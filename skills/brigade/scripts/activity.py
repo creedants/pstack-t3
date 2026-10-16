@@ -77,7 +77,9 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -426,7 +428,7 @@ def parser():
     top.add_argument("--max-bytes", type=int, default=BUDGET, help="the most bytes the output and the newline after it take, from 16000 to 500000")
     top.add_argument("--t3-home", help="T3 Code's base directory (default $T3CODE_HOME, else ~/.t3)")
     top.add_argument("--serve", nargs="?", const=DEFAULT_PORT, default=None, type=int, metavar="PORT",
-                     help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port")
+                     help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped")
     top.add_argument("--live-page", action="store_true",
                      help="print the self-contained HTML wrapper that polls the local server every 30 seconds for html_render; the wrapper holds the token, so never share or commit it")
     return top
@@ -2474,24 +2476,74 @@ def secret_of(directory, port):
     except OSError as error:
         raise ActivityError(f"cannot create the live view's token file ({error.strerror}); check its permissions and run this again") from None
     if fd is not None:
-        with os.fdopen(fd, "w") as token_file:
-            token_file.write(secrets.token_urlsafe(TOKEN_BYTES))
-    try:
-        text = path.read_text().strip()
-    except (OSError, ValueError):
-        text = ""
-    if not text or not text.isascii():
         text = secrets.token_urlsafe(TOKEN_BYTES)
-        try:
-            path.write_text(text)
-        except OSError as error:
-            raise ActivityError(f"cannot write the live view's token file ({error.strerror}); check its permissions and run this again") from None
-    try:
-        os.chmod(path, 0o600)
-    except OSError as error:
-        raise ActivityError(f"cannot set the live view's token file to mode 0600 ({error.strerror}); check its permissions and run this again") from None
+        with os.fdopen(fd, "w") as token_file:
+            token_file.write(text)
+        token = text.encode("ascii")
+        return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+    text = read_valid_token(path)
+    if text:
+        token = text.encode("ascii")
+        return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+    text = secrets.token_urlsafe(TOKEN_BYTES)
+    install_token(path, text)
     token = text.encode("ascii")
     return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+
+
+def read_valid_token(path):
+    """The existing token when its file is a private regular file holding a generated token, else an empty string."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return ""
+    try:
+        done = os.fstat(fd)
+        if not stat.S_ISREG(done.st_mode):
+            return ""
+        if done.st_uid != os.getuid():
+            return ""
+        if stat.S_IMODE(done.st_mode) != 0o600:
+            return ""
+        raw = b""
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            raw += chunk
+            if len(raw) > 4096:
+                return ""
+        try:
+            text = raw.decode("ascii").strip()
+        except UnicodeDecodeError:
+            return ""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", text or ""):
+            return ""
+        return text
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+
+
+def install_token(path, text):
+    """Write a replacement token through a private temporary file, then move it over the token path."""
+    try:
+        tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent)
+    except OSError as error:
+        raise ActivityError(f"cannot write the live view's token file ({error.strerror}); check its permissions and run this again") from None
+    try:
+        with os.fdopen(tmp_fd, "w") as tmp:
+            tmp.write(text)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    except OSError as error:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise ActivityError(f"cannot write the live view's token file ({error.strerror}); check its permissions and run this again") from None
 
 
 def live_server(settings, secret, port):
