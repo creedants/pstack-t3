@@ -20,7 +20,7 @@
 **pstack-t3 makes any model in T3 Code do careful engineering, and gives each project a standing coordinator that turns your requests into reviewed, landed changes.**
 
 <p align="center">
-  <img src="docs/assets/activity-view.png" alt="Activity page for the demo coordinator kit, with one running worker, one sub-agent, and two work items" width="100%">
+  <img src="docs/assets/activity-view.png" alt="Activity page for the demo coordinator kit, showing one working item, one merged item, one running worker, and one sub-agent" width="100%">
 </p>
 
 ## What it does
