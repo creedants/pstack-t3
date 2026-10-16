@@ -406,7 +406,7 @@ Private working state that must survive the session but never be committed lives
 
 Resume notes from Pause safely go to `.pstack/resume/<slug>.md` in the repository, untracked (add `.pstack/` to `.git/info/exclude`), and are also posted as the thread's final message. Rely on the final message, because storage cleanup can delete the file with its worktree.
 
-After a T3 restart, follow [failures.md](failures.md#after-a-restart) before you respawn any slice. It also acts after the thread's PR merges into the default branch by squash or rebase at the worktree's head SHA. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
+After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Storage cleanup can also remove a worktree after the thread's PR merges into the default branch by squash or rebase at the worktree's head SHA. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
 
 ## Verification surfaces
 
