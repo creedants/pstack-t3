@@ -284,6 +284,8 @@ def _header_cells(line):
 
 
 def light_table_findings(rel_s, text, cells):
+    if rel_s in ("pstack-runtime/SKILL.md", "pstack-runtime/light.md"):
+        return []
     findings = []
     lines = text.splitlines()
     for number, line in enumerate(lines, 1):
@@ -678,8 +680,7 @@ def check_tree(root, guide=True):
                     )
         findings.extend(catalog_heredoc_findings(rel, text))
         if file.suffix == ".md":
-            if rel_s != "pstack-runtime/SKILL.md":
-                findings.extend(light_table_findings(rel_s, text, cells))
+            findings.extend(light_table_findings(rel_s, text, cells))
             for target in LINK.findall(text):
                 if THREAD_LINK.match(target):
                     continue

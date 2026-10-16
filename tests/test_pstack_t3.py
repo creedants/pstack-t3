@@ -996,7 +996,7 @@ def brief_paragraph(runtime):
 
 
 def light_behavior_rows(runtime):
-    section = runtime.split("### Light behavior", 1)[1].split("\n### ", 1)[0]
+    section = runtime.split("# Light behavior", 1)[1].split("\n### ", 1)[0]
     rows = []
     for line in section.splitlines():
         stripped = line.strip()
@@ -1052,6 +1052,13 @@ class ModesTest(unittest.TestCase):
         for fragment in re.findall(r"\]\(#([^)\s]+)\)", self.runtime):
             if fragment not in slugs:
                 broken.append(f"pstack-runtime/SKILL.md#{fragment}")
+        light = (ROOT / "skills/pstack-runtime/light.md").read_text()
+        for fragment in re.findall(r"\]\(SKILL\.md#([^)\s]+)\)", light):
+            if fragment not in slugs:
+                broken.append(f"pstack-runtime/light.md#SKILL.md#{fragment}")
+        for fragment in re.findall(r"\]\(#([^)\s]+)\)", light):
+            if fragment not in slugs:
+                broken.append(f"pstack-runtime/light.md#{fragment}")
         self.assertEqual(broken, [])
         self.assertEqual(heading_slug("Resolve and carry the mode"), "resolve-and-carry-the-mode")
 
@@ -1099,24 +1106,26 @@ class ModesTest(unittest.TestCase):
         self.assertEqual(seat_rule(self.runtime), SEAT_RULE)
 
     def test_every_owner_row_carries_the_seat_rule(self):
-        rows = [row for row in light_behavior_rows(self.runtime) if "mode lines" in row]
+        light = (ROOT / "skills/pstack-runtime/light.md").read_text()
+        rows = [row for row in light_behavior_rows(light) if "mode lines" in row]
         self.assertGreaterEqual(len(rows), 4)
         for row in rows:
             self.assertIn(
-                "the seat rule from [Resolve and carry the mode](#resolve-and-carry-the-mode)",
+                "the seat rule from [Resolve and carry the mode](SKILL.md#resolve-and-carry-the-mode)",
                 row,
             )
 
     def test_child_facing_light_rows(self):
+        light = (ROOT / "skills/pstack-runtime/light.md").read_text()
         self.assertIn(
             "Its brief lists every `threadId` that `t3_thread_list` returns in the window, across every page. The parent filters and samples none",
-            light_row(self.runtime, "`automate-me`"),
+            light_row(light, "`automate-me`"),
         )
-        self.assertIn("pass `--session-mode full`", light_row(self.runtime, "`reflect`"))
-        verification = light_row(self.runtime, "Multi-phase verification")
+        self.assertIn("pass `--session-mode full`", light_row(light, "`reflect`"))
+        verification = light_row(light, "Multi-phase verification")
         self.assertIn("every **Verify, live** lane box that drives its surface", verification)
         self.assertIn("Launch no perf lane.", verification)
-        self.assertIn("(#gate-review)", verification)
+        self.assertIn("(SKILL.md#gate-review)", verification)
 
     def test_explicit_reflect_names_session_full_at_both_flag_sites(self):
         roles = self.runtime.split("### Where roles live", 1)[1].split("\n### ", 1)[0]
@@ -1153,11 +1162,12 @@ class ModesTest(unittest.TestCase):
         self.assertNotIn("and ask for that skill's checks", self.runtime)
 
     def test_every_gate_review_row_links_gate_review(self):
-        for row in light_behavior_rows(self.runtime):
+        light = (ROOT / "skills/pstack-runtime/light.md").read_text()
+        for row in light_behavior_rows(light):
             if "gate review" not in row and "is the gate" not in row:
                 continue
             spawn = row.split("|")[1].strip()
-            self.assertIn("(#gate-review)", row, spawn)
+            self.assertIn("(SKILL.md#gate-review)", row, spawn)
 
     def test_full_mode_persona_keeps_investigation(self):
         persona = (ROOT / "skills/pstack-runtime/agents/comment-sicko.md").read_text()
@@ -1987,7 +1997,7 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md")
 
 
 def runtime_docs():
