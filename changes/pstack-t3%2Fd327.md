@@ -1,4 +1,4 @@
 - kind feature
 - Run a service gains step 0. It runs `$B next` first with the wake that started the service.
 - The script block gains the `$B next` line. It prints the steps the wake owes and whether it is a reply.
-- Command output gains `next`. It prints `wake`, `reporting`, `reports to`, each cue, and `reply` in that order.
+- Command output gains `next`. It prints `wake`, `reporting`, `reports to` when one is set, each cue, and `reply` in that order.
