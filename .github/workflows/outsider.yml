@@ -1,0 +1,21 @@
+name: outsider
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    env:
+      GIT_AUTHOR_NAME: outsider
+      GIT_AUTHOR_EMAIL: outsider@example.com
+      GIT_COMMITTER_NAME: outsider
+      GIT_COMMITTER_EMAIL: outsider@example.com
+    steps:
+      - name: install git
+        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - uses: actions/checkout@v7
+      - run: python3 scripts/outsider_smoke.py
