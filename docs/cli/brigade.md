@@ -836,6 +836,8 @@ In text, a wholly missing measure prints its absence words and no counts. In JSO
 
 A Claude model line prints `reasoning not recorded` when `usage.output_tokens_details.thinking_tokens` is missing, null, negative, a bool, or not an integer. A recorded count prints as a number, and 0 stays 0. Adding two model totals prints `not recorded` for reasoning when either total was not recorded. Output and dollars stay the recorded totals.
 
+Codex and OpenCode turn totals print under the thread's current model selection, so turns taken before a mid-run model switch count under the later model.
+
 `--by reviewer` groups whole items by the seat that reviewed them. Its token lines include the worker's and every other ledger role's usage for those items. An item reviewed by several seats appears under one joined key.
 
 | Argument | Required | Choices | Default | Help |
