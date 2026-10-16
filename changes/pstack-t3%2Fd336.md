@@ -1,3 +1,3 @@
 - kind fix
 - `t3/added/brigade/scripts/brigade.py` names its loader alias `brigade_lib`, so each file loads once as `brigade_lib.<name>` and `spend.py` no longer exists as two objects.
-- `tests/brigade/test_loader.py` pins that `seam` is `brigade_lib.seam` and that reporting sees the same `spend` object the entry imported.
+- `tests/brigade/test_loader.py` pins that `seam` is `brigade_lib.seam` and that reporting's `spend` is the module that defines `spend_text`.
