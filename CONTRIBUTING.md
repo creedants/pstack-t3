@@ -10,6 +10,12 @@ Issues and pull requests are welcome.
 
 [AGENTS.md](AGENTS.md) has the porting rules. Agents working on this repo should read it first.
 
+## For an outside contributor
+
+The full suite takes about 16 minutes in one process and about 5 minutes with `python3 scripts/run_tests.py`. While you work, run the module you changed, then `python3 -m unittest tests.test_pstack_t3`, `python3 scripts/build.py`, and `python3 scripts/check.py`.
+
+An outside pull request is ported into a reviewed branch. That branch credits the author with a `Co-authored-by` trailer. The original pull request is then closed rather than merged.
+
 ## Before you open a PR
 
 ```bash
@@ -22,7 +28,7 @@ python3 scripts/run_tests.py
 
 Commit the regenerated `skills/` with your change. For a user-facing change, add one fragment under `changes/`. The file name is the branch name with `%` encoded as `%25` and `/` encoded as `%2F`, then `.md`. Encode `%` before `/`. Branch `pstack-t3/d50` writes `changes/pstack-t3%2Fd50.md`. The file holds markdown bullets only. A bullet starts with `- `. Indent a continuation line under that bullet. A branch reused before the release adds its next bullet to the same file. CI fails if `skills/` does not match what the build produces.
 
-Edit `README.md` or `docs/guide.md` only when the ticket is about those files, or when the change removes or renames something they name. Otherwise list the doc edit under follow-ups. Those notes become one docs change. When one coordinator owns those files, that coordinator takes the change. When none does, each coordinator's notes are one batch.
+Edit `README.md` or `docs/guide.md` only when the ticket is about those files, or when the change removes or renames something they name. Otherwise list the doc edit under follow-ups. Those notes become one docs change.
 
 If you changed a skill's behavior, run it in a real T3 thread and say in the PR which provider led and what it did.
 

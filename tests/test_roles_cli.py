@@ -122,9 +122,9 @@ Act as the implementation sub-agent for this task.
 
 Implement the pstack-t3 change described in /tmp/d25-architect/IMPL.md. Read that file, /tmp/d25-architect/SYNTHESIS.md, and /tmp/d25-architect/c3-sol/SKETCH.md before you edit. The synthesis wins where the sketch differs.
 
-Work only in /home/marcus/.t3/worktrees/pstack-t3/pstack-t3-d25 on branch pstack-t3/d25. Do not create a worktree. Do not merge, rebase, push, or open a pull request. Do not edit README.md or CHANGELOG.md. Do not hand-edit skills/ or vendor/pstack. Do not spawn agents.
+Work only in /tmp/pstack-work/pstack-t3-d25 on branch pstack-t3/d25. Do not create a worktree. Do not merge, rebase, push, or open a pull request. Do not edit README.md or CHANGELOG.md. Do not hand-edit skills/ or vendor/pstack. Do not spawn agents.
 
-Two green commits, in order. First the roles defaults and the setup watch gate, with tests. Then scripts/sync_upstream.py and the override ports. Run tests and builds only through python3 /home/marcus/Projects/pstack-t3/skills/landing/scripts/land.py slot -- <command>.
+Two green commits, in order. First the roles defaults and the setup watch gate, with tests. Then scripts/sync_upstream.py and the override ports. Run tests and builds only through python3 /tmp/pstack-work/skills/landing/scripts/land.py slot -- <command>.
 
 Commit messages have no Co-Authored-By trailer, no Generated-with footer, and no mention of an agent or a tool.
 
