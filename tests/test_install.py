@@ -1020,17 +1020,25 @@ NO_PROC = (
 def darwin_renamex():
     """Hook code that leaves only `renamex_np` in libc, as on Darwin.
 
-    The fake has no `renameat2`. Its `renamex_np` asserts flag 4 and forwards to the real `renameat2`.
+    Where `renameat2` exists the fake `renamex_np` asserts flag 4 and forwards to it. Where it is absent the fake wraps the real `renamex_np`, so the same tests run natively on macOS.
     """
     return (
         "import ctypes\n"
         "real = ctypes.CDLL(None, use_errno=True)\n"
-        "forward = real.renameat2\n"
-        "forward.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)\n"
-        "forward.restype = ctypes.c_int\n"
-        "def renamex_np(source, target, flags):\n"
-        "    assert flags == 4, flags\n"
-        "    return forward(-100, source, -100, target, 1)\n"
+        "forward = getattr(real, 'renameat2', None)\n"
+        "if forward is not None:\n"
+        "    forward.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)\n"
+        "    forward.restype = ctypes.c_int\n"
+        "    def renamex_np(source, target, flags):\n"
+        "        assert flags == 4, flags\n"
+        "        return forward(-100, source, -100, target, 1)\n"
+        "else:\n"
+        "    native = real.renamex_np\n"
+        "    native.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)\n"
+        "    native.restype = ctypes.c_int\n"
+        "    def renamex_np(source, target, flags):\n"
+        "        assert flags == 4, flags\n"
+        "        return native(source, target, flags)\n"
         "fake = type('FakeLibc', (), {})()\n"
         "fake.renamex_np = renamex_np\n"
         "ctypes.CDLL = lambda *args, **kwargs: fake\n"
@@ -2459,9 +2467,9 @@ class OwnershipTest(unittest.TestCase):
             self.assertFalse(path.is_symlink())
             self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
 
-    def assert_restore_kept(self, raced, swarm, rows, kind, reason, tried=True):
+    def assert_restore_kept(self, raced, swarm, rows, kind, reason):
         """The raced restore wrote nothing at swarm and kept the backup and its row where they were."""
-        self.assertEqual((self.home / "filled").read_text(), str(tried))
+        self.assertEqual((self.home / "filled").read_text(), "True")
         backup = Path(rows[0]["backup"])
         self.skipped(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
         self.assert_displaced(backup, kind)
@@ -2475,13 +2483,6 @@ class OwnershipTest(unittest.TestCase):
         if (kind != "directory" and not link_error) or code == 0:
             return f"{swarm} was taken again"
         return f"{swarm} cannot be refilled without risking an overwrite ({os.strerror(code)})"
-
-    def restore_tried(self, kind, link_error, rename):
-        """Whether the restore reached a call that writes swarm, which is when the occupant arrives.
-
-        Every restore reaches such a call, whatever the rename hook takes away.
-        """
-        return True
 
     def test_a_restore_never_replaces_an_entry_that_took_the_path(self):
         cases = (
@@ -2499,11 +2500,8 @@ class OwnershipTest(unittest.TestCase):
                     a, swarm, rows = self.displaced_by(kind)
                     raced = uninstall_hooked(self.home, a, restore_race(swarm, occupy, link_error=link_error, rename=rename))
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    tried = self.restore_tried(kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
-                    if not tried:
-                        self.assertFalse(os.path.lexists(swarm))
-                    elif occupy == "file":
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
+                    if occupy == "file":
                         self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
                         swarm.unlink()
                     elif occupy == "link":
@@ -2530,11 +2528,7 @@ class OwnershipTest(unittest.TestCase):
                     hook = restore_race(swarm, install_b, link_error=link_error, rename=rename)
                     raced = uninstall_hooked(self.home, a, hook)
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    tried = self.restore_tried(kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
-                    if not tried:
-                        self.assertFalse(os.path.lexists(swarm))
-                        continue
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
                     self.assertEqual(snapshot(b / "skills"), tree)
                     self.assert_grok_text(b)
                     self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
