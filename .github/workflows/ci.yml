@@ -196,7 +196,7 @@ jobs:
           python-version: "3.12"
       - continue-on-error: true
         run: pip install pyyaml
-      # This job runs the whole suite on a pull request and on a push to main. Every step stays non-blocking, so the job never fails the workflow.
+      # This job runs the whole suite on a pull request and on a push to main. Every step uses continue-on-error, so a step failure does not fail the job check.
       - name: Full test suite
         continue-on-error: true
         run: |
