@@ -1,4 +1,4 @@
 - kind fix
 - `failures.md` `## After a restart` states the gate the runtime pointer promises. Follow it before you read a saved child's result, replace a child, or use a saved worktree path.
 - The storage-cleanup sentence names the one-minute grace instead of pointing at an unnamed "grace below".
-- The `## Usage limit` panel sentence states what `t3/scripts/roles.py` does. A panel seats the configured `review backups` seats, drops the failed provider, and parks when fewer than two usable seats remain.
+- The `## Usage limit` panel sentence states what `t3/scripts/roles.py` does. A panel never seats the failed provider, seats the configured `review backups` seats it keeps, and parks when fewer than two usable seats remain.
