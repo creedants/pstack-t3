@@ -141,9 +141,8 @@ class Integration:
             if picked.returncode != 0:
                 return result, did
             for path in unmerged:
-                in_before = self.git("rev-parse", "--verify", "--quiet", f"{before}:{path}", check=False).returncode == 0
                 in_ours = self.git("rev-parse", "--verify", "--quiet", f"HEAD:{path}", check=False).returncode == 0
-                if in_before or in_ours:
+                if in_ours:
                     checkout = self.git("checkout", "--ours", "--", path, check=False)
                     if checkout.returncode != 0:
                         return result, did
