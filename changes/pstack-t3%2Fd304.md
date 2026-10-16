@@ -1,0 +1,7 @@
+- kind feature
+- `close` appends a `## Spend` section after its other sections, from `spend_text` with `by="goal"`, `tokens=True`, and `since` the UTC date of `lastReportAt`, with standard error captured
+- The section drops spend's last line, and when a captured line equals `spend.UNREADABLE` or `spend.SCHEMA` it drops every line that starts with two spaces and appends one `tokens unavailable` line, and it prints `none` when no line remains
+- The window is the UTC date of `lastReportAt`, which is the finest window `spend --since` takes, so a second close on the same UTC day repeats that day's goal rows
+- A `spend_text` call that raises, from a refused `prices.json` or a raising token read, is caught and rerun with `tokens=False`, and the section prints the goal rows that rerun renders with one `tokens unavailable` line, so close keeps every other section and no spend stderr
+- The top-level `--help` command list names the section, and `docs/cli/brigade.md` and the `skills/brigade/` copies regenerate
+- `tests/brigade/test_reporting.py` adds five close tests over fixture stores, one goal row per goal, `none` for a window with no items, and the goal rows with `tokens unavailable` for an unreadable token source, a refused prices.json, and a raising token read, and `tests/brigade/test_briefs.py`, `tests/brigade/test_reviews.py`, `tests/brigade/test_items.py`, and `tests/brigade/test_tickets.py` carry the section in their exact report assertions

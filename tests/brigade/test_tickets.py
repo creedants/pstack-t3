@@ -1194,7 +1194,8 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.assertEqual(out["status"].splitlines()[3:], ["untagged: 1"])
         self.assertEqual(out["ticket list"], "T1 waiting normal [user] a")
         self.assertEqual(out["startable"].splitlines()[2], "T1 normal, 0m: unknown, no paths recorded")
-        self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a"])
+        self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a",
+                                                                  "", "## Spend", "", "none"])
         self.assertNotIn("bugfix", "".join(out.values()))
 
     def test_a_waiting_ticket_that_an_item_in_flight_names_is_warned_of_for_a_bad_kind_and_a_bad_goal_with_that_items_id_and_state(self):

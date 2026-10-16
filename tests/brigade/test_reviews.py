@@ -1211,6 +1211,10 @@ class ReviewsTest(BrigadeTest):
             "### Unassigned", "",
             "- polish T8: Tidy the docs",
             "- T9: Installer",
+            "", "## Spend", "",
+            "goal not recorded  wall 0m (1 open)  rounds 1  send-backs 0  threads not recorded",
+            "G1  wall open  rounds 0  send-backs 0  threads not recorded",
+            "G2  wall open  rounds 1  send-backs 1  threads not recorded",
         ])
 
     def test_next_runs_each_conditional_action(self):

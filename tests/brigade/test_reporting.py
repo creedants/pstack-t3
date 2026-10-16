@@ -1,3 +1,5 @@
+import sqlite3
+
 from .support import (
     setUpModule,
     BrigadeTest,
@@ -6,7 +8,10 @@ from .support import (
     Path,
     ProcessReason,
     SCRIPT,
+    call,
+    call_in_process,
     real_process,
+    run_globals,
     _ReportingRace,
     _owner_words,
     _shown_root,
@@ -203,7 +208,8 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             "# Perf report", "",
             f"Since opening. merged: 1.", "",
             "## Merged", "", "- fix D1 (T1): Fix s", "",
-            "## Dropped", "", "- T2: UI",
+            "## Dropped", "", "- T2: UI", "",
+            "## Spend", "", "goal not recorded  wall 0m  rounds 1  send-backs 0  threads not recorded",
         ]))
 
     def test_close_to_file_prints_the_written_path_and_advances_the_report(self):
@@ -386,7 +392,9 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.brigade("close")
         self.brigade("dish", "D1", "--mode", "full", "--reason", "contested: two owners")
         text = self.brigade("close", "--dry-run")
-        self.assertEqual(text.split("\n\n", 2)[2], "## Moved to full mode\n\n- D1 (T1): contested: two owners")
+        self.assertEqual(text.split("\n\n", 2)[2], "\n\n".join([
+            "## Moved to full mode", "- D1 (T1): contested: two owners",
+            "## Spend", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"]))
 
     def test_the_second_send_back_moves_the_item_to_full_once(self):
         self.coordinator()
@@ -675,7 +683,8 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.assertEqual(self.brigade("startable"), f"{idle}\nno waiting tickets")
         self.assertEqual(self.brigade("watch"), f"{idle}\nno work in progress")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
-        self.assertEqual(self.close_run("--dry-run"), (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.", ""))
+        self.assertEqual(self.close_run("--dry-run"),
+                         (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Spend\n\nnone", ""))
         self.assertEqual(self.brigade("walk").splitlines(), [
             f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty.",
             "  Perf (reports milestones): nothing on record",
@@ -705,3 +714,165 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.assertNotIn("Traceback", err)
         self.assertEqual([line for line in out.splitlines() if line.startswith("reply:")], [out.splitlines()[-1]])
         self.assertFalse((self.at / "goals.tsv").exists())
+
+
+FIRE = "2026-10-01T00:00:00+00:00"
+CLOSE_AT = "2026-10-01T02:00:00+00:00"
+
+
+class _SpendFixture:
+    """`fill`, `put`, and `dish` follow `SpendTest` in tests/brigade/test_spend.py, and `dish_close` renames its `close`. `goal_row`, `thread_row`, `token_database`, and `advance_report` are new."""
+
+    def fill(self, dishes, passes=(), threads=(), logs=(), goals=()):
+        self.open()
+        self.put("dishes.tsv", dishes)
+        self.put("pass.tsv", passes)
+        self.put("threads.tsv", threads)
+        self.put("log.tsv", logs)
+        if goals:
+            self.put("goals.tsv", goals)
+
+    def put(self, table, rows):
+        path = self.at / table
+        header = path.read_text().splitlines()[0].split("\t")
+        lines = ["\t".join(header)]
+        for row in rows:
+            lines.append("\t".join(str(row.get(column, "")) for column in header))
+        path.write_text("\n".join(lines) + "\n")
+
+    def dish(self, ident="D1", **cells):
+        row = {
+            "id": ident, "at": FIRE, "state": "merged", "kind": "fix", "goal": "G1",
+            "thread": "dish-thread-sentinel", "summary": "summary sentinel",
+        }
+        row.update(cells)
+        return row
+
+    def dish_close(self, ident="D1", at=CLOSE_AT, state="merged"):
+        return {"at": at, "kind": "dish", "id": ident, "state": state, "note": "note sentinel"}
+
+    def goal_row(self, ident, name):
+        return {"id": ident, "at": FIRE, "state": "open", "name": name, "purpose": "why", "done": "when"}
+
+    def thread_row(self, dish, name):
+        return {"at": FIRE, "dish": dish, "role": "worker", "thread": name, "seat": "codex/gpt-6.1-sol"}
+
+    def token_database(self):
+        """A database with spend's provider tables and indexes and no rows, so every thread reads as not recorded."""
+        base = Path(self.temporary.name) / "t3"
+        path = base / "userdata" / "statev2.sqlite"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(path)
+        try:
+            connection.execute(
+                "CREATE TABLE orchestration_v2_projection_provider_threads "
+                "(thread_id TEXT, provider_thread_id TEXT, driver TEXT, payload_json TEXT)")
+            connection.execute(
+                "CREATE TABLE orchestration_v2_projection_provider_turns "
+                "(provider_thread_id TEXT, payload_json TEXT)")
+            connection.execute(
+                "CREATE INDEX provider_threads_thread "
+                "ON orchestration_v2_projection_provider_threads(thread_id)")
+            connection.execute(
+                "CREATE INDEX provider_turns_thread "
+                "ON orchestration_v2_projection_provider_turns(provider_thread_id)")
+            connection.commit()
+        finally:
+            connection.close()
+        return base
+
+    def advance_report(self, stamp):
+        path = self.at / "restaurant.json"
+        meta = json.loads(path.read_text())
+        meta["lastReportAt"] = stamp
+        path.write_text(json.dumps(meta, indent=2) + "\n")
+
+
+class SpendReportTest(BrigadeTest, _SpendFixture):
+    def spend_block(self, text):
+        return text[text.index("## Spend"):]
+
+    def two_goal_store(self):
+        self.fill(
+            [self.dish("D1"), self.dish("D2", goal="G2")],
+            threads=[self.thread_row("D1", "ledger-a"), self.thread_row("D2", "ledger-b")],
+            logs=[self.dish_close("D1", CLOSE_AT), self.dish_close("D2", CLOSE_AT)],
+            goals=[self.goal_row("G1", "one"), self.goal_row("G2", "two")],
+        )
+
+    def test_close_prints_a_spend_section_with_one_goal_row_per_goal(self):
+        base = self.token_database()
+        self.two_goal_store()
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}):
+            code, out, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.spend_block(out), "\n".join([
+            "## Spend", "",
+            "G1  wall 2h  rounds 0  send-backs 0  threads 1",
+            "  not recorded",
+            "G2  wall 2h  rounds 0  send-backs 0  threads 1",
+            "  not recorded",
+        ]))
+
+    def test_close_prints_a_spend_none_for_a_window_with_no_items(self):
+        base = self.token_database()
+        self.two_goal_store()
+        self.advance_report("2026-10-02T00:00:00+00:00")
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}):
+            code, out, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.spend_block(out), "## Spend\n\nnone")
+
+    def test_close_keeps_the_goal_rows_and_says_tokens_unavailable_when_the_token_source_is_unreadable(self):
+        empty = Path(self.temporary.name) / "no-t3-database"
+        self.two_goal_store()
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(empty)}):
+            code, out, err = self.close_run("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.spend_block(out), "\n".join([
+            "## Spend", "",
+            "G1  wall 2h  rounds 0  send-backs 0  threads 1",
+            "G2  wall 2h  rounds 0  send-backs 0  threads 1",
+            "tokens unavailable",
+        ]))
+        self.assertNotIn("  not recorded", out)
+
+    GOAL_ROWS_NO_TOKENS = "\n".join([
+        "## Spend", "",
+        "G1  wall 2h  rounds 0  send-backs 0  threads 1",
+        "G2  wall 2h  rounds 0  send-backs 0  threads 1",
+        "tokens unavailable",
+    ])
+
+    def each_close_form(self, expected, in_process=False):
+        """`close --dry-run`, `close`, and `close --to-file` each print this Spend block with empty stderr.
+
+        A writing close advances the report window, so the window is reset to every item before each form.
+        """
+        runner = call_in_process if in_process else call
+        for flags in (("--dry-run",), (), ("--to-file",)):
+            with self.subTest(flags=flags):
+                self.advance_report("")
+                outcome = runner(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                *_owner_words(self.at), "close", *flags])
+                self.assertEqual((outcome.code, outcome.stderr_text().strip()), (0, ""))
+                text = outcome.stdout_text().strip()
+                self.assertEqual(self.spend_block(Path(text).read_text().strip() if flags == ("--to-file",) else text), expected)
+
+    def test_close_keeps_the_goal_rows_and_says_tokens_unavailable_when_the_prices_file_is_refused(self):
+        base = self.token_database()
+        self.two_goal_store()
+        (self.at / "prices.json").write_text("{broken")
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}):
+            self.each_close_form(self.GOAL_ROWS_NO_TOKENS)
+
+    def test_close_keeps_the_goal_rows_and_says_tokens_unavailable_when_the_token_read_raises(self):
+        base = self.token_database()
+        self.two_goal_store()
+        space = run_globals(self, SCRIPT)["report"].__globals__["spend"].__dict__
+
+        def refused(question):
+            raise PermissionError("the token read was refused")
+
+        with mock.patch.dict(os.environ, {"T3CODE_HOME": str(base)}), mock.patch.dict(space, {"_open_tokens": refused}):
+            self.each_close_form(self.GOAL_ROWS_NO_TOKENS, in_process=True)
