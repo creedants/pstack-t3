@@ -16,6 +16,6 @@
 - Generated roots that traverse a symlink bounce without deleting outside the worktree.
 - Handled rebuild failures run `git reset --hard` at the pre-entry commit, then `git clean -ffdx` on generated paths when the roots stay inside the worktree.
 - Rebuild launch and I/O failures bounce as rebuild failures that name the build command and the exception.
-- Interrupts during rebuild stop the build, reset to the pre-entry commit and clean generated paths when the roots stay inside the worktree, and propagate without bouncing.
+- Interrupts during rebuild stop the tracked build, reset to the pre-entry commit, then clean generated paths when the roots stay inside the worktree, and propagate without bouncing.
 - Generated conflicts absent on ours are removed and only restored paths are staged with literal pathspecs.
 - Dirty and unmerged discovery reads NUL names with exact decoding.
