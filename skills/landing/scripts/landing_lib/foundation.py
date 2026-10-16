@@ -193,69 +193,19 @@ def is_generated(path):
     return covered(path, GENERATED_PATHS)
 
 
-def _header_paths(line):
-    rest = line[len("diff --git "):]
-    parts = []
-    pos = 0
-    while len(parts) < 2:
-        if pos >= len(rest):
-            return None
-        if rest[pos] == '"':
-            end = pos + 1
-            while end < len(rest) and rest[end] != '"':
-                if rest[end] == "\\":
-                    return None
-                end += 1
-            if end >= len(rest):
-                return None
-            parts.append(rest[pos + 1:end])
-            pos = end + 1
-            if pos < len(rest):
-                if rest[pos] != " ":
-                    return None
-                pos += 1
-            elif len(parts) < 2:
-                return None
-        else:
-            end = rest.find(" ", pos)
-            if end == -1:
-                parts.append(rest[pos:])
-                pos = len(rest)
-            else:
-                parts.append(rest[pos:end])
-                pos = end + 1
-    if pos != len(rest):
-        return None
-    if not parts[0].startswith("a/") or not parts[1].startswith("b/"):
-        return None
-    return parts[0][2:], parts[1][2:]
-
-
 def fingerprint(repo, base, head):
-    """Hash of the source change. Sections either side of which parses as a generated path are dropped. Unparseable headers are kept."""
-    diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff", "-U0", base, head, cwd=repo).stdout
+    """Hash of the source change. Sources come from NUL-delimited names. Their diff uses literal pathspecs."""
+    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo).stdout
+    changed = [canonical(path, "changed") for path in raw.split("\0") if path]
+    sources = [path for path in changed if not is_generated(path)]
+    if not sources:
+        return ""
+    specs = [f":(literal){path}" for path in sources]
+    diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff",
+               "-U0", base, head, "--", *specs, cwd=repo).stdout
     if not diff:
         return ""
-    lines = diff.splitlines()
-    starts = [i for i, line in enumerate(lines) if line.startswith("diff --git ")]
-    if not starts:
-        kept = lines
-    else:
-        kept = lines[:starts[0]]
-        for index, start in enumerate(starts):
-            end = starts[index + 1] if index + 1 < len(starts) else len(lines)
-            section = lines[start:end]
-            parsed = _header_paths(section[0])
-            if parsed is None:
-                kept.extend(section)
-                continue
-            a_path, b_path = parsed
-            if is_generated(a_path) or is_generated(b_path):
-                continue
-            kept.extend(section)
-        if not kept:
-            return ""
-    lines = [line for line in kept if not line.startswith("index ")]
+    lines = [line for line in diff.splitlines() if not line.startswith("index ")]
     lines = [re.sub(r"^@@ [^@]* @@", "@@", line) for line in lines]
     return hashlib.sha256("\n".join(lines).encode("utf-8", "surrogateescape")).hexdigest()
 

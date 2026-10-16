@@ -1,13 +1,13 @@
 - kind feature
 - Generated paths live in one registry in foundation.
 - Submit lease check covers sources only and rejects generated only changes.
-- Fingerprint drops generated sections with parseable headers. Empty stays empty.
-- Generated only conflicts resolve with ours when file lists agree.
+- Fingerprint lists sources with NUL-delimited names and hashes their diff with literal pathspecs. Empty stays empty.
+- Generated only conflicts resolve with ours without matching file lists.
 - Source conflicts still bounce with trunk.
 - Empty source changes return already in trunk.
-- Rebuild restores the files trunk tracks under each generated path, then runs build twice.
+- Rebuild removes all generated entries including branch additions and untracked files, restores trunk tracks, then runs build twice.
 - Failed builds bounce and never land.
-- Builds that dirty tracked sources bounce.
-- Builds whose second run changes file bytes bounce.
+- Builds that dirty tracked sources on either run bounce.
+- Builds whose second run changes generated entries including modes and symlink targets bounce.
 - Staged generated output amends the tip with no edit.
 - Fingerprint and author checks run after rebuild.
