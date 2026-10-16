@@ -1,3 +1,3 @@
 - kind fix
 - `governor.py` shares one runner between `supervised` and `Integration._run_build`.
-- Stop the tracked group while the leader is still unreaped, then reap, and never signal a reaped PID.
+- The SIGINT handler attempts SIGKILL for the tracked group when the leader has no recorded return code.

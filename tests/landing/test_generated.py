@@ -872,3 +872,138 @@ class GeneratedTest(LandingTest):
                     pipe.close()
                 except OSError:
                     pass
+
+    def test_reaped_leader_gets_no_killpg_on_interrupt(self):
+        if not hasattr(os, "waitid"):
+            self.skipTest("reservation guard needs os.waitid")
+        real_handle = subprocess.Popen._handle_exitstatus
+        real_killpg = os.killpg
+        previous = signal.getsignal(signal.SIGINT)
+        attempts = []
+        proof = []
+        injected = []
+
+        def recording_killpg(pgid, sig):
+            attempts.append((pgid, sig))
+
+        def injecting_handle(self, sts, *args, **kwargs):
+            if not injected:
+                injected.append(True)
+                try:
+                    os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                except ChildProcessError:
+                    proof.append("reaped")
+                except OSError:
+                    proof.append("unproven")
+                else:
+                    proof.append("reserved")
+                signal.raise_signal(signal.SIGINT)
+            return real_handle(self, sts, *args, **kwargs)
+
+        subprocess.Popen._handle_exitstatus = injecting_handle
+        os.killpg = recording_killpg
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                land.run_build("exit 0", str(self.work), 10)
+        finally:
+            subprocess.Popen._handle_exitstatus = real_handle
+            os.killpg = real_killpg
+        self.assertEqual(injected, [True])
+        self.assertEqual(proof, ["reaped"])
+        self.assertEqual(attempts, [], "killpg ran after reap")
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+
+    def test_sigint_ignored_preserves_build_when_sig_ign(self):
+        parent = str(SCRIPT.parent)
+        work = str(self.work)
+        cmd = repr("sleep 0.05; printf finished")
+        lines = [
+            "import signal, subprocess, sys",
+            f"sys.path.insert(0, {parent!r})",
+            "import land",
+            "signal.signal(signal.SIGINT, signal.SIG_IGN)",
+            "real = subprocess.Popen.communicate",
+            "sent = []",
+            "def wrapping(self, *args, **kwargs):",
+            "    if not sent:",
+            "        sent.append(True)",
+            "        signal.raise_signal(signal.SIGINT)",
+            "    return real(self, *args, **kwargs)",
+            "subprocess.Popen.communicate = wrapping",
+            f"try:\n    code, out = land.run_build({cmd}, {work!r}, 10)",
+            "except KeyboardInterrupt:",
+            '    print("CAUGHT_KEYBOARD_INTERRUPT")',
+            "    raise SystemExit(1)",
+            'print("RESULT " + repr((code, out)))',
+            'raise SystemExit(0 if code == 0 and out == "finished" else 2)',
+        ]
+        result = subprocess.run(
+            [sys.executable, "-c", "\n".join(lines)],
+            capture_output=True, text=True, timeout=60, cwd=work)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("finished", result.stdout)
+        self.assertNotIn("CAUGHT", result.stdout + result.stderr)
+
+    def test_sigint_default_terminates_build_when_sig_dfl(self):
+        parent = str(SCRIPT.parent)
+        work = str(self.work)
+        cmd = repr("sleep 0.05; printf finished")
+        lines = [
+            "import signal, subprocess, sys",
+            f"sys.path.insert(0, {parent!r})",
+            "import land",
+            "signal.signal(signal.SIGINT, signal.SIG_DFL)",
+            "real = subprocess.Popen.communicate",
+            "sent = []",
+            "def wrapping(self, *args, **kwargs):",
+            "    if not sent:",
+            "        sent.append(True)",
+            "        signal.raise_signal(signal.SIGINT)",
+            "    return real(self, *args, **kwargs)",
+            "subprocess.Popen.communicate = wrapping",
+            f"try:\n    result = land.run_build({cmd}, {work!r}, 10)",
+            "except KeyboardInterrupt:",
+            '    print("CAUGHT_KEYBOARD_INTERRUPT")',
+            "    raise SystemExit(4)",
+            'print("RETURNED " + repr(result))',
+            "raise SystemExit(3)",
+        ]
+        result = subprocess.run(
+            [sys.executable, "-c", "\n".join(lines)],
+            capture_output=True, text=True, timeout=60, cwd=work)
+        self.assertEqual(result.returncode, -signal.SIGINT, result.stdout + result.stderr)
+        self.assertNotIn("RETURNED", result.stdout)
+        self.assertNotIn("CAUGHT", result.stdout + result.stderr)
+
+    def test_install_race_restores_handler_after_interrupt(self):
+        real_signal = signal.signal
+        previous = signal.getsignal(signal.SIGINT)
+        injected = []
+        active = {}
+
+        def wrapping_signal(signum, handler):
+            result = real_signal(signum, handler)
+            if signum == signal.SIGINT and handler is not previous and not injected:
+                injected.append(True)
+                signal.raise_signal(signal.SIGINT)
+            return result
+
+        signal.signal = wrapping_signal
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                land.run_build("sleep 30", str(self.work), 30, active)
+        finally:
+            signal.signal = real_signal
+        self.assertEqual(injected, [True])
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+        proc = active.get("process")
+        if proc is not None:
+            try:
+                land._stop_tracked(proc)
+            except OSError:
+                pass
+            try:
+                proc.stdout.close()
+            except (OSError, ValueError):
+                pass
+            self.assertIsNotNone(proc.returncode)

@@ -14,6 +14,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -1000,14 +1001,41 @@ def slot(pool="worker", repo=None, command=None, *, count=1):
             _hide_hold()
 
 
+def _group_reserved(process):
+    """True only when the leader PID is still reserved by this process."""
+    if process is None or process.returncode is not None:
+        return False
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if (hasattr(os, "waitid") and hasattr(os, "P_PID") and hasattr(os, "WEXITED")
+            and hasattr(os, "WNOHANG") and hasattr(os, "WNOWAIT")):
+        try:
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except ChildProcessError:
+            return False
+        except OSError:
+            return False
+        return True
+    text = _ps_line(pid, "ppid=")
+    if text is None:
+        return False
+    try:
+        parent = int(text.strip().split()[0])
+    except (ValueError, IndexError):
+        return False
+    return parent == os.getpid()
+
+
 def _stop_tracked(process):
-    """Stop the tracked process group while the leader is still unreaped, then reap. Never signal a reaped PID."""
+    """Skip absent processes and processes with a recorded return code. Otherwise try to stop the group and wait."""
     if process is None or process.returncode is not None:
         return
-    try:
-        _killpg_like_linux(process, signal.SIGKILL)
-    except OSError:
-        pass
+    if _group_reserved(process):
+        try:
+            _killpg_like_linux(process, signal.SIGKILL)
+        except OSError:
+            pass
     try:
         process.wait()
     except OSError:
@@ -1016,6 +1044,12 @@ def _stop_tracked(process):
 
 def run_build(command, cwd, timeout, active=None):
     """Run a shell command in its own process group and kill the whole group on timeout."""
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError("signal only works in main thread of the main interpreter")
+    try:
+        previous = signal.getsignal(signal.SIGINT)
+    except ValueError:
+        raise
     try:
         process = subprocess.Popen(command, cwd=cwd, shell=True, start_new_session=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -1025,10 +1059,20 @@ def run_build(command, cwd, timeout, active=None):
         raise
     if active is not None:
         active["process"] = process
-    previous = signal.getsignal(signal.SIGINT)
 
     def _on_sigint(signum, frame):
-        if process.returncode is None:
+        if previous is signal.SIG_IGN:
+            return
+        if previous is signal.SIG_DFL:
+            if _group_reserved(process):
+                try:
+                    _killpg_like_linux(process, signal.SIGKILL)
+                except OSError:
+                    pass
+            signal.signal(signal.SIGINT, previous)
+            os.kill(os.getpid(), signal.SIGINT)
+            return
+        if _group_reserved(process):
             try:
                 _killpg_like_linux(process, signal.SIGKILL)
             except OSError:
@@ -1038,8 +1082,8 @@ def run_build(command, cwd, timeout, active=None):
         else:
             raise KeyboardInterrupt
 
-    signal.signal(signal.SIGINT, _on_sigint)
     try:
+        signal.signal(signal.SIGINT, _on_sigint)
         try:
             output, _ = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -1057,8 +1101,19 @@ def run_build(command, cwd, timeout, active=None):
         if active is not None:
             active["process"] = None
         return process.returncode, output.decode("utf-8", "replace")
+    except ValueError:
+        try:
+            _stop_tracked(process)
+        except OSError:
+            pass
+        if active is not None:
+            active["process"] = None
+        raise
     finally:
-        signal.signal(signal.SIGINT, previous)
+        try:
+            signal.signal(signal.SIGINT, previous)
+        except ValueError:
+            pass
 
 
 def supervised(command, cwd, timeout):
