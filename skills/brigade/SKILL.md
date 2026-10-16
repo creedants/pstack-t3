@@ -45,8 +45,8 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
-$B status                                    # thread <id> or thread not recorded, the counts in progress, in review, passed review, and waiting to land, reports to <thread>, and owner <thread>@<generation>
-$B set --thread <id> [--replace] --schedule <name>=<id>   # records the thread and the schedule ids; --replace prints previousThread
+$B status                                    # thread <id> or thread not recorded, the counts in progress, in review, passed review, and waiting to land, reports to <thread> when set, and owner <thread>@<generation> when a generation is recorded
+$B set --thread <id> [--replace] --schedule <name>=<id>   # records the thread and the schedule ids; --replace prints previousThread when a thread was recorded before the change
 $B set --reporting every-turn|milestones|digest
 $B set --schedule <name>=                    # drops that name from restaurant.json
 $B set --intake github,<feed>                # the intake sources this restaurant owns
