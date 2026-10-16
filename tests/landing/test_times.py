@@ -70,6 +70,10 @@ class LandingTest(LandingTestBase):
             "E3 r/D3 - 44.5",
             "n=2 median=33.5 p90=44.5 max=44.5 skipped=0",
         ]))
+        self.assertEqual(self.land("times", "--last", "1"), "\n".join([
+            "E3 r/D3 - 44.5",
+            "n=1 median=44.5 p90=44.5 max=44.5 skipped=0",
+        ]))
 
     def test_times_holder_matches_one_holder_and_every_holder_under_a_prefix(self):
         self.landed_entries(THREE)
