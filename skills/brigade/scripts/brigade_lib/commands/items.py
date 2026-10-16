@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.briefs import brief, stored_contract
 from brigade_lib.commands.once import Once
-from brigade_lib.items import ATTEMPT_AFTER, drop, fire, item_escalation, record_escalation, retired_worker_threads, workers_full
+from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, fire, item_escalation, record_escalation, retired_worker_threads, workers_full
 from brigade_lib.leases import fragment_lines
 from brigade_lib.reviews import fix_round_refusal, pass_check, write_threads
 from brigade_lib.shared import BrigadeError, stored
@@ -262,6 +262,7 @@ def handle_locked(restaurant, args, view):
     if args.command != "dish":
         return None
     _, current = restaurant.find("dishes.tsv", args.id)
+    bound = stored("dishes.tsv", "thread", args.thread or "")
     if args.thread:
         canonical = stored("dishes.tsv", "thread", args.thread)
         if canonical:
@@ -317,6 +318,10 @@ def handle_locked(restaurant, args, view):
         write_threads(restaurant, args.id, [("worker", args.thread, "")], closing=closing, keep_thread=keep)
     elif closing:
         write_threads(restaurant, args.id, (), closing=True)
+    if args.state == "merged":
+        announce_archive(restaurant, args.id, "closed")
+    elif bound and bound != current.get("thread", ""):
+        announce_archive(restaurant, args.id, "replaced", thread=bound, replaced=current.get("thread", ""))
     if args.state == "merged":
         for ticket in filter(None, row["tickets"].split(",")):
             restaurant.update("rail.tsv", ticket, "ticket", state="done")
