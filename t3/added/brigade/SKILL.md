@@ -56,21 +56,21 @@ $B set --build-command "<command>" --check-command "<command>"   # the two comma
 $B set --cap KIND=N[,KIND=N]                 # the cap on items of that kind holding a worker slot
 $B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind
 $B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]   # prints T<n>. --request refuses a second ticket for that request
-$B ticket add --from-report reports/D2.md [--dry-run]   # one waiting ticket per follow-up in that report. It prints a not filed line for text it skips
+$B ticket add --from-report reports/D2.md [--dry-run]   # one waiting ticket per follow-up in that report. It prints a `not filed` line for prose it does not take as a follow-up, and a `skipped` line for follow-up text already on the rail
 $B ticket list [--state waiting|assigned|moved|done|dropped]
 $B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision | --no-decision]   # at least one flag
 $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
 $B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
-$B startable                                 # the workers line, then each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. A ticket line reads startable, rides with, below auto-start, decision for the owner, held back, or unknown, no paths recorded
+$B startable                                 # the workers line, then each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. A ticket line reads startable, rides with, below auto-start, decision for the owner, held back, blocked, or unknown, no paths recorded
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
 $B goal add --name "<name>" --purpose "<why>" --done "<test>" [--share <n>]   # prints G<n>
 $B goal set G1 --state open|paused|done|dropped [--evidence "<one line>"]   # a move to done or dropped needs --evidence
 $B goal set G<n> --state paused   # no ticket of that goal starts, not even as a ride-along
 $B goal set G<n> --share N   # a ceiling of N worker slots holding that goal's items
-$B goal list [--all]   # each open or paused goal, and each done or dropped goal that still has waiting work, with its state, name, counts, purpose, and done test, then the counts of unassigned work
+$B goal list [--all]   # each open or paused goal, and each done or dropped goal that still has a waiting ticket, an item in flight, or a ticket riding along, with its state, name, counts, purpose, and done test, then the counts of unassigned work
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3] [--doc-item]   # claims the lease, prints D<n>
 $B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md
 $B brief D2 --goal '...' --acceptance '...' [--acceptance ...] --contract '...' --verify '...' --base main [--context ...]   # same brief. Single-quote every field
@@ -243,7 +243,7 @@ When the user asks what the agents are doing, or asks for activity or status as 
 
 ## Executive chef's view
 
-Before you run `brigade.py walk`, read [Executive chef's view](views.md#executive-chefs-view) in views.md.
+Before you run `brigade.py walk` or read `$B status` output, read [Executive chef's view](views.md#executive-chefs-view) in views.md.
 
 ## Close a restaurant
 
