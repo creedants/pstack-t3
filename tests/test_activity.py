@@ -4193,7 +4193,7 @@ class LiveTest(OutputCase):
         self.assertNotIn("http://127.0.0.1:48731", wrapper)
 
     def test_live_page_with_path_query_or_non_http_scheme_is_refused_with_the_origin_rule(self):
-        refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:<port>"
+        refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
         for origin in ("https://home.example.ts.net:48731/activity", "https://home.example.ts.net:48731?x=1", "ftp://home.example.ts.net:48731"):
             with self.subTest(origin=origin):
                 self.assertEqual(self.fails(1, "--live-page", origin), refused)
