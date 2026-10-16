@@ -241,7 +241,7 @@ def worker_report(restaurant, dish_id):
 
 
 def thread_binding(row):
-    """The identity `write_threads` de-duplicates a worker row on, as the table stores it."""
+    """The identity `write_threads` de-duplicates a row on, as the table stores it."""
     return (row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"]))
 
 
