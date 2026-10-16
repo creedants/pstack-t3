@@ -324,13 +324,43 @@ def catalog_heredoc_findings(rel, text):
 FRAGMENT_DIRS = ("brigade", "brigade-admin", "pstack-runtime")
 # A markdown link target holding a #, in-file (#x) or file-plus-fragment (other.md#x).
 # The destination holds no space. An optional title in double quotes, single quotes, or parens is excluded.
-FRAGMENT_LINK = re.compile(r"\]\(\s*([^\s)]*#[^\s)]*)\s*(?:\"[^\"]*\"|'[^']*'|\([^)]*\))?\s*\)")
+# A backslash escapes the next character inside a title.
+FRAGMENT_LINK = re.compile(r"\]\(\s*([^\s)]*#[^\s)]*)\s*(?:\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|\((?:[^)\\]|\\.)*\))?\s*\)")
 VENDOR_SKILLS_PATH = Path(__file__).resolve().parents[1] / "vendor/pstack/skills"
 
 
 def heading_slug(heading):
     kept = "".join(char for char in heading.lower() if char.isalnum() or char in " -")
     return kept.replace(" ", "-")
+
+
+_BLOCKQUOTE_PREFIX = re.compile(r"^ {0,3}> ?")
+_LIST_PREFIX = re.compile(r"^ {0,3}(?:[-+*]|\d+[.)])")
+_BACKTICK_RUN = re.compile(r"`+")
+
+
+def _list_content(line):
+    """Marker indent and content indent of a list item line, or None.
+
+    The marker is one of -, +, or *, or a number with . or ). Trailing spaces
+    after the marker count toward the content indent. Five or more count as one.
+    """
+    match = _LIST_PREFIX.match(line)
+    if match is None:
+        return None
+    rest = line[match.end():]
+    if rest != "" and rest[0] not in " \t":
+        return None
+    indent = len(line) - len(line.lstrip(" "))
+    width = match.end() - indent
+    if rest.startswith("\t"):
+        content = (indent + width + 4) // 4 * 4
+    else:
+        spaces = len(rest) - len(rest.lstrip(" "))
+        if spaces == 0 or spaces > 4:
+            spaces = 1
+        content = indent + width + spaces
+    return indent, content
 
 
 def _fence_open(line):
@@ -372,27 +402,119 @@ def _is_fence_close(line, marker, length):
 
 
 def _visible_lines(text):
-    marker = None
-    length = 0
+    """Yield source line numbers with container prefixes stripped, skipping fenced lines.
+
+    One record drives both headings and links. Each line carries stripped content
+    plus container context. At most one container level is stripped per line. That is
+    one blockquote marker plus one optional space, or one list indent through its
+    content indent. Fence indentation is measured within the stripped content. A fence
+    records its container kind and indent. It ends at its containing block boundary.
+    A list fence ends at a new item at the same level or a line outside the item.
+    A blockquote fence ends at a line outside the quote. An unclosed fence outside
+    any container hides the rest of the file.
+    """
+    fence = None
+    item = None
     for number, line in enumerate(text.splitlines(), 1):
-        if marker is None:
-            opened = _fence_open(line)
-            if opened is not None:
-                marker, length = opened
+        current = line
+        while True:
+            if fence is None:
+                if current.strip() == "":
+                    yield number, current
+                    break
+                if current.startswith("\t"):
+                    yield number, current
+                    break
+                quote = _BLOCKQUOTE_PREFIX.match(current)
+                if quote is not None:
+                    item = None
+                    stripped = current[quote.end():]
+                    opened = _fence_open(stripped)
+                    if opened is None:
+                        yield number, stripped
+                    else:
+                        fence = (*opened, "quote", 0, 0)
+                    break
+                listed = _list_content(current)
+                if listed is not None:
+                    item = listed
+                    stripped = current[listed[1]:]
+                    opened = _fence_open(stripped)
+                    if opened is None:
+                        yield number, stripped
+                    else:
+                        fence = (*opened, "list", listed[0], listed[1])
+                    break
+                if item is not None and current[: item[1]].strip() == "":
+                    stripped = current[item[1]:]
+                    opened = _fence_open(stripped)
+                    if opened is None:
+                        yield number, stripped
+                    else:
+                        fence = (*opened, "list", item[0], item[1])
+                    break
+                item = None
+                opened = _fence_open(current)
+                if opened is None:
+                    yield number, current
+                else:
+                    fence = (*opened, "plain", 0, 0)
+                break
+            marker, length, kind, findent, fcontent = fence
+            if current.strip() == "" or current.startswith("\t"):
+                break
+            if kind == "quote":
+                quote = _BLOCKQUOTE_PREFIX.match(current)
+                if quote is None:
+                    fence = None
+                    item = None
+                    continue
+                if _is_fence_close(current[quote.end():], marker, length):
+                    fence = None
+                break
+            if kind == "list":
+                listed = _list_content(current)
+                if listed is not None:
+                    if listed[0] <= findent:
+                        fence = None
+                        continue
+                    break
+                if current[:fcontent].strip() == "":
+                    if _is_fence_close(current[fcontent:], marker, length):
+                        fence = None
+                    break
+                fence = None
                 continue
-            yield number, line
-        else:
-            if _is_fence_close(line, marker, length):
-                marker = None
-                length = 0
-            continue
-
-
-_CODE_SPAN = re.compile(r"(`+)(.+?)\1")
+            if _is_fence_close(current, marker, length):
+                fence = None
+            break
 
 
 def _strip_code_spans(line):
-    return _CODE_SPAN.sub("", line)
+    """Remove single-line code spans from a line.
+
+    Maximal backtick runs scan left to right. A span is removed only between
+    complete runs of equal length. A run with no equal partner stays literal.
+    """
+    runs = [(match.start(), match.end() - match.start()) for match in _BACKTICK_RUN.finditer(line)]
+    kept = []
+    pos = 0
+    index = 0
+    while index < len(runs):
+        start, length = runs[index]
+        closer = index + 1
+        while closer < len(runs) and runs[closer][1] != length:
+            closer += 1
+        if closer == len(runs):
+            kept.append(line[pos : start + length])
+            pos = start + length
+            index += 1
+        else:
+            kept.append(line[pos:start])
+            pos = runs[closer][0] + length
+            index = closer + 1
+    kept.append(line[pos:])
+    return "".join(kept)
 
 
 def _fragment_link_targets(line):
@@ -432,12 +554,14 @@ def fragment_findings(root):
     The scan covers every markdown file under the tree's brigade,
     brigade-admin, and pstack-runtime skill directories, at any depth. A link
     is a markdown link target that holds a #. Single-line code spans are removed before
-    link extraction. An optional title after the destination is recognized and
-    excluded from the destination. A shared fence scanner hides fenced lines.
+    link extraction. A span is removed only between complete runs of equal backtick
+    length. An optional title after the destination is recognized and
+    excluded from the destination. A title may hold escaped delimiters. A shared fence scanner hides fenced lines.
     It tracks marker character and opening length. It recognizes tilde and
     backtick fences. It closes only on a matching fence of sufficient length.
-    It allows up to three spaces indent. An unclosed fence hides the rest of
-    the file. A link or heading inside a fence is not seen. A link whose
+    It allows up to three spaces indent inside one blockquote or list level.
+    An unclosed fence ends at its containing block boundary. Outside any container
+    it hides the rest of the file. A link or heading inside a fence is not seen. A link whose
     fragment is empty, as in (other.md) or (other.md#),
     is skipped. A link whose path before the # is empty, as in (#terms), is
     checked against the file that holds it. Otherwise the path resolves against

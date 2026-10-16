@@ -815,6 +815,36 @@ class FragmentCheckTest(unittest.TestCase):
             [],
         )
 
+    def test_a_fence_inside_a_blockquote_hides_its_link(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> ```md\n> [example](#missing)\n> ```\n"}),
+            [],
+        )
+
+    def test_a_fence_inside_a_list_item_hides_its_link(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "1. Example\n\n    ```md\n    [example](#missing)\n    ```\n"}),
+            [],
+        )
+
+    def test_a_fence_ends_at_the_next_list_item(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "1. Example\n\n   ```md\n   sample\n2. [bad](#missing)\n"}),
+            ["brigade/SKILL.md:5: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_code_span_with_inner_backticks_leaves_a_later_link_visible(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "Use `` ``` `` to fence [bad](#missing), then `x`.\n"}),
+            ["brigade/SKILL.md:1: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_link_title_with_an_escaped_quote_is_checked(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": '[bad](#missing "say \\"hi\\"")\n'}),
+            ["brigade/SKILL.md:1: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
     def test_a_titled_fragment_link_to_a_missing_heading_is_reported(self):
         self.assertEqual(
             fragment_tree_findings({"pstack-runtime/SKILL.md": '## Terms\n[bad](#missing "title")\n'}),
