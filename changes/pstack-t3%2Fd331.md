@@ -1,4 +1,4 @@
 - kind fix
 - `fragment_findings` in `scripts/check.py` decodes a percent-encoded fragment before matching headings and strips a destination query before resolving the target file.
-- `_visible_lines` in `scripts/check.py` strips every blockquote marker and every list marker in order and tracks quote depth for nested fences.
+- `_visible_lines` in `scripts/check.py` strips the leading blockquote markers, then the leading list markers, and tracks quote depth for nested fences.
 - `tests/test_check.py` gains passing and failing fixtures for encoded fragments and query-bearing destinations and nested list-in-blockquote fences.
