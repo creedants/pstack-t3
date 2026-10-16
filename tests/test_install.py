@@ -742,8 +742,7 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
     """Hook code that swaps `path` for a foreign `swap` entry just before the move aside.
 
     `occupy` arrives at `path` when the put-back calls a rename onto it, after any check for vacancy.
-    `rename` takes the no-replace rename away: "platform" runs it as darwin, "symbol" gives it a libc
-    without `renameat2`, and "libc" makes loading libc fail. At exit the run records what that rename
+    `rename` takes `/proc` away. "platform" also sets `sys.platform` to darwin and leaves the no-replace rename working, "symbol" gives it a libc without `renameat2` or `renamex_np`, and "libc" makes loading libc fail. At exit the run records what the no-replace rename
     returned on a scratch pair, read back with `noreplace_result`.
     """
     return (
@@ -774,9 +773,9 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
 
 
 def without_noreplace(hooked, link_error, rename):
-    """Hook code that wraps the no-replace rename in `hooked` and takes it or hard links away, as `put_back_race` describes.
+    """Hook code that wraps the no-replace rename in `hooked`, takes hard links away when `link_error` is set, and takes the rename away for `"symbol"` and `"libc"`, as `put_back_race` describes.
 
-    A platform without that rename has no /proc either, so a hard link from a held descriptor finds nothing there.
+    A hook that sets `rename` has no `/proc` either, so a hard link from a held descriptor finds nothing there.
     """
     return (
         "noreplace = getattr(module, 'rename_noreplace', None)\n"
@@ -816,7 +815,7 @@ def restore_race(path, occupy, link_error=False, rename=None):
     """Hook code that fills `path` just before the first call that would write a backup onto it.
 
     `occupy` is a "file", a "directory", a "link", or a command line to run, such as another checkout's
-    installer. `link_error` and `rename` take hard links and the no-replace rename away as in `put_back_race`.
+    installer. `link_error` takes hard links away. `rename` takes `/proc` away as in `put_back_race`.
     """
     return (
         "import atexit, ctypes, errno, shutil, subprocess, tempfile\n"
@@ -858,7 +857,7 @@ def cross_device(backups, path, occupy=None, rename=None):
     A move that stays inside `backups` works. A hard link from a held descriptor counts as a move of the entry it holds.
 
     `occupy` is a "file" or a "directory" that fills `path` just before the first call that would write
-    anything else onto it. `rename` takes the no-replace rename away as in `put_back_race`. At exit the
+    anything else onto it. `rename` takes `/proc` away as in `put_back_race`. At exit the
     run records how many moves it failed, read back with `crossings`.
     """
     return (
@@ -1016,6 +1015,34 @@ NO_PROC = (
     "    return linking(source, *args, **kwargs)\n"
     "os.link = no_proc\n"
 )
+
+
+def darwin_renamex():
+    """Hook code that leaves only `renamex_np` in libc, as on Darwin.
+
+    Where `renameat2` exists the fake `renamex_np` asserts flag 4 and forwards to it. Where it is absent the fake wraps the real `renamex_np`.
+    """
+    return (
+        "import ctypes\n"
+        "real = ctypes.CDLL(None, use_errno=True)\n"
+        "forward = getattr(real, 'renameat2', None)\n"
+        "if forward is not None:\n"
+        "    forward.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)\n"
+        "    forward.restype = ctypes.c_int\n"
+        "    def renamex_np(source, target, flags):\n"
+        "        assert flags == 4, flags\n"
+        "        return forward(-100, source, -100, target, 1)\n"
+        "else:\n"
+        "    native = real.renamex_np\n"
+        "    native.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)\n"
+        "    native.restype = ctypes.c_int\n"
+        "    def renamex_np(source, target, flags):\n"
+        "        assert flags == 4, flags\n"
+        "        return native(source, target, flags)\n"
+        "fake = type('FakeLibc', (), {})()\n"
+        "fake.renamex_np = renamex_np\n"
+        "ctypes.CDLL = lambda *args, **kwargs: fake\n"
+    )
 
 
 def unlock_failure(state, count):
@@ -2303,10 +2330,12 @@ class OwnershipTest(unittest.TestCase):
                 self.assertIsNone(read_owner(self.home, a))
 
     def noreplace(self, rename):
-        """What the no-replace rename returned in the last hooked run. A forced `rename` must have taken it away."""
+        """What the no-replace rename returned in the last hooked run. `symbol` and `libc` must have taken it away."""
         code = noreplace_result(self.home)
-        if rename is not None:
+        if rename in ("symbol", "libc"):
             self.assertEqual(code, errno.ENOSYS)
+        else:
+            self.assertEqual(code, 0)
         return code
 
     def test_a_directory_put_back_never_replaces_a_directory_that_took_the_path(self):
@@ -2438,9 +2467,9 @@ class OwnershipTest(unittest.TestCase):
             self.assertFalse(path.is_symlink())
             self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
 
-    def assert_restore_kept(self, raced, swarm, rows, kind, reason, tried=True):
-        """The raced restore wrote nothing at swarm and kept the backup and its row where they were."""
-        self.assertEqual((self.home / "filled").read_text(), str(tried))
+    def assert_restore_kept(self, raced, swarm, rows, kind, reason):
+        """The raced restore saw the occupant arrive, left no set-aside copy, and kept the backup and its row where they were."""
+        self.assertEqual((self.home / "filled").read_text(), "True")
         backup = Path(rows[0]["backup"])
         self.skipped(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
         self.assert_displaced(backup, kind)
@@ -2454,14 +2483,6 @@ class OwnershipTest(unittest.TestCase):
         if (kind != "directory" and not link_error) or code == 0:
             return f"{swarm} was taken again"
         return f"{swarm} cannot be refilled without risking an overwrite ({os.strerror(code)})"
-
-    def restore_tried(self, kind, link_error, rename):
-        """Whether the restore reached a call that writes swarm, which is when the occupant arrives.
-
-        A platform with no safe rename has no held descriptor to link either. It gives up on a directory, and on a
-        file it cannot hard link, before any such call.
-        """
-        return not (rename == "platform" and (kind == "directory" or link_error))
 
     def test_a_restore_never_replaces_an_entry_that_took_the_path(self):
         cases = (
@@ -2479,11 +2500,8 @@ class OwnershipTest(unittest.TestCase):
                     a, swarm, rows = self.displaced_by(kind)
                     raced = uninstall_hooked(self.home, a, restore_race(swarm, occupy, link_error=link_error, rename=rename))
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    tried = self.restore_tried(kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
-                    if not tried:
-                        self.assertFalse(os.path.lexists(swarm))
-                    elif occupy == "file":
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
+                    if occupy == "file":
                         self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
                         swarm.unlink()
                     elif occupy == "link":
@@ -2510,11 +2528,7 @@ class OwnershipTest(unittest.TestCase):
                     hook = restore_race(swarm, install_b, link_error=link_error, rename=rename)
                     raced = uninstall_hooked(self.home, a, hook)
                     reason = self.restore_reason(swarm, kind, link_error, rename)
-                    tried = self.restore_tried(kind, link_error, rename)
-                    self.assert_restore_kept(raced, swarm, rows, kind, reason, tried)
-                    if not tried:
-                        self.assertFalse(os.path.lexists(swarm))
-                        continue
+                    self.assert_restore_kept(raced, swarm, rows, kind, reason)
                     self.assertEqual(snapshot(b / "skills"), tree)
                     self.assert_grok_text(b)
                     self.ok(run(self.home, b, "--harness", "grok", "uninstall"), "removed 3 links, restored 1 entries")
@@ -2702,7 +2716,7 @@ class OwnershipTest(unittest.TestCase):
                     self.assert_empty_records()
 
     def test_a_restore_across_filesystems_with_no_safe_rename_keeps_the_backup(self):
-        for rename in ("platform", "symbol"):
+        for rename in ("symbol", "libc"):
             with self.subTest(rename=rename):
                 self.use_fresh()
                 a, swarm, rows = self.displaced_by("directory")
@@ -2720,6 +2734,49 @@ class OwnershipTest(unittest.TestCase):
                 self.assert_displaced(backup, "directory")
                 self.assertEqual(read_legacy(self.home)["backups"], rows)
                 self.assert_no_copy_left(swarm)
+
+    def test_renamex_np_dispatch_uses_excl_flag(self):
+        """Darwin has no `renameat2`. Its `renamex_np` must take flag 4."""
+        a = make_checkout(self.home, "a")
+        self.ok(run(self.home, a, "--harness", "grok"))
+        swarm = provider_link(self.home, "grok", "swarm")
+        hook = darwin_renamex() + put_back_race(swarm, "directory", occupy="directory", rename=None)
+        raced = uninstall_hooked(self.home, a, hook)
+        self.assertEqual(noreplace_result(self.home), 0)
+        aside = set_aside(swarm)
+        self.assertEqual(len(aside), 1, aside)
+        self.skipped(
+            raced,
+            "removed 2 links, restored 0 entries",
+            f"skipped unlink {swarm}: the link no longer matches the recorded checkout and {swarm} was taken again; "
+            f"it is kept at {aside[0]}",
+        )
+
+    def test_a_directory_restore_through_renamex_np_restores_the_backup(self):
+        """A directory backup restores where only `renamex_np` gives a safe rename."""
+        a, swarm, rows = self.displaced_by("directory")
+        backup = Path(rows[0]["backup"])
+        raced = uninstall_hooked(self.home, a, darwin_renamex() + NO_PROC)
+        self.ok(raced, "removed 3 links, restored 1 entries")
+        self.assert_displaced(swarm, "directory")
+        self.assertFalse(os.path.lexists(backup))
+        self.assert_empty_records()
+
+    def test_a_file_restore_with_every_hard_link_refused_restores_through_renamex_np(self):
+        """A file backup restores through `renamex_np` where every hard link is refused."""
+        a, swarm, rows = self.displaced_by("file")
+        backup = Path(rows[0]["backup"])
+        denied = (
+            "import errno\n"
+            "def denied(*args, **kwargs):\n"
+            "    raise OSError(errno.EPERM, 'hard links prohibited')\n"
+            "os.link = denied\n"
+        )
+        raced = uninstall_hooked(self.home, a, darwin_renamex() + denied)
+        self.ok(raced, "removed 3 links, restored 1 entries")
+        self.assert_displaced(swarm, "file")
+        self.assertFalse(os.path.lexists(backup))
+        self.assert_empty_records()
 
     def backup_race_uninstall(self, a, swarm, backup, *events, crossing=False, **options):
         """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem."""
