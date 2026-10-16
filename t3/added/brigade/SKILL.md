@@ -257,6 +257,13 @@ A --text          # plain lines instead of the HTML document
 
 The page names work items by id at every reporting level. Every string of the document and of the text form passes the script's filter, which removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. `A --help` states what it reads as each.
 
+For a view that stays current, run the server once and render its wrapper. Start `A --serve` detached. It prints its token address and serves this store's page, rebuilt at most every 10 seconds. Render the stdout of `A --live-page` with `html_render`. The wrapper polls the server every 30 seconds, keeps the last good view while the server is unreachable, and folds each item under its header. The server stops on a T3 restart, so start it again after one. The token lives in `activity-token` under the store directory, mode 0600, reused across restarts. The wrapper holds the token, so never share or commit it.
+
+```bash
+A --serve &                # prints http://127.0.0.1:48731/activity/<token>
+A --live-page              # the wrapper that polls that address
+```
+
 ## Executive chef's view
 
 `python3 <skills>/brigade/scripts/brigade.py walk` groups every restaurant under its repository. Each repository gets one header with its landing queue's status line, or `no landing contract`. Under it, each restaurant gets its reporting level and counts, with the waiting tickets whose block still holds counted as blocked. A second line names its thread ID and the unreleased leases its dishes hold. Open decisions follow. `walk --repo <root>` prints one repository. A restaurant idle past 24 hours is marked, so a stalled head chef shows. `$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. A `restaurant.json` with no `reporting` field reads as `milestones`. `$B status` prints `mode <m>` when `restaurant.json` records one. `walk` adds `, mode <m>` after the reporting level.
