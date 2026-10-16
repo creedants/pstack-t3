@@ -425,8 +425,8 @@ def _visible_lines(text):
     is measured within the fully stripped content. A fence records its container
     kind and its quote depth and list indent. A line that starts with a tab does not end it.
     A list fence ends at a new item at the same level or a line outside the item.
-    A list fence inside a blockquote also ends at a non-blank line that does not start with a tab whose quote depth drops.
-    A blockquote fence ends at a non-blank line that does not start with a tab whose quote depth is lower. An unclosed fence
+    A list fence inside a blockquote also ends at a line with text after its quote markers that does not start with a tab whose quote depth drops.
+    A blockquote fence ends at a line with text after its quote markers that does not start with a tab whose quote depth is lower. An unclosed fence
     outside any container hides the rest of the file. Tables are plain lines.
     """
     fence = None
