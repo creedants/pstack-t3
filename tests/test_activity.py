@@ -3992,8 +3992,16 @@ class LiveTest(OutputCase):
         fixture = one_running(self.fixture).write()
         path = fixture.store / "activity-token"
         path.write_bytes(b"\xff\xfe\x00bad")
-        os.chmod(path, 0o600)
-        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        os.chmod(path, 0o644)
+        real_chmod = os.chmod
+
+        def check_private_before_chmod(target, mode):
+            if Path(target) == path and stat.S_IMODE(os.stat(path).st_mode) != 0o600:
+                self.assertEqual(path.read_bytes(), b"\xff\xfe\x00bad", "a fresh token was readable before chmod")
+            return real_chmod(target, mode)
+
+        with mock.patch.object(os, "chmod", side_effect=check_private_before_chmod):
+            second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
         self.assertTrue(re.fullmatch(r"[A-Za-z0-9_-]{43}", second.token.decode("ascii")))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
@@ -4002,8 +4010,16 @@ class LiveTest(OutputCase):
         fixture = one_running(self.fixture).write()
         path = fixture.store / "activity-token"
         path.write_text("")
-        os.chmod(path, 0o600)
-        second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
+        os.chmod(path, 0o644)
+        real_chmod = os.chmod
+
+        def check_private_before_chmod(target, mode):
+            if Path(target) == path and stat.S_IMODE(os.stat(path).st_mode) != 0o600:
+                self.assertEqual(path.read_bytes(), b"", "a fresh token was readable before chmod")
+            return real_chmod(target, mode)
+
+        with mock.patch.object(os, "chmod", side_effect=check_private_before_chmod):
+            second = MOD["secret_of"](fixture.store, MOD["DEFAULT_PORT"])
         self.assertTrue(re.fullmatch(r"[A-Za-z0-9_-]{43}", second.token.decode("ascii")))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         self.assertTrue(stat.S_ISREG(os.stat(path).st_mode))
