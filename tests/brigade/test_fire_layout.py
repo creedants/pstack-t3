@@ -484,7 +484,7 @@ class FireLayoutTest(BrigadeTest):
         self.assertIn("paths overlap", refused)
         self.assertIn("skills/pstack-runtime/SKILL.md", refused)
 
-    def test_startable_empty_blocked_note_falls_back_to_rail_and_ticket_set_repairs_it(self):
+    def test_startable_empty_blocked_note_falls_back_to_rail_and_ticket_set_updates_rail_preview(self):
         self.git_project()
         self.vendor_layout()
         self.init_landing()
