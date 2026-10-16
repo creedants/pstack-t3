@@ -686,7 +686,7 @@ class GeneratedTest(LandingTest):
             status = sh("git", "status", "--porcelain", cwd=store.dir / "integration")
         self.assertEqual(status, "")
 
-    def test_user_interrupt_cleans_integration_tree(self):
+    def test_user_interrupt_cleans_generated_remnants(self):
         self._setup_generated()
         self.init()
         sleep_build = BUILD_PY + (
