@@ -14,6 +14,7 @@ import pwd
 import re
 import socket
 import sys
+import urllib.parse
 
 try:
     import yaml
@@ -403,17 +404,29 @@ def _is_fence_close(line, marker, length):
     return rest[run:].strip() == ""
 
 
+def _quote_stripped(line):
+    depth = 0
+    stripped = line
+    while True:
+        quote = _BLOCKQUOTE_PREFIX.match(stripped)
+        if quote is None:
+            return stripped, depth
+        stripped = stripped[quote.end():]
+        depth += 1
+
+
 def _visible_lines(text):
     """Yield source line numbers with container prefixes stripped, skipping fenced lines.
 
     One scan drives both headings and links. It yields each visible line number
-    and content with the container prefix stripped. At most one container level is stripped per line. That is
-    one blockquote marker plus one optional space, or one list indent through its
-    content indent. Fence indentation is measured within the stripped content. A fence
-    records its container kind and indent. It ends at its containing block boundary.
+    and content with all container prefixes stripped. That is every blockquote marker
+    and every list marker through its content indent, in order. Fence indentation
+    is measured within the fully stripped content. A fence records its container
+    kind and its quote depth and list indent. It ends at its containing block boundary.
     A list fence ends at a new item at the same level or a line outside the item.
-    A blockquote fence ends at a non-blank line with no quote marker. An unclosed fence outside
-    any container hides the rest of the file.
+    A list fence inside a blockquote also ends when the quote depth drops.
+    A blockquote fence ends at a line whose quote depth is lower. An unclosed fence
+    outside any container hides the rest of the file. Tables are plain lines.
     """
     fence = None
     item = None
@@ -421,68 +434,83 @@ def _visible_lines(text):
         current = line
         while True:
             if fence is None:
-                if current.strip() == "":
+                if current.strip() == "" or current.startswith("\t"):
                     yield number, current
                     break
-                if current.startswith("\t"):
-                    yield number, current
+                stripped, depth = _quote_stripped(current)
+                if stripped.strip() == "":
+                    yield number, stripped
                     break
-                quote = _BLOCKQUOTE_PREFIX.match(current)
-                if quote is not None:
-                    item = None
-                    stripped = current[quote.end():]
-                    opened = _fence_open(stripped)
+                offset = 0
+                first = None
+                while True:
+                    listed = _list_content(stripped[offset:])
+                    if listed is None:
+                        break
+                    marker, content = listed
+                    marker += offset
+                    content += offset
+                    if first is None:
+                        first = (marker, content)
+                    item = (marker, content)
+                    offset = content
+                    if offset >= len(stripped):
+                        break
+                if first is not None:
+                    opened = _fence_open(stripped[offset:])
                     if opened is None:
-                        yield number, stripped
+                        yield number, stripped[offset:]
                     else:
-                        fence = (*opened, "quote", 0, 0)
+                        fence = (*opened, "list", item[0], item[1], depth, offset)
                     break
-                listed = _list_content(current)
-                if listed is not None:
-                    item = listed
-                    stripped = current[listed[1]:]
-                    opened = _fence_open(stripped)
+                if item is not None and len(stripped) >= item[1] and stripped[: item[1]].strip() == "":
+                    opened = _fence_open(stripped[item[1]:])
                     if opened is None:
-                        yield number, stripped
+                        yield number, stripped[item[1]:]
                     else:
-                        fence = (*opened, "list", listed[0], listed[1])
-                    break
-                if item is not None and current[: item[1]].strip() == "":
-                    stripped = current[item[1]:]
-                    opened = _fence_open(stripped)
-                    if opened is None:
-                        yield number, stripped
-                    else:
-                        fence = (*opened, "list", item[0], item[1])
+                        fence = (*opened, "list", item[0], item[1], depth, item[1])
                     break
                 item = None
+                if depth > 0:
+                    opened = _fence_open(stripped)
+                    if opened is None:
+                        yield number, stripped
+                    else:
+                        fence = (*opened, "quote", 0, 0, depth, 0)
+                    break
                 opened = _fence_open(current)
                 if opened is None:
                     yield number, current
                 else:
-                    fence = (*opened, "plain", 0, 0)
+                    fence = (*opened, "plain", 0, 0, 0, 0)
                 break
-            marker, length, kind, findent, fcontent = fence
+            marker, length, kind, findent, fcontent, qdepth, foffset = fence
             if current.strip() == "" or current.startswith("\t"):
                 break
+            stripped, depth = _quote_stripped(current)
+            if stripped.strip() == "":
+                break
             if kind == "quote":
-                quote = _BLOCKQUOTE_PREFIX.match(current)
-                if quote is None:
+                if depth < qdepth:
                     fence = None
                     item = None
                     continue
-                if _is_fence_close(current[quote.end():], marker, length):
+                if _is_fence_close(stripped, marker, length):
                     fence = None
                 break
             if kind == "list":
-                listed = _list_content(current)
+                if depth < qdepth:
+                    fence = None
+                    item = None
+                    continue
+                listed = _list_content(stripped)
                 if listed is not None:
                     if listed[0] <= findent:
                         fence = None
                         continue
                     break
-                if current[:fcontent].strip() == "":
-                    if _is_fence_close(current[fcontent:], marker, length):
+                if len(stripped) >= fcontent and stripped[:fcontent].strip() == "":
+                    if _is_fence_close(stripped[fcontent:], marker, length):
                         fence = None
                     break
                 fence = None
@@ -561,12 +589,17 @@ def fragment_findings(root):
     excluded from the destination. A title may hold escaped delimiters. A shared fence scanner hides fenced lines.
     It tracks marker character and opening length. It recognizes tilde and
     backtick fences. It closes on a matching fence of sufficient length.
-    It allows up to three spaces indent inside one blockquote or list level.
+    It strips every blockquote marker and every list marker in order.
+    It allows up to three spaces indent at each level.
     An unclosed fence ends at its containing block boundary. Outside any container
-    it hides the rest of the file. A link or heading inside a fence is not seen. A link whose
+    it hides the rest of the file. A link or heading inside a fence is not seen.
+    A percent-encoded fragment is decoded before matching. A destination query
+    is stripped before resolving. The finding names the decoded fragment and
+    the resolved file. A link whose
     fragment is empty, as in (other.md) or (other.md#),
-    is skipped. A link whose path before the # is empty, as in (#terms), is
-    checked against the file that holds it. Otherwise the path resolves against
+    is skipped. A link whose path before the # is empty or holds only a query,
+    as in (#terms) or (?raw=1#terms), is
+    checked against the file that holds it. Otherwise the query is stripped and the path resolves against
     the holding file's directory. A path that does not resolve to an existing
     file, one whose target is not a .md file, one whose target is outside the
     tree, and one whose target .md lives in a vendor-derived skill are skipped.
@@ -593,15 +626,20 @@ def fragment_findings(root):
             rel = file.relative_to(root).as_posix()
             for number, line in _visible_lines(file.read_text()):
                 for target in _fragment_link_targets(line):
-                    path, fragment = target.split("#", 1)
-                    if fragment == "":
+                    path, raw_fragment = target.split("#", 1)
+                    if raw_fragment == "":
                         continue
+                    fragment = urllib.parse.unquote(raw_fragment)
                     if path == "":
                         target_file = file
                     else:
-                        target_file = (file.parent / path).resolve()
-                        if not target_file.is_file() or target_file.suffix != ".md":
-                            continue
+                        clean_path = path.split("?", 1)[0]
+                        if clean_path == "":
+                            target_file = file
+                        else:
+                            target_file = (file.parent / clean_path).resolve()
+                            if not target_file.is_file() or target_file.suffix != ".md":
+                                continue
                     try:
                         target_rel = target_file.relative_to(root)
                     except ValueError:
