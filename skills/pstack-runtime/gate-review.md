@@ -18,6 +18,6 @@ Two sources can show both today.
 - A `Gate:` line in a brief or a PR body is not a verdict.
 
 Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.
-Light mode keeps that policy for lane receipts only, such as a tests, build, or mergeability result. (See pstack-runtime/SKILL.md#modes).
+Light mode keeps that policy for lane receipts only, such as a tests, build, or mergeability result. (See pstack-runtime/SKILL.md#gate-review for the lane receipt rule).
 
 A lane receipt never stands in for the gate review. Read the head again right before you create the PR, mark it ready, or merge. When it moved, apply [Gate review](SKILL.md#gate-review) again.

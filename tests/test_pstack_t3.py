@@ -1199,7 +1199,7 @@ class ModesTest(unittest.TestCase):
             self.assertIn(bullet, gate)
         self.assertIn("Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.", gate)
         self.assertIn("Light mode keeps that policy for lane receipts only", gate)
-        self.assertIn("pstack-runtime/SKILL.md#modes", gate)
+        self.assertIn("pstack-runtime/SKILL.md#gate-review", gate)
         self.assertIn("pass check <item> --sha <head> --json", self.runtime)
         self.assertIn("Before you reuse a gate verdict for a new head SHA, read [Reusing a verdict](gate-review.md#reusing-a-verdict).", self.runtime)
         self.assertIn("A lane receipt never stands in for the gate review.", self.runtime)

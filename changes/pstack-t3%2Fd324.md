@@ -20,9 +20,9 @@
   old `Two sources can show both today.` kept verbatim.
   old source 1 `brigade.py --at pass check` with `--json`, `crossFamily true`, `Never read pass.tsv`, `Never take without --json` kept verbatim.
   old source 2 `A verdict this run launched at that exact SHA.` kept verbatim.
-  old four `does not qualify` bullets kept verbatim.
+  old four exclusion bullets kept verbatim (three state does not qualify).
   old `Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.` kept verbatim.
-  old `Light mode keeps that policy for lane receipts only` kept with `(See pstack-runtime/SKILL.md#modes)`.
+  old `Light mode keeps that policy for lane receipts only` kept verbatim with added `(See pstack-runtime/SKILL.md#gate-review for the lane receipt rule)` to satisfy the light-mode link check.
   `SKILL.md` keeps `Launch a new gate unless a current qualifying verdict exists at the exact head SHA.`, `Current` and `Qualifying` bullets verbatim, one `pass check <item> --sha <head> --json` line, pointer to `gate-review.md`, and lane receipt sentences.
 - Tightened watch heartbeat still states every rule.
   old `When the event you are waiting for is the merge itself, create a schedule_task heartbeat` still as `When the wait is for the merge itself, add a schedule_task heartbeat`.
