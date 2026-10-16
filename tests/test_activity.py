@@ -3841,6 +3841,35 @@ class LedgerTest(OutputCase):
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
+    def test_three_thousand_sparse_attempts_fit_the_byte_budget_with_the_true_count_in_both_forms(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {
+                "at": stamp,
+                "dish": "D7",
+                "attempt": str(2 * number + 1),
+                "role": "worker",
+                "thread": f"opaque=sparse-{number}",
+                "seat": "",
+                "start": stamp,
+                "end": stamp,
+            }
+            for number in range(3000)
+        ])
+        for args in ((), ("--text",)):
+            self.assertLessEqual(len(fixture.stdout_bytes(*args, "--max-bytes", "16000")), 16000)
+        document = self.document("--max-bytes", "16000")
+        folded = data_of(document).get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertIn("3000 attempts", folded[0][1])
+        self.assertIn("3000 workers", folded[0][1])
+        text = self.out("--text", "--max-bytes", "16000")
+        self.assertIn("3000 attempts", text)
+        self.assertIn("3000 workers", text)
+        running = [line for line in text.split("\n") if "running for" in line]
+        self.assertTrue(any("D7 worker" in line for line in running), running)
+
     def test_ordinary_ledger_secret_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
         token = "ledger-secret-token"
         fixture = one_running(self.fixture).write()
