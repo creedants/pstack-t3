@@ -831,8 +831,10 @@ class BrigadeTest(unittest.TestCase):
     def setUp(self):
         self.addCleanup(_drop_entry, self)
         self.temporary = tempfile.TemporaryDirectory()
-        self.store = Path(self.temporary.name) / "store"
-        self.project = Path(self.temporary.name) / "Bridge Kit"
+        # The product resolves the project root, so the fixture paths below come from one resolved root.
+        self.root = Path(self.temporary.name).resolve()
+        self.store = self.root / "store"
+        self.project = self.root / "Bridge Kit"
         self.project.mkdir()
         self.at = self.store / "bridge-kit" / "perf"
         self.isolate_roles_config()

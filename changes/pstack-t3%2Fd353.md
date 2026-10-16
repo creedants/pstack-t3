@@ -1,0 +1,3 @@
+- kind fix
+- `tests/brigade/support.py`'s `BrigadeTest.setUp` resolves the temporary directory once and builds `self.store`, `self.project`, and `self.at` from that resolved root
+- `tests/brigade/test_context_cap.py`'s `ContextCapTest` drops its `setUp` override, which re-resolved `self.project`, because `BrigadeTest.setUp` now resolves the temporary root
