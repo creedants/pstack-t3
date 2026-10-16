@@ -184,8 +184,9 @@ jobs:
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
 
-  macos_312:
-    name: macOS (3.12)
+  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 1 of 4. No macOS part is in a needs list.
+  macos_312_1:
+    name: macOS (3.12, 1/4)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -196,14 +197,13 @@ jobs:
           python-version: "3.12"
       - continue-on-error: true
         run: pip install pyyaml
-      # This job runs the whole suite on a pull request and on a push to main. Every step uses continue-on-error, so a step failure does not fail the job check.
-      - name: Full test suite
+      - name: Test part 1/4
         continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"
           status=0
-          python3 scripts/run_tests.py >> "$log" 2>&1 || status=1
+          python3 scripts/run_tests.py --part 1/4 >> "$log" 2>&1 || status=1
           cat "$log" || true
           {
             grep -E '^Ran [0-9]+ tests? in ' "$log" || true
@@ -217,3 +217,84 @@ jobs:
           python3 scripts/build.py
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
+  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 2 of 4. No macOS part is in a needs list.
+  macos_312_2:
+    name: macOS (3.12, 2/4)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        continue-on-error: true
+      - uses: actions/setup-python@v7
+        continue-on-error: true
+        with:
+          python-version: "3.12"
+      - continue-on-error: true
+        run: pip install pyyaml
+      - name: Test part 2/4
+        continue-on-error: true
+        run: |
+          log="$RUNNER_TEMP/macos-312.txt"
+          : > "$log"
+          status=0
+          python3 scripts/run_tests.py --part 2/4 >> "$log" 2>&1 || status=1
+          cat "$log" || true
+          {
+            grep -E '^Ran [0-9]+ tests? in ' "$log" || true
+            grep -E '^(OK|FAILED)' "$log" || true
+            grep -E '^(FAIL|ERROR): ' "$log" || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 3 of 4. No macOS part is in a needs list.
+  macos_312_3:
+    name: macOS (3.12, 3/4)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        continue-on-error: true
+      - uses: actions/setup-python@v7
+        continue-on-error: true
+        with:
+          python-version: "3.12"
+      - continue-on-error: true
+        run: pip install pyyaml
+      - name: Test part 3/4
+        continue-on-error: true
+        run: |
+          log="$RUNNER_TEMP/macos-312.txt"
+          : > "$log"
+          status=0
+          python3 scripts/run_tests.py --part 3/4 >> "$log" 2>&1 || status=1
+          cat "$log" || true
+          {
+            grep -E '^Ran [0-9]+ tests? in ' "$log" || true
+            grep -E '^(OK|FAILED)' "$log" || true
+            grep -E '^(FAIL|ERROR): ' "$log" || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 4 of 4. No macOS part is in a needs list.
+  macos_312_4:
+    name: macOS (3.12, 4/4)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        continue-on-error: true
+      - uses: actions/setup-python@v7
+        continue-on-error: true
+        with:
+          python-version: "3.12"
+      - continue-on-error: true
+        run: pip install pyyaml
+      - name: Test part 4/4
+        continue-on-error: true
+        run: |
+          log="$RUNNER_TEMP/macos-312.txt"
+          : > "$log"
+          status=0
+          python3 scripts/run_tests.py --part 4/4 >> "$log" 2>&1 || status=1
+          cat "$log" || true
+          {
+            grep -E '^Ran [0-9]+ tests? in ' "$log" || true
+            grep -E '^(OK|FAILED)' "$log" || true
+            grep -E '^(FAIL|ERROR): ' "$log" || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
