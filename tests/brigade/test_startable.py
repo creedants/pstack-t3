@@ -556,7 +556,7 @@ class StartableTest(BrigadeTest):
                   "--paths", "t3/added/brigade/scripts/activity.py,tests/brigade/test_context_cap.py,changes/perf%2Fd1.md")
         self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_startable.py")
 
-    def test_startable_does_not_block_a_ticket_on_a_lease_that_holds_only_the_next_change_note(self):
+    def test_startable_does_not_block_on_a_lease_whose_only_match_is_the_next_change_note(self):
         # A lease whose only match is the note the preview would name for the next dish blocks nothing.
         self.note_lease_fixture()
         self.assertEqual(self.brigade("startable"), "\n".join([
@@ -566,7 +566,7 @@ class StartableTest(BrigadeTest):
             "  Fix the cap",
         ]))
 
-    def test_startable_agrees_with_fire_when_a_lease_holds_only_the_next_change_note(self):
+    def test_startable_agrees_with_fire_on_a_lease_whose_only_match_is_the_next_change_note(self):
         self.note_lease_fixture()
         self.assertIn("T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_startable.py",
                       self.brigade("startable"))
