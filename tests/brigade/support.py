@@ -55,7 +55,7 @@ ITEM_DECISION = (
     "with at least one other option that closes it"
 )
 # The brigade reporting docs join in BRIGADE_DOCS order. Later items append to this tuple.
-BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md")
+BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md", "opening.md")
 
 
 def brigade_docs():
