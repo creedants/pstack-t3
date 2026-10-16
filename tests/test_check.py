@@ -700,6 +700,10 @@ class LinkCheckTest(unittest.TestCase):
     def test_a_thread_link_with_an_id_is_not_a_file_link(self):
         self.assertEqual(link_findings("t3-thread://v1/abc-123", "other.md"), [])
 
+    def test_a_query_bearing_file_link_to_an_existing_file_passes(self):
+        self.assertEqual(link_findings("other.md?raw=1"), [])
+        self.assertEqual(link_findings("other.md?raw=1#x"), [])
+
     def test_other_targets_still_must_resolve(self):
         self.assertEqual(
             link_findings("missing.md", "t3-thread://v2/abc", "t3-thread://v1/"),
@@ -995,6 +999,18 @@ class FragmentCheckTest(unittest.TestCase):
         self.assertEqual(
             fragment_tree_findings({"brigade/SKILL.md": "- - item\n\n  ```md\n[bad](#missing)\n  ```\n"}),
             ["brigade/SKILL.md:4: fragment #missing names no heading in brigade/SKILL.md"],
+        )
+
+    def test_a_fence_inside_a_list_inside_a_blockquote_hides_its_link(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> - ```md\n>   [example](#missing)\n>   ```\n"}),
+            [],
+        )
+
+    def test_a_fence_inside_a_blockquote_list_ends_at_the_next_item(self):
+        self.assertEqual(
+            fragment_tree_findings({"brigade/SKILL.md": "> 1. Example\n>\n>    ```md\n>    sample\n> 2. [bad](#missing)\n"}),
+            ["brigade/SKILL.md:5: fragment #missing names no heading in brigade/SKILL.md"],
         )
 
     def test_check_tree_reports_a_fragment_that_names_no_heading(self):
