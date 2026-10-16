@@ -76,7 +76,7 @@ UNAVAILABLE = "na"
 
 def proc_root():
     """The directory that holds process data. /proc, or the directory the environment names."""
-    return Path(os.environ.get(PROC_ROOT_ENV, "/proc"))
+    return Path(os.environ.get(PROC_ROOT_ENV) or "/proc")
 
 
 def meminfo():
