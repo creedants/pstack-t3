@@ -536,6 +536,46 @@ class StartableTest(BrigadeTest):
             "  Fix srcx",
         ]))
 
+    def vendor_layout(self):
+        target = self.project / "scripts"
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("build.py", "cli_reference.py"):
+            (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+
+    def note_lease_fixture(self):
+        """A lease on the activity paths plus the change note `fire` would name for the next dish.
+
+        The ticket's paths and the lease's activity path are siblings under `tests/`.
+        """
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.land("lease", "claim", "--holder", "engine/D1",
+                  "--paths", "t3/added/brigade/scripts/activity.py,tests/test_activity.py,changes/perf%2Fd1.md")
+        self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_context_cap.py")
+
+    def test_startable_does_not_block_a_ticket_on_a_lease_that_holds_only_the_next_change_note(self):
+        # A lease whose only match is the note the preview would name for the next dish blocks nothing.
+        self.note_lease_fixture()
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 1, startable: 1",
+            "T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_context_cap.py",
+            "  Fix the cap",
+        ]))
+
+    def test_startable_agrees_with_fire_when_a_lease_holds_only_the_next_change_note(self):
+        self.note_lease_fixture()
+        self.assertIn("T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_context_cap.py",
+                      self.brigade("startable"))
+        # The fire branch is the coordinator's choice, so its note is free while the preview's guess is not.
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the cap",
+                                      "--paths", "tests/brigade/support.py,tests/brigade/test_context_cap.py",
+                                      "--branch", "perf/d2"),
+                         "D1 (lease L2 held by perf/D1)")
+
     def test_startable_prints_one_line_for_a_ticket_the_landing_queue_refuses_in_a_project_that_is_not_a_git_repository(self):
         self.open()
         self.filed("Fix a", "--paths", "src/a.py")

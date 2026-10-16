@@ -1,0 +1,4 @@
+- kind fix
+- `startable` checks a waiting ticket's saved paths and the generated copies the build layout maps from them, and adds no change note to that claim
+- the change note is named for the branch `fire` is given and the preview does not know that branch, so the note it guessed from the next dish id blocked a ticket whose saved paths and generated copies no lease holds
+- `tests/brigade/test_startable.py` pins a lease on the activity paths plus the guessed note against a ticket whose paths are free, the preview saying startable where it said `blocked, waiting on L1`, and its `fire` claiming the lease
