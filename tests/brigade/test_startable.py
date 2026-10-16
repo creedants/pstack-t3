@@ -545,7 +545,7 @@ class StartableTest(BrigadeTest):
     def note_lease_fixture(self):
         """A lease on the activity paths plus the change note `fire` would name for the next dish.
 
-        The ticket's paths and the lease's activity path are siblings under `tests/`.
+        The lease's test path and the ticket's first path are siblings under `tests/brigade/`.
         """
         self.git_project()
         self.vendor_layout()
@@ -553,8 +553,8 @@ class StartableTest(BrigadeTest):
         self.landing_env()
         self.open()
         self.land("lease", "claim", "--holder", "engine/D1",
-                  "--paths", "t3/added/brigade/scripts/activity.py,tests/test_activity.py,changes/perf%2Fd1.md")
-        self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_context_cap.py")
+                  "--paths", "t3/added/brigade/scripts/activity.py,tests/brigade/test_context_cap.py,changes/perf%2Fd1.md")
+        self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_startable.py")
 
     def test_startable_does_not_block_a_ticket_on_a_lease_that_holds_only_the_next_change_note(self):
         # A lease whose only match is the note the preview would name for the next dish blocks nothing.
@@ -562,17 +562,17 @@ class StartableTest(BrigadeTest):
         self.assertEqual(self.brigade("startable"), "\n".join([
             self.NONE_RUNNING,
             "waiting tickets: 1, startable: 1",
-            "T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_context_cap.py",
+            "T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_startable.py",
             "  Fix the cap",
         ]))
 
     def test_startable_agrees_with_fire_when_a_lease_holds_only_the_next_change_note(self):
         self.note_lease_fixture()
-        self.assertIn("T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_context_cap.py",
+        self.assertIn("T1 normal fix, 0m: startable; tests/brigade/support.py,tests/brigade/test_startable.py",
                       self.brigade("startable"))
-        # The fire branch is the coordinator's choice, so its note is free while the preview's guess is not.
+        # The branch is the coordinator's choice, so the note `fire` claims is not the note the lease holds.
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the cap",
-                                      "--paths", "tests/brigade/support.py,tests/brigade/test_context_cap.py",
+                                      "--paths", "tests/brigade/support.py,tests/brigade/test_startable.py",
                                       "--branch", "perf/d2"),
                          "D1 (lease L2 held by perf/D1)")
 
