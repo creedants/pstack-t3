@@ -65,7 +65,7 @@ A pull request link is printed only as https://host/owner/repository/pull/number
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 
---serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the default address for html_render. The token lives in activity-token under the store directory.
+--serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the polled address for html_render, by default http://127.0.0.1:<port> and with an origin such as https://home.example.ts.net:48731 from a remote Mac or iPhone through tailscale serve. The token lives in activity-token under the store directory.
 """
 
 import argparse
@@ -297,6 +297,26 @@ class Span:
     status: Status
 
 
+# The roles a row of threads.tsv may hold, in display order. It matches the store role tuple.
+ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
+
+
+@dataclass(frozen=True)
+class RoleCount:
+    role: str
+    n: int
+    opened: int
+
+
+@dataclass(frozen=True)
+class AttemptFold:
+    summary: str = ""
+    lines: tuple = ()
+    attempts: tuple = ()
+    ranks: tuple = ()
+    counts: tuple = ()
+
+
 @dataclass(frozen=True)
 class Row:
     depth: int
@@ -308,6 +328,7 @@ class Row:
     spans: tuple[Span, ...]
     open_seconds: Optional[int] = None
     stands_for: int = 1
+    earlier: bool = False
 
 
 @dataclass(frozen=True)
@@ -324,6 +345,7 @@ class Item:
     kind: str = ""
     goal: str = ""
     lines: tuple = ()
+    fold: AttemptFold = AttemptFold()
 
 
 @dataclass(frozen=True)
@@ -399,10 +421,16 @@ TOKEN_BYTES = 32
 
 
 @dataclass(frozen=True)
+class Origin:
+    text: str
+
+
+@dataclass(frozen=True)
 class Secret:
     token: bytes
     route: bytes
     url: str
+    given_origin: bool = False
 
 
 @dataclass(frozen=True)
@@ -430,8 +458,8 @@ def parser():
     top.add_argument("--t3-home", help="T3 Code's base directory (default $T3CODE_HOME, else ~/.t3)")
     top.add_argument("--serve", nargs="?", const=DEFAULT_PORT, default=None, type=int, metavar="PORT",
                      help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped")
-    top.add_argument("--live-page", action="store_true",
-                     help="print the self-contained HTML wrapper that polls the local server every 30 seconds for html_render; the wrapper holds the token, so never share or commit it")
+    top.add_argument("--live-page", nargs="?", const="", default=None, metavar="ORIGIN",
+                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render; with no value it polls http://127.0.0.1:<port>, with an http:// or https:// origin with no path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin from a remote Mac or iPhone through tailscale serve; the wrapper holds the token, so never share or commit it")
     return top
 
 
@@ -477,8 +505,9 @@ def run(argv):
     if not BUDGET <= args.max_bytes <= MAX_BUDGET:
         raise ActivityError("--max-bytes must be from 16000 to 500000; pass a number in that range")
     directory = store_dir(args.at, os.environ)
-    if args.live_page:
-        return live_wrapper(secret_of(directory, DEFAULT_PORT).url)
+    if args.live_page is not None:
+        origin = None if args.live_page == "" else origin_of(args.live_page)
+        return live_wrapper(secret_of(directory, DEFAULT_PORT, origin).url)
     if args.serve is not None:
         if not 0 <= args.serve <= 65535:
             raise ActivityError("--serve takes a port from 0 to 65535; 0 picks an ephemeral port and no value means 48731")
@@ -1367,6 +1396,105 @@ def lines_of(rows, dish, privacy):
         for _, row in sorted(chosen, key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
 
 
+def format_attempt(attempts, ranks, counts):
+    """One summary line for folded earlier attempts. Attempts holds clipped fielded cells in rank order. Ranks holds the rank of each. Counts holds RoleCounts in display order."""
+    if len(attempts) == 1:
+        head = f"attempt {attempts[0]}"
+    elif ranks and all(kind == 0 for kind, _ in ranks):
+        numbers = sorted(number for _, number in ranks)
+        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+            head = f"attempts {numbers[0]}-{numbers[-1]}"
+        else:
+            head = f"attempts {', '.join(attempts)}"
+    else:
+        head = f"attempts {', '.join(attempts)}"
+    roles = ", ".join(count(entry.n, entry.role) for entry in counts)
+    opened = sum(entry.opened for entry in counts)
+    total = sum(entry.n for entry in counts)
+    ended = total - opened
+    if opened == 0:
+        state = "all ended"
+    elif ended == 0:
+        state = "all open"
+    else:
+        state = f"{opened} open plus {ended} ended"
+    return f"{head}: {roles}, {state}" if roles else f"{head}: {state}"
+
+
+def partition_attempts(dish_rows, rows, is_finished, privacy):
+    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set."""
+    if is_finished or not dish_rows:
+        current = tuple(
+            LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
+            for _, row in sorted(enumerate(dish_rows), key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
+        marked = tuple(replace(row, earlier=False) for row in rows)
+        return current, AttemptFold(), marked
+    ordinal_of = {}
+    for row in dish_rows:
+        cell = row["attempt"]
+        if not (cell.isascii() and 1 <= len(cell) <= 18 and cell.isdigit()) and cell not in ordinal_of:
+            ordinal_of[cell] = len(ordinal_of)
+
+    def rank_of(cell):
+        if cell.isascii() and 1 <= len(cell) <= 18 and cell.isdigit():
+            return (0, int(cell))
+        return (1, ordinal_of[cell])
+
+    ranked = [(index, row, rank_of(row["attempt"])) for index, row in enumerate(dish_rows)]
+    distinct = sorted({rank for _, _, rank in ranked})
+    earlier_at = set()
+    inside = False
+    for at, row in enumerate(rows):
+        if row.depth == 0:
+            inside = row.label == "earlier worker"
+            if inside:
+                earlier_at.add(at)
+        elif inside:
+            earlier_at.add(at)
+    if len(distinct) == 1 and not earlier_at:
+        current = tuple(
+            LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
+            for _, row, _ in sorted(ranked, key=lambda triple: (triple[2], triple[0])))
+        marked = tuple(replace(row, earlier=False) for row in rows)
+        return current, AttemptFold(), marked
+    top = max(distinct)
+    current_raw = sorted((triple for triple in ranked if triple[2] == top), key=lambda triple: (triple[2], triple[0]))
+    earlier_raw = sorted((triple for triple in ranked if triple[2] != top), key=lambda triple: (triple[2], triple[0]))
+    current = tuple(LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row)) for _, row, _ in current_raw)
+    earlier_lines = tuple(LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row)) for _, row, _ in earlier_raw)
+    basis = earlier_raw if earlier_raw else ranked
+    seen = {}
+    for _, row, rank in basis:
+        if rank not in seen:
+            seen[rank] = clip(privacy.field(row["attempt"]), ID_BYTES)
+    ordered = sorted(seen)
+    attempts = tuple(seen[rank] for rank in ordered)
+    ranks = tuple(ordered)
+    grouped = {}
+    for line in earlier_lines:
+        grouped.setdefault(line.role, []).append(line)
+    counts = []
+    for role in ROLES:
+        if role in grouped:
+            lines = grouped.pop(role)
+            counts.append(RoleCount(role, len(lines), sum(1 for line in lines if line.open)))
+    for role in sorted(grouped):
+        lines = grouped[role]
+        counts.append(RoleCount(role, len(lines), sum(1 for line in lines if line.open)))
+    ledger_roles = {line.role for line in earlier_lines}
+    lane = [rows[at] for at in sorted(earlier_at) if rows[at].depth > 0 and rows[at].label not in ledger_roles]
+    by_label = {}
+    for row in lane:
+        by_label.setdefault(row.label, []).append(row)
+    for label in sorted(by_label):
+        members = by_label[label]
+        counts.append(RoleCount(label, len(members), sum(1 for row in members if row.status in LIVE)))
+    summary = format_attempt(attempts, ranks, tuple(counts))
+    fold = AttemptFold(summary, earlier_lines, attempts, ranks, tuple(counts))
+    marked = tuple(replace(row, earlier=(at in earlier_at)) for at, row in enumerate(rows))
+    return current, fold, marked
+
+
 def spoken(line):
     parts = (
         f"attempt {clip(line.attempt, ID_BYTES)}",
@@ -1377,12 +1505,12 @@ def spoken(line):
     return " · ".join(part for part in parts if part)
 
 
-def item_of(unit, privacy, key, goal_ids=(), lines=()):
+def item_of(unit, privacy, key, goal_ids=(), lines=(), fold=AttemptFold()):
     word, tone = STATE_WORDS.get(unit.state, UNKNOWN_STATE)
     link, why = privacy.link(unit.pr)
     kind = unit.kind if unit.kind in KINDS else ""
     goal = unit.goal if unit.goal in goal_ids else ""
-    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal, tuple(lines))
+    return Item(privacy.field(unit.id) or UNNAMED, privacy.field(unit.summary), word, tone, link, unit.state not in FINISHED_STATES, why, key, kind, goal, tuple(lines), fold)
 
 
 def build_page(store, t3, window, privacy):
@@ -1409,14 +1537,22 @@ def build_page(store, t3, window, privacy):
     for thread, assignment in placed.items():
         members.setdefault(assignment.unit, []).append(t3.agents[thread])
     members = {unit: with_parents(agents) for unit, agents in members.items()}
-    groups, by_request = [], 0
+    groups, by_request, folded_by_unit = [], 0, {}
     for unit, agents in sorted(((unit, agents) for unit, agents in members.items() if agents), key=order):
         rows = tuple(row(agent, depth, label_of(agent, store, unit, privacy)) for agent, depth in tree(agents))
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
-        item = item_of(units[unit], privacy, keys[unit], goal_ids, lines_of(store.threads, unit, privacy)) if unit else None
-        groups.append(Group(item, rows, len(active) - subagents, subagents))
+        if unit:
+            raw = [entry for entry in store.threads if entry["dish"] == unit]
+            in_flight = units[unit].state not in FINISHED_STATES
+            live = any(entry.status in LIVE for entry in rows)
+            current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy)
+            folded_by_unit[unit] = (current, fold)
+            item = item_of(units[unit], privacy, keys[unit], goal_ids, current, fold)
+            groups.append(Group(item, marked, len(active) - subagents, subagents))
+        else:
+            groups.append(Group(None, tuple(replace(entry, earlier=False) for entry in rows), len(active) - subagents, subagents))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
@@ -1434,7 +1570,15 @@ def build_page(store, t3, window, privacy):
         digits = re.search(r"[0-9]{1,18}", unit.id)
         return (int(digits.group()) if digits else 0, unit.id)
 
-    items = tuple(item_of(unit, privacy, keys[unit.id], goal_ids, lines_of(store.threads, unit.id, privacy))
+    def folded_item(unit):
+        if unit.id in folded_by_unit:
+            current, fold = folded_by_unit[unit.id]
+            return item_of(unit, privacy, keys[unit.id], goal_ids, current, fold)
+        raw = [entry for entry in store.threads if entry["dish"] == unit.id]
+        current, fold, _ = partition_attempts(raw, (), False, privacy)
+        return item_of(unit, privacy, keys[unit.id], goal_ids, current, fold)
+
+    items = tuple(folded_item(unit)
                   for unit in sorted(units.values(), key=number) if unit.state not in FINISHED_STATES)
     hidden = Hidden(other_threads=t3.other_threads, unknown_status=t3.unknown_status, by_request_name=by_request, unstarted=t3.unstarted)
     return Page(privacy.field(store.name) or "this coordinator", window, totals, legend, own, tuple(groups), items, hidden, goals=goals, flight=flight_of(items, goals))
@@ -1739,10 +1883,13 @@ def ledger_px(page):
     seen = set()
     total = 0
     for item in items_of(page):
-        if not item.lines or item.key in seen:
+        if item.key in seen:
             continue
         seen.add(item.key)
-        total += LEDGER_GAP_PX + LEDGER_PX * len(item.lines)
+        summary = 1 if item.fold.summary else 0
+        if not item.lines and not summary:
+            continue
+        total += LEDGER_GAP_PX + LEDGER_PX * (len(item.lines) + summary)
         if item.key not in grouped:
             total += GROUP_PX
     return total
@@ -1753,7 +1900,7 @@ def height(page):
     fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
     A grouped strip adds flight_column_px. A page with ledger lines adds ledger_px.
     """
-    rows = [row for group in page.groups for row in group.rows]
+    rows = [row for group in page.groups for row in group.rows if not row.earlier]
     total = fixed_height(page, notes(page, items_of(page))) + GROUP_PX * len(page.groups) + ROW_PX * len(rows)
     for status in OPEN:
         lines = sum(row.open_seconds is not None and row.status is status for row in rows)
@@ -1774,7 +1921,7 @@ def framed(page, limit):
         return page
     page = replace(page, name=clip(page.name, NAME_BYTES))
     # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines, so the result needs no second pass.
-    has_lines = any(item.lines for item in items_of(page))
+    has_lines = any(item.lines or item.fold.summary or item.fold.lines for item in items_of(page))
     worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1,
                     cut_lines=(page.hidden.cut_lines or 1) if has_lines else page.hidden.cut_lines)
     left = limit - fixed_height(page, notes(replace(page, hidden=worst), items_of(page)))
@@ -1789,10 +1936,16 @@ def framed(page, limit):
         return 0 if row.open_seconds is not None else 1 if row.status is Status.FAILED else 2
 
     pieces = []
-    for at, group in enumerate(page.groups):
-        ranked = sorted(range(len(group.rows)), key=lambda index: (tier(group.rows[index]), index))
-        pieces += [(tier(group.rows[index]), turn, at, index) for turn, index in enumerate(ranked)]
     kept, headed, lists = set(), set(), set()
+    for at, group in enumerate(page.groups):
+        for index, row in enumerate(group.rows):
+            if row.earlier:
+                kept.add((at, index))
+                headed.add(at)
+    for at, group in enumerate(page.groups):
+        visible = [index for index, row in enumerate(group.rows) if not row.earlier]
+        ranked = sorted(visible, key=lambda index: (tier(group.rows[index]), index))
+        pieces += [(tier(group.rows[index]), turn, at, index) for turn, index in enumerate(ranked)]
     for _, _, at, index in sorted(pieces):
         row = page.groups[at].rows[index]
         opened = row.open_seconds is not None
@@ -1819,28 +1972,33 @@ def line_count(page):
         if item.key in seen:
             continue
         seen.add(item.key)
-        total += len(item.lines)
+        total += len(item.lines) + len(item.fold.lines)
     return total
 
 
 def limit_ledger(page, keep):
     """The page with the first keep attempt lines in display order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
-    Display order is items_of order, each work item key once, and within a key the order of its lines.
+    Display order is items_of order, each work item key once, current lines before fold payload within a key. Payload drops before current lines.
     """
-    seen, remaining, removed, kept = set(), keep, 0, {}
+    seen, remaining, removed = set(), keep, 0
+    kept_current, kept_payload = {}, {}
     for item in items_of(page):
         if item.key in seen:
             continue
         seen.add(item.key)
-        take = min(len(item.lines), remaining)
-        kept[item.key] = item.lines[:take]
-        removed += len(item.lines) - take
-        remaining -= take
+        take_current = min(len(item.lines), remaining)
+        remaining -= take_current
+        take_payload = min(len(item.fold.lines), remaining)
+        remaining -= take_payload
+        kept_current[item.key] = item.lines[:take_current]
+        kept_payload[item.key] = item.fold.lines[:take_payload]
+        removed += (len(item.lines) - take_current) + (len(item.fold.lines) - take_payload)
 
     def trimmed(item):
-        if item is None or item.key not in kept:
+        if item is None or item.key not in kept_current:
             return item
-        return replace(item, lines=kept[item.key])
+        fold = replace(item.fold, lines=kept_payload[item.key]) if item.fold.summary else item.fold
+        return replace(item, lines=kept_current[item.key], fold=fold)
 
     groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
     items = tuple(trimmed(item) for item in page.items)
@@ -2192,31 +2350,78 @@ RENDERER = squeezed("""
 STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
 # `.ldg` has a 100% flex basis, so `.tl>.grp` wraps it onto a line under the id, title, and state chip.
 LEDGER_CSS = ".tl>.grp{flex-wrap:wrap}.ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
+ATTEMPT_CSS = ".row.earlier{display:none}.ldg details{margin:0;padding:0}.ldg summary{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground);cursor:pointer}"
 LEDGER_HOOK = """
-    if (D && D.v === 1 && D.L && D.L.length) {
+    if (D && D.v === 1 && ((D.L && D.L.length) || (D.E && D.E.length))) {
       const children = (node) => node.kids || [...node.children];
-      const attach = (head, lines) => {
+      const hasEarlier = (node) => ((node.className || '').split(' ').indexOf('earlier') >= 0);
+      const addEarlier = (node) => { if (!hasEarlier(node)) node.className = (node.className ? node.className + ' ' : '') + 'earlier'; };
+      const dropEarlier = (node) => { node.className = (node.className || '').split(' ').filter((c) => c && c !== 'earlier').join(' '); };
+      const attemptMap = (typeof window !== 'undefined' && window.attemptState) || {};
+      if (typeof window !== 'undefined' && !window.attemptState) window.attemptState = attemptMap;
+      const byCurrent = new Map((D.L || []).map(([index, lines]) => [index, lines]));
+      const byFold = new Map((D.E || []).map(([index, summary, payload]) => [index, [summary, payload]]));
+      const byEarlier = new Map((D.R || []).map(([gpos, idxs]) => [gpos, idxs]));
+      const lanes = root.querySelector('.tl');
+      const groups = D.G || [];
+      const heads = children(lanes).filter((node) => (node.className || '').split(' ').includes('grp'));
+      const domGroups = [];
+      let cur = null;
+      for (const node of children(lanes)) {
+        const cls = (node.className || '').split(' ');
+        if (cls.indexOf('grp') >= 0) { cur = {head: node, rows: []}; domGroups.push(cur); }
+        else if (cur && cls.indexOf('row') >= 0) cur.rows.push(node);
+      }
+      const attach = (head, gpos, itemIndex) => {
+        const current = byCurrent.get(itemIndex) || [];
+        const folded = byFold.get(itemIndex);
+        if (!current.length && !folded) return;
         const block = document.createElement('div');
         block.className = 'ldg';
-        for (const phrase of lines) {
+        head.appendChild(block);
+        const itemId = (D.I[itemIndex] || [])[0] || String(itemIndex);
+        let details = null;
+        if (folded) {
+          const summary = folded[0], payload = folded[1] || [];
+          details = document.createElement('details');
+          const sum = document.createElement('summary');
+          sum.textContent = summary;
+          details.appendChild(sum);
+          for (const phrase of payload) {
+            const span = document.createElement('span');
+            span.textContent = phrase;
+            details.appendChild(span);
+          }
+          block.appendChild(details);
+          const open = !!attemptMap[itemId];
+          details.open = open;
+          const rows = (gpos != null && domGroups[gpos]) ? domGroups[gpos].rows : [];
+          const idxs = (gpos != null && byEarlier.get(gpos)) || [];
+          const earlierRows = idxs.map((ri) => rows[ri]).filter(Boolean);
+          if (open) { for (const r of earlierRows) dropEarlier(r); }
+          else { for (const r of earlierRows) addEarlier(r); }
+          details.ontoggle = () => {
+            const isOpen = !!details.open;
+            attemptMap[itemId] = isOpen;
+            for (const r of earlierRows) { if (isOpen) dropEarlier(r); else addEarlier(r); }
+          };
+        }
+        for (const phrase of current) {
           const span = document.createElement('span');
           span.textContent = phrase;
           block.appendChild(span);
         }
-        head.appendChild(block);
       };
-      const lanes = root.querySelector('.tl');
-      const groups = D.G || [];
-      const heads = children(lanes).filter((node) => (node.className || '').split(' ').includes('grp'));
       const placed = new Set();
       if (heads.length === groups.length) {
         groups.forEach((group, at) => {
-          const lines = D.L.find((entry) => entry[0] === group[0]);
-          if (lines) { attach(heads[at], lines[1]); placed.add(group[0]); }
+          if (byCurrent.has(group[0]) || byFold.has(group[0])) { attach(heads[at], at, group[0]); placed.add(group[0]); }
         });
       }
-      for (const [index, lines] of D.L) {
-        if (placed.has(index)) continue;
+      const seen = new Set(placed);
+      for (const index of [...byCurrent.keys(), ...byFold.keys()]) {
+        if (seen.has(index)) continue;
+        seen.add(index);
         const item = D.I[index];
         const head = add(lanes, 'div', 'grp');
         const link = (parent, text, url) => {
@@ -2227,7 +2432,7 @@ LEDGER_HOOK = """
         link(head, item[0], item[4]).className = 'one';
         add(head, 'span', 'sum', item[1]);
         add(head, 'b', 'chip ' + item[3], item[2]);
-        attach(head, lines);
+        attach(head, null, index);
       }
     }
 """
@@ -2302,6 +2507,11 @@ def wire(page):
         data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
     if any(item.lines for item in items):
         data["L"] = [[index, [spoken(line) for line in item.lines]] for index, item in enumerate(items) if item.lines]
+    if any(item.fold.summary for item in items):
+        data["E"] = [[index, item.fold.summary, [spoken(line) for line in item.fold.lines]] for index, item in enumerate(items) if item.fold.summary]
+    earlier = [[at, [index for index, row in enumerate(group.rows) if row.earlier]] for at, group in enumerate(page.groups) if any(row.earlier for row in group.rows)]
+    if earlier:
+        data["R"] = earlier
     return data
 
 
@@ -2317,9 +2527,11 @@ def render_html(page, clean):
     data = encode(wire(page), clean)
     style = STYLE if page.flight is None else STYLE + STRIP_CSS
     script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
-    if any(item.lines for item in items_of(page)):
+    if any(item.lines or item.fold.summary for item in items_of(page)):
         style += LEDGER_CSS
         script += squeezed(LEDGER_HOOK)
+    if any(item.fold.summary for item in items_of(page)):
+        style += ATTEMPT_CSS
     return (
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
         f"<title>Agent activity</title><style>{style}</style><div id=o></div>"
@@ -2355,6 +2567,9 @@ def render_text(page, clean):
     for group in page.groups:
         above = {}
         for row in group.rows:
+            if row.earlier:
+                above[row.depth] = row.label
+                continue
             above[row.depth] = row.label
             name = f"{group.item.id} {row.label}" if group.item else row.label
             if row.open_seconds is not None:
@@ -2370,11 +2585,13 @@ def render_text(page, clean):
 
     def flat_block(item):
         head = line(item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
-        return [head, *("    " + spoken(entry) for entry in item.lines)]
+        summary = ["    " + item.fold.summary] if item.fold.summary else []
+        return [head, *summary, *("    " + spoken(entry) for entry in item.lines)]
 
     def grouped_block(item):
         head = "  " + line(item.kind, item.id, item.state, item.summary, drawn.get(item, "no activity in this window"), item.pr)
-        return [head, *("      " + spoken(entry) for entry in item.lines)]
+        summary = ["      " + item.fold.summary] if item.fold.summary else []
+        return [head, *summary, *("      " + spoken(entry) for entry in item.lines)]
 
     flat = [part for item in listed for part in flat_block(item)]
     text_flight = flight_of(listed, page.goals)
@@ -2410,6 +2627,7 @@ LIVE_CSS = joined_lines("""
 
 LIVE_FOLD = squeezed("""
     const openState = {};
+    const attemptState = window.attemptState || (window.attemptState = {});
     let appliers = [];
     const setAll = (open) => { for (const a of appliers) { openState[a.id] = open; a.apply(); } };
     function fold() {
@@ -2433,11 +2651,11 @@ LIVE_FOLD = squeezed("""
         const apply = () => {
           const open = id in openState ? openState[id] : byDefault;
           caret.textContent = open ? '\u25BE' : '\u25B8';
-          for (const r of rows) r.style.display = open ? '' : 'none';
+          for (const r of rows) { const earlier = r.classList.contains('earlier'); const attemptOpen = !!attemptState[id]; r.style.display = !open ? 'none' : (earlier && !attemptOpen ? 'none' : ''); }
           const l = head.querySelector('.ldg');
           if (l) l.style.display = open ? '' : 'none';
         };
-        head.onclick = (e) => { if (e.target.closest('a')) return; openState[id] = !(id in openState ? openState[id] : byDefault); apply(); };
+        head.onclick = (e) => { if (e.target.closest('a,summary,details')) return; openState[id] = !(id in openState ? openState[id] : byDefault); apply(); };
         apply();
         appliers.push({id, apply});
       }
@@ -2467,7 +2685,28 @@ LIVE_SCRIPT = squeezed("""
 """)
 
 
-def secret_of(directory, port):
+def origin_of(value):
+    """The origin for --live-page. Only an http:// or https:// origin with no userinfo, path, query, or fragment is accepted."""
+    bad = "--live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:<port>"
+    if any(char.isspace() for char in value) or "\\" in value or "?" in value or "#" in value:
+        raise ActivityError(bad)
+    try:
+        parts = urlsplit(value)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        raise ActivityError(bad) from None
+    if parts.scheme not in ("http", "https"):
+        raise ActivityError(bad)
+    if not host:
+        raise ActivityError(bad)
+    if parts.username is not None or parts.password is not None:
+        raise ActivityError(bad)
+    if parts.path or parts.query or parts.fragment:
+        raise ActivityError(bad)
+    return Origin(value)
+
+
+def secret_of(directory, port, origin=None):
     """The live view's secret for one store. A fresh token holds TOKEN_BYTES bytes from secrets. It lives in <store>/activity-token, a file created mode 0600 and reused across restarts while it stays valid, with surrounding ASCII whitespace ignored, and replaced otherwise."""
     path = directory / TOKEN_FILE_NAME
     try:
@@ -2481,15 +2720,21 @@ def secret_of(directory, port):
         with os.fdopen(fd, "w") as token_file:
             token_file.write(text)
         token = text.encode("ascii")
-        return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+        if origin is None:
+            return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+        return Secret(token, b"/activity/" + token, f"{origin.text}/activity/{text}", True)
     text = read_valid_token(path)
     if text:
         token = text.encode("ascii")
-        return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+        if origin is None:
+            return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+        return Secret(token, b"/activity/" + token, f"{origin.text}/activity/{text}", True)
     text = secrets.token_urlsafe(TOKEN_BYTES)
     install_token(path, text)
     token = text.encode("ascii")
-    return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+    if origin is None:
+        return Secret(token, b"/activity/" + token, f"http://127.0.0.1:{port}/activity/{text}")
+    return Secret(token, b"/activity/" + token, f"{origin.text}/activity/{text}", True)
 
 
 def read_valid_token(path):
@@ -2612,7 +2857,7 @@ def serve(settings, secret, port):
     """Run the live view server for one store until interrupted. It prints the token address so a wrapper can embed it."""
     server = live_server(settings, secret, port)
     actual = server.server_address[1]
-    if actual != port:
+    if actual != port and not secret.given_origin:
         secret = replace(secret, url=f"http://127.0.0.1:{actual}{secret.route.decode('ascii')}")
         server.live_secret = secret
     print(secret.url, flush=True)
