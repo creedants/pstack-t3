@@ -3880,7 +3880,7 @@ class LedgerTest(OutputCase):
         self.assertEqual((rank("007"), rank("9" * 18)), ((0, 7), (0, int("9" * 18))))
         self.assertEqual((rank("9" * 19), rank(""), rank("٢")), ((1, "9" * 19), (1, ""), (1, "٢")))
 
-    def test_three_attempts_without_fold_would_show_every_earlier_ledger_line_and_lane(self):
+    def test_three_attempts_fold_earlier_ledger_lines_and_lane_rows(self):
         fixture = self.fixture
         fixture.coordinator()
         fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
@@ -3921,7 +3921,7 @@ class LedgerTest(OutputCase):
         self.assertNotIn("opaque=", document)
         self.assertNotIn("opaque=", "\n".join(lines))
 
-    def test_single_attempt_without_earlier_family_renders_as_before_with_no_fold(self):
+    def test_single_attempt_with_no_earlier_family_has_no_fold(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": "opaque=single-worker", "start": stamp, "end": ""}])

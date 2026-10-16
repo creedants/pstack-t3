@@ -65,7 +65,7 @@ A pull request link is printed only as https://host/owner/repository/pull/number
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 
---serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the polled address for html_render, by default http://127.0.0.1:<port> and with an origin such as https://home.example.ts.net:48731 from a remote Mac or iPhone through tailscale serve. The token lives in activity-token under the store directory.
+--serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the given address for html_render, by default http://127.0.0.1:<port> and with an origin such as https://home.example.ts.net:48731 it polls that origin. The token lives in activity-token under the store directory.
 """
 
 import argparse
@@ -297,7 +297,7 @@ class Span:
     status: Status
 
 
-# The roles a row of threads.tsv may hold, in display order. It matches the store role tuple.
+# The roles the store records, in display order. It matches the store role tuple. A row with another role sorts after these as unknown.
 ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
 
 
@@ -459,7 +459,7 @@ def parser():
     top.add_argument("--serve", nargs="?", const=DEFAULT_PORT, default=None, type=int, metavar="PORT",
                      help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped")
     top.add_argument("--live-page", nargs="?", const="", default=None, metavar="ORIGIN",
-                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render; with no value it polls http://127.0.0.1:<port>, with an http:// or https:// origin with no path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin from a remote Mac or iPhone through tailscale serve; the wrapper holds the token, so never share or commit it")
+                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render; with no value it polls http://127.0.0.1:<port>, with an http:// or https:// origin with no userinfo, path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin; the wrapper holds the token, so never share or commit it")
     return top
 
 
@@ -1897,7 +1897,8 @@ def ledger_px(page):
 
 def height(page):
     """The modelled height of the HTML page at 390 px wide.
-    fixed_height, plus GROUP_PX a group and ROW_PX a row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
+    fixed_height, plus GROUP_PX a group and ROW_PX a shown row, plus HEADING_PX once for each of the two open lists that has a line and OPEN_PX a line in it, plus STRIP_PX once and CHIP_PX a chip when the page has chips.
+    Rows flagged earlier are folded and not counted.
     A grouped strip adds flight_column_px. A page with ledger lines adds ledger_px.
     """
     rows = [row for group in page.groups for row in group.rows if not row.earlier]
@@ -1978,7 +1979,7 @@ def line_count(page):
 
 def limit_ledger(page, keep):
     """The page with the first keep attempt lines in display order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
-    Display order is items_of order, each work item key once, current lines before fold payload within a key. Payload drops before current lines.
+    Display order is items_of order, each work item key once, current lines before fold payload within a key. Within a key, payload drops before current lines.
     """
     seen, remaining, removed = set(), keep, 0
     kept_current, kept_payload = {}, {}
