@@ -596,8 +596,8 @@ def fragment_findings(root):
     A percent-encoded fragment is decoded before matching. A destination query
     is stripped before resolving. The finding names the decoded fragment and
     the resolved file. A link whose
-    fragment is empty, as in (other.md) or (other.md#),
-    is skipped. A link whose path before the # is empty or holds only a query,
+    fragment is empty, as in (other.md#),
+    is skipped. A link with no # is not extracted. A link whose path before the # is empty or holds only a query,
     as in (#terms) or (?raw=1#terms), is
     checked against the file that holds it. Otherwise the query is stripped and the path resolves against
     the holding file's directory. A path that does not resolve to an existing
