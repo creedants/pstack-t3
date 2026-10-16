@@ -1,6 +1,8 @@
 """Draw four activity pages in a headless browser at 390 pixels wide and measure the page root element."""
 
+import html
 import io
+import json
 import os
 import re
 import shutil
@@ -10,6 +12,11 @@ import unittest
 from unittest import mock
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+try:
+    from tests import in_process
+except ImportError:
+    import in_process
 
 try:
     from tests import test_activity
@@ -231,6 +238,68 @@ class RenderHeightTest(unittest.TestCase):
                 height = measure(self.browser, MOD["render_html"](fitted, CLEAN), self.root)
                 self.assertLessEqual(height, reserved)
                 self.assertLessEqual(height, MOD["FRAME_HEIGHT"])
+
+
+class LiveAttemptFoldTest(unittest.TestCase):
+    def setUp(self):
+        in_ci = os.environ.get("CI") == "true"
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.browser, unavailable = select_browser(self.root)
+        if self.browser is None and in_ci:
+            self.browser, unavailable = select_browser(self.root)
+        if self.browser is None:
+            reason = f"no working headless browser: {'; '.join(unavailable)}"
+            if in_ci:
+                self.fail(reason)
+            self.skipTest(reason)
+
+    def document_with_earlier_fold(self):
+        fixture = Fixture(str(self.root / "live"))
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=test_activity.worker(3))
+        fixture.retired("D7", test_activity.worker(1))
+        fixture.retired("D7", test_activity.worker(2))
+        fixture.thread(test_activity.worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(test_activity.worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(test_activity.worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        test_activity.write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": test_activity.worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": test_activity.worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": test_activity.worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write_database()
+        result = in_process.invoke(fixture.command())
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        return result.stdout
+
+    def test_opening_the_attempt_details_in_the_live_wrapper_shows_the_earlier_rows_and_closing_hides_them_again(self):
+        probe = "".join((
+            "<script>", MOD["LIVE_FOLD"],
+            "fold();",
+            "var details = document.querySelector('#o .tl .ldg details');",
+            "if (!details) { document.title = 'no attempt details'; } else {",
+            "var rows = Array.prototype.slice.call(document.querySelectorAll('#o .tl .row.earlier'));",
+            "var disp = function () { return rows.map(function (r) { return getComputedStyle(r).display; }); };",
+            "var before = disp();",
+            "details.open = true;",
+            "details.dispatchEvent(new Event('toggle'));",
+            "var after = disp();",
+            "details.open = false;",
+            "details.dispatchEvent(new Event('toggle'));",
+            "var shut = disp();",
+            "document.title = JSON.stringify({before: before, after: after, shut: shut});",
+            "}",
+            "</script>",
+        ))
+        target = Path(self.root) / "live.html"
+        target.write_text(self.document_with_earlier_fold().replace("<div id=o></div>", f"<div id=o></div>{PINNED}") + probe)
+        drawn = confined_run(self.browser, target, self.root, "e", RENDER_TIMEOUT)
+        seen = json.loads(html.unescape(TITLE.search(drawn).group(1)))
+        self.assertEqual(seen, {"before": ["none", "none"], "after": ["grid", "grid"], "shut": ["none", "none"]})
 
 
 class BrowserSelectionTest(unittest.TestCase):
