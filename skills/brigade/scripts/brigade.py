@@ -46,7 +46,8 @@ def _drop_cached_brigade(*names):
 _prior_brigade = {n: m for n, m in _sys.modules.items() if n == "brigade_lib" or n.startswith("brigade_lib.")}
 _drop_cached_brigade("brigade_lib")
 _pkg = "_brigade_ns_" + _uuid.uuid4().hex
-_alias = _types.ModuleType(_pkg)
+# The alias keeps the brigade_lib name so each file loads once under that name.
+_alias = _types.ModuleType("brigade_lib")
 _alias.__path__ = [str(_libdir)]
 _sys.modules[_pkg] = _alias
 _sys.modules["brigade_lib"] = _alias
