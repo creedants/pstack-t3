@@ -32,6 +32,10 @@ A change applies from the next brief, and a running worker keeps the mode its br
 
 Each command's text below is the text that moved out of the command block in [the script](SKILL.md#the-script), word for word.
 
+### next
+
+`$B next`. `wake: <label>`, then `reporting: <level>`, then `reports to: <thread>` when one is set, then each cue as `run <argv>`, `see <words>`, or `if <cond>: <action>`, or the line `nothing else owed` when there is no cue, then `reply: yes|no (<occasion>: <detail>)`. `<label>` is the wake word, plus the dish or the request when the wake takes one. A wake left off prints `wake: unspecified`.
+
 ### status
 
 **`$B status`.** thread <id> or thread not recorded, then reporting level, landing mode, and counts, then the workers line, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to <thread>, mode <full|light>, and owner <thread>@<generation> when set.
