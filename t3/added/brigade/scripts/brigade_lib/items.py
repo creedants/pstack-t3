@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, refusal_kind, refill_of, release_lease, running_workers, worker_cap
-from brigade_lib.reviews import fix_round_refusal, write_threads
+from brigade_lib.reviews import fix_round_refusal, thread_binding, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug, stored
 from brigade_lib.store import IN_FLIGHT_STATES, KIND_CHOICE, LEASED_STATES, STATION_KIND, WORKER_ROLES
 from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, read_labels, tracked_paths
@@ -547,13 +547,20 @@ def other_items_threads(restaurant, dish_id):
     return held
 
 
+def worker_bindings(restaurant, ident):
+    """The binding of each worker row of the item, the identity `write_threads` de-duplicates on."""
+    return {thread_binding(row) for row in restaurant.rows("threads.tsv")
+            if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]}
+
+
 def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None):
     """Print one `archive thread: <id>` line on standard error for each thread to archive at a finish point.
 
     `occasion` is "review" for the thread a `pass record` recorded, "replaced" for the worker a
     `dish --thread` replaced, and "closed" for every worker thread a merged or dropped item used.
     `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the dish's thread
-    cell read before that write. `only` holds ids seen before an unlocked step. None means no restriction.
+    cell read before that write. `only` holds the ids the caller allows to print after an unlocked step.
+    None means no restriction.
     A set means only ids in it print. The coordinator's own thread, a thread another item in flight holds,
     a blank id, and a repeated id are left out. A review also leaves out the item's current worker and its
     open worker rows. The call writes no table.
@@ -612,9 +619,8 @@ def drop(restaurant, ident, stopped):
         current = stored("dishes.tsv", "thread", dish["thread"])
         if current:
             observed.add(current)
-        for row in restaurant.rows("threads.tsv"):
-            if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]:
-                observed.add(stored("threads.tsv", "thread", row["thread"]))
+        bindings = worker_bindings(restaurant, ident)
+        observed.update(item for _, _, item in bindings)
         for item in retired_worker_threads(restaurant, ident):
             item = stored("threads.tsv", "thread", item)
             if item:
@@ -626,12 +632,16 @@ def drop(restaurant, ident, stopped):
             raise BrigadeError(f"{ident} not dropped: could not release {lease}: {error}")
     with restaurant.checked():
         _, dish = restaurant.find("dishes.tsv", ident)
+        later = {item for _, _, item in worker_bindings(restaurant, ident) - bindings}
+        cell = stored("dishes.tsv", "thread", dish["thread"])
+        if cell and cell != current:
+            later.add(cell)
         evidence = [f"stopped {stopped}"] if stopped else []
         evidence += [f"released {lease}"] if lease else []
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
         write_threads(restaurant, ident, (), closing=True)
-        announce_archive(restaurant, ident, "closed", only=observed)
+        announce_archive(restaurant, ident, "closed", only=observed - later)
         rows = restaurant.rows("rail.tsv")
         back = [row for row in rows if row["state"] == "assigned" and row["dish"] == ident]
         for row in back:

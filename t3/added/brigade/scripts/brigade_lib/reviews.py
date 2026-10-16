@@ -240,6 +240,11 @@ def worker_report(restaurant, dish_id):
         raise BrigadeError(f"reports/{name} is not UTF-8; nothing recorded") from None
 
 
+def thread_binding(row):
+    """The identity `write_threads` de-duplicates a worker row on, as the table stores it."""
+    return (row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"]))
+
+
 def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     """The one writer of threads.tsv. Returns True when it wrote a row or closed one.
 
@@ -257,7 +262,7 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     mine = [row for row in rows if row["dish"] == dish_id]
     stamp = seam.now()
     keep = stored("threads.tsv", "thread", keep_thread) if keep_thread else ""
-    held = {(row["attempt"], row["role"], row["thread"]) for row in mine}
+    held = {thread_binding(row) for row in mine}
     written = []
     for role, thread, seat in threads:
         thread = stored("threads.tsv", "thread", thread)
