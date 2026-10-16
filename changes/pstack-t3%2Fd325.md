@@ -1,0 +1,7 @@
+- kind polish
+- The command comments in t3/added/brigade/SKILL.md name only what each command does and the output lines a later step acts on.
+- The rest of each comment moved word for word to script.md under a new "## Command output" section.
+- The bodies of "## Agent activity" and "## Executive chef's view" moved verbatim to the new t3/added/brigade/views.md behind pointer sentences.
+- tests/brigade/support.py reads views.md through BRIGADE_DOCS.
+- tests/test_activity.py skill_section() reads views.md for the "## Agent activity" section with its assertions unchanged.
+- The skill drops about 1,100 words.

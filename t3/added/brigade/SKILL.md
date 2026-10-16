@@ -43,57 +43,56 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
-$B status                                    # thread <id> or thread not recorded, then reporting level, landing mode, and counts, then the workers line, then a kinds line, a goals line, and an untagged line when each has something to count, then reports to <thread>, mode <full|light>, and owner <thread>@<generation> when set
-$B set --thread <id> [--replace] --schedule <name>=<id>
+$B status                                    # thread <id> or thread not recorded, the counts in progress, in review, passed review, and waiting to land, reports to <thread>, and owner <thread>@<generation>
+$B set --thread <id> [--replace] --schedule <name>=<id>   # records the thread and the schedule ids; --replace prints previousThread
 $B set --reporting every-turn|milestones|digest
-$B set --schedule <name>= drops that name from restaurant.json. A name that is not recorded is already absent, and the command still succeeds. Other names stay.
-$B set --intake github,<feed>                # the intake sources this restaurant owns. Replaces the list. --intake "" clears it
-$B set --workers <n>                         # dishes in progress or in review at once. A missing value reads as 2
-$B set --autofire off|urgent|normal|low     # the lowest ticket priority startable lists as startable. A missing value reads as normal
-$B set --reports-to <thread>                 # the executive admin this restaurant reports through. --reports-to "" clears it
-$B set --mode light|full                     # this restaurant's mode from the next brief. --mode "" returns it to the roles files
-$B set --build-command "<command>" --check-command "<command>"   # the two commands edits verify runs. none for one the project lacks
-$B set --cap KIND=N[,KIND=N]   # at most that many items of the kind holding a worker slot. A pair with no number clears that kind's cap. An empty value clears every cap. Read back through the JSON that set prints.
-$B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind. A pair with no mode clears that kind's depth. An empty value clears every depth. Read back through the JSON that set prints.
-$B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]   # prints T<n>. --request refuses a second ticket for that request. --again lifts the same-summary refusal in Filing tracker work step 4. --kind is required with --summary. --goal takes an open or paused goal, and without it the ticket is unassigned
-$B ticket add --from-report reports/D2.md [--dry-run]   # one waiting ticket per follow-up in that report, source report. Skips text already on the rail in any state. A run changes only the ticket table, the log, and `lastActivityAt`. --dry-run changes no table and no log. It takes no --kind and no --goal. Each ticket takes the goal of the report's item, whatever that goal's state. When that item has a kind, the ticket is polish, because a follow-up is filed with no priority and a report ticket with no priority is low. When the item has no kind, the ticket has no kind
+$B set --schedule <name>=                    # drops that name from restaurant.json
+$B set --intake github,<feed>                # the intake sources this restaurant owns
+$B set --workers <n>                         # dishes in progress or in review at once
+$B set --autofire off|urgent|normal|low      # the lowest ticket priority startable lists as startable
+$B set --reports-to <thread>                 # the executive admin this restaurant reports through
+$B set --mode light|full                     # this restaurant's mode from the next brief
+$B set --build-command "<command>" --check-command "<command>"   # the two commands edits verify runs
+$B set --cap KIND=N[,KIND=N]                 # the cap on items of that kind holding a worker slot
+$B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind
+$B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]   # prints T<n>. --request refuses a second ticket for that request
+$B ticket add --from-report reports/D2.md [--dry-run]   # one waiting ticket per follow-up in that report. It prints a not filed line for text it skips
 $B ticket list [--state waiting|assigned|moved|done|dropped]
-$B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision | --no-decision]   # at least one flag. --paths "" clears the recorded paths
-$B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket. Refused on a ticket in another state, and on a waiting ticket that an item in flight names. --goal takes an open or paused goal
+$B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision | --no-decision]   # at least one flag
+$B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
-$B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths it finds in the summary's backtick quotes
-$B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
+$B ticket paths [--dry-run]                  # records the tracked paths it finds in each waiting ticket's backtick quotes
+$B startable                                 # the workers line, then each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing. A ticket line reads startable, rides with, below auto-start, decision for the owner, held back, or unknown, no paths recorded
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
-$B goal add --name "<name>" --purpose "<why>" --done "<test>" [--share <n>]   # prints G<n>. --share is a whole number of 1 or more
-$B goal set G1 --state open|paused|done|dropped [--evidence "<one line>"]   # a move to done or dropped needs --evidence and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. --evidence on open or paused is refused
-$B goal set G<n> --state paused   # no ticket of that goal starts, not even as a ride-along. Items in flight finish and land. $B goal set G<n> --state open resumes.
-$B goal set G<n> --share N   # a ceiling of N worker slots holding that goal's items. Clear with --share "".
-# `startable` waits with `its goal is paused`, `the <kind> cap holds (<held> of <cap>)`, and `the <goal> share holds (<held> of <share>)`.
-$B goal list [--all]   # each open or paused goal, and each done or dropped goal that still has a waiting ticket, an item in flight, or a ticket riding along, with its state, name, counts, purpose, and done test, then the counts of unassigned work. A ticket riding along is an assigned ticket of that goal that is not in an item of that goal. --all also prints each other done or dropped goal
-$B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3] [--doc-item]   # claims the lease, prints D<n>. The item takes the first ticket's goal, and its kind when it has one. A --kind that differs from that kind is refused. Pass --doc-item when the item is about a shared document. It lets the fire through and records a doc item row in log.tsv.
+$B goal add --name "<name>" --purpose "<why>" --done "<test>" [--share <n>]   # prints G<n>
+$B goal set G1 --state open|paused|done|dropped [--evidence "<one line>"]   # a move to done or dropped needs --evidence
+$B goal set G<n> --state paused   # no ticket of that goal starts, not even as a ride-along
+$B goal set G<n> --share N   # a ceiling of N worker slots holding that goal's items
+$B goal list [--all]   # each open or paused goal with its state, name, counts, purpose, and done test, then the counts of unassigned work
+$B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3] [--doc-item]   # claims the lease, prints D<n>
 $B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md
 $B brief D2 --goal '...' --acceptance '...' [--acceptance ...] --contract '...' --verify '...' --base main [--context ...]   # same brief. Single-quote every field
 $B contract D2                               # prints the contract the last brief of D2 stored
-$B watch                                     # a line for every open dish; renews each live lease
-$B hang D1 --provider <provider> --minutes <n> [--attempt <n>]   # one open run after report-back, once per attempt
-$B model skip <provider/model> --cause rate-limit|failed   # records that seat as skipped. It needs --cause rate-limit or failed.
-$B model clear <provider/model>   # records a passing smoke test on that seat and clears its skip.
-$B thread <dish> --role "panel member" --thread <id> --seat <provider/model>   # records one thread an item used, for a role no other command writes. The other six roles are written by dish --thread, --reviewer-thread, or a report.
-$B dish D2 --state dropped [--stopped <run id>|idle]   # releases the dish's lease, returns its tickets to waiting
-$B dish D2 --state in-progress|in-review|queued|merged [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>] [--reported] [--lease <id>] [--paths <paths>] [--branch <name>]   # --thread writes the open worker row of threads.tsv for the current attempt with an empty seat. It closes the previous open worker row. A later attempt is stored as fix worker. The same thread again writes no new row. A call that also has --reported, or a state change to a state other than in-progress, closes the item's open worker row. A call that names a new thread leaves that new thread's row open.
-$B dish D2 --mode full --reason "<one line>"   # records the item's move to full once. --mode light exits 1
-$B dish D1 --worker-ended "<reason>"   # records that this attempt's worker ended or failed and wrote no report. It takes no other dish flag. It writes one ended log row and changes no dish field.
-$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. It takes its seat from --verifier.
+$B watch                                     # a line for every open dish; renews each live lease. A dish that owes its round decision gets <n> send-backs, decision pending
+$B hang D1 --provider <provider> --minutes <n> [--attempt <n>]   # one open run after report-back, once per attempt. Without a report-back it refuses with brigade: no report-back on this attempt
+$B model skip <provider/model> --cause rate-limit|failed   # records that seat as skipped
+$B model clear <provider/model>   # records a passing smoke test on that seat and clears its skip
+$B thread <dish> --role "panel member" --thread <id> --seat <provider/model>   # records one thread an item used, for a role no other command writes
+$B dish D2 --state dropped [--stopped <run id>|idle]   # releases the dish's lease and returns its tickets to waiting
+$B dish D2 --state in-progress|in-review|queued|merged [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>] [--reported] [--lease <id>] [--paths <paths>] [--branch <name>]   # --thread writes the open worker row of threads.tsv for the current attempt
+$B dish D2 --mode full --reason "<one line>"   # records the item's move to full once
+$B dish D1 --worker-ended "<reason>"   # records that this attempt's worker ended or failed and wrote no report
+$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. Each send-back it counts ends its line with <n> send-backs, decision pending
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
-$B edits verify D2 --from <reviewed sha> --to <head>   # compares <head> with the reviewed commit that has that round's edits applied and the build run. Exits 1 when a compared path differs or the build or check command fails
+$B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 add --dish D2 --round-budget           # the decision D2 owes at three send-backs. prints Q<n>
 $B 86 answer Q1 --answer "..." ; $B 86 list
 $B close [--dry-run | --to-file]             # report of what changed since the last one. --to-file prints only the written file's path
 python3 <skills>/brigade/scripts/brigade.py walk [--repo <project root>]
-L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue. Lease, submit, share, and contest writes pass --owner <restaurant>/@<generation>. cap and mode take none
+L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
 
 Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show. `$B <command> --help` prints every flag.
@@ -240,33 +239,11 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 ## Agent activity
 
-When the user asks what the agents are doing, or asks for activity or status as a picture, show the activity page. That request is a message from the user, so a reply is due at every reporting level. The script builds the page from this store and T3 Code's state database.
-
-```bash
-A() { python3 "<skills>/brigade/scripts/activity.py" --at "<restaurant dir>" "$@"; }
-A                 # one HTML document on stdout, for the last 3 hours
-A --hours 12      # the last 12 hours
-A --text          # plain lines instead of the HTML document
-```
-
-1. Run `A`. Its stdout is the whole document.
-2. Call `html_preview` with that document. When the preview shows a console error or a clipped or overlapping element, send the stdout of `A --text` and name the fault in the reply. Render only a page whose preview passes. Call `html_render` with the document unchanged and the title `Agent activity`, per steps 3 to 4 of [Visual reports](../pstack-runtime/SKILL.md#visual-reports).
-3. When the preview shows `This copy differs from what the tool wrote`, the `html` argument is not the script's output. Run `A` again and call `html_preview` with its stdout.
-4. When `html_preview` or `html_render` is missing, or `html_render` fails, send the stdout of `A --text` as the reply.
-5. On exit status 1 or 3 the script prints one line on stderr and nothing on stdout. Status 3 means it could not use T3 Code's database. Send that line as the reply. Status 1 names a fault in the arguments or the store.
-
-The page names work items by id at every reporting level. Every string of the document and of the text form passes the script's filter, which removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. `A --help` states what it reads as each.
-
-For a view that stays current, run the server once and render its wrapper. Start `A --serve` in the background. It prints its token address and serves this store's page, rebuilt at most every 10 seconds. Render the stdout of `A --live-page` with `html_render`. The wrapper polls the default server address every 30 seconds, keeps the last good view while the server is unreachable, and folds each item under its header. The server stops on a T3 restart, so start it again after one. The token lives in `activity-token` under the store directory, mode 0600, reused across restarts while it stays valid and replaced otherwise. The wrapper holds the token, so never share or commit it. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped.
-
-```bash
-A --serve &                # prints http://127.0.0.1:48731/activity/<token>
-A --live-page              # the wrapper that polls that address
-```
+When the user asks what the agents are doing, or asks for activity or status as a picture, follow [Agent activity](views.md#agent-activity) in views.md.
 
 ## Executive chef's view
 
-`python3 <skills>/brigade/scripts/brigade.py walk` groups every restaurant under its repository. Each repository gets one header with its landing queue's status line, or `no landing contract`. Under it, each restaurant gets its reporting level and counts, with the waiting tickets whose block still holds counted as blocked. A second line names its thread ID and the unreleased leases its dishes hold. Open decisions follow. `walk --repo <root>` prints one repository. A restaurant idle past 24 hours is marked, so a stalled head chef shows. `$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. A `restaurant.json` with no `reporting` field reads as `milestones`. `$B status` prints `mode <m>` when `restaurant.json` records one. `walk` adds `, mode <m>` after the reporting level.
+Before you run `brigade.py walk`, read [Executive chef's view](views.md#executive-chefs-view) in views.md.
 
 ## Close a restaurant
 
