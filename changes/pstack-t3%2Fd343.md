@@ -1,2 +1,4 @@
 - kind polish
 - README opens with the pitch plus a screenshot of the activity page, and install plus policy detail now live in guide.
+- Activity screenshot rebuilds the demo with realistic workers and captures the page with light theme values at 1400 wide, cropped to content.
+- README alt text names the running agents, the item states, and the model families the new image shows.
