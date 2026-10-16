@@ -187,22 +187,20 @@ jobs:
   macos_312:
     name: macOS (3.12)
     runs-on: macos-latest
-    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install pyyaml
-      # This job runs only on push to main, and this step stays non-blocking.
-      - name: Landing and brigade tests
+      # This job runs the whole suite on a pull request and on a push to main, and these steps stay non-blocking.
+      - name: Full test suite
         continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"
           status=0
-          python3 -m unittest discover -s tests/landing -t . >> "$log" 2>&1 || status=1
-          python3 -m unittest tests.brigade.test_watch tests.brigade.test_wake tests.brigade.test_tickets >> "$log" 2>&1 || status=1
+          python3 scripts/run_tests.py >> "$log" 2>&1 || status=1
           cat "$log" || true
           {
             grep -E '^Ran [0-9]+ tests? in ' "$log" || true
@@ -210,3 +208,9 @@ jobs:
             grep -E '^(FAIL|ERROR): ' "$log" || true
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+      - name: Generated skills match the sources
+        continue-on-error: true
+        run: |
+          python3 scripts/build.py
+          git diff --exit-code -- skills docs/skills.md docs/cli
+          test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
