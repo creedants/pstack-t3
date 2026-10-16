@@ -23,7 +23,7 @@ _CHILD = (
 
 class SupportTest(unittest.TestCase):
     def test_a_ctypes_pydll_cannot_segfault_live_owner_cleanup(self):
-        """Pin T766. The helper calls fileno only on known owners, never a ctypes library. Starts a process for a signal."""
+        """Pin T766. The helper calls fileno only on known owners, never a ctypes library. Starts a process for a signal, so a regression fails the test instead of killing the runner."""
         child = subprocess.run([sys.executable, "-c", _CHILD], capture_output=True, text=True)
         self.assertEqual(child.returncode, 0, child.stderr)
         self.assertEqual(child.stdout.strip(), "ok")

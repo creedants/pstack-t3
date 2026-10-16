@@ -179,10 +179,11 @@ def _close_live_owners(numbers):
         return
     owners = []
     for obj in gc.get_objects():
-        # Call fileno only on known descriptor owners. A ctypes library resolves any attribute as a C
-        # symbol, and glibc fileno dies with SIGSEGV. A dead weakref proxy raises ReferenceError from the
+        # Call fileno only on known descriptor owners. A ctypes library resolves fileno as a C
+        # function when the loaded library exports that name, and calling glibc fileno with no FILE
+        # pointer can crash the process with SIGSEGV. A dead weakref proxy raises ReferenceError from the
         # type check or the lookup. An unrelated object can raise a BaseException such as SystemExit.
-        # Both are skipped. KeyboardInterrupt is raised on.
+        # Both are skipped. KeyboardInterrupt propagates.
         try:
             if not isinstance(obj, (io.IOBase, socket.socket)):
                 continue
