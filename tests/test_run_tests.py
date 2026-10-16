@@ -1458,8 +1458,10 @@ class RunTestsTest(unittest.TestCase):
             self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
             macos = job_body(text.splitlines(keepends=True), "macos_312")
             self.assertIsNotNone(macos)
-            self.assertNotIn("if: github.event_name == 'push'", "".join(macos))
+            self.assertNotIn("if:", "".join(macos))
             self.assertIn("python3 scripts/run_tests.py", "".join(macos))
+            self.assertNotIn("--part", "".join(macos))
+            self.assertNotIn("--real-process-share", "".join(macos))
             self.assertIn("Generated skills match the sources", "".join(macos))
             self.assertIn("continue-on-error: true", "".join(macos))
             for index in range(1, 5):
