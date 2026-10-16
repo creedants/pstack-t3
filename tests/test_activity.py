@@ -3924,7 +3924,7 @@ class LedgerTest(OutputCase):
         self.assertEqual((rank("007"), rank("9" * 18)), ((0, 7), (0, int("9" * 18))))
         self.assertEqual((rank("9" * 19), rank(""), rank("٢")), ((1, "9" * 19), (1, ""), (1, "٢")))
 
-    def test_three_attempts_fold_earlier_ledger_lines_and_earlier_rows(self):
+    def test_earlier_attempt_lines_leave_the_current_list_and_no_thread_id_reaches_the_page(self):
         fixture = self.fixture
         fixture.coordinator()
         fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
