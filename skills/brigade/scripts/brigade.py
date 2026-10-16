@@ -46,8 +46,9 @@ def _drop_cached_brigade(*names):
 _prior_brigade = {n: m for n, m in _sys.modules.items() if n == "brigade_lib" or n.startswith("brigade_lib.")}
 _drop_cached_brigade("brigade_lib")
 _pkg = "_brigade_ns_" + _uuid.uuid4().hex
-# The alias keeps the brigade_lib name so each file loads once under that name.
-_alias = _types.ModuleType("brigade_lib")
+# The alias keeps a unique name so seam metadata cannot resolve to a restored prior package.
+# Spend is registered under both names so the file executes once.
+_alias = _types.ModuleType(_pkg)
 _alias.__path__ = [str(_libdir)]
 _sys.modules[_pkg] = _alias
 _sys.modules["brigade_lib"] = _alias
@@ -55,6 +56,8 @@ _bw = _sys.dont_write_bytecode
 _sys.dont_write_bytecode = True
 try:
     from brigade_lib import seam as _seam_bootstrap
+    from brigade_lib import spend as _spend_bootstrap
+    _sys.modules["brigade_lib.spend"] = _spend_bootstrap
     from brigade_lib.compact import effective_provider, parse_context_cap, parse_coordinator_provider, status_lines, sync_meta
     from brigade_lib.briefs import ESCALATED, MEASURING_STATIONS, MODE_RESOLUTIONS, ModeInputs, ModeLines, SEAT_RULE, WAIT_RULE, brief, brief_dish, contract_file, mode_inputs, roles_mode, stored_contract, write_brief
     from brigade_lib.edits import BLANK, BLOB_MODES, Digest, EDITS_REFUSED, EDITS_SECTION, EDIT_FAILS, EDIT_MARKS, EDIT_TITLE, Edit, EditsRefused, FILE_LINE, HEADING, LABELS, NEEDS_COMMANDS, NESTED, NO_COMMAND, PATH_LINES, TreeEntry, UNDERLINE, UNREAD, apply_edits, commit_tree, compared_paths, digests, edit_mark, exit_code, git, head_digest, occurrences, one_edit, parse_edits, path_lines, replay, report_edits, report_parts

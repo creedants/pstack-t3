@@ -1,3 +1,3 @@
 - kind fix
-- `t3/added/brigade/scripts/brigade.py` names its loader alias `brigade_lib`, so each file loads once as `brigade_lib.<name>` and `spend.py` no longer exists as two objects.
-- `tests/brigade/test_loader.py` pins that `seam` is `brigade_lib.seam` and that reporting's `spend` is the module that defines `spend_text`.
+- `t3/added/brigade/scripts/brigade.py` keeps a unique loader alias and registers `spend` under both names, so each file executes once and seam metadata cannot resolve to a restored prior package.
+- `tests/brigade/test_loader.py` pins shared `spend` identity, single execution of all 28 files, and that `seam.set` does not resolve to a restored prior package.
