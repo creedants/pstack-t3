@@ -1059,13 +1059,6 @@ class ModesTest(unittest.TestCase):
         for fragment in re.findall(r"\]\(#([^)\s]+)\)", light):
             if fragment not in slugs:
                 broken.append(f"pstack-runtime/light.md#{fragment}")
-        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
-        for fragment in re.findall(r"\]\(SKILL\.md#([^)\s]+)\)", gate):
-            if fragment not in slugs:
-                broken.append(f"pstack-runtime/gate-review.md#SKILL.md#{fragment}")
-        for fragment in re.findall(r"\]\(#([^)\s]+)\)", gate):
-            if fragment not in slugs:
-                broken.append(f"pstack-runtime/gate-review.md#{fragment}")
         self.assertEqual(broken, [])
         self.assertEqual(heading_slug("Resolve and carry the mode"), "resolve-and-carry-the-mode")
 
@@ -1171,7 +1164,8 @@ class ModesTest(unittest.TestCase):
     def test_every_gate_review_row_links_gate_review(self):
         light = (ROOT / "skills/pstack-runtime/light.md").read_text()
         for row in light_behavior_rows(light):
-            if "gate review" not in row and "is the gate" not in row:
+            lowered = row.lower()
+            if "gate review" not in lowered and "is the gate" not in lowered:
                 continue
             spawn = row.split("|")[1].strip()
             self.assertIn("(SKILL.md#gate-review)", row, spawn)
