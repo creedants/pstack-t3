@@ -1396,18 +1396,8 @@ def lines_of(rows, dish, privacy):
         for _, row in sorted(chosen, key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
 
 
-def format_attempt(attempts, ranks, counts):
-    """One summary line for folded earlier attempts. Attempts holds clipped fielded cells in rank order. Ranks holds the rank of each. Counts holds RoleCounts in display order."""
-    if len(attempts) == 1:
-        head = f"attempt {attempts[0]}"
-    elif ranks and all(kind == 0 for kind, _ in ranks):
-        numbers = sorted(number for _, number in ranks)
-        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
-            head = f"attempts {numbers[0]}-{numbers[-1]}"
-        else:
-            head = f"attempts {', '.join(attempts)}"
-    else:
-        head = f"attempts {', '.join(attempts)}"
+def attempt_tail(counts):
+    """The roles and the state of one fold summary. Counts holds RoleCounts in display order."""
     roles = ", ".join(count(entry.n, entry.role) for entry in counts)
     opened = sum(entry.opened for entry in counts)
     total = sum(entry.n for entry in counts)
@@ -1418,17 +1408,67 @@ def format_attempt(attempts, ranks, counts):
         state = "all open"
     else:
         state = f"{opened} open plus {ended} ended"
-    return f"{head}: {roles}, {state}" if roles else f"{head}: {state}"
+    return f"{roles}, {state}" if roles else state
 
 
-def partition_attempts(dish_rows, rows, is_finished, privacy):
-    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set."""
-    if is_finished or not dish_rows:
+def format_attempt(attempts, ranks, counts):
+    """One summary line for folded earlier attempts. Attempts holds clipped fielded cells in rank order. Ranks holds the rank of each. Counts holds RoleCounts in display order. With no attempts the summary is counts plus state, for a fold of lanes with no earlier ledger row."""
+    tail = attempt_tail(counts)
+    if not attempts:
+        return tail
+    if len(attempts) == 1:
+        head = f"attempt {attempts[0]}"
+    elif ranks and all(kind == 0 for kind, _ in ranks):
+        numbers = sorted(number for _, number in ranks)
+        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+            head = f"attempts {numbers[0]}-{numbers[-1]}"
+        else:
+            head = f"attempts {', '.join(attempts)}"
+    else:
+        head = f"attempts {', '.join(attempts)}"
+    return f"{head}: {tail}"
+
+
+def brief_attempt(ranks, counts):
+    """One bounded summary line for folded earlier attempts. Ranks holds the rank of each earlier ledger row. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when attempts are sparse. With no ranks the summary is counts plus state."""
+    tail = attempt_tail(counts)
+    if not ranks:
+        return tail
+    head = "1 attempt" if len(ranks) == 1 else f"{len(ranks)} attempts"
+    return f"{head}: {tail}"
+
+
+def partition_attempts(dish_rows, rows, is_finished, privacy, threads=()):
+    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Threads holds the agent thread of each row in the same order, and is empty when there is none to match. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set.
+
+    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread once under its ledger role, each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
+    """
+    if is_finished:
         current = tuple(
             LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
             for _, row in sorted(enumerate(dish_rows), key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
         marked = tuple(replace(row, earlier=False) for row in rows)
         return current, AttemptFold(), marked
+    matched = tuple(threads) if len(threads) == len(rows) else ()
+    family, inside = set(), False
+    for at, row in enumerate(rows):
+        if row.depth == 0:
+            inside = row.label == "earlier worker"
+        if inside:
+            family.add(at)
+    shown = set()
+    for at, row in enumerate(rows):
+        if row.status in LIVE:
+            depth = row.depth
+            shown.add(at)
+            for before in range(at - 1, -1, -1):
+                if rows[before].depth < depth:
+                    depth = rows[before].depth
+                    shown.add(before)
+                    if not depth:
+                        break
+    earlier_at = family - shown
+    kept = {matched[at] for at in family & shown} if matched else set()
     ordinal_of = {}
     for row in dish_rows:
         cell = row["attempt"]
@@ -1442,53 +1482,59 @@ def partition_attempts(dish_rows, rows, is_finished, privacy):
 
     ranked = [(index, row, rank_of(row["attempt"])) for index, row in enumerate(dish_rows)]
     distinct = sorted({rank for _, _, rank in ranked})
-    earlier_at = set()
-    inside = False
-    for at, row in enumerate(rows):
-        if row.depth == 0:
-            inside = row.label == "earlier worker"
-            if inside:
-                earlier_at.add(at)
-        elif inside:
-            earlier_at.add(at)
-    if len(distinct) == 1 and not earlier_at:
-        current = tuple(
-            LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
-            for _, row, _ in sorted(ranked, key=lambda triple: (triple[2], triple[0])))
-        marked = tuple(replace(row, earlier=False) for row in rows)
-        return current, AttemptFold(), marked
-    top = max(distinct)
+    top = max(distinct, default=None)
     current_raw = sorted((triple for triple in ranked if triple[2] == top), key=lambda triple: (triple[2], triple[0]))
     earlier_raw = sorted((triple for triple in ranked if triple[2] != top), key=lambda triple: (triple[2], triple[0]))
-    current = tuple(LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row)) for _, row, _ in current_raw)
-    earlier_lines = tuple(LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row)) for _, row, _ in earlier_raw)
-    basis = earlier_raw if earlier_raw else ranked
+    stayed = {index for index, row, _ in earlier_raw if row["thread"] and row["thread"] in kept}
+    current = tuple(
+        LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
+        for _, row, _ in sorted((*current_raw, *(triple for triple in earlier_raw if triple[0] in stayed)), key=lambda triple: (triple[2], triple[0])))
+    folded = [triple for triple in earlier_raw if triple[0] not in stayed]
+    earlier_lines = tuple(
+        LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row)) for _, row, _ in folded)
+    if not folded and not earlier_at:
+        marked = tuple(replace(row, earlier=False) for row in rows)
+        return current, AttemptFold(), marked
+    lane_threads = {matched[at] for at in earlier_at} if matched else set()
+    ledger_threads = {row["thread"] for _, row, _ in folded if row["thread"]}
+    grouped, pending = {}, {}
+    for (_, row, _), line in zip(folded, earlier_lines):
+        thread = row["thread"]
+        if thread and thread in lane_threads:
+            if thread in pending:
+                pending[thread][1] = pending[thread][1] or line.open
+            else:
+                pending[thread] = [line.role, line.open]
+            continue
+        grouped.setdefault(line.role, [0, 0])
+        grouped[line.role][0] += 1
+        grouped[line.role][1] += line.open
+    for role, opened in pending.values():
+        grouped.setdefault(role, [0, 0])
+        grouped[role][0] += 1
+        grouped[role][1] += opened
+    for at in sorted(earlier_at):
+        thread = matched[at] if matched else ""
+        if thread and thread in ledger_threads:
+            continue
+        grouped.setdefault(rows[at].label, [0, 0])
+        grouped[rows[at].label][0] += 1
+        grouped[rows[at].label][1] += rows[at].status in LIVE
     seen = {}
-    for _, row, rank in basis:
+    for _, row, rank in folded:
         if rank not in seen:
             seen[rank] = clip(privacy.field(row["attempt"]), ID_BYTES)
     ordered = sorted(seen)
     attempts = tuple(seen[rank] for rank in ordered)
     ranks = tuple(ordered)
-    grouped = {}
-    for line in earlier_lines:
-        grouped.setdefault(line.role, []).append(line)
     counts = []
     for role in ROLES:
         if role in grouped:
-            lines = grouped.pop(role)
-            counts.append(RoleCount(role, len(lines), sum(1 for line in lines if line.open)))
-    for role in sorted(grouped):
-        lines = grouped[role]
-        counts.append(RoleCount(role, len(lines), sum(1 for line in lines if line.open)))
-    ledger_roles = {line.role for line in earlier_lines}
-    lane = [rows[at] for at in sorted(earlier_at) if rows[at].depth > 0 and rows[at].label not in ledger_roles]
-    by_label = {}
-    for row in lane:
-        by_label.setdefault(row.label, []).append(row)
-    for label in sorted(by_label):
-        members = by_label[label]
-        counts.append(RoleCount(label, len(members), sum(1 for row in members if row.status in LIVE)))
+            n, opened = grouped.pop(role)
+            counts.append(RoleCount(role, n, opened))
+    for label in sorted(grouped):
+        n, opened = grouped[label]
+        counts.append(RoleCount(label, n, opened))
     summary = format_attempt(attempts, ranks, tuple(counts))
     fold = AttemptFold(summary, earlier_lines, attempts, ranks, tuple(counts))
     marked = tuple(replace(row, earlier=(at in earlier_at)) for at, row in enumerate(rows))
@@ -1539,7 +1585,8 @@ def build_page(store, t3, window, privacy):
     members = {unit: with_parents(agents) for unit, agents in members.items()}
     groups, by_request, folded_by_unit = [], 0, {}
     for unit, agents in sorted(((unit, agents) for unit, agents in members.items() if agents), key=order):
-        rows = tuple(row(agent, depth, label_of(agent, store, unit, privacy)) for agent, depth in tree(agents))
+        ordered = tree(agents)
+        rows = tuple(row(agent, depth, label_of(agent, store, unit, privacy)) for agent, depth in ordered)
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
@@ -1547,7 +1594,7 @@ def build_page(store, t3, window, privacy):
             raw = [entry for entry in store.threads if entry["dish"] == unit]
             in_flight = units[unit].state not in FINISHED_STATES
             live = any(entry.status in LIVE for entry in rows)
-            current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy)
+            current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy, tuple(agent.thread for agent, _ in ordered))
             folded_by_unit[unit] = (current, fold)
             item = item_of(units[unit], privacy, keys[unit], goal_ids, current, fold)
             groups.append(Group(item, marked, len(active) - subagents, subagents))
