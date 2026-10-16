@@ -1815,7 +1815,8 @@ def _add_worktree(repo, path, branch):
 class WorktreeAuditTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        # Git records the physical path, which the audit prints, so resolve the temporary root.
+        self.root = Path(self.tmp.name).resolve()
         self.repo = self.root / "repo"
         self.repo.mkdir()
         _init_repo(self.repo)
