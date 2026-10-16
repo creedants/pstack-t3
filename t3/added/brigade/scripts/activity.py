@@ -1441,7 +1441,7 @@ def brief_attempt(ranks, counts):
 def partition_attempts(dish_rows, rows, is_finished, privacy, threads=()):
     """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Threads holds the agent thread of each row in the same order, and is empty when there is none to match. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set.
 
-    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread once under its ledger role, each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
+    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread that an earlier-worker lane also holds once under its ledger role, and each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
     """
     if is_finished:
         current = tuple(
@@ -2113,7 +2113,7 @@ def within_budget(page, budget, clean, render, brief=False):
 
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. When that document is over budget, the cut keeps the longest prefix of its attempt lines whose document fits, and on the last fold it keeps no attempt line only when no prefix fits even with the summaries bounded to their counts.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. On the last fold, an over-budget cut keeps the longest prefix of its attempt lines whose document fits. Before the last fold, an over-budget cut is discarded and the next fold runs, and on the last fold it keeps no attempt line only when no prefix fits even with the summaries bounded to their counts.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
