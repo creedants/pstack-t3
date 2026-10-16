@@ -266,7 +266,7 @@ class Integration:
         spec = f"{entry['base']}..{seam.pin_ref(entry['sha'])}"
         identity = seam.committer(self.path)
         result = self.git(*identity, "-c", "rerere.enabled=false", "cherry-pick", spec, check=False)
-        # resolved tracks generated resolution across pick and skip. A builder rebuilds every entry that changes sources.
+        # resolved tracks generated resolution across pick and skip.
         result, resolved = self._resolve_generated(before, identity, result)
         # git 2.43 has no cherry-pick --empty=drop. Git added it in 2.45. Drop a commit that
         # became empty, and stop on a commit that started empty. That matches --empty=drop.
@@ -304,6 +304,7 @@ class Integration:
             return "already-in-trunk"
         generated = [path for path in changed if seam.is_generated(path)]
         has_builder = (Path(self.path) / "scripts/build.py").is_file()
+        # Rebuild runs for every entry that changes sources when scripts/build.py exists.
         if generated or resolved or has_builder:
             failed = self._rebuild(before)
             if failed:

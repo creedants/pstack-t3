@@ -180,7 +180,7 @@ class GeneratedTest(LandingTest):
         live = sh("git", "show", "main:src/one.txt", cwd=self.base / "origin.git")
         self.assertEqual(live, "base1")
 
-    def test_nested_generated_payload_does_not_land(self):
+    def test_nested_generated_payload_is_dropped_on_land(self):
         self._setup_generated()
         self.init()
         path = self.base / "w1"
@@ -371,6 +371,15 @@ class GeneratedTest(LandingTest):
         (self.work / 'skills/quote"name.txt').write_text("generated\n")
         gen_only = self.commit("gen only quoted")
         self.assertEqual(land.fingerprint(self.work, base, gen_only), "")
+
+    def test_leading_space_source_filename_is_fingerprinted(self):
+        self._setup_generated()
+        base = sh("git", "rev-parse", "HEAD", cwd=self.work)
+        spaced = self.work / " skills"
+        spaced.mkdir(exist_ok=True)
+        (spaced / "x.txt").write_text("source\n")
+        src_only = self.commit("src leading space")
+        self.assertNotEqual(land.fingerprint(self.work, base, src_only), "")
 
     def test_spaced_generated_rebase_lands_disjoint_sources(self):
         self._setup_generated()

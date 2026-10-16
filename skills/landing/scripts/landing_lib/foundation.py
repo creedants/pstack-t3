@@ -197,7 +197,7 @@ def fingerprint(repo, base, head):
     """Hash of the source change. Sources come from NUL-delimited names. Their diff uses literal pathspecs."""
     raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo).stdout
     names = [path for path in raw.split("\0") if path]
-    sources = [path for path in names if not is_generated(canonical(path, "changed"))]
+    sources = [path for path in names if not is_generated(path)]
     if not sources:
         return ""
     specs = [f":(literal){path}" for path in sources]
