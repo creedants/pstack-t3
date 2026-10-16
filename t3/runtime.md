@@ -157,6 +157,8 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 
 ### Built-in defaults
 
+Before you resolve a role's seats or weigh agreement between seats, read [roles.md](roles.md).
+
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
 `roles.py show` owns this mapping. A skill must not rebuild it.
@@ -228,6 +230,8 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
   ```
 - A read-only leaf, such as a `how` explainer or a reviewer, gets no `Mode:` line. It resolves no seat.
 - A light session with no brief runs the same command with `--playbook <name> --attempt first` for its own playbook. Its `Waived by mode:` line names the steps this thread skips.
+
+Before a light `roles.py show` or `roles.py backup` call, read [roles.md](roles.md#budget).
 
 An explicit budget wins. No mode sets `fastMode` to `true`. A Grok seat that declares it gets `false`, per [Excluded seats](#excluded-seats). Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat of a capped role gets the cap.
 
