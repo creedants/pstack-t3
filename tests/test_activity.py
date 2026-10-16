@@ -3702,6 +3702,14 @@ class LedgerTest(OutputCase):
             self.assertNotIn(b".ldg", document)
             self.assertNotIn(b"D.L", document)
 
+    def test_timeline_header_wraps_its_attempt_lines_instead_of_squeezing_the_id_and_title_to_no_width(self):
+        """The attempt block's 100% basis fills the header's line, so the header needs a wrap to give the id, title, and chip a line of their own."""
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": "opaque=ledger-wrap", "start": stamp, "end": ""}])
+        style = re.search(r"<style>(.*?)</style>", self.document(), re.S).group(1)
+        self.assertEqual([(name, value) for selector, name, value in declarations(style) if selector == ".tl>.grp"], [("flex-wrap", "wrap")])
+
     def test_opaque_ledger_private_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
         token = "opaque=ledger-private-token"
         fixture = one_running(self.fixture).write()
