@@ -55,7 +55,7 @@ ITEM_DECISION = (
     "with at least one other option that closes it"
 )
 # The brigade reporting docs join in BRIGADE_DOCS order. Later items append to this tuple.
-BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md", "opening.md")
+BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md", "opening.md", "recovery.md")
 
 
 def brigade_docs():
@@ -2066,9 +2066,8 @@ class LivenessIdleDocTest(unittest.TestCase):
 
 class UsageLimitDocTest(unittest.TestCase):
     def test_step_7_relaunches_a_usage_limit_before_the_light_mode_question(self):
-        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
-        service = text.split("## Run a service", 1)[1].split("\n## ", 1)[0]
-        bullet = next(line for line in service.splitlines() if line.startswith("   - Usage limit:"))
+        text = (ROOT / "t3/added/brigade/recovery.md").read_text()
+        bullet = next(line for line in text.splitlines() if line.startswith("   - Usage limit:"))
         self.assertIn("../pstack-runtime/SKILL.md#failure-handling", bullet)
         self.assertIn("roles.py backup", bullet)
         self.assertIn("The dish keeps its lease", bullet)
@@ -2093,9 +2092,8 @@ class UsageLimitDocTest(unittest.TestCase):
         self.assertNotIn("relaunch per this bullet on the first service after it", bullet)
 
     def test_step_7_runs_a_review_backups_panel(self):
-        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
-        service = text.split("## Run a service", 1)[1].split("\n## ", 1)[0]
-        bullet = next(line for line in service.splitlines() if line.startswith("   - Usage limit:"))
+        text = (ROOT / "t3/added/brigade/recovery.md").read_text()
+        bullet = next(line for line in text.splitlines() if line.startswith("   - Usage limit:"))
         relaunch = "When it prints `relaunch`, spawn a fresh verifier per step 6 on the printed seat."
         panel = (
             "When it prints `panel`, spawn one fresh verifier per step 6 on each printed seat, "
@@ -2155,12 +2153,15 @@ class RoundBudgetDocTest(unittest.TestCase):
         ))
 
     def test_step_7_stops_fix_rounds_at_a_pending_decision(self):
-        pending = [line for line in self.service
+        recovery = (ROOT / "t3/added/brigade/recovery.md").read_text()
+        pending = [line for line in recovery.splitlines()
                    if line.startswith("   - When `pass record` or `watch` prints `<n> send-backs, decision pending`,")]
         self.assertEqual(len(pending), 1)
         bullet = pending[0]
+        stub = next(line for line in self.service
+                    if line.startswith("   - When `pass record` or `watch` prints `<n> send-backs, decision pending`,"))
         send_back = next(line for line in self.service if line.startswith("   - `send-back`:"))
-        self.assertLess(self.service.index(bullet), self.service.index(send_back))
+        self.assertLess(self.service.index(stub), self.service.index(send_back))
         self.assertIn("`$B 86 add --dish <id> --round-budget`", bullet)
         self.assertIn('`$B 86 answer Q<n> --answer "<option>"`', bullet)
         self.assertIn("On `known limits`", bullet)
