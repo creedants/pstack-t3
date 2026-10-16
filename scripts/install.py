@@ -836,6 +836,20 @@ def discard(path):
 HOLDER = ".pstack-t3-"
 SCRAP = ".pstack-t3-scrap-"
 SCRAP_LEFT = "an unfinished copy or an already restored backup; delete it by hand"
+STRANGER = ".pstack-t3-stranger-"
+STRANGER_LEFT = "a restore found it where the entry it held should have been; it is not a backup or a link this checkout made"
+TWIN = "twin"
+MOVED = "moved"
+
+
+@dataclass(frozen=True)
+class Published:
+    """Proof that `path` names the held entry, or this call's copy of it, after the last move onto `path`.
+
+    Only `arrived` makes one, and `restore_backup` makes one after `link_held` links the held descriptor itself.
+    `drop_backup` takes one, so no code path removes a backup's name or its row without it.
+    """
+    path: str
 
 
 def listing(directory):
@@ -878,7 +892,8 @@ class Holder:
     """A private directory beside `home`. `aside` is the one name an entry takes inside it.
 
     An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. Nothing in a SCRAP directory was:
-    it holds a copy being built, or a backup whose copy is already in place.
+    it holds a copy being built, or a backup whose copy is already in place. Nothing in a STRANGER directory was either:
+    it holds an entry this installer moved but could not prove. The sweep never restores or deletes it.
     As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
     leaves while entries are inside becomes a `Stranded` that names them.
     """
@@ -886,7 +901,8 @@ class Holder:
     def __init__(self, home, prefix=HOLDER):
         parent, name = os.path.split(home)
         # A directory this call just created holds nothing yet, so a move into it cannot land on an existing entry.
-        # mkdtemp ends the name with characters from [a-z0-9_], so no HOLDER name starts with SCRAP.
+        # mkdtemp ends the name with characters from [a-z0-9_], so no HOLDER name starts with SCRAP or STRANGER
+        # and no SCRAP name starts with STRANGER.
         self.directory = made_directory(parent, prefix)
         self.home = home
         self.aside = os.path.join(self.directory, name)
@@ -906,16 +922,26 @@ class Holder:
         return False
 
 
-def place_copy(source, path):
-    """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
-    with Holder(path, SCRAP) as holder:
+def place_copy(source, path, fd):
+    """Copy the entry at `source` beside `path`, then place the copy. Return Published, or why nothing was placed.
+
+    `source` is proven before the call and again once the copy is built, so the copy is of the entry `fd` holds.
+    The copy is held open from the moment it is built, so `arrived` proves the placed copy as well.
+    """
+    with Holder(path, SCRAP) as holder, ExitStack() as holds:
         copy = holder.aside
         try:
             if os.path.isdir(source) and not os.path.islink(source):
                 shutil.copytree(source, copy, symlinks=True)
             else:
                 shutil.copy2(source, copy, follow_symlinks=False)
-            return place(copy, path)
+            if not same_entry(source, fd):
+                return CHANGED
+            copied = hold(copy, holds)
+            if copied.fd is None:
+                return f"the copy could not be held open to prove it is the entry uninstall read ({copied.error})"
+            code = place(copy, path)
+            return arrived(path, copied.fd) if code == 0 else refusal(path, code)
         finally:
             # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
             if os.path.lexists(copy):
@@ -945,10 +971,38 @@ def same_entry(path, fd):
     return identity(os.lstat(path))[:2] == identity(os.fstat(fd))[:2]
 
 
+def park(entry):
+    """Move the entry at `entry` into a new STRANGER directory beside it. Return its new path, or None when it stayed.
+
+    It moves by `place`, so it replaces nothing, and it stays on one filesystem, so it never needs a copy.
+    An entry inside a holder parks in its grandparent, so the STRANGER directory stays beside the backup.
+    """
+    parent = os.path.dirname(entry)
+    if os.path.basename(parent).startswith(HOLDER):
+        beside = os.path.join(os.path.dirname(parent), os.path.basename(entry))
+    else:
+        beside = entry
+    with Holder(beside, STRANGER) as stranger:
+        return stranger.aside if place(entry, stranger.aside) == 0 else None
+
+
+def arrived(path, fd):
+    """Return Published when `path` names the entry `fd` holds, after a move by name put an entry there.
+
+    Any other entry there came from a holder another process changed after the proof, or took `path` since.
+    It is parked beside `path`, and the reason names where.
+    """
+    if same_entry(path, fd):
+        return Published(path)
+    parked = park(path)
+    where = f"is kept at {parked}" if parked else f"is still at {path}"
+    return f"{CHANGED}; the entry that reached {path} in its place {where}"
+
+
 def link_held(fd, path):
     """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
 
-    It links through `/proc/self/fd`, and it answers `ENOSYS` where the platform is not Linux. Whenever it returns nonzero other than `EEXIST` and the backup is still there, `restore_backup` tries to give the backup a private name in `restore_aside`. The descriptor keeps the inode in use, so `same_entry` checks the entry at that name just before `place` moves it. A same-user process that swaps the name between the check and the move is not caught. A file that can be hard linked keeps its own backup name until the entry is placed. A directory, or a file that cannot be hard linked, is renamed to the private name when the no-replace rename works. Otherwise it stays where it is. If the move to the path fails, it goes back to its old name when that name is still free.
+    It links through `/proc/self/fd`, and it answers `ENOSYS` where the platform is not Linux. Whenever it returns nonzero other than `EEXIST` and the backup is still there, `restore_backup` tries to give the backup a private name in `restore_aside`. Routes that move by name prove `path` with `arrived` after the move. A file that can be hard linked keeps its own backup name until the entry is placed. A directory, or a file that cannot be hard linked, is renamed to the private name when the no-replace rename works. Otherwise it stays where it is. If the move to the path fails, it goes back to its old name when that name is still free.
     """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS
@@ -962,8 +1016,13 @@ def link_held(fd, path):
     return 0
 
 
-def drop_backup(backup, aside, path, fd):
-    """Delete the backup that is now at `path`, only if `backup` still names the entry `fd` holds. Any other entry stays and is reported."""
+def drop_backup(backup, aside, published, fd):
+    """Delete the backup's own name now that `published` proves the entry is at its path.
+
+    It takes `published` where it took `path`, so nothing removes a backup without that proof.
+    Any other entry stays and is reported.
+    """
+    path = published.path
     try:
         # The rename takes whatever the path names now into a directory only this call uses, so the check and the delete see one entry.
         os.rename(backup, aside)
@@ -979,31 +1038,70 @@ def drop_backup(backup, aside, path, fd):
         print(f"kept {aside}: it took the place of the backup uninstall restored to {path} and {reason}")
 
 
-def place_proven(aside, path):
-    """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return why it stayed."""
+def place_proven(aside, path, fd):
+    """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem.
+
+    Return Published, with nothing of the held entry left at `aside`, or why it stayed. `aside` is unchanged when it stayed.
+    """
     try:
         code = place(aside, path)
+        if code == 0:
+            return arrived(path, fd)
         if code != errno.EXDEV:
             return refusal(path, code)
         # The backup is on another filesystem. A copy beside the path takes the same put-back, and the proven entry goes once the copy is in place.
-        code = place_copy(aside, path)
+        placed = place_copy(aside, path, fd)
     except OSError as error:
         # A copy that failed left nothing at the path, so the entry goes back like one that was refused.
         return str(error)
-    if code == 0:
-        retire(aside)
-    return refusal(path, code)
+    if isinstance(placed, Published):
+        retire(aside, fd)
+    return placed
 
 
-def retire(aside):
-    """Delete the entry at `aside`, whose full copy is now in place.
+def retire(aside, fd):
+    """Delete the entry at `aside`, whose full copy is now in place, only while it is the entry `fd` holds.
 
-    It moves into a SCRAP directory beside its holder first, so what a stopped removal leaves is never taken for a backup.
+    It moves into a SCRAP directory first, as today, then proves it there. Anything else is parked, never deleted.
     """
     holder, name = os.path.split(aside)
     with Holder(os.path.join(os.path.dirname(holder), name), SCRAP) as scrap:
         os.rename(aside, scrap.aside)
-        discard(scrap.aside)
+        if same_entry(scrap.aside, fd):
+            discard(scrap.aside)
+        else:
+            parked = park(scrap.aside)
+            print(f"kept {parked or scrap.aside}: {STRANGER_LEFT}")
+
+
+def give_back(taken, backup, aside, reason):
+    """Return what this call took from `backup` before the proof failed. Return `reason` plus anything that stuck."""
+    if taken == TWIN:
+        if one_entry(aside, backup):
+            with suppress(OSError):
+                os.unlink(aside)
+            return reason
+        parked = park(aside)
+        where = f"is kept at {parked}" if parked else f"is still at {aside}"
+        return f"{reason}; an entry that took {aside} during the restore {where}"
+    stuck = put_back(aside, backup)
+    return reason if stuck is None else f"{reason} and {stuck}; it is kept at {aside}"
+
+
+def keep(taken, backup, aside, fd, reason):
+    """After the proof passed and the placement did not, leave the backup as it was and park what is not it."""
+    if not os.path.lexists(aside):
+        return reason
+    if same_entry(aside, fd):
+        if taken == TWIN:
+            with suppress(OSError):
+                os.unlink(aside)
+            return reason
+        stuck = put_back(aside, backup)
+        return reason if stuck is None else f"{reason} and {stuck}; it is kept at {aside}"
+    parked = park(aside)
+    where = f"is kept at {parked}" if parked else f"is still at {aside}"
+    return f"{reason}; an entry that took {aside} during the restore {where}"
 
 
 def restore_aside(backup, aside, path, fd):
@@ -1011,25 +1109,22 @@ def restore_aside(backup, aside, path, fd):
     try:
         # A second name leaves the backup where it is until the entry is proven.
         os.link(backup, aside, follow_symlinks=False)
-        named = True
+        taken = TWIN
     except (OSError, NotImplementedError):
         # A directory cannot be hard linked. The no-replace rename that moves it here is the one that can put it back.
         code = rename_noreplace(backup, aside)
         if code != 0:
             return CHANGED if code == errno.ENOENT else refusal(path, code)
-        named = False
-    reason = place_proven(aside, path) if same_entry(aside, fd) else CHANGED
-    if named:
-        # Only the second name is left here. The backup still has its own.
-        if os.path.lexists(aside):
-            os.unlink(aside)
-        if reason is None:
-            drop_backup(backup, aside, path, fd)
-        return reason
-    if reason is None:
+        taken = MOVED
+    if not same_entry(aside, fd):
+        # What the backup's path named when this call took it. It goes back where it came from.
+        return give_back(taken, backup, aside, CHANGED)
+    placed = place_proven(aside, path, fd)
+    if isinstance(placed, Published):
+        if taken == TWIN:
+            drop_backup(backup, aside, placed, fd)
         return None
-    stuck = put_back(aside, backup)
-    return reason if stuck is None else f"{reason} and {stuck}; it is kept at {aside}"
+    return keep(taken, backup, aside, fd, placed)
 
 
 def restore_backup(backup, path, held):
@@ -1056,7 +1151,7 @@ def restore_backup(backup, path, held):
         return None if code == 0 else CHANGED
     with holder:
         if code == 0:
-            drop_backup(backup, holder.aside, path, held.fd)
+            drop_backup(backup, holder.aside, Published(path), held.fd)
             return None
         return restore_aside(backup, holder.aside, path, held.fd)
 
@@ -1157,7 +1252,9 @@ def survey(view, scope, user, state, root, selected):
                 found.append(Stray("empty", directory))
             for entry in entries:
                 aside, home = os.path.join(directory, entry), os.path.join(parent, entry)
-                if name.startswith(SCRAP):
+                if name.startswith(STRANGER):
+                    found.append(Stray("left", aside, home, why=STRANGER_LEFT))
+                elif name.startswith(SCRAP):
                     found.append(Stray("left", aside, home, why=SCRAP_LEFT))
                 else:
                     found.append(judge(view, root, side, aside, home))

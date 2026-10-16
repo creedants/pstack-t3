@@ -1088,6 +1088,34 @@ def darwin_renamex():
     )
 
 
+def holder_swap(saved, foreign="file"):
+    """Hook code that swaps a holder entry for a foreign one after its proof, as a same-user race would.
+
+    On the first True proof for a path under a `.pstack-t3-` directory, it renames that path to `saved`
+    in a separate process and puts a foreign `foreign` entry there. `foreign` is "file" or "directory".
+    """
+    file_actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); Path(sys.argv[1]).write_bytes(b'foreign\\x00\\xff')"
+    dir_actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); os.mkdir(sys.argv[1]); Path(sys.argv[1], 'precious').write_bytes(b'foreign directory\\x00')"
+    return (
+        "import subprocess\n"
+        f"saved = {str(saved)!r}\n"
+        f"foreign_kind = {foreign!r}\n"
+        f"file_actor = {file_actor!r}\n"
+        f"dir_actor = {dir_actor!r}\n"
+        "swapped = False\n"
+        "real_proof = module.same_entry\n"
+        "def proof(path, fd):\n"
+        "    global swapped\n"
+        "    result = real_proof(path, fd)\n"
+        "    if result and not swapped and '.pstack-t3-' in str(path):\n"
+        "        swapped = True\n"
+        "        actor = dir_actor if foreign_kind == 'directory' else file_actor\n"
+        "        subprocess.run([sys.executable, '-c', actor, str(path), saved], check=True)\n"
+        "    return result\n"
+        "module.same_entry = proof\n"
+    )
+
+
 def unlock_failure(state, count):
     """Hook code that fails the unlock of the state lock, then writes to `count` how many descriptors the run still has open on `state`."""
     return (
@@ -3029,6 +3057,69 @@ class OwnershipTest(unittest.TestCase):
             raced = self.backup_race_uninstall(a, swarm, rows[0]["backup"], event, crossing=True, foreign="directory")
             # The directory was already out of its path when the entry arrived, so only the proven directory is discarded.
             self.assert_swap_survived(raced, a, swarm, rows, "directory", "directory", saved=False, noted=False)
+
+    def test_an_entry_swapped_into_a_holder_after_its_proof_is_parked_and_never_published(self):
+        """A swap between the holder proof and the placement parks the foreign entry and keeps the backup."""
+        for kind in ("file", "link", "directory"):
+            for rename in (None, "darwin"):
+                with self.subTest(kind=kind, rename=rename):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    backup = Path(rows[0]["backup"])
+                    saved = self.home / "saved"
+                    foreign = "directory" if kind == "directory" else "file"
+                    if rename is None:
+                        prefix = NO_PROC if kind in ("file", "link") else ""
+                    else:
+                        prefix = darwin_renamex() + "sys.platform = 'darwin'\n"
+                    raced = uninstall_hooked(self.home, a, prefix + holder_swap(saved, foreign))
+                    strangers = list(swarm.parent.glob(".pstack-t3-stranger-*"))
+                    self.assertEqual(len(strangers), 1, raced.stdout + raced.stderr)
+                    parked = strangers[0] / "swarm"
+                    reason = f"the backup is no longer the entry uninstall read; the entry that reached {swarm} in its place is kept at {parked}"
+                    self.skipped(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
+                    self.assertFalse(os.path.lexists(swarm))
+                    self.assert_foreign(parked, foreign)
+                    self.assert_displaced(saved, kind)
+                    self.assertEqual(read_legacy(self.home)["backups"], rows)
+                    if kind in ("file", "link"):
+                        self.assert_displaced(backup, kind)
+                    else:
+                        self.assertFalse(os.path.lexists(backup))
+                    again = run(self.home, a, "--harness", "grok", "uninstall")
+                    self.assertIn(f"left {parked}: a restore found it where the entry it held should have been", again.stdout)
+                    self.assert_foreign(parked, foreign)
+                    self.assert_displaced(saved, kind)
+
+    def test_an_entry_swapped_into_a_holder_before_a_copy_across_filesystems_is_never_copied(self):
+        """A swap before a cross-filesystem copy discards the copy and parks the foreign entry beside the backup."""
+        for kind, foreign in (("file", "file"), ("directory", "directory")):
+            with self.subTest(kind=kind):
+                self.use_fresh()
+                a, swarm, rows = self.displaced_by(kind)
+                backup = Path(rows[0]["backup"])
+                saved = self.home / "saved"
+                hook = cross_device(state_dir(self.home) / "backups", swarm) + holder_swap(saved, foreign)
+                raced = uninstall_hooked(self.home, a, hook)
+                self.assertGreater(crossings_by_name(self.home), 0, raced.stdout + raced.stderr)
+                self.assertEqual(raced.returncode, 3, raced.stdout + raced.stderr)
+                strangers = list(backup.parent.glob(".pstack-t3-stranger-*"))
+                self.assertEqual(len(strangers), 1, raced.stdout + raced.stderr)
+                parked = strangers[0] / "swarm"
+                lines = raced.stdout.splitlines()
+                self.assertIn("removed 3 links, restored 0 entries", lines)
+                match = [line for line in lines if line.startswith(f"skipped restore {backup}: the backup is no longer the entry uninstall read")]
+                self.assertEqual(len(match), 1, raced.stdout)
+                self.assertIn(str(parked), match[0])
+                self.assertFalse(os.path.lexists(swarm))
+                self.assert_no_copy_left(swarm)
+                self.assert_foreign(parked, foreign)
+                self.assert_displaced(saved, kind)
+                self.assertEqual(read_legacy(self.home)["backups"], rows)
+                if kind == "file":
+                    self.assert_displaced(backup, kind)
+                else:
+                    self.assertFalse(os.path.lexists(backup))
 
     def test_an_entry_that_takes_a_withdrawn_backups_path_is_never_deleted(self):
         a, b = self.base()

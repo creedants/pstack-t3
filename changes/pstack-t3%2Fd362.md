@@ -1,0 +1,6 @@
+- kind fix
+- `place` treats a source that is gone after its hard link worked as moved, so a restore whose backup directory vanishes after the entry reached its path reports it restored instead of failing with ENOENT
+- every restore that moves an entry by name proves `path` names the held entry after the move, parks any other entry in a `.pstack-t3-stranger-` directory beside it, and keeps the backup and its row
+- a copy across filesystems proves its source again after the copy is built, and is held open so its placement is proven too
+- an entry this restore cannot prove never goes back to the backup's path, and the sweep leaves `.pstack-t3-stranger-` entries where they are
+- `restore_race`, `cross_device`, and `raising` make the occupant, the crossing count, and the stranded state independent of whether the platform links a held descriptor through `/proc`
