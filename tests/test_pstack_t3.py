@@ -2385,7 +2385,7 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("roles.py backup --cwd", section)
         self.assertIn("```bash", section)
         self.assertNotIn("A Claude worker parks.", section)
-        self.assertIn("A panel relaunches the failed seat and says when a family repeats.", section)
+        self.assertIn("A panel never seats the failed provider, seats the configured `review backups` seats it keeps, and parks when fewer than two usable seats remain. A panel reports when it drops a seat whose family is already seated.", section)
         sentences = re.split(r"(?<=\.)\s+", section)
 
         def named_roles(sentence):
