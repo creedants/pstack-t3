@@ -1,7 +1,7 @@
 - kind feature
 - `pass record` with `--reviewer-thread`, `dish --thread`, and `dish --state merged` or `--state dropped` print `archive thread: <id>` on standard error, one id per line, and never on standard output
 - `pass record` prints the recorded reviewer thread on any verdict, except when it names the item's current worker or an open worker row of the item, and prints nothing without `--reviewer-thread` or with `--member`
-- `dish --thread` prints the worker it replaced when it binds a different non-empty thread, taking the id from the dish thread cell read before the write, else from the last retired worker log row, else from the last closed worker row, and prints nothing for the first bind or a repeated id
+- `dish --thread` without `--state merged` prints the worker it replaced when it binds a different non-empty thread, taking the id from the dish thread cell read before the write, else from the last retired worker log row, else from the last closed worker row, and prints nothing for the first bind or a repeated id
 - `dish --state merged` prints every worker thread the item used, meaning its `threads.tsv` worker rows plus its retired worker log rows plus its dish thread cell, and prints no child, reviewer, or panel member thread
 - `dish --state dropped` prints every worker thread observed before the lease release, meaning its `threads.tsv` worker rows plus its retired worker log rows plus its dish thread cell read before the release, and prints no child, reviewer, or panel member thread and no replacement bound during the release
 - no command prints the coordinator thread, a thread another in-flight item holds, a blank id, or a repeated id, and no command fails for an unknown or archived id
