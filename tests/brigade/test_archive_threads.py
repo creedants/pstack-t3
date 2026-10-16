@@ -1,3 +1,5 @@
+import types
+
 from .support import (
     setUpModule,
     BrigadeTest,
@@ -9,6 +11,8 @@ from .support import (
     THREAD_D,
     _owner_words,
     call,
+    call_in_process,
+    run_globals,
 )
 
 
@@ -103,3 +107,66 @@ class ArchiveThreadsTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.assertEqual([row[4] for row in self.thread_rows()], [THREAD_D])
         self.assertEqual(self.archived("dish", "D1", "--state", "dropped"), [])
+
+    def test_pass_record_reviewer_thread_equal_to_current_worker_prints_nothing(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
+                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+                                      "--reviewer-thread", THREAD_A])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stderr_text().splitlines(), [])
+        self.assertEqual(outcome.stdout_text().strip(), "D1 sent-back")
+        self.assertEqual(len(self.pass_rows()), 1)
+
+    def test_late_pass_record_reviewer_thread_equal_to_current_worker_prints_nothing_and_keeps_worker_open(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
+                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+                                      "--reviewer-thread", THREAD_A, "--late"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stderr_text().splitlines(), [])
+        self.assertEqual(outcome.stdout_text().strip(), "D1: late send-back on record; D1 stays in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["thread"], THREAD_A)
+        rows = self.thread_rows()
+        self.assertEqual(len(rows), 2)
+        worker = [row for row in rows if row[4] == THREAD_A and row[3] in ("worker", "fix worker")][0]
+        self.assertEqual(worker[7], "")
+
+    def test_dropped_dish_omits_replacement_thread_bound_during_lease_release(self):
+        # Covers a replacement bound during the lease release gap.
+        self.started()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        glob = run_globals(self, SCRIPT)
+        original = glob["land_result"]
+
+        def stubbed(project_root, *args):
+            if args[:2] == ("lease", "release"):
+                inner = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                       *_owner_words(self.at), "dish", "D1",
+                                                       "--thread", THREAD_B])
+                self.assertEqual(inner.code, 0, inner.stdout_text() + inner.stderr_text())
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            return original(project_root, *args)
+
+        glob["land_result"] = stubbed
+        try:
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                     *_owner_words(self.at), "dish", "D1",
+                                                     "--state", "dropped", "--stopped", "run-A"])
+        finally:
+            glob["land_result"] = original
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        lines = outcome.stderr_text().splitlines()
+        self.assertIn(f"archive thread: {THREAD_A}", lines)
+        self.assertNotIn(f"archive thread: {THREAD_B}", lines)
+        self.assertEqual(lines, [f"archive thread: {THREAD_A}"])
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "dropped")
+        closed = [row[7] for row in self.thread_rows()]
+        self.assertTrue(closed)
+        for end in closed:
+            self.assertEqual(end, "stamp")
