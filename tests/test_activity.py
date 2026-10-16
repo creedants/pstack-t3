@@ -3892,11 +3892,11 @@ class LedgerTest(OutputCase):
         fixture.write_store()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
-            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": "opaque=three-1-worker", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
             {"at": stamp, "dish": "D7", "attempt": "1", "role": "claims check", "thread": "opaque=three-1-claims", "start": stamp, "end": stamp},
-            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": "opaque=three-2-worker", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
             {"at": stamp, "dish": "D7", "attempt": "2", "role": "code delegate", "thread": "opaque=three-2-code", "start": stamp, "end": stamp},
-            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": "opaque=three-3-worker", "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
             {"at": stamp, "dish": "D7", "attempt": "3", "role": "claims check", "thread": "opaque=three-3-claims", "start": stamp, "end": ""},
         ])
         fixture.write()
@@ -3920,6 +3920,198 @@ class LedgerTest(OutputCase):
             self.assertIn(phrase, document)
         self.assertNotIn("opaque=", document)
         self.assertNotIn("opaque=", "\n".join(lines))
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_live_earlier_worker_stays_visible_with_its_ledger_row_current(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("running", 6.5, None),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempt 2: 1 worker, all ended"
+        current = ["attempt 1 · worker · open", "attempt 3 · worker · open"]
+        payload = ["attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        self.assertIn("  D7 earlier worker   model-a   running for ", "\n".join(lines))
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker")])
+        self.assertEqual(sum(1 for line in lanes if line[1] == "earlier worker"), 2)
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_live_descendant_of_a_completed_earlier_worker_keeps_its_ancestor_chain_visible(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        child = delegated(worker(1), "helper-task")
+        fixture.thread(child, title="helper", parent=worker(1), turns=(("running", 6.5, None),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempt 2: 1 worker, all ended"
+        current = ["attempt 1 · worker · ended", "attempt 3 · worker · open"]
+        payload = ["attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        running = [line for line in lines if "running for" in line]
+        self.assertTrue(any("D7 helper" in line and "under earlier worker" in line for line in running), running)
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker")])
+        self.assertIn("helper", [line[1] for line in lanes])
+        for ident in (worker(1), worker(2), worker(3), child):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_earlier_worker_without_a_ledger_row_is_counted_once_by_lane_label(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "claims check", "thread": "opaque=missing-1-claims", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "code delegate", "thread": "opaque=missing-2-code", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "claims check", "thread": "opaque=missing-3-claims", "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 1 worker, 1 code delegate, 1 claims check, 1 earlier worker, all ended"
+        current = ["attempt 3 · worker · open", "attempt 3 · claims check · open"]
+        payload = ["attempt 1 · claims check · ended", "attempt 2 · worker · ended", "attempt 2 · code delegate · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker"), (0, "earlier worker")])
+        self.assertNotIn("opaque=", document)
+        self.assertNotIn("opaque=", "\n".join(lines))
+
+    def test_two_completed_children_with_one_ledger_row_count_two_code_delegates(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        first = delegated(worker(1), "first-part")
+        fixture.thread(first, title="code delegate", parent=worker(1), turns=(("completed", 50, 40),))
+        second = delegated(worker(1), "second-part")
+        fixture.thread(second, title="code delegate", parent=worker(1), turns=(("completed", 45, 35),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "code delegate", "thread": first, "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 2 workers, 2 code delegates, all ended"
+        current = ["attempt 3 · worker · open"]
+        payload = ["attempt 1 · worker · ended", "attempt 1 · code delegate · ended", "attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 3], ["    " + summary, *["    " + phrase for phrase in current]])
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(sorted(covered), [(0, "earlier worker"), (0, "earlier worker"), (1, "code delegate"), (1, "code delegate")])
+        for ident in (worker(1), worker(2), worker(3), first, second):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_store_without_a_thread_table_folds_earlier_lanes_with_counts_and_state_only(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write()
+        summary = "2 earlier workers, all ended"
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1], "    " + summary)
+        document = self.document()
+        data = data_of(document)
+        self.assertNotIn("L", data)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], [])
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker"), (0, "earlier worker")])
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
 
     def test_single_attempt_with_no_earlier_family_has_no_fold(self):
         fixture = one_running(self.fixture).write()
