@@ -541,3 +541,36 @@ class FireLayoutTest(BrigadeTest):
         refused = self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "two",
                                "--paths", saved["T2"], "--doc-item", ok=False)
         self.assertIn("paths overlap L1 held by perf/D2", refused)
+
+    def saved_scope_pair(self, first, second):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "filler")
+        for ident, paths in (("T1", first), ("T2", second)):
+            self.assertEqual(self.brigade("fire", "--tickets", ident, "--station", "bug-fix",
+                                          "--summary", ident, "--paths", paths, ok=False),
+                             "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        return self.brigade("startable")
+
+    def test_startable_blocks_the_second_scope_when_only_the_first_saved_scope_holds_the_repository_root(self):
+        # Only the first saved scope holds the root, so the overlap needs scopes_overlap, not paths_overlap.
+        text = self.saved_scope_pair(".,t1.txt", "t2.txt")
+        self.assertIn("waiting tickets: 2, startable: 1, blocked: 1", text)
+        self.assertIn("T1 normal fix, 0m: startable; .,t1.txt", text)
+        self.assertIn("T2 normal fix, 0m: blocked, starts after T1; t2.txt", text)
+
+    def test_startable_blocks_the_second_scope_when_only_the_second_saved_scope_holds_the_repository_root(self):
+        # Only the second saved scope holds the root, so the overlap needs scopes_overlap, not paths_overlap.
+        text = self.saved_scope_pair("t1.txt", ".,t2.txt")
+        self.assertIn("waiting tickets: 2, startable: 1, blocked: 1", text)
+        self.assertIn("T1 normal fix, 0m: startable; t1.txt", text)
+        self.assertIn("T2 normal fix, 0m: blocked, starts after T1; .,t2.txt", text)
