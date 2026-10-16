@@ -2,13 +2,18 @@ from .support import (
     setUpModule,
     LandingTest,
     REVIEWER,
+    SCRIPT,
     land,
     sh,
 )
 
+import errno
+import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 
 
 BUILD_PY = """#!/usr/bin/env python3
@@ -647,3 +652,109 @@ class GeneratedTest(LandingTest):
         gen = sh("git", "show", "main:skills/out.txt", cwd=self.base / "origin.git")
         self.assertIn("one1", gen)
         self.assertIn("two2", gen)
+
+    def test_build_launch_exception_bounces_and_cleans(self):
+        self._setup_generated()
+        self.init()
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "src/one.txt").write_text("reviewed-new\n")
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        real_popen = subprocess.Popen
+
+        def failing_popen(*args, **kwargs):
+            command = args[0] if args else kwargs.get("args")
+            if command == "python3 scripts/build.py":
+                raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+            return real_popen(*args, **kwargs)
+
+        subprocess.Popen = failing_popen
+        try:
+            out = self.land("land")
+        finally:
+            subprocess.Popen = real_popen
+        self.assertIn("bounced E1", out)
+        self.assertIn("rebuild failed", out)
+        self.assertIn("BlockingIOError", out)
+        live = sh("git", "show", "main:src/one.txt", cwd=self.base / "origin.git")
+        self.assertEqual(live, "base1")
+        with land.Store.for_repo(self.work) as store:
+            status = sh("git", "status", "--porcelain", cwd=store.dir / "integration")
+        self.assertEqual(status, "")
+
+    def test_user_interrupt_cleans_integration_tree(self):
+        self._setup_generated()
+        self.init()
+        sleep_build = BUILD_PY + (
+            "\nimport os as _os, time as _time\n"
+            "_slept = _os.path.join(str(root), 'skills', '.build_started')\n"
+            "open(_slept, 'w').write(f'{_os.getpid()} {_os.getpgrp()}')\n"
+            "_time.sleep(60)\n"
+        )
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "src/one.txt").write_text("reviewed-new\n")
+        (path / "scripts/build.py").write_text(sleep_build)
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt,scripts/build.py")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        with land.Store.for_repo(self.work) as store:
+            integration = store.dir / "integration"
+        marker = integration / "skills" / ".build_started"
+        queue = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--repo", str(self.work), "land"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True, env=os.environ.copy())
+        build_pgid = None
+        try:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if queue.poll() is not None:
+                    break
+                try:
+                    text = marker.read_text().strip()
+                except OSError:
+                    time.sleep(0.05)
+                    continue
+                if text:
+                    build_pgid = int(text.split()[1])
+                    break
+                time.sleep(0.05)
+            if queue.poll() is not None:
+                out, err = queue.communicate()
+                self.fail(f"queue exited before the build slept: {out[-2000:]} {err[-2000:]}")
+            self.assertTrue(marker.exists(), "fixture build never recorded readiness")
+            queue.send_signal(signal.SIGINT)
+            queue.wait(timeout=120)
+            self.assertNotEqual(queue.returncode, 0)
+            live = sh("git", "show", "main:src/one.txt", cwd=self.base / "origin.git")
+            self.assertEqual(live, "base1")
+            with land.Store.for_repo(self.work) as store:
+                status = sh("git", "status", "--porcelain", cwd=store.dir / "integration")
+            self.assertEqual(status, "")
+        finally:
+            if build_pgid is not None:
+                try:
+                    os.killpg(build_pgid, signal.SIGKILL)
+                except OSError:
+                    pass
+            if queue.poll() is None:
+                try:
+                    os.killpg(queue.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            try:
+                queue.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            for pipe in (queue.stdout, queue.stderr):
+                try:
+                    pipe.close()
+                except OSError:
+                    pass

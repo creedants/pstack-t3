@@ -220,60 +220,108 @@ class Integration:
             names.extend(path for path in out.split("\0") if path)
         return sorted(set(names))
 
-    def _rebuild(self, before):
-        failed = self._clear_generated()
-        if failed:
-            return self._give_up(before, failed)
-        contract = self.store.contract
-        timeout = contract.get("timeout") or 1800
-        command = "python3 scripts/build.py"
+    def _stop_build(self, process):
+        if process is None or process.returncode is not None:
+            return
+        killpg = getattr(seam, "_killpg_like_linux", None)
         try:
-            slot = seam.slot
-        except AttributeError:
-            slot = None
-        holder = slot("landing", repo=self.path, command=command) if slot else contextlib.nullcontext()
-        with holder:
-            first = seam.supervised(command, self.path, timeout)
-            if first[0] is None or first[0] != 0:
-                reason = "timed out" if first[0] is None else f"exited {first[0]}"
-                return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(first[1])}")
-            dirty = self._dirty_tracked()
-            sources = sorted(seam.source_paths(dirty))
-            if sources:
-                return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-            staged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
-            if staged.returncode != 0:
-                return self._give_up(before, f"rebuild failed. `git add` exited {staged.returncode}. {_tail(staged.stderr + staged.stdout)}")
-            snapshot = self._generated_snapshot()
-            if snapshot is None:
-                return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
+            if killpg is not None:
+                killpg(process, signal.SIGKILL)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            process.wait()
+        except OSError:
+            pass
+
+    def _run_build(self, command, timeout, active):
+        # Tracks the live build so the rebuild guard can stop it before cleanup.
+        try:
+            process = subprocess.Popen(command, cwd=self.path, shell=True, start_new_session=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except Exception:
+            active["process"] = None
+            raise
+        active["process"] = process
+        try:
+            output, _ = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._stop_build(process)
+            try:
+                output, _ = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.stdout.close()
+                process.wait()
+                output = b""
+            active["process"] = None
+            return None, output.decode("utf-8", "replace")
+        active["process"] = None
+        return process.returncode, output.decode("utf-8", "replace")
+
+    def _rebuild(self, before):
+        command = "python3 scripts/build.py"
+        active = {}
+        try:
             failed = self._clear_generated()
             if failed:
                 return self._give_up(before, failed)
-            second = seam.supervised(command, self.path, timeout)
-            if second[0] is None or second[0] != 0:
-                reason = "timed out" if second[0] is None else f"exited {second[0]}"
-                return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(second[1])}")
-            dirty = self._dirty_tracked()
-            sources = sorted(seam.source_paths(dirty))
-            if sources:
-                return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-            restaged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
-            if restaged.returncode != 0:
-                return self._give_up(before, f"rebuild failed. `git add` exited {restaged.returncode}. {_tail(restaged.stderr + restaged.stdout)}")
-            again = self._generated_snapshot()
-            if again is None:
-                return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
-            if again != snapshot:
-                return self._give_up(before, "build did not reproduce generated entries")
-        added = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
-        if added.returncode != 0:
-            return self._give_up(before, f"rebuild failed. `git add` exited {added.returncode}. {_tail(added.stderr + added.stdout)}")
-        if self.git("diff", "--cached", "--quiet", check=False).returncode != 0:
-            amend = self.git(*seam.committer(self.path), "commit", "--amend", "--no-edit", check=False)
-            if amend.returncode != 0:
-                return self._give_up(before, f"rebuild failed. `git commit --amend` exited {amend.returncode}. {_tail(amend.stderr + amend.stdout)}")
-        return None
+            contract = self.store.contract
+            timeout = contract.get("timeout") or 1800
+            try:
+                slot = seam.slot
+            except AttributeError:
+                slot = None
+            holder = slot("landing", repo=self.path, command=command) if slot else contextlib.nullcontext()
+            with holder:
+                first = self._run_build(command, timeout, active)
+                if first[0] is None or first[0] != 0:
+                    reason = "timed out" if first[0] is None else f"exited {first[0]}"
+                    return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(first[1])}")
+                dirty = self._dirty_tracked()
+                sources = sorted(seam.source_paths(dirty))
+                if sources:
+                    return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
+                staged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+                if staged.returncode != 0:
+                    return self._give_up(before, f"rebuild failed. `git add` exited {staged.returncode}. {_tail(staged.stderr + staged.stdout)}")
+                snapshot = self._generated_snapshot()
+                if snapshot is None:
+                    return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
+                failed = self._clear_generated()
+                if failed:
+                    return self._give_up(before, failed)
+                second = self._run_build(command, timeout, active)
+                if second[0] is None or second[0] != 0:
+                    reason = "timed out" if second[0] is None else f"exited {second[0]}"
+                    return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(second[1])}")
+                dirty = self._dirty_tracked()
+                sources = sorted(seam.source_paths(dirty))
+                if sources:
+                    return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
+                restaged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+                if restaged.returncode != 0:
+                    return self._give_up(before, f"rebuild failed. `git add` exited {restaged.returncode}. {_tail(restaged.stderr + restaged.stdout)}")
+                again = self._generated_snapshot()
+                if again is None:
+                    return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
+                if again != snapshot:
+                    return self._give_up(before, "build did not reproduce generated entries")
+            added = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+            if added.returncode != 0:
+                return self._give_up(before, f"rebuild failed. `git add` exited {added.returncode}. {_tail(added.stderr + added.stdout)}")
+            if self.git("diff", "--cached", "--quiet", check=False).returncode != 0:
+                amend = self.git(*seam.committer(self.path), "commit", "--amend", "--no-edit", check=False)
+                if amend.returncode != 0:
+                    return self._give_up(before, f"rebuild failed. `git commit --amend` exited {amend.returncode}. {_tail(amend.stderr + amend.stdout)}")
+            return None
+        except BaseException as error:
+            self._stop_build(active.pop("process", None))
+            self._give_up(before, "")
+            if isinstance(error, Exception):
+                return f"rebuild failed. `{command}` {type(error).__name__}: {error}"
+            raise
 
     def apply(self, entry):
         """Replay the pinned commits onto HEAD. Returns None, or why the entry cannot land."""
