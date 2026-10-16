@@ -1,0 +1,8 @@
+- kind polish
+- Steps 4.1 and 6 state the timebox through the runtime Deadlines section and keep only the brigade differences.
+- Step 4.2 quotes values per script.md Brief fields and drops the duplicated quoting sentences.
+- Step 7 states each not filed category in shorter sentences and keeps every rule.
+- Step 9 keeps the 3132 two thinking block rule and points to History for older bounds.
+- Step 7 holds the three drop steps and other stops run their first two steps without the drop.
+- The executive view pointer fires only on walk and the status sentences moved to SKILL.md.
+- The skill drops 71 words.
