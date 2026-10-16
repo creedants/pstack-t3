@@ -2130,7 +2130,8 @@ RENDERER = squeezed("""
 """)
 
 STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
-LEDGER_CSS = ".ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
+# `.ldg` has a 100% flex basis, so `.tl>.grp` wraps it onto a line under the id, title, and state chip.
+LEDGER_CSS = ".tl>.grp{flex-wrap:wrap}.ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
 LEDGER_HOOK = """
     if (D && D.v === 1 && D.L && D.L.length) {
       const children = (node) => node.kids || [...node.children];
