@@ -1463,7 +1463,7 @@ class RunTestsTest(unittest.TestCase):
             self.assertNotIn("--part", "".join(macos))
             self.assertNotIn("--real-process-share", "".join(macos))
             self.assertIn("Generated skills match the sources", "".join(macos))
-            self.assertIn("continue-on-error: true", "".join(macos))
+            self.assertEqual("".join(macos).count("continue-on-error: true"), 5)
             for index in range(1, 5):
                 self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
             return
@@ -1536,9 +1536,12 @@ class RunTestsTest(unittest.TestCase):
         self.assertEqual(macos["name"], "macOS (3.12)")
         self.assertEqual(macos["runs-on"], "macos-latest")
         self.assertNotIn("if", macos)
+        self.assertEqual(len(macos["steps"]), 5)
+        self.assertEqual([step.get("continue-on-error") for step in macos["steps"]], [True] * 5)
         setup = next(step for step in macos["steps"] if step.get("uses") == "actions/setup-python@v7")
         self.assertEqual(setup["with"]["python-version"], "3.12")
         self.assertIsInstance(setup["with"]["python-version"], str)
+        self.assertTrue(setup["continue-on-error"])
         test = next(step for step in macos["steps"] if "scripts/run_tests.py" in step.get("run", ""))
         self.assertNotIn("--part", test["run"])
         self.assertNotIn("--real-process-share", test["run"])

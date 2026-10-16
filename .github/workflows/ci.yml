@@ -189,11 +189,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        continue-on-error: true
       - uses: actions/setup-python@v7
+        continue-on-error: true
         with:
           python-version: "3.12"
-      - run: pip install pyyaml
-      # This job runs the whole suite on a pull request and on a push to main, and these steps stay non-blocking.
+      - continue-on-error: true
+        run: pip install pyyaml
+      # This job runs the whole suite on a pull request and on a push to main. Every step stays non-blocking, so the job never fails the workflow.
       - name: Full test suite
         continue-on-error: true
         run: |

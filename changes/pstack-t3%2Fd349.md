@@ -1,5 +1,6 @@
 - kind fix
 - The `macos_312` job in `.github/workflows/ci.yml` carries no `if`, so it runs on a pull request and on a push to main, and it keeps the name `macOS (3.12)`.
-- Its test step runs `python3 scripts/run_tests.py` with no `--part`, which selects the whole suite with the same runner the Linux part jobs call with `--part i/4`, and it keeps `continue-on-error: true`.
-- The job runs the generated skills check step the Linux gate jobs run, with `continue-on-error: true`, so a test or generated skills failure does not fail the workflow.
-- `tests/test_run_tests.py` pins the new macOS job in both branches: the job carries no `if`, holds a step running `python3 scripts/run_tests.py` with neither `--part` nor `--real-process-share`, keeps `continue-on-error: true`, and holds the step name `Generated skills match the sources`.
+- Every step of that job carries `continue-on-error: true`, including the checkout, Python setup, and `pip install pyyaml` steps, so no step failure makes the job check fail.
+- Its test step runs `python3 scripts/run_tests.py` with no `--part`, which selects the whole suite with the same runner the Linux part jobs call with `--part i/4`.
+- The job runs the generated skills check step the Linux gate jobs run.
+- `tests/test_run_tests.py` pins the new macOS job in both branches: the job carries no `if`, all five steps carry `continue-on-error: true`, one step runs `python3 scripts/run_tests.py` with neither `--part` nor `--real-process-share`, and one step is named `Generated skills match the sources`.
