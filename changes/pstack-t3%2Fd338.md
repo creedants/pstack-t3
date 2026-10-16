@@ -13,7 +13,7 @@
 - Fingerprint and author checks run after rebuild.
 - NUL-delimited Git names decode exactly and source checks share one lossless classifier.
 - Source entries bounce without scripts/build.py when generated output exists or the entry touches it.
-- Generated roots that traverse a symlink bounce before any cleanup.
-- Failed rebuilds reset to the pre-entry commit and clean generated remnants.
+- Generated roots that traverse a symlink bounce without deleting outside the worktree.
+- Failed rebuilds reset to the pre-entry commit and clean generated remnants when the roots stay inside the worktree.
 - Generated conflicts absent on ours are removed and only restored paths are staged with literal pathspecs.
 - Dirty and unmerged discovery reads NUL names with exact decoding.
