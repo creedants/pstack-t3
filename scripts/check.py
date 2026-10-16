@@ -561,8 +561,10 @@ def _step(line, stack):
 def _visible_lines(text):
     """Yield visible line numbers with container prefixes stripped, skipping fenced lines.
 
-    One stack holds open quotes, then open lists, then one fence. Peel trims
-    outside in at the first mismatch. Opened blocks precede any fence open.
+    One stack holds open quotes, then open lists, then one fence. Open lists
+    stay open only while the line indents into each one. A change in quote
+    depth rebuilds the list stack from that line. Opened blocks precede any
+    fence open.
     A fence closes only inside its owning containers. A fence directly in a
     quote keeps an extra `>` as code. In a list inside a quote, an extra `>`
     left of the list content column ends the fence.
