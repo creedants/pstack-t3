@@ -1430,7 +1430,7 @@ def format_attempt(attempts, ranks, counts):
 
 
 def brief_attempt(ranks, counts):
-    """One bounded summary line for folded earlier attempts. Ranks holds the rank of each earlier ledger row. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when attempts are sparse. With no ranks the summary is counts plus state."""
+    """One bounded summary line for folded earlier attempts. Ranks holds the distinct ranks of the earlier ledger rows. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when attempts are sparse. With no ranks the summary is counts plus state."""
     tail = attempt_tail(counts)
     if not ranks:
         return tail
@@ -1960,7 +1960,7 @@ def height(page):
 def framed(page, limit):
     """The page cut for height. A page whose height() is at most limit is returned as it is.
     The name is clipped to NAME_BYTES. At most MAX_STRIP chips stay, those of an item with a group on the page first.
-    Rows are tried in three passes, and each row whose parts fit what is left of limit stays.
+    Rows are tried in three passes, and each row whose parts fit what is left of limit stays. Rows flagged earlier always stay and cost nothing, since height() does not count them.
     The first pass tries every row with a Running now or Queued line, the second every failed row, the third every other row.
     Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
     A group with no row left is cut with its heading. counted() counts the agents and items left out.
@@ -2069,8 +2069,7 @@ def briefed(page):
 def within_budget(page, budget, clean, render, brief=False):
     """The page, its render, and whether that render's UTF-8 length is at most budget.
     A page that already fits, or a page with no attempt line, is returned as it is.
-    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, it keeps no attempt line.
-    When no prefix fits even with no attempt line, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of sparse attempts cannot break the budget. Counts and state stay exact, and no lane is dropped.
+    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of sparse attempts no longer adds bytes beyond its count. Counts and state stay exact, and no lane is dropped. When even the briefed zero line form is over budget, that form is returned as it is.
     """
     text = render(page, clean)
     count = line_count(page)
@@ -2114,7 +2113,7 @@ def within_budget(page, budget, clean, render, brief=False):
 
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. When that document is over budget, the cut keeps the longest prefix of its attempt lines whose document fits, and on the last fold it keeps no attempt line when no prefix fits.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. When that document is over budget, the cut keeps the longest prefix of its attempt lines whose document fits, and on the last fold it keeps no attempt line only when no prefix fits even with the summaries bounded to their counts.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
@@ -2755,7 +2754,7 @@ LIVE_SCRIPT = squeezed("""
 
 
 def origin_of(value):
-    """The origin for --live-page. Only an http:// or https:// origin with no userinfo, path, query, or fragment is accepted."""
+    """The origin for --live-page. A value with whitespace or backslash or ? or # is refused. The rest must parse as http:// or https:// with a host and no userinfo, path, query, or fragment."""
     bad = "--live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
     if any(char.isspace() for char in value) or "\\" in value or "?" in value or "#" in value:
         raise ActivityError(bad)
