@@ -372,7 +372,7 @@ class GeneratedTest(LandingTest):
         gen_only = self.commit("gen only quoted")
         self.assertEqual(land.fingerprint(self.work, base, gen_only), "")
 
-    def test_leading_space_source_filename_is_fingerprinted(self):
+    def test_leading_space_source_directory_is_fingerprinted(self):
         self._setup_generated()
         base = sh("git", "rev-parse", "HEAD", cwd=self.work)
         spaced = self.work / " skills"
