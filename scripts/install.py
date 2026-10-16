@@ -946,7 +946,7 @@ def same_entry(path, fd):
 def link_held(fd, path):
     """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
 
-    It links through `/proc/self/fd`, so it answers `ENOSYS` where the platform is not Linux. Whenever it returns nonzero other than `EEXIST`, `restore_backup` gives the backup a private name in `restore_aside`. The descriptor keeps the inode in use, so `same_entry` proves the entry at that name before `place` moves it to an empty path. A file that can be hard linked keeps its own backup name until the entry is placed. A directory, or a file that cannot be hard linked, is renamed to the private name. It goes back to its old name if that name is still free.
+    It links through `/proc/self/fd`, so it answers `ENOSYS` where the platform is not Linux. Whenever it returns nonzero other than `EEXIST` and the backup is still there, `restore_backup` gives the backup a private name in `restore_aside`. The descriptor keeps the inode in use, so `same_entry` proves the entry at that name before `place` moves it to an empty path. A file that can be hard linked keeps its own backup name until the entry is placed. A directory, or a file that cannot be hard linked, is renamed to the private name. It goes back to its old name if that name is still free.
     """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS

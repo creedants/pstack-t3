@@ -742,7 +742,7 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
     """Hook code that swaps `path` for a foreign `swap` entry just before the move aside.
 
     `occupy` arrives at `path` when the put-back calls a rename onto it, after any check for vacancy.
-    `rename` takes `/proc` away. "platform" also sets `sys.platform` to darwin and leaves the no-replace rename working, "symbol" gives it a libc without `renameat2` or `renamex_np`, and "libc" makes loading libc fail. At exit the run records what that rename
+    `rename` takes `/proc` away. "platform" also sets `sys.platform` to darwin and leaves the no-replace rename working, "symbol" gives it a libc without `renameat2` or `renamex_np`, and "libc" makes loading libc fail. At exit the run records what the no-replace rename
     returned on a scratch pair, read back with `noreplace_result`.
     """
     return (
