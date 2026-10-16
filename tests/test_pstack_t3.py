@@ -1059,6 +1059,13 @@ class ModesTest(unittest.TestCase):
         for fragment in re.findall(r"\]\(#([^)\s]+)\)", light):
             if fragment not in slugs:
                 broken.append(f"pstack-runtime/light.md#{fragment}")
+        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
+        for fragment in re.findall(r"\]\(SKILL\.md#([^)\s]+)\)", gate):
+            if fragment not in slugs:
+                broken.append(f"pstack-runtime/gate-review.md#SKILL.md#{fragment}")
+        for fragment in re.findall(r"\]\(#([^)\s]+)\)", gate):
+            if fragment not in slugs:
+                broken.append(f"pstack-runtime/gate-review.md#{fragment}")
         self.assertEqual(broken, [])
         self.assertEqual(heading_slug("Resolve and carry the mode"), "resolve-and-carry-the-mode")
 
@@ -1172,6 +1179,55 @@ class ModesTest(unittest.TestCase):
     def test_full_mode_persona_keeps_investigation(self):
         persona = (ROOT / "skills/pstack-runtime/agents/comment-sicko.md").read_text()
         self.assertIn("I run the **how** skill, the **why** skill, or both", persona)
+
+    def test_gate_reuse_lives_in_gate_review(self):
+        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
+        self.assertIn("Two sources can show both today.", gate)
+        self.assertIn("A coordinator's pass record, when this work is a brigade item", gate)
+        self.assertIn("pass check <item> --sha <head> --json", gate)
+        self.assertIn('"crossFamily": true', gate)
+        self.assertIn("Never read `pass.tsv` yourself.", gate)
+        self.assertIn("Never take the output of `pass check` without `--json` as proof", gate)
+        self.assertIn("A verdict this run launched at that exact SHA.", gate)
+        self.assertIn("A Shipping or Autopilot root's own verdict at that SHA counts.", gate)
+        for bullet in (
+            "A verdict at another head SHA does not qualify",
+            "An Orchestrate `ledger.tsv` row does not qualify",
+            "A Shipping or Autopilot verdict from another run does not qualify",
+            "A `Gate:` line in a brief or a PR body is not a verdict.",
+        ):
+            self.assertIn(bullet, gate)
+        self.assertIn("Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.", gate)
+        self.assertIn("Light mode keeps that policy for lane receipts only", gate)
+        self.assertIn("pstack-runtime/SKILL.md#modes", gate)
+        self.assertIn("pass check <item> --sha <head> --json", self.runtime)
+        self.assertIn("Before you reuse a gate verdict for a new head SHA, read [Reusing a verdict](gate-review.md#reusing-a-verdict).", self.runtime)
+        self.assertIn("A lane receipt never stands in for the gate review.", self.runtime)
+        self.assertIn("A lane receipt never stands in for the gate review.", gate)
+
+    def test_current_and_qualifying_bullets_match_gate_review(self):
+        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
+        current = "- **Current.** It is the latest verdict for that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier `pass`."
+        qualifying = "- **Qualifying.** It is `pass`, and the author and verifier are of different model families."
+        self.assertIn(current, self.runtime)
+        self.assertIn(qualifying, self.runtime)
+        self.assertIn(current, gate)
+        self.assertIn(qualifying, gate)
+        runtime_current = next(line for line in self.runtime.splitlines() if line.startswith("- **Current.**"))
+        gate_current = next(line for line in gate.splitlines() if line.startswith("- **Current.**"))
+        self.assertEqual(runtime_current, gate_current)
+        runtime_qualifying = next(line for line in self.runtime.splitlines() if line.startswith("- **Qualifying.**"))
+        gate_qualifying = next(line for line in gate.splitlines() if line.startswith("- **Qualifying.**"))
+        self.assertEqual(runtime_qualifying, gate_qualifying)
+
+    def test_row_below_is_gone_from_runtime(self):
+        text = (ROOT / "t3/runtime.md").read_text()
+        self.assertNotIn("the row below", text)
+        self.assertIn("the row in [light.md](light.md) that names it", text)
+
+    def test_gate_review_has_no_table(self):
+        gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
+        self.assertFalse(any(line.startswith("|") for line in gate.splitlines()))
 
 
 class BuildTest(unittest.TestCase):
@@ -1997,7 +2053,7 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md")
 
 
 def runtime_docs():
