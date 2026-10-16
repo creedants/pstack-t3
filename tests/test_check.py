@@ -1111,6 +1111,28 @@ class SamplerOutputTest(unittest.TestCase):
         self.assertEqual(lines[0].split("\t"), list(measure_capacity.COLUMNS))
         self.assertEqual(lines[1].split("\t")[0], "x")
 
+    def test_a_missing_proc_root_crashed_before_the_header_and_now_prints_na_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "rows.tsv"
+            env = dict(os.environ, **{measure_capacity.PROC_ROOT_ENV: str(Path(directory) / "no-proc")})
+            with out.open("w") as handle:
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts" / "measure_capacity.py"), "--label", "x", "--samples", "1", "--interval", "0"],
+                    stdout=handle,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    timeout=60,
+                )
+            lines = out.read_text().splitlines()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines[0].split("\t"), list(measure_capacity.COLUMNS))
+        self.assertEqual(len(lines), 2)
+        row = dict(zip(measure_capacity.COLUMNS, lines[1].split("\t")))
+        self.assertEqual(row["label"], "x")
+        for name in measure_capacity.COLUMNS:
+            if name not in ("label", "ts"):
+                self.assertEqual(row[name], measure_capacity.UNAVAILABLE, name)
+
 
 class BadgeCheckTest(unittest.TestCase):
     def test_check_py_names_an_older_badge_and_exits_nonzero(self):
