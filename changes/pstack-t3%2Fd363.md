@@ -3,5 +3,5 @@
 - Each part runs `python3 scripts/run_tests.py --part N/4` and appends its `Ran` line, its `OK` or `FAILED` line, and every `FAIL:` and `ERROR:` line to `$GITHUB_STEP_SUMMARY`.
 - Every step of every macOS part has `continue-on-error: true`, and none of the four jobs is in a `needs:` list.
 - The `Generated skills match the sources` step runs on macOS only in `macos_312_1`.
-- GitHub documents a maximum of 5 concurrent macOS jobs for a standard GitHub-hosted runner on the Free, Pro, and Team plans, so the four parts can run at once. Source: GitHub's Actions limits page, the "Job concurrency limits for GitHub-hosted runners" table.
+- GitHub documents a maximum of 5 concurrent macOS jobs for a standard GitHub-hosted runner on the Free, Pro, and Team plans (Actions limits, "Job concurrency limits for GitHub-hosted runners"), so the four parts fit within that limit when no other macOS job runs.
 - `tests/test_run_tests.py` pins the four jobs, their part commands, and the single skills step in both the PyYAML branch and the no-PyYAML branch.
