@@ -1350,6 +1350,7 @@ def seconds_of(agent, window):
 
 
 def tree(agents):
+    """True depths in tree preorder. build_page clips each depth to 2 for display."""
     def began(agent):
         return (min((turn.start for turn in stretches(agent)), default=0), agent.thread)
 
@@ -1362,7 +1363,7 @@ def tree(agents):
             stack.append((agent, 0))
     while stack:
         agent, depth = stack.pop()
-        order.append((agent, min(depth, 2)))
+        order.append((agent, depth))
         stack.extend((child, depth + 1) for child in children.get(agent.thread, ()))
     return order
 
@@ -1438,10 +1439,10 @@ def brief_attempt(ranks, counts):
     return f"{head}: {tail}"
 
 
-def partition_attempts(dish_rows, rows, is_finished, privacy, threads=()):
-    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Threads holds the agent thread of each row in the same order, and is empty when there is none to match. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set.
+def partition_attempts(dish_rows, rows, is_finished, privacy, threads=(), parents=()):
+    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Threads holds the agent thread of each row in the same order, and is empty when there is none to match. Parents holds the parent thread of each row in the same order, and is empty when there is none to match. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set.
 
-    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread that an earlier-worker lane also holds once under its ledger role, and each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
+    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors by parent thread to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread that an earlier-worker lane also holds once under its ledger role, and each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
     """
     if is_finished:
         current = tuple(
@@ -1450,6 +1451,7 @@ def partition_attempts(dish_rows, rows, is_finished, privacy, threads=()):
         marked = tuple(replace(row, earlier=False) for row in rows)
         return current, AttemptFold(), marked
     matched = tuple(threads) if len(threads) == len(rows) else ()
+    parent_threads = tuple(parents) if len(parents) == len(rows) else ()
     family, inside = set(), False
     for at, row in enumerate(rows):
         if row.depth == 0:
@@ -1457,16 +1459,37 @@ def partition_attempts(dish_rows, rows, is_finished, privacy, threads=()):
         if inside:
             family.add(at)
     shown = set()
-    for at, row in enumerate(rows):
-        if row.status in LIVE:
-            depth = row.depth
-            shown.add(at)
-            for before in range(at - 1, -1, -1):
-                if rows[before].depth < depth:
-                    depth = rows[before].depth
-                    shown.add(before)
-                    if not depth:
+    if matched and parent_threads:
+        index_of = {}
+        for at, thread in enumerate(matched):
+            index_of.setdefault(thread, at)
+        for at, row in enumerate(rows):
+            if row.status in LIVE:
+                shown.add(at)
+                seen, cur = {at}, at
+                while True:
+                    parent = parent_threads[cur]
+                    if not parent:
                         break
+                    parent_at = index_of.get(parent)
+                    if parent_at is None or parent_at in seen:
+                        break
+                    shown.add(parent_at)
+                    if rows[parent_at].depth == 0:
+                        break
+                    seen.add(parent_at)
+                    cur = parent_at
+    else:
+        for at, row in enumerate(rows):
+            if row.status in LIVE:
+                depth = row.depth
+                shown.add(at)
+                for before in range(at - 1, -1, -1):
+                    if rows[before].depth < depth:
+                        depth = rows[before].depth
+                        shown.add(before)
+                        if not depth:
+                            break
     earlier_at = family - shown
     kept = {matched[at] for at in family & shown} if matched else set()
     ordinal_of = {}
@@ -1586,7 +1609,7 @@ def build_page(store, t3, window, privacy):
     groups, by_request, folded_by_unit = [], 0, {}
     for unit, agents in sorted(((unit, agents) for unit, agents in members.items() if agents), key=order):
         ordered = tree(agents)
-        rows = tuple(row(agent, depth, label_of(agent, store, unit, privacy)) for agent, depth in ordered)
+        rows = tuple(row(agent, min(depth, 2), label_of(agent, store, unit, privacy)) for agent, depth in ordered)
         active = [agent for agent in agents if stretches(agent)]
         subagents = sum(agent.parent is not None for agent in active)
         by_request += sum(placed[agent.thread].evidence is Evidence.REQUEST for agent in active)
@@ -1594,7 +1617,7 @@ def build_page(store, t3, window, privacy):
             raw = [entry for entry in store.threads if entry["dish"] == unit]
             in_flight = units[unit].state not in FINISHED_STATES
             live = any(entry.status in LIVE for entry in rows)
-            current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy, tuple(agent.thread for agent, _ in ordered))
+            current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy, tuple(agent.thread for agent, _ in ordered), tuple(agent.parent for agent, _ in ordered))
             folded_by_unit[unit] = (current, fold)
             item = item_of(units[unit], privacy, keys[unit], goal_ids, current, fold)
             groups.append(Group(item, marked, len(active) - subagents, subagents))
