@@ -4087,6 +4087,46 @@ class LedgerTest(OutputCase):
             self.assertNotIn(ident, document)
             self.assertNotIn(ident, "\n".join(lines))
 
+    def test_byte_budget_quiet_fold_keeps_every_earlier_family_inside_the_attempt_fold(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        for number in range(100):
+            child = delegated(worker(1), f"code-delegate-{number}")
+            fixture.thread(child, title="code delegate", parent=worker(1), turns=(("completed", 50, 40),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 2 workers, 100 code delegates, all ended"
+        document = self.document("--max-bytes", "16000")
+        data = data_of(document)
+        self.assertEqual([fold[1] for fold in data.get("E", [])], [summary])
+        lanes = data["G"][0][1]
+        covered = {index for _, idxs in data["R"] for index in idxs}
+        self.assertEqual(sorted(lanes[index][1] for index in covered), ["100 sub-agents", "earlier worker", "earlier worker"])
+        self.assertEqual([lanes[index][1] for index in range(len(lanes)) if index not in covered], ["worker"])
+        text = self.out("--text", "--max-bytes", "16000")
+        self.assertIn("    " + summary, text)
+        lines = text.split("\n")
+        for heading in ("Running now", "Queued", "Failed"):
+            if heading in lines:
+                block = lines[lines.index(heading) + 1:]
+                block = block[:next((at for at, line in enumerate(block) if line and not line.startswith(" ")), len(block))]
+                for line in block:
+                    self.assertNotIn("code delegate", line)
+                    self.assertNotIn("sub-agents", line)
+                    self.assertNotIn("earlier worker", line)
+
     def test_store_without_a_thread_table_folds_earlier_lanes_with_counts_and_state_only(self):
         fixture = self.fixture
         fixture.coordinator()
