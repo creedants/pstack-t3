@@ -3059,7 +3059,7 @@ class OwnershipTest(unittest.TestCase):
             self.assert_swap_survived(raced, a, swarm, rows, "directory", "directory", saved=False, noted=False)
 
     def test_an_entry_swapped_into_a_holder_after_its_proof_is_parked_and_never_published(self):
-        """A swap between the holder proof and the placement parks the foreign entry and keeps the backup."""
+        """A swap between the holder proof and the placement parks the foreign entry, keeps a file or link backup at its path, and leaves a directory backup's path empty."""
         for kind in ("file", "link", "directory"):
             for rename in (None, "darwin"):
                 with self.subTest(kind=kind, rename=rename):
@@ -3091,7 +3091,7 @@ class OwnershipTest(unittest.TestCase):
                     self.assert_foreign(parked, foreign)
                     self.assert_displaced(saved, kind)
 
-    def test_an_entry_swapped_into_a_holder_before_a_copy_across_filesystems_is_never_copied(self):
+    def test_an_entry_swapped_into_a_holder_before_a_copy_across_filesystems_is_discarded(self):
         """A swap before a cross-filesystem copy discards the copy and parks the foreign entry beside the backup."""
         for kind, foreign in (("file", "file"), ("directory", "directory")):
             with self.subTest(kind=kind):

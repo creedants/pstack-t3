@@ -846,8 +846,9 @@ MOVED = "moved"
 class Published:
     """Proof that `path` names the held entry, or this call's copy of it, after the last move onto `path`.
 
-    Only `arrived` makes one, and `restore_backup` makes one after `link_held` links the held descriptor itself.
-    `drop_backup` takes one, so no code path removes a backup's name or its row without it.
+    `arrived` makes one, and `restore_backup` makes one after `link_held` links the held descriptor itself.
+    `drop_backup` takes one, so the backup's own name goes only with it. A restore whose backup directory is
+    already gone returns without one, and its row is forgotten anyway.
     """
     path: str
 
@@ -892,8 +893,9 @@ class Holder:
     """A private directory beside `home`. `aside` is the one name an entry takes inside it.
 
     An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. Nothing in a SCRAP directory was:
-    it holds a copy being built, or a backup whose copy is already in place. Nothing in a STRANGER directory was either:
-    it holds an entry this installer moved but could not prove. The sweep never restores or deletes it.
+    it holds a copy being built, or a backup whose copy is already in place. A STRANGER entry was renamed there from
+    the path the held entry should have taken, or from a holder, and this restore could not prove it. That entry may
+    instead be one that took the path after the move. The sweep never restores or deletes it.
     As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
     leaves while entries are inside becomes a `Stranded` that names them.
     """
@@ -926,7 +928,7 @@ def place_copy(source, path, fd):
     """Copy the entry at `source` beside `path`, then place the copy. Return Published, or why nothing was placed.
 
     `source` is proven before the call and again once the copy is built, so the copy is of the entry `fd` holds.
-    The copy is held open from the moment it is built, so `arrived` proves the placed copy as well.
+    The copy is held open once that proof passes, so `arrived` proves the placed copy as well.
     """
     with Holder(path, SCRAP) as holder, ExitStack() as holds:
         copy = holder.aside
@@ -990,7 +992,7 @@ def arrived(path, fd):
     """Return Published when `path` names the entry `fd` holds, after a move by name put an entry there.
 
     Any other entry there came from a holder another process changed after the proof, or took `path` since.
-    It is parked beside `path`, and the reason names where.
+    It is parked beside `path` when it can be moved, and the reason names where, or that it is still at `path`.
     """
     if same_entry(path, fd):
         return Published(path)
