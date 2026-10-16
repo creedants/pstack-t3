@@ -1,6 +1,0 @@
-- kind feature
-- `scripts/outsider_smoke.py` runs the README Quick start commands, `roles.py show` on a catalog written from `tests/fixtures/catalog.json`, and `brigade.py open` plus `land.py init` on a scratch repository, each as one process, printing one `ok` line per step and exiting 1 on the first failure
-- Every step runs with `HOME` set to a home the run made and `GIT_CONFIG_NOSYSTEM=1`, keeping only `PATH`, `LANG`, `LC_*`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL` from the inherited environment, and every Python child runs with `-I`
-- It refuses a `--home` pointing at a directory the run did not create, and a missing git identity, before making anything
-- `.github/workflows/outsider.yml` runs the script on push to main and pull requests in a `python:3.12-slim` container that installs git
-- `tests/test_outsider_smoke.py` asserts the five step lines with exit 0 and an unchanged canary path listing, the refusal with exit 1, that `GIT_INDEX_FILE`, `GIT_TRACE`, and `GIT_CONFIG_SYSTEM` values pointing into the canary directory preserve its path listing, and that `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE`, and `PYTHONPATH` values pointing into the canary directory preserve its path listing with no canary path in captured child output

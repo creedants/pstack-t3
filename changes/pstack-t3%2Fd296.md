@@ -1,3 +1,0 @@
-- kind polish
-- `brigade.py open` on an existing restaurant prints `context-cap stays N; change it with set --context-cap` when `--context-cap` differs from the stored cap, where a missing cap reads as 300000
-- `brigade.py open` on an existing restaurant prints `coordinator-provider stays P; change it with set --coordinator-provider` when `--coordinator-provider` differs from the stored provider, where a missing provider reads as claude

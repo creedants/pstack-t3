@@ -1,6 +1,0 @@
-- kind polish
-- `t3/added/brigade/opening.md` holds the Open a restaurant steps, the First service steps, the Close a restaurant steps, and the Context cap paragraph. `t3/added/brigade/SKILL.md` keeps stub headings with pointer sentences for those three sections.
-- The Open a restaurant offer line names every-turn, milestones, and digest and points at Run a service step 9 in SKILL.md for what each level sends. Step 4 names the Context cap in opening.md.
-- The First service stub keeps the landing drain bullet, the liveness bullet, and the record-ID bullet. The opening.md First service holds the pin line, the roles line, the three schedule lines, and the rerun and run lines with a back link to First service in SKILL.md.
-- Run a service step 4.1 links First service step 3 in SKILL.md. The script section drops the context cap paragraph with no pointer. It lives in opening.md Context cap.
-- `BRIGADE_DOCS` in `tests/brigade/support.py` reads SKILL.md, admin-reporting.md, and opening.md in that order.

@@ -1,3 +1,0 @@
-- kind fix
-- `fragment_findings` in `scripts/check.py` decodes a percent-encoded fragment before matching headings and strips a destination query before resolving the target file.
-- `tests/test_check.py` gains passing and failing fixtures for encoded fragments and query-bearing destinations, and regressions that pin the one-level container and fence scanning.

@@ -1,4 +1,0 @@
-- kind fix
-- `tests/test_activity_render.py` gives the browser a short TMPDIR from `tempfile.mkdtemp(dir="/tmp")` removed after the run, while HOME and XDG paths stay confined.
-- `tests/test_activity_render.py` skips with `chromium socket path too long` when the socket path passes 107 characters instead of launching.
-- `tests/test_activity_render.py` adds `test_confined_run_tmpdir_keeps_singleton_socket_path_within_107_characters` asserting the TMPDIR handed to the browser yields a socket path of at most 107 characters.

@@ -1,3 +1,0 @@
-- kind upkeep
-- `t3/overrides/ketchup/SKILL.md` embeds upstream ketchup visuals text with `preview_snapshot`, `preview_recording_start`, `preview_recording_stop`, `html_preview`, and `html_render` in place of Cursor mechanics
-- `upstream.json` names commit `6ce45c59b9301a638c1fe1a7b8dc2a82b650898f` and version `0.15.25`

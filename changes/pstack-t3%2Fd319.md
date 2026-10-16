@@ -1,3 +1,0 @@
-- kind fix
-- `tests/landing/support.py` calls `fileno` only on `io.IOBase` and `socket.socket` instances in `_close_live_owners`.
-- `tests/landing/test_support.py` plants `ctypes.PyDLL(None)` and `ctypes.pythonapi` with a `KeyboardInterrupt` canary and runs the helper in a child process.

@@ -1,4 +1,0 @@
-- kind polish
-- land.py states that the Darwin alive-leader fast path runs where os.waitid exists and that the ps query runs otherwise or after that leader exits.
-- A landing Store assigns self.db before it converts its directory argument, so close after a constructor failure at that conversion raises nothing.
-- The exclusive cap's surviving-member assertion reads the member's process state, so a zombie member fails it where os.kill(pid, 0) succeeds.

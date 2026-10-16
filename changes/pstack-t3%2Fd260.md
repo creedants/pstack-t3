@@ -1,2 +1,0 @@
-- kind polish
-- `t3/added/brigade/SKILL.md` script block records `set --cap`, `set --review`, `goal set G<n> --state paused` with `--state open` to resume, and `goal set G<n> --share N`, and the `startable` wait reasons `its goal is paused`, `the <kind> cap holds (<held> of <cap>)`, and `the <goal> share holds (<held> of <share>)`.

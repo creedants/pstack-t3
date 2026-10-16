@@ -1,7 +1,0 @@
-- kind polish
-- `t3/runtime.md` moves the table under `### Light behavior` into new `t3/added/pstack-runtime/light.md`. The section keeps its intro paragraph and adds `In light mode, read [light.md](light.md) before every spawn and run the row for that spawn.`
-- `light.md` opens with `# Light behavior` and holds the header plus every row verbatim. In-file links now target `SKILL.md`.
-- `scripts/check.py` returns early from `light_table_findings` for `pstack-runtime/SKILL.md` and `pstack-runtime/light.md`. The forbidden pattern scan still applies to `light.md`.
-- `tests/test_pstack_t3.py` adds `light.md` to `RUNTIME_DOCS` and points the four row tests at `skills/pstack-runtime/light.md` with `SKILL.md#` links.
-- `tests/test_check.py` shows a light table in `pstack-runtime/light.md` passes and the same table in another file still fails. A forbidden pattern in `light.md` still fails.
-- `wc -w t3/runtime.md` reads 10068 before and 9188 after.

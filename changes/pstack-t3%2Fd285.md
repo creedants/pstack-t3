@@ -1,5 +1,0 @@
-- kind polish
-- `run_at` in `tests/brigade/support.py` takes `code`, the one exit status the call must return, and a caller that passes no `code` keeps the `ok` check that accepts any nonzero status
-- Seventeen refusal calls in sixteen tests in `tests/brigade/test_context_cap.py` passed `ok=False` and accepted any nonzero status, and now pass `code=1` and assert exit code exactly 1
-- The four nested-repository refusal tests call that shared option, which removes the local `refused` helper on `ContextCapTest`
-- Every tightened refusal raises `BrigadeError`, and `main` in `t3/added/brigade/scripts/brigade.py` prints it and returns 1, so no product code changes

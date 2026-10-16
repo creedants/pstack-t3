@@ -1,4 +1,0 @@
-- kind fix
-- `tests/landing/test_times.py` runs `--last 1` on the order fixture and expects `E3`, so ID selection fails.
-- `tests/landing/test_support.py` plants a real socket in the child and asserts cleanup closes it, so removing `socket.socket` from the filter fails the test.
-- `tests/landing/test_support.py` creates the child temp file inside a parent-owned `TemporaryDirectory`, so the parent removes it after success or a nonzero exit.

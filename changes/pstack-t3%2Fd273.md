@@ -1,5 +1,0 @@
-- kind fix
-- `tests/brigade/support.py` adds `attempt_report` which writes `reports/<dish>.md` and sets its mtime to the later of now and the dish's last attempt start.
-- `tests/brigade/test_wake.py` writes eight current-attempt reports with `attempt_report`.
-- `tests/brigade/test_tickets.py` expects `self.project.resolve()` in `test_ticket_paths_refuses_a_project_that_is_not_a_git_repository_and_changes_no_store_file`.
-- `tests/brigade/test_wake.py` expects `self.project.resolve()` in `test_a_released_or_unreadable_lease_gets_its_own_line`.

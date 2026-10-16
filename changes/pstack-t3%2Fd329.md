@@ -1,3 +1,0 @@
-- kind polish
-- `brigade.py spend`'s help text says that Codex and OpenCode turn totals print under the thread's current model selection, so turns taken before a mid-run model switch count under the later model.
-- The regenerated `docs/cli/brigade.md` carries that sentence, and `spend` behavior is unchanged.

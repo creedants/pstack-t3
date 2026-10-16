@@ -1,5 +1,0 @@
-- kind upkeep
-- `.github/workflows/ci.yml` adds a `macos_312` job that runs `python3 -m unittest discover -s tests/landing -t .` and `python3 -m unittest tests.brigade.test_watch tests.brigade.test_wake tests.brigade.test_tickets` on `macos-latest`.
-- The job sets up Python 3.12 and pyyaml, and its test step carries `continue-on-error: true`.
-- That step appends the `Ran` summary lines, the `OK` or `FAILED` status lines, and any `FAIL:` or `ERROR:` name to `$GITHUB_STEP_SUMMARY`.
-- Existing jobs and their triggers are unchanged.

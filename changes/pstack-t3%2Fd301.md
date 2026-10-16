@@ -1,4 +1,0 @@
-- kind fix
-- `t3/added/brigade/scripts/brigade_lib/layout.py` adds `docs/skills.md` when the leased path is `t3/runtime.md`, `t3/setup.md`, `t3/removed.txt`, `t3`, `t3/overrides`, `t3/added`, `vendor/pstack`, `vendor/pstack/skills`, any single name under `t3/overrides/`, `t3/added/`, or `vendor/pstack/skills/`, or `SKILL.md` as the second name under those bases, and not otherwise
-- `skills/brigade/scripts/brigade_lib/layout.py` regenerates from the added copy
-- `tests/brigade/test_fire_layout.py` adds `test_skill_source_adds_docs_skills_md_and_unrelated_omits_it` with vendor file, overrides file, added file, runtime file, setup file, overrides dir, added dir, vendor dir, removed list, and one unrelated tool script case

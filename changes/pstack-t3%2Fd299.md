@@ -1,5 +1,0 @@
-- kind fix
-- The brief `## Threads` sentence states the seat is one bare provider/model token with nothing after it and no backticks around it.
-- The role is one of code delegate, claims check, and architect runner, named literally.
-- Any other child, such as a how explainer, and any in-harness child is named in the report body instead.
-- The sentence gives an example item that `report_threads` parses as one child with no unreadable line.
