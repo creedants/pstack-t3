@@ -543,7 +543,7 @@ class StartableTest(BrigadeTest):
             (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
 
     def note_lease_fixture(self):
-        """A lease on the activity paths plus the change note `fire` would name for the next dish.
+        """A lease on one activity path, one test path, and the next dish's default change note.
 
         The lease's test path and the ticket's first path are siblings under `tests/brigade/`.
         """
@@ -557,7 +557,7 @@ class StartableTest(BrigadeTest):
         self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_startable.py")
 
     def test_startable_does_not_block_on_a_lease_whose_only_match_is_the_next_change_note(self):
-        # A lease whose only match is the note the preview would name for the next dish blocks nothing.
+        # Before the fix, the preview matched this ticket only through the note it named for the next dish.
         self.note_lease_fixture()
         self.assertEqual(self.brigade("startable"), "\n".join([
             self.NONE_RUNNING,

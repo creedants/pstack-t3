@@ -112,9 +112,10 @@ def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
 def lease_refusals(meta, tickets):
     """The block on a waiting ticket's paths, or nothing when the landing queue would admit them.
 
-    The claim carries the ticket's saved paths and the generated copies the build layout maps from them, so it
-    matches the paths `fire` claims. It carries no change note. The note is named for the branch a `fire` runs on,
-    which the preview does not know, so a guessed note blocks a ticket whose paths are free.
+    The claim carries the ticket's saved paths and, when the project has a build layout, the generated copies the
+    layout maps from them. That is the claim `fire` builds for the same paths, minus the change note. The note is
+    named for the branch a `fire` runs on, which the preview does not know, so a guessed note blocks a ticket
+    whose paths are free.
     """
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, refusals = {}, {}
