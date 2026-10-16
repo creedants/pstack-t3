@@ -1,3 +1,4 @@
 - kind fix
 - `t3/added/brigade/scripts/activity.py` gives the timeline group header `flex-wrap: wrap`, so an item's attempt lines take a line under its id, title, and state chip.
 - `tests/test_activity.py` adds `test_timeline_header_wraps_its_attempt_lines_instead_of_squeezing_the_id_and_title_to_no_width`, which renders an item with attempt lines and asserts the page's stylesheet gives `.tl>.grp` `flex-wrap: wrap`.
+- `tests/test_activity.py`'s `test_five_hundred_ledger_rows_stay_within_max_bytes_and_the_note_counts_the_lines_left_out` expects `15991` and `19989` bytes of HTML, 24 bytes more than before, because the stylesheet holds one more rule.
