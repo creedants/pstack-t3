@@ -1458,7 +1458,9 @@ class RunTestsTest(unittest.TestCase):
             self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
             macos = job_body(text.splitlines(keepends=True), "macos_312")
             self.assertIsNotNone(macos)
-            self.assertIn("if: github.event_name == 'push'", "".join(macos))
+            self.assertNotIn("if: github.event_name == 'push'", "".join(macos))
+            self.assertIn("python3 scripts/run_tests.py", "".join(macos))
+            self.assertIn("Generated skills match the sources", "".join(macos))
             self.assertIn("continue-on-error: true", "".join(macos))
             for index in range(1, 5):
                 self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
@@ -1527,15 +1529,17 @@ class RunTestsTest(unittest.TestCase):
                              "test -z \"$(git status --porcelain -- skills docs/skills.md docs/cli)\"\n")
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
-        self.assertEqual(named, ["test_310", "test_312"])
+        self.assertEqual(named, ["test_310", "test_312", "macos_312"])
         macos = jobs["macos_312"]
         self.assertEqual(macos["name"], "macOS (3.12)")
         self.assertEqual(macos["runs-on"], "macos-latest")
-        self.assertEqual(macos["if"], "github.event_name == 'push'")
+        self.assertNotIn("if", macos)
         setup = next(step for step in macos["steps"] if step.get("uses") == "actions/setup-python@v7")
         self.assertEqual(setup["with"]["python-version"], "3.12")
         self.assertIsInstance(setup["with"]["python-version"], str)
-        test = next(step for step in macos["steps"] if "unittest" in step.get("run", ""))
+        test = next(step for step in macos["steps"] if "scripts/run_tests.py" in step.get("run", ""))
+        self.assertNotIn("--part", test["run"])
+        self.assertNotIn("--real-process-share", test["run"])
         self.assertTrue(test["continue-on-error"])
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
