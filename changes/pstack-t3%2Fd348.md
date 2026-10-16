@@ -1,0 +1,4 @@
+- kind fix
+- `paths_inside` in `t3/added/brigade/scripts/brigade_lib/leases.py` reads an empty string in `within` as the whole repository, so a low ticket under a whole-repository saved scope previews `rides with` its holder instead of `blocked, starts after` it
+- `tests/brigade/test_startable.py` pins that low ticket, whose own paths come from its rail row
+- `tests/brigade/test_fire_layout.py` pins a saved scope pair where only the first holds the repository root and a pair where only the second does; both preview the second ticket as `blocked, starts after` the first

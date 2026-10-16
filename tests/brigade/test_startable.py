@@ -577,3 +577,24 @@ class StartableTest(BrigadeTest):
                                                                   "T5 normal, 0m: unknown, no paths recorded",
                                                                   "T6 normal, 0m: blocked, starts after T1; a.txt",
                                                                   "T4 low, 0m: below auto-start; d.txt"])
+
+    def test_startable_rides_a_low_ticket_under_a_whole_repository_saved_scope_instead_of_blocking_it(self):
+        # The saved scope holds the repository root, so its empty canonical part covers the low ticket's path.
+        self.queue("--workers", "1")
+        self.filed("Fix the repository")
+        self.filed("Tidy the guide", "--paths", "docs/guide.md", "--priority", "low")
+        self.filed("Hold a worker")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Hold a worker")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix",
+                                      "--summary", "Fix the repository", "--paths", ".,t1.txt", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        self.brigade("set", "--workers", "2")
+        self.assertEqual(self.brigade("startable"), "\n".join([
+            self.NONE_RUNNING,
+            "waiting tickets: 2, startable: 1, riding: 1",
+            "T1 normal fix, 0m: startable; .,t1.txt",
+            "  Fix the repository",
+            "T2 low fix, 0m: rides with T1; docs/guide.md",
+            "  Tidy the guide",
+        ]))

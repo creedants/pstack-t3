@@ -425,7 +425,8 @@ def paths_overlap(first, second):
 
 
 def paths_inside(paths, within):
-    return all(any(a == b or a.startswith(b + "/") for b in within) for a in paths)
+    """Every path in `paths` is covered by `within`. An empty string in `within` is the whole repository, so it covers every path."""
+    return all(any(b == "" or a == b or a.startswith(b + "/") for b in within) for a in paths)
 
 
 def renew_line(restaurant, dish):
