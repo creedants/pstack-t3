@@ -2054,10 +2054,23 @@ def limit_ledger(page, keep):
     return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
 
 
-def within_budget(page, budget, clean, render):
+def briefed(page):
+    """The page with every fold summary in bounded count form. Counts and state stay exact, and every line stays."""
+    def trimmed(item):
+        if item is None or not item.fold.summary:
+            return item
+        return replace(item, fold=replace(item.fold, summary=brief_attempt(item.fold.ranks, item.fold.counts)))
+
+    groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
+    items = tuple(trimmed(item) for item in page.items)
+    return cut_items(replace(page, groups=groups, items=items), items)
+
+
+def within_budget(page, budget, clean, render, brief=False):
     """The page, its render, and whether that render's UTF-8 length is at most budget.
     A page that already fits, or a page with no attempt line, is returned as it is.
     Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, it keeps no attempt line.
+    When no prefix fits even with no attempt line, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of sparse attempts cannot break the budget. Counts and state stay exact, and no lane is dropped.
     """
     text = render(page, clean)
     count = line_count(page)
@@ -2082,7 +2095,9 @@ def within_budget(page, budget, clean, render):
         else:
             high = mid - 1
     if best is None:
-        return at(0)
+        if brief:
+            return at(0)
+        return within_budget(briefed(page), budget, clean, render, True)
     for _ in range(count + 1):
         chosen = at(best)[2]
         nxt = best + 1

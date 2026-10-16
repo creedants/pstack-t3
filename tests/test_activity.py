@@ -3862,11 +3862,9 @@ class LedgerTest(OutputCase):
         document = self.document("--max-bytes", "16000")
         folded = data_of(document).get("E", [])
         self.assertEqual(len(folded), 1)
-        self.assertIn("3000 attempts", folded[0][1])
-        self.assertIn("3000 workers", folded[0][1])
+        self.assertEqual(folded[0][1], "2999 attempts: 2999 workers, all ended")
         text = self.out("--text", "--max-bytes", "16000")
-        self.assertIn("3000 attempts", text)
-        self.assertIn("3000 workers", text)
+        self.assertIn("2999 attempts: 2999 workers, all ended", text)
         running = [line for line in text.split("\n") if "running for" in line]
         self.assertTrue(any("D7 worker" in line for line in running), running)
 
