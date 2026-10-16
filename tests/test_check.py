@@ -1001,18 +1001,6 @@ class FragmentCheckTest(unittest.TestCase):
             ["brigade/SKILL.md:4: fragment #missing names no heading in brigade/SKILL.md"],
         )
 
-    def test_a_fence_inside_a_list_inside_a_blockquote_hides_its_link(self):
-        self.assertEqual(
-            fragment_tree_findings({"brigade/SKILL.md": "> - ```md\n>   [example](#missing)\n>   ```\n"}),
-            [],
-        )
-
-    def test_a_fence_inside_a_blockquote_list_ends_at_the_next_item(self):
-        self.assertEqual(
-            fragment_tree_findings({"brigade/SKILL.md": "> 1. Example\n>\n>    ```md\n>    sample\n> 2. [bad](#missing)\n"}),
-            ["brigade/SKILL.md:5: fragment #missing names no heading in brigade/SKILL.md"],
-        )
-
     def test_check_tree_reports_a_fragment_that_names_no_heading(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

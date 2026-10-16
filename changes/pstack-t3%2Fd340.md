@@ -1,7 +1,3 @@
 - kind fix
-- `_visible_lines` in `scripts/check.py` holds one stack of open quotes, then open lists, then one fence. `_step` computes every later stack. `_visible_lines` starts the stack empty. A non-blank line that does not indent into an open list closes it. Blank and tab-led lines leave the list stack unchanged. A change in quote depth rebuilds the list stack from that line. Opened blocks precede any fence open.
-- A fence closes only on a line inside its owning containers. A fence directly in a quote keeps an extra `>` as code. In a list inside a quote, an extra `>` left of the list content column ends the fence. A list indent never reaches into a later quote and never survives leaving one.
-- Returning from a nested list to a surviving parent list opens the fence in that parent. A lower-depth blank quote line ends the inner quote and its fence.
-- A fence inside a list inside a blockquote hides its link. A fence in a blockquote list ends at the next list item whose marker sits at or left of the list content column.
-- `check_tree` in `scripts/check.py` strips a destination query before resolving the path. A file-plus-query link is not reported as broken when its file exists. The fragment check still checks its fragment.
-- `tests/test_check.py` covers both quoted list fence shapes and query-bearing file links.
+- `check_tree` in `scripts/check.py` strips a destination query before resolving the path. A link whose destination is a file plus a query is not reported as broken when that file exists.
+- `tests/test_check.py` covers a query-bearing file link to an existing file.
