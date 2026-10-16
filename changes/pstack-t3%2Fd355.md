@@ -2,4 +2,4 @@
 - `governor.py` shares one runner between `supervised` and `Integration._run_build`.
 - The runner signals only before it reaps.
 - Restoration runs masked.
-- Timeout kills unreaped then waits at most five seconds.
+- Timeout kills the group before the reap. The output drain waits at most five seconds.

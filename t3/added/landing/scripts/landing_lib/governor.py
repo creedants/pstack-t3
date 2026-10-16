@@ -1044,7 +1044,7 @@ class _Build:
         self.returncode = None
 
     def start(self, command, cwd):
-        """Open the wake pipe, install the handler, then spawn. The handler is in place before the fork."""
+        """Open the wake pipe, install the interceptable handler, then spawn. An installed handler is in place before the fork."""
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)
         os.set_blocking(self._wake_w, False)
@@ -1122,7 +1122,7 @@ class _Build:
             pass
 
     def _drain(self, until):
-        """Read stdout until EOF, the time limit, or a pending SIGINT. Never reaps."""
+        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. Never reaps."""
         while self._stdout is not None:
             if self._pending is not None and self.phase == _STARTED:
                 return "interrupt"
@@ -1244,10 +1244,10 @@ class _Build:
 
 
 def run_build(command, cwd, timeout):
-    """Run a shell command in its own process group. Returns a pair, or None on timeout.
+    """Run a shell command in its own process group. Returns a pair. Timeout returns None as the status.
 
     One runner signals the group and reaps the leader, and it signals only before it reaps.
-    A SIGINT during the build is postponed. The runner kills the group, reaps the leader,
+    An interceptable SIGINT before the reap is postponed. The runner kills the group before it reaps,
     restores the entry disposition, and then delivers the SIGINT to it. SIG_IGN leaves the
     build running.
     """

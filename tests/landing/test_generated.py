@@ -973,7 +973,7 @@ class GeneratedTest(LandingTest):
         self.assertNotIn("CAUGHT", result.stdout + result.stderr)
 
     def test_install_race_restores_handler_after_interrupt(self):
-        """Restoration runs masked."""
+        """Install race restores the entry handler."""
         real_signal = signal.signal
         previous = signal.getsignal(signal.SIGINT)
         injected = []
@@ -1042,8 +1042,8 @@ class GeneratedTest(LandingTest):
         self.assertEqual(calls, [["killpg", "reaped"]])
         self.assertIs(restored, returning_previous)
 
-    def test_sigint_at_every_runner_line_keeps_the_ownership_contract(self):
-        """Ownership holds at every line."""
+    def test_sigint_sampled_lines_never_signal_after_reap(self):
+        """Sampled lines never signal after the reap."""
         codes = {land.run_build.__code__}
         for value in vars(land._Build).values():
             if callable(value):
@@ -1139,8 +1139,8 @@ class GeneratedTest(LandingTest):
             os.waitpid = real_waitpid
             signal.signal(signal.SIGINT, signal.default_int_handler)
 
-    def test_timeout_kills_unreaped_then_waits_at_most_five_seconds(self):
-        """Timeout kills unreaped then waits at most five seconds."""
+    def test_timeout_kills_live_build_with_no_exit_detector(self):
+        """Timeout kills a live build without an exit detector."""
         parent = str(SCRIPT.parent)
         work = str(self.work)
         lines = [
