@@ -404,93 +404,172 @@ def _is_fence_close(line, marker, length):
     return rest[run:].strip() == ""
 
 
-def _visible_lines(text):
-    """Yield source line numbers with container prefixes stripped, skipping fenced lines.
-
-    One scan drives both headings and links. It yields each visible line number
-    and content with the container prefix stripped. At most one container level is stripped per line. That is
-    one blockquote marker plus one optional space, or one list indent through its
-    content indent. Fence indentation is measured within the stripped content. A fence
-    records its container kind and indent. It ends at its containing block boundary.
-    A list fence ends at a new item at the same level or a line outside the item.
-    A blockquote fence ends at a non-blank line with no quote marker. An unclosed fence outside
-    any container hides the rest of the file.
-    """
-    fence = None
-    item = None
-    for number, line in enumerate(text.splitlines(), 1):
-        current = line
-        while True:
-            if fence is None:
-                if current.strip() == "":
-                    yield number, current
-                    break
-                if current.startswith("\t"):
-                    yield number, current
-                    break
-                quote = _BLOCKQUOTE_PREFIX.match(current)
-                if quote is not None:
-                    item = None
-                    stripped = current[quote.end():]
-                    opened = _fence_open(stripped)
-                    if opened is None:
-                        yield number, stripped
-                    else:
-                        fence = (*opened, "quote", 0, 0)
-                    break
-                listed = _list_content(current)
-                if listed is not None:
-                    item = listed
-                    stripped = current[listed[1]:]
-                    opened = _fence_open(stripped)
-                    if opened is None:
-                        yield number, stripped
-                    else:
-                        fence = (*opened, "list", listed[0], listed[1])
-                    break
-                if item is not None and current[: item[1]].strip() == "":
-                    stripped = current[item[1]:]
-                    opened = _fence_open(stripped)
-                    if opened is None:
-                        yield number, stripped
-                    else:
-                        fence = (*opened, "list", item[0], item[1])
-                    break
-                item = None
-                opened = _fence_open(current)
-                if opened is None:
-                    yield number, current
-                else:
-                    fence = (*opened, "plain", 0, 0)
-                break
-            marker, length, kind, findent, fcontent = fence
-            if current.strip() == "" or current.startswith("\t"):
-                break
-            if kind == "quote":
-                quote = _BLOCKQUOTE_PREFIX.match(current)
-                if quote is None:
-                    fence = None
-                    item = None
-                    continue
-                if _is_fence_close(current[quote.end():], marker, length):
-                    fence = None
-                break
-            if kind == "list":
-                listed = _list_content(current)
-                if listed is not None:
-                    if listed[0] <= findent:
-                        fence = None
-                        continue
-                    break
-                if current[:fcontent].strip() == "":
-                    if _is_fence_close(current[fcontent:], marker, length):
-                        fence = None
-                    break
-                fence = None
-                continue
-            if _is_fence_close(current, marker, length):
-                fence = None
+def _quote_depth_and_pos(line):
+    depth = 0
+    pos = 0
+    while pos < len(line):
+        match = _BLOCKQUOTE_PREFIX.match(line[pos:])
+        if match is None or match.end() == 0:
             break
+        depth += 1
+        pos += match.end()
+        if pos >= len(line):
+            break
+    return depth, pos
+
+
+def _list_chain(rest):
+    chain = []
+    pos = 0
+    while pos < len(rest):
+        found = _list_content(rest[pos:])
+        if found is None:
+            break
+        rel_ind, rel_cont = found
+        abs_ind = pos + rel_ind
+        abs_cont = pos + rel_cont
+        if abs_cont <= pos:
+            break
+        chain.append((abs_ind, abs_cont))
+        pos = abs_cont
+        if pos >= len(rest):
+            break
+    return chain
+
+
+def _stack_quotes_and_lists(stack):
+    quotes = 0
+    for entry in stack:
+        if entry[0] == "quote":
+            quotes += 1
+        else:
+            break
+    lists = [entry for entry in stack[quotes:] if entry[0] == "list"]
+    return quotes, lists
+
+
+def _pos_after_quotes(line, count):
+    pos = 0
+    for _ in range(count):
+        match = _BLOCKQUOTE_PREFIX.match(line[pos:])
+        if match is None or match.end() == 0:
+            return None
+        pos += match.end()
+    return pos
+
+
+def _step(line, stack):
+    if line.startswith("\t"):
+        if stack and stack[-1][0] == "fence":
+            return None, stack
+        return line, stack
+    if line.strip() == "":
+        if stack and stack[-1][0] == "fence":
+            return None, stack
+        return line, stack
+    depth, pos = _quote_depth_and_pos(line)
+    rest = line[pos:]
+    if stack and stack[-1][0] == "fence":
+        marker, length = stack[-1][1], stack[-1][2]
+        owning = list(stack[:-1])
+        oq, olists = _stack_quotes_and_lists(owning)
+        if not olists:
+            if depth < oq:
+                stack = owning
+            else:
+                owned_pos = _pos_after_quotes(line, oq)
+                if owned_pos is None:
+                    stack = owning
+                else:
+                    content = line[owned_pos:]
+                    if _is_fence_close(content, marker, length):
+                        return None, owning
+                    return None, stack
+        else:
+            owned_pos = _pos_after_quotes(line, oq)
+            if owned_pos is None:
+                stack = owning
+            else:
+                rest_owning = line[owned_pos:]
+                if rest_owning.strip() == "":
+                    return None, stack
+                listed = _list_content(rest_owning)
+                if listed is not None:
+                    if listed[0] <= olists[-1][2]:
+                        stack = owning
+                    else:
+                        return None, stack
+                else:
+                    stays = True
+                    for _, _, cont in olists:
+                        if rest_owning[:cont].strip() != "":
+                            stays = False
+                            break
+                    if not stays:
+                        stack = owning
+                    else:
+                        content = rest_owning[olists[-1][2]:]
+                        if _is_fence_close(content, marker, length):
+                            return None, owning
+                        return None, stack
+    depth, pos = _quote_depth_and_pos(line)
+    rest = line[pos:]
+    quotes, lists = _stack_quotes_and_lists(stack)
+    if rest.strip() == "":
+        if depth != quotes:
+            return "", [("quote",)] * depth
+        return "", stack
+    if depth != quotes:
+        chain = _list_chain(rest)
+        new = [("quote",)] * depth + [("list", ind, cont) for ind, cont in chain]
+        remainder = rest[chain[-1][1]:] if chain else rest
+        opened = _fence_open(remainder)
+        if opened is not None:
+            return None, new + [("fence", opened[0], opened[1])]
+        return remainder, new
+    first = _list_content(rest)
+    if first is not None:
+        chain = _list_chain(rest)
+        threshold = chain[0][0]
+        kept = []
+        for entry in lists:
+            if entry[1] < threshold:
+                kept.append(entry)
+            else:
+                break
+        new_lists = kept + [("list", ind, cont) for ind, cont in chain]
+        new = [("quote",)] * quotes + new_lists
+        remainder = rest[chain[-1][1]:]
+        opened = _fence_open(remainder)
+        if opened is not None:
+            return None, new + [("fence", opened[0], opened[1])]
+        return remainder, new
+    cut = len(lists)
+    for index, entry in enumerate(lists):
+        if rest[:entry[2]].strip() != "":
+            cut = index
+            break
+    kept = lists[:cut]
+    base = [("quote",)] * quotes + kept
+    remainder = rest[kept[-1][2]:] if kept else rest
+    opened = _fence_open(remainder)
+    if opened is not None:
+        return None, base + [("fence", opened[0], opened[1])]
+    return remainder, base
+
+
+def _visible_lines(text):
+    """Yield visible line numbers with container prefixes stripped, skipping fenced lines.
+
+    One stack holds open quotes, then open lists, then one fence. Peel trims
+    outside in at the first mismatch. Opened blocks precede any fence open.
+    A fence closes only inside its owning containers. Extra markers stay code.
+    """
+    stack = []
+    for number, line in enumerate(text.splitlines(), 1):
+        content, stack = _step(line, stack)
+        if content is not None:
+            yield number, content
 
 
 def _strip_code_spans(line):
@@ -694,7 +773,7 @@ def check_tree(root, guide=True):
             for target in LINK.findall(text):
                 if THREAD_LINK.match(target):
                     continue
-                path = target.split("#", 1)[0]
+                path = target.split("#", 1)[0].split("?", 1)[0]
                 # Template placeholders such as (url) are not paths.
                 if "/" not in path and "." not in path:
                     continue
