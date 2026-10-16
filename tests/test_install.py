@@ -1020,7 +1020,7 @@ NO_PROC = (
 def darwin_renamex():
     """Hook code that leaves only `renamex_np` in libc, as on Darwin.
 
-    Where `renameat2` exists the fake `renamex_np` asserts flag 4 and forwards to it. Where it is absent the fake wraps the real `renamex_np`, so the same tests run natively on macOS.
+    Where `renameat2` exists the fake `renamex_np` asserts flag 4 and forwards to it. Where it is absent the fake wraps the real `renamex_np`.
     """
     return (
         "import ctypes\n"
@@ -2468,7 +2468,7 @@ class OwnershipTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"displaced\x00\xfe")
 
     def assert_restore_kept(self, raced, swarm, rows, kind, reason):
-        """The raced restore wrote nothing at swarm and kept the backup and its row where they were."""
+        """The raced restore saw the occupant arrive, left no set-aside copy, and kept the backup and its row where they were."""
         self.assertEqual((self.home / "filled").read_text(), "True")
         backup = Path(rows[0]["backup"])
         self.skipped(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
