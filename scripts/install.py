@@ -837,7 +837,7 @@ HOLDER = ".pstack-t3-"
 SCRAP = ".pstack-t3-scrap-"
 SCRAP_LEFT = "an unfinished copy or an already restored backup; delete it by hand"
 STRANGER = ".pstack-t3-stranger-"
-STRANGER_LEFT = "a restore found it where the entry it held should have been; it is not a backup or a link this checkout made"
+STRANGER_LEFT = "a restore found it where the entry it held should have been"
 TWIN = "twin"
 MOVED = "moved"
 
@@ -848,7 +848,7 @@ class Published:
 
     `arrived` makes one, and `restore_backup` makes one after `link_held` links the held descriptor itself.
     `drop_backup` takes one, so the backup's own name goes only with it. A restore whose backup directory is
-    already gone returns without one, and its row is forgotten anyway.
+    already gone returns without one, and its row is forgotten only when the held link already reached its path.
     """
     path: str
 
@@ -1077,7 +1077,7 @@ def retire(aside, fd):
 
 
 def give_back(taken, backup, aside, reason):
-    """Return what this call took from `backup` before the proof failed. Return `reason` plus anything that stuck."""
+    """Return the entry at `aside` to `backup` for a moved entry. Drop the second name or park its replacement for a twin. Return `reason` plus anything that stuck."""
     if taken == TWIN:
         if one_entry(aside, backup):
             with suppress(OSError):
@@ -1091,7 +1091,7 @@ def give_back(taken, backup, aside, reason):
 
 
 def keep(taken, backup, aside, fd, reason):
-    """After the proof passed and the placement did not, leave the backup as it was and park what is not it."""
+    """After the proof passed and the placement did not, drop the second name for a twin and return the moved entry to `backup` or keep it at `aside`. Park what is not the held entry."""
     if not os.path.lexists(aside):
         return reason
     if same_entry(aside, fd):

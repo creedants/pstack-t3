@@ -1091,7 +1091,7 @@ def darwin_renamex():
 def holder_swap(saved, foreign="file"):
     """Hook code that swaps a holder entry for a foreign one after its proof, as a same-user race would.
 
-    On the first True proof for a path under a `.pstack-t3-` directory, it renames that path to `saved`
+    On the first True proof for a path with `.pstack-t3-` in its text, it renames that path to `saved`
     in a separate process and puts a foreign `foreign` entry there. `foreign` is "file" or "directory".
     """
     file_actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); Path(sys.argv[1]).write_bytes(b'foreign\\x00\\xff')"
@@ -2856,7 +2856,7 @@ class OwnershipTest(unittest.TestCase):
         self.assert_empty_records()
 
     def backup_race_uninstall(self, a, swarm, backup, *events, crossing=False, **options):
-        """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem."""
+        """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem. `crossing` as "refused" also asserts no move left the backups by name."""
         hook = backup_race(backup, swarm, events, **options)
         if crossing:
             hook = cross_device(state_dir(self.home) / "backups", swarm) + hook
