@@ -1779,8 +1779,9 @@ class LandingTest(LandingTestBase):
         # caller before the probe is stopped keeps that order, so its first attempt wakes with the
         # free slot already released and yields to the earlier exclusive instead of starting.
         self.assertEqual(slots.settle(landing), "waiting")
-        # A killed probe releases its locks without that order, so the turn mutex can be released
-        # while the free slot is still locked, and the landing caller can then take landing-0.
+        # Stopping the probe before that attempt leaves when each lock is released up to the
+        # kernel, so the attempt can land on either side of the free slot's release. On the
+        # early side it takes landing-0 instead of yielding to the earlier exclusive.
         stop_reporter()
         self.assertEqual(slots.step(exclusive), "started")
         self.assertFalse(landing.started)
