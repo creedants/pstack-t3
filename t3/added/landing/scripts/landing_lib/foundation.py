@@ -193,16 +193,21 @@ def is_generated(path):
     return covered(path, GENERATED_PATHS)
 
 
+def source_paths(names):
+    """Git names that are sources. Git names need no canonicalization."""
+    return [path for path in names if not is_generated(path)]
+
+
 def fingerprint(repo, base, head):
     """Hash of the source change. Sources come from NUL-delimited names. Their diff uses literal pathspecs."""
-    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo).stdout
+    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo, exact=True).stdout
     names = [path for path in raw.split("\0") if path]
-    sources = [path for path in names if not is_generated(path)]
+    sources = source_paths(names)
     if not sources:
         return ""
     specs = [f":(literal){path}" for path in sources]
     diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff",
-               "-U0", base, head, "--", *specs, cwd=repo).stdout
+               "-U0", base, head, "--", *specs, cwd=repo, exact=True).stdout
     if not diff:
         return ""
     lines = [line for line in diff.splitlines() if not line.startswith("index ")]
@@ -211,4 +216,5 @@ def fingerprint(repo, base, head):
 
 
 def changed_paths(repo, base, head):
-    return [p for p in git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo).stdout.split("\0") if p]
+    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo, exact=True).stdout
+    return [p for p in raw.split("\0") if p]
