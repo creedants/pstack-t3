@@ -1,4 +1,4 @@
 - kind polish
-- Move the paragraphs after the command block in `## The script` of `t3/added/brigade/SKILL.md` into new on-demand file `t3/added/brigade/script.md` and leave a stub with refusal text and a link at each site.
-- Point a refused or unnamed `$B` line at `script.md`. The pointer states `$B <command> --help`.
-- Join `script.md` to `BRIGADE_DOCS`. Drop five `--help` restatements the pointer, the command block, and help text already state.
+- Move the paragraphs after the command block in `## The script` of `t3/added/brigade/SKILL.md` into new on-demand file `t3/added/brigade/script.md`. Leave a stub with a link at each moved site and refusal text where the paragraph had one. Priority stays with no new link.
+- Point a refused or unnamed `$B` line, or a flag the block does not show, at `script.md`. The pointer states `$B <command> --help`.
+- Join `script.md` to `BRIGADE_DOCS`. Drop five `--help` restatements. The pointer states the `--help` line. Help text and the command block state the other four.
