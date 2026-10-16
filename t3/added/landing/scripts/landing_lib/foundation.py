@@ -186,13 +186,35 @@ def covered(path, paths):
     return any(p == "" or path == p or path.startswith(p + "/") for p in paths)
 
 
+GENERATED_PATHS = ("skills", "docs/cli", "docs/skills.md")
+
+
+def is_generated(path):
+    return covered(path, GENERATED_PATHS)
+
+
+def source_paths(names):
+    """Git names that are sources. Git names need no canonicalization."""
+    return [path for path in names if not is_generated(path)]
+
+
 def fingerprint(repo, base, head):
-    """Hash of the change itself: content, whitespace, modes, and binaries, without line numbers or blob IDs."""
-    diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff", "-U0", base, head, cwd=repo).stdout
+    """Hash of the source change. Sources come from NUL-delimited names. Their diff uses literal pathspecs."""
+    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo, exact=True).stdout
+    names = [path for path in raw.split("\0") if path]
+    sources = source_paths(names)
+    if not sources:
+        return ""
+    specs = [f":(literal){path}" for path in sources]
+    diff = git("diff", "--binary", "--full-index", "--no-renames", "--no-textconv", "--no-ext-diff",
+               "-U0", base, head, "--", *specs, cwd=repo, exact=True).stdout
+    if not diff:
+        return ""
     lines = [line for line in diff.splitlines() if not line.startswith("index ")]
     lines = [re.sub(r"^@@ [^@]* @@", "@@", line) for line in lines]
-    return hashlib.sha256("\n".join(lines).encode("utf-8", "surrogateescape")).hexdigest() if diff else ""
+    return hashlib.sha256("\n".join(lines).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def changed_paths(repo, base, head):
-    return [p for p in git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo).stdout.split("\0") if p]
+    raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo, exact=True).stdout
+    return [p for p in raw.split("\0") if p]

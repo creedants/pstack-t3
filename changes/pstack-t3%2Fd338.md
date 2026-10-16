@@ -1,0 +1,21 @@
+- kind feature
+- Generated paths live in one registry in foundation.
+- Submit lease check covers sources only and rejects generated only changes.
+- Fingerprint lists sources with NUL-delimited names and hashes their diff with literal pathspecs. Empty stays empty.
+- The generated conflict resolver no longer compares trunk and picked filename sets.
+- Source conflicts still bounce with trunk.
+- Empty source changes return already in trunk.
+- Rebuild clears every generated root, runs the build, clears again, runs again, and compares.
+- Failed builds bounce and never land.
+- Builds that dirty tracked sources on either run bounce.
+- Builds whose second run changes generated entries including modes and symlink targets bounce.
+- Staged generated output amends the tip with no edit.
+- Fingerprint and author checks run after rebuild.
+- NUL-delimited Git names decode exactly and source checks share one lossless classifier.
+- Source entries bounce without scripts/build.py when generated output exists or the entry touches it.
+- Generated roots that traverse a symlink bounce without deleting outside the worktree.
+- Handled rebuild failures run `git reset --hard` at the pre-entry commit, then `git clean -ffdx` on generated paths when the roots stay inside the worktree.
+- An ordinary exception caught by the rebuild guard returns a rebuild failure that names the build command and the exception after cleanup succeeds.
+- Caught interrupts run `_stop_build` and `_give_up`, then propagate without bouncing when cleanup succeeds.
+- Generated conflicts absent on ours are removed and only restored paths are staged with literal pathspecs.
+- Dirty and unmerged discovery reads NUL names with exact decoding.
