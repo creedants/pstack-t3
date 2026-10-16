@@ -6,7 +6,6 @@ from .support import (
     sh,
 )
 
-import os
 import subprocess
 import sys
 

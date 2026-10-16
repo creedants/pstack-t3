@@ -266,7 +266,7 @@ class Integration:
         spec = f"{entry['base']}..{seam.pin_ref(entry['sha'])}"
         identity = seam.committer(self.path)
         result = self.git(*identity, "-c", "rerere.enabled=false", "cherry-pick", spec, check=False)
-        # resolved tracks generated resolution across pick and skip. Entries with a builder always rebuild.
+        # resolved tracks generated resolution across pick and skip. A builder rebuilds every entry that changes sources.
         result, resolved = self._resolve_generated(before, identity, result)
         # git 2.43 has no cherry-pick --empty=drop. Git added it in 2.45. Drop a commit that
         # became empty, and stop on a commit that started empty. That matches --empty=drop.
