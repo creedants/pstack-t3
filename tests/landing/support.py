@@ -15,6 +15,7 @@ import runpy
 import shlex
 import shutil
 import signal
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -178,9 +179,13 @@ def _close_live_owners(numbers):
         return
     owners = []
     for obj in gc.get_objects():
-        # A dead weakref proxy raises ReferenceError from the lookup. An unrelated object can raise a
-        # BaseException such as SystemExit. Both are skipped. KeyboardInterrupt is raised on.
+        # Call fileno only on known descriptor owners. A ctypes library resolves any attribute as a C
+        # symbol, and glibc fileno dies with SIGSEGV. A dead weakref proxy raises ReferenceError from the
+        # type check or the lookup. An unrelated object can raise a BaseException such as SystemExit.
+        # Both are skipped. KeyboardInterrupt is raised on.
         try:
+            if not isinstance(obj, (io.IOBase, socket.socket)):
+                continue
             fileno = getattr(obj, "fileno", None)
             if not callable(fileno):
                 continue
