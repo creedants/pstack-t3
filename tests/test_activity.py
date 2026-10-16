@@ -3878,7 +3878,7 @@ class LedgerTest(OutputCase):
         self.assertNotIn(token, text)
         self.assertIn("attempt 1 · worker · open", text)
 
-    def test_ordinary_ledgertoken_in_the_thread_attempt_role_and_seat_is_absent_from_both_forms(self):
+    def test_ordinary_ledgertoken_in_the_thread_role_and_seat_is_absent_from_both_forms(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         token, other = "ledgertoken", "ledger-secret-token"
