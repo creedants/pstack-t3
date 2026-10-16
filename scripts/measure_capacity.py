@@ -32,6 +32,14 @@ The count is not, by itself, proof that a build or a test run passed.
 psi_full_avg10 is the 10-second "full" memory-stall average from
 /proc/pressure/memory, or "na" when that file is absent.
 
+The process directory is /proc, or the directory the environment variable
+PSTACK_CAPACITY_PROC_ROOT names. When that path is not a directory the
+sampler still prints its header and one row per sample. It writes na for the
+memory and swap columns, load1, sessions, build_procs, psi_full_avg10, and
+the probe columns probe_ms, probe_ok, and probe_port, because it cannot read
+the process table or find the listening port. label and ts keep their values.
+The run exits 0.
+
 Stop a ramp when swap used exceeds half of swap total, or when a probe fails
 or takes longer than 2000 ms. Those rules are the hard stop. They are not a
 fit ceiling. The caller decides the ceiling from the rows.
@@ -62,11 +70,18 @@ COLUMNS = (
 
 PROBE_TIMEOUT_S = 5.0
 LISTEN = "0A"
+PROC_ROOT_ENV = "PSTACK_CAPACITY_PROC_ROOT"
+UNAVAILABLE = "na"
+
+
+def proc_root():
+    """The directory that holds process data. /proc, or the directory the environment names."""
+    return Path(os.environ.get(PROC_ROOT_ENV, "/proc"))
 
 
 def meminfo():
     fields = {}
-    for line in Path("/proc/meminfo").read_text().splitlines():
+    for line in (proc_root() / "meminfo").read_text().splitlines():
         key, _, rest = line.partition(":")
         fields[key] = int(rest.strip().split()[0])
     missing = [key for key in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree") if key not in fields]
@@ -82,20 +97,20 @@ def memory_kib(fields):
 
 
 def load1():
-    return float(Path("/proc/loadavg").read_text().split()[0])
+    return float((proc_root() / "loadavg").read_text().split()[0])
 
 
 def psi_full_avg10():
-    path = Path("/proc/pressure/memory")
+    path = proc_root() / "pressure" / "memory"
     if not path.exists():
-        return "na"
+        return UNAVAILABLE
     for line in path.read_text().splitlines():
         if not line.startswith("full "):
             continue
         for part in line.split():
             if part.startswith("avg10="):
                 return part.split("=", 1)[1]
-    return "na"
+    return UNAVAILABLE
 
 
 def cmdline(pid_path):
@@ -107,7 +122,7 @@ def cmdline(pid_path):
 
 
 def each_pid():
-    for entry in Path("/proc").iterdir():
+    for entry in proc_root().iterdir():
         if entry.name.isdigit():
             yield entry
 
@@ -206,7 +221,7 @@ def t3_server_inodes():
 
 def listen_ports(inodes):
     ports = []
-    path = Path("/proc/net/tcp")
+    path = proc_root() / "net" / "tcp"
     if not path.exists():
         return ports
     for line in path.read_text().splitlines()[1:]:
@@ -237,6 +252,11 @@ def probe_once(port):
 
 
 def sample(label, port):
+    if port == UNAVAILABLE:
+        row = dict.fromkeys(COLUMNS, UNAVAILABLE)
+        row["label"] = label
+        row["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return row
     used, available, swap_used, swap_total = memory_kib(meminfo())
     if port is None:
         probe_ms, probe_ok = 0.0, 0
@@ -263,6 +283,8 @@ def sample(label, port):
 
 
 def choose_port():
+    if not proc_root().is_dir():
+        return UNAVAILABLE
     ports = listen_ports(t3_server_inodes())
     if not ports:
         return None
