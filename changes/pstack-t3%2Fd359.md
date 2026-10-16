@@ -1,0 +1,6 @@
+- kind feature
+- `pass record` with `--reviewer-thread`, `dish --thread`, and `dish --state merged` or `--state dropped` print `archive thread: <id>` on standard error, one id per line, and print nothing on standard output
+- `pass record` prints the recorded reviewer thread, pass or send-back, and prints nothing without `--reviewer-thread` or with `--member`
+- `dish --thread` prints the replaced worker only when it binds a different non-empty thread, and prints nothing for the first bind or a repeated id
+- `dish --state merged` and `--state dropped` print every worker thread the item used, meaning its `threads.tsv` worker rows plus its retired worker log rows plus its dish thread cell, and print no child, reviewer, or panel member thread
+- no command prints the coordinator thread, a thread another in-flight item holds, a blank id, or a repeated id, and no command fails for an unknown or archived id
