@@ -276,7 +276,7 @@ Launch a new gate unless a current qualifying verdict exists at the exact head S
 - **Current.** It is the latest verdict for that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier `pass`.
 - **Qualifying.** It is `pass`, and the author and verifier are of different model families.
 
-Before you reuse a gate verdict for a new head SHA, read [Reusing a verdict](gate-review.md#reusing-a-verdict). That file holds the two sources and the four exclusions and states the patch-id split. For a brigade item, the coordinator source runs `pass check <item> --sha <head> --json`.
+Before you reuse a gate verdict, read [Reusing a verdict](gate-review.md#reusing-a-verdict). That file holds the two sources and the four exclusions and states the patch-id split. For a brigade item, the coordinator source runs `pass check <item> --sha <head> --json`.
 
 A lane receipt never stands in for the gate review. Read the head again right before you create the PR, mark it ready, or merge. When it moved, apply this section again.
 

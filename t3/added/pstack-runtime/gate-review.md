@@ -1,6 +1,6 @@
 # Gate review reuse
 
-Read this file before you reuse a gate verdict for a new head SHA.
+Read this file before you reuse a gate verdict.
 
 ## Reusing a verdict
 
