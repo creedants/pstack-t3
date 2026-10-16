@@ -24,6 +24,7 @@ MOD = test_activity.MOD
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome")
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
+SOCKET_LIMIT = 107
 BUDGET = 15999
 # The frame fit() reserves.
 FRAME = MOD["FRAME_HEIGHT"] - MOD["FRAME_MARGIN"]
@@ -124,15 +125,23 @@ class BrowserBinary:
 
 
 def confined_run(browser, target, directory, prefix, timeout):
-    """Run browser on target with a timeout of timeout seconds, a profile under directory, and browser state confined there."""
+    """Run browser on target with a timeout of timeout seconds, a profile under directory, HOME and XDG state confined there, and TMPDIR under /tmp."""
     environment = dict(os.environ)
-    for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s"), ("TMPDIR", "t")):
+    for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s")):
         path = Path(directory) / name
         path.mkdir(parents=True, exist_ok=True)
         environment[variable] = str(path)
-    profile = tempfile.mkdtemp(prefix=prefix, dir=directory)
-    return subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
-                          capture_output=True, text=True, timeout=timeout, check=True, env=environment).stdout
+    short_tmp = tempfile.mkdtemp(dir="/tmp")
+    try:
+        socket_path = os.path.join(short_tmp, "org.chromium.Chromium.XXXXXX", "SingletonSocket")
+        if len(socket_path) > SOCKET_LIMIT:
+            raise unittest.SkipTest(f"chromium socket path too long ({len(socket_path)} > {SOCKET_LIMIT})")
+        environment["TMPDIR"] = short_tmp
+        profile = tempfile.mkdtemp(prefix=prefix, dir=directory)
+        return subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
+                              capture_output=True, text=True, timeout=timeout, check=True, env=environment).stdout
+    finally:
+        shutil.rmtree(short_tmp, ignore_errors=True)
 
 
 def skip_segments(items):
@@ -364,6 +373,27 @@ class ProbeContractTest(unittest.TestCase):
 
         _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
         self.assertEqual(unavailable[0], "chromium (/opt/a) timed out after 7 seconds")
+
+    def test_confined_run_tmpdir_keeps_singleton_socket_path_within_107_characters(self):
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen["env"] = kwargs["env"]
+            completed = mock.Mock()
+            completed.stdout = ""
+            return completed
+
+        with tempfile.TemporaryDirectory() as root:
+            deep = Path(root) / ("d" * 80)
+            deep.mkdir()
+            target = deep / "probe.html"
+            target.write_text("<div id=o></div>")
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                confined_run("/opt/a", target, str(deep), "q", 5)
+        tmpdir = seen["env"]["TMPDIR"]
+        socket_path = os.path.join(tmpdir, "org.chromium.Chromium.XXXXXX", "SingletonSocket")
+        self.assertLessEqual(len(socket_path), SOCKET_LIMIT)
+        self.assertEqual(SOCKET_LIMIT, 107)
 
     def test_render_keeps_its_own_timeout(self):
         timeouts = []
