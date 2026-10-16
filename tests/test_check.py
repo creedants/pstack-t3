@@ -1111,7 +1111,7 @@ class SamplerOutputTest(unittest.TestCase):
         self.assertEqual(lines[0].split("\t"), list(measure_capacity.COLUMNS))
         self.assertEqual(lines[1].split("\t")[0], "x")
 
-    def test_a_missing_proc_root_crashed_before_the_header_and_now_prints_na_rows(self):
+    def test_a_missing_process_directory_does_not_crash_before_the_header(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "rows.tsv"
             env = dict(os.environ, **{measure_capacity.PROC_ROOT_ENV: str(Path(directory) / "no-proc")})
