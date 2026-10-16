@@ -1,0 +1,4 @@
+- kind upkeep
+- The `macos_312` job in `.github/workflows/ci.yml` carries `if: github.event_name == 'push'`, so it runs only on a push to main and never on a pull request.
+- The comment above the job's test step now reads that the job runs only on push to main and the step stays non-blocking.
+- `tests/test_run_tests.py` asserts that exact `if` expression for the macOS job in the yaml branch and in the no-yaml text branch.
