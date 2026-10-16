@@ -1987,7 +1987,7 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md")
 
 
 def runtime_docs():
@@ -2094,7 +2094,7 @@ class ThreadLifecycleDocTest(unittest.TestCase):
         self.assertNotIn("Read `t3.json` before you settle", section)
 
     def test_local_state_does_not_promise_worktrees_persist(self):
-        section = runtime_section("## Local state")
+        section = runtime_section("## Local state") + runtime_doc_section("failures.md", "## After a restart")
         self.assertNotIn("Pushed branches, worktrees, launched threads, and schedules persist.", section)
         self.assertIn("unless the project enables storage cleanup", section)
         self.assertIn("by squash or rebase at the worktree's head SHA", section)
@@ -2290,7 +2290,7 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_failure_handling_relaunches_a_usage_limit_on_the_backup_ladder(self):
-        section = runtime_section("### Failure handling", "\n### ")
+        section = runtime_section("### Failure handling", "\n### ") + runtime_doc_section("failures.md", "## Usage limit")
         self.assertIn("roles.py backup", section)
         for decision in ("relaunch", "panel", "park", "not-usage-limit"):
             self.assertIn(f"`{decision}`", section)
@@ -2349,7 +2349,7 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("`hasPendingChildRuns` does not change that.", step)
 
     def test_local_state_reads_a_finished_result_after_restart(self):
-        section = runtime_section("## Local state")
+        section = runtime_doc_section("failures.md", "## After a restart")
         self.assertIn("A task in `result_available` finished", section)
         self.assertIn("before you respawn its slice", section)
 
