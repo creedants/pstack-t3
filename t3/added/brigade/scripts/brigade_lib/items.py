@@ -554,7 +554,7 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced=""):
     `dish --thread` replaced, and "closed" for every worker thread a merged or dropped item used.
     `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the dish's thread
     cell read before that write. The coordinator's own thread, a thread another item in flight holds,
-    a blank id, and a repeated id are left out. The call writes no table and raises nothing.
+    a blank id, and a repeated id are left out. The call writes no table.
     """
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
     workers = [row["thread"] for row in rows if row["role"] in WORKER_ROLES and row["thread"]]
