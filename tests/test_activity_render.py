@@ -42,7 +42,7 @@ MACOS = sys.platform == "darwin"
 DISPLAY_WARNING = "CVDisplayLinkCreateWithCGDisplay failed"
 _WARNING_PREFIX = re.compile(r"\[[^\]]*\]\s*")
 _CVRETURN_CLAUSE = re.compile(r"^\s*\.\s*CVReturn:\s*-?\d+")
-# How many stderr lines a failure keeps, taken from the end.
+# How many kept stderr diagnostics a failure keeps, taken from the end.
 STDERR_TAIL = 5
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
@@ -299,7 +299,7 @@ class RenderHeightTest(unittest.TestCase):
             ("busy ordinary", busy_page(self.root / "ordinary", [f"Ship {number}" for number in range(1, 37)]), 1956, 11, 8),
             ("busy wide", busy_page(self.root / "wide", ["W" * 36] * 36), 1918, 8, 8),
             ("new short", wide_page([f"Ship {number}" for number in range(1, 9)]), 1886, 16, 8),
-            ("new wide", wide_page(["W" * 36] * 8), 1890, 10, 8),
+            ("new wide", wide_page(["W" * 36] * 8), 1950, 12, 8),
         )
         for name, unfolded, reserved, rows, groups in cases:
             with self.subTest(name):
@@ -413,6 +413,63 @@ class LiveAttemptFoldTest(unittest.TestCase):
         seen = json.loads(html.unescape(TITLE.search(drawn).group(1)))
         self.assertEqual(seen["ids"], ["work item", "work item"])
         # Deleting `if (block) block.open = attemptOpen;` from LIVE_FOLD's apply() leaves [true, false].
+        self.assertEqual(seen["open"], [True, True])
+
+    def test_two_groups_that_print_one_work_item_id_fold_independently(self):
+        fixture = Fixture(str(self.root / "fold-alone"))
+        fixture.coordinator()
+        for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2")):
+            fixture.unit(ident, "in-progress", "Activity page", thread=test_activity.worker(offset + 3))
+            fixture.retired(ident, test_activity.worker(offset + 1))
+            fixture.retired(ident, test_activity.worker(offset + 2))
+            fixture.thread(test_activity.worker(offset + 3), title=f"worker {offset}", turns=(("running", 4.5, None),))
+            fixture.thread(test_activity.worker(offset + 1), turns=(("completed", 90, 80),))
+            fixture.thread(test_activity.worker(offset + 2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        test_activity.write_threads(fixture, [
+            {"at": stamp, "dish": ident, "attempt": str(attempt), "role": "worker", "thread": test_activity.worker(offset + attempt), "start": stamp, "end": stamp}
+            for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2"))
+            for attempt in (1, 2)
+        ] + [
+            {"at": stamp, "dish": ident, "attempt": "3", "role": "worker", "thread": test_activity.worker(offset + 3), "start": stamp, "end": ""}
+            for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2"))
+        ])
+        fixture.write_database()
+        result = in_process.invoke(fixture.command())
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        # The second fold re-applies state after the click on the same nodes.
+        probe = "".join((
+            "<script>", MOD["LIVE_FOLD"], "</script>",
+            "<script>",
+            "fold();",
+            "var heads = [].slice.call(document.querySelectorAll('#o .tl .grp'));",
+            "if (heads.length < 2) { document.title = JSON.stringify({groups: heads.length}); } else {",
+            "var ones = heads.map(function (h) { var o = h.querySelector('.one'); return o ? o.textContent : ''; });",
+            "var groupsOf = function () { var out = []; var cur = null; var kids = document.querySelector('#o .tl').children; for (var i = 0; i < kids.length; i++) { var n = kids[i]; if (n.classList.contains('grp')) { cur = {head: n, rows: []}; out.push(cur); } else if (cur && n.classList.contains('row')) cur.rows.push(n); } return out; };",
+            "var groups = groupsOf();",
+            "groups[0].head.click();",
+            "fold();",
+            "groups = groupsOf();",
+            "var disp = function (r) { return getComputedStyle(r).display; };",
+            "var first = groups[0].rows.map(disp);",
+            "var second = groups[1].rows.map(disp);",
+            "var details = [].slice.call(document.querySelectorAll('#o .ldg details'));",
+            "details[0].open = true;",
+            "details[0].dispatchEvent(new Event('toggle'));",
+            "document.title = JSON.stringify({ones: ones, first: first, second: second,",
+            " open: details.map(function (d) { return d.open; })});",
+            "}",
+            "</script>",
+        ))
+        target = Path(self.root) / "fold-alone.html"
+        target.write_text(result.stdout.replace("<div id=o></div>", f"<div id=o></div>{PINNED}") + probe)
+        drawn = confined_run(self.browser, target, self.root, "s", RENDER_TIMEOUT)
+        seen = json.loads(html.unescape(TITLE.search(drawn).group(1)))
+        self.assertEqual(seen["ones"], ["work item", "work item"])
+        self.assertTrue(len(seen["first"]) > 0 and all(each == "none" for each in seen["first"]))
+        # Keying the fold by id alone leaves every row of the second group at none.
+        self.assertTrue(len(seen["second"]) > 0 and any(each != "none" for each in seen["second"]))
         self.assertEqual(seen["open"], [True, True])
 
 

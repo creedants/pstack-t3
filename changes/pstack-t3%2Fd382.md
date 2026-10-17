@@ -1,0 +1,4 @@
+- kind polish
+- activity.py: the live wrapper keys each group fold by the printed id plus its occurrence among that id, so two groups that print one id fold independently and attempt summaries keep the shared printed id key (T852).
+- activity.py: frame_cuts() adds the unused worst case counted note room back, except the attempt line floor, and retries rejected rows in tier order, and keeps the retried result only when its height stays at most the limit (T854).
+- activity.py: before the last fold, fit() keeps the cut before frame_cuts() reclaims the note room when the reclaimed cut is over the byte budget and that earlier cut is not (T854).
