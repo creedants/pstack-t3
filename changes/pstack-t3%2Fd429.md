@@ -1,5 +1,6 @@
 - kind feature
 - `t3/added/brigade/scripts/activity.py` Running now and Queued print the work item id, the role label, and the elapsed time, plus `under <parent>` for a sub-agent, and no model name. The HTML form lays the entries out as one wrapped row.
-- The same file prints each goal under Work items in flight once, as its name and counts. An item that has a Timeline group shows its id and state only, and in HTML its id links to that group. An item with no Timeline group keeps its summary.
+- The same file prints each goal under Work items in flight once, as its name and counts. In HTML an item that has a Timeline group shows its kind chip when the item carries a kind, its id linked to that group, and its state, and no summary. An item with no Timeline group keeps its summary.
 - Each Timeline group header for a work item carries an `id` of `g` plus the work item's index, so an in-flight id link resolves to its group. Nothing else of the Timeline changed.
+- The same file's `fit()` tries the frame cuts before the last fold's cap when a page is still over the byte budget at the fold where the frame folds end, and keeps the first cut whose document is at most the budget and whose height is at most the frame.
 - The plain form prints the goal once and keeps the rest of each item's line, because it draws no Timeline.
