@@ -958,7 +958,7 @@ def same_entry(path, fd):
 def place_copy(source, path, source_fd):
     """Copy the entry at `source` beside `path`, hold the copy, then move it. Return Published or a refusal.
 
-    It checks `same_entry` on `source` first. It copies into a SCRAP holder beside `path`. It holds the completed copy open, then `prove_moved` moves the copy and proves the live entry against the held copy. A Published result retires `source` first. A mismatch keeps the backup and its row with a refusal naming the live path. It never compares the copy with the original source descriptor. Anything still at the copy path is this call's own copy.
+    It checks `same_entry` on `source` first. It copies into a SCRAP holder beside `path`. It holds the completed copy open, then `prove_moved` moves the copy and proves the live entry against the held copy. A Published result retires `source` first. A mismatch keeps the backup and its row with a refusal naming the live path. It never compares the copy with the original source descriptor. The finally block discards any entry left at the copy path.
     """
     try:
         if not same_entry(source, source_fd):
