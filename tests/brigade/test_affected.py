@@ -27,6 +27,26 @@ class AffectedTest(BrigadeTest):
     def affected(self, *args, ok=True, code=None):
         return self.brigade("affected", "--root", str(self.project), *args, ok=ok, code=code)
 
+    def archive_root(self):
+        if hasattr(self, "_archive_dir"):
+            return self._archive_dir
+        import shutil
+        import subprocess
+        dest = self.root / "archive"
+        dest.mkdir(parents=True, exist_ok=True)
+        for child in ROOT.iterdir():
+            if child.name == ".git" or child.name == "__pycache__":
+                continue
+            target = dest / child.name
+            if child.is_dir():
+                shutil.copytree(child, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            else:
+                shutil.copy2(child, target)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=dest, capture_output=True, text=True, check=True)
+        self._archive_dir = dest
+        return dest
+
     def vendor_layout(self):
         target = self.project / "scripts"
         target.mkdir(parents=True, exist_ok=True)
@@ -237,28 +257,78 @@ class AffectedTest(BrigadeTest):
         self.assertIn("tests.test_pin", out)
         self.assertIn(ALWAYS, out)
 
-    def test_brigade_source_and_twin_pick_briefs_and_times_fails_when_brigade_entry_not_carried(self):
+    def test_brigade_source_and_twin_pick_briefs_without_times_fails_when_helper_union_not_narrowed(self):
+        root = str(self.archive_root())
         for rel in ("t3/added/brigade/scripts/brigade.py", "skills/brigade/scripts/brigade.py"):
-            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            out = self.brigade("affected", "--root", root, "--paths", rel)
             self.assertIn("tests.brigade.test_briefs", out)
-            self.assertIn("tests.landing.test_times", out)
+            self.assertNotIn("tests.landing.test_times", out)
             self.assertNotIn("No affected mapping", out)
 
     def test_landing_source_and_twin_pick_briefs_and_times_fails_when_landing_entry_not_carried(self):
+        root = str(self.archive_root())
         for rel in ("t3/added/landing/scripts/land.py", "skills/landing/scripts/land.py"):
-            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            out = self.brigade("affected", "--root", root, "--paths", rel)
             self.assertIn("tests.brigade.test_briefs", out)
             self.assertIn("tests.landing.test_times", out)
             self.assertNotIn("No affected mapping", out)
 
     def test_briefs_lib_one_hop_maps_fails_when_helper_carried_entry_import_not_followed(self):
+        root = str(self.archive_root())
         for rel in ("t3/added/brigade/scripts/brigade_lib/briefs.py", "skills/brigade/scripts/brigade_lib/briefs.py"):
-            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            out = self.brigade("affected", "--root", root, "--paths", rel)
             self.assertIn("tests.brigade.test_briefs", out)
+            self.assertNotIn("tests.landing.test_times", out)
             self.assertNotIn("No affected mapping", out)
 
     def test_governor_one_hop_maps_fails_when_helper_carried_entry_import_not_followed(self):
+        root = str(self.archive_root())
         for rel in ("t3/added/landing/scripts/landing_lib/governor.py", "skills/landing/scripts/landing_lib/governor.py"):
-            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            out = self.brigade("affected", "--root", root, "--paths", rel)
             self.assertIn("tests.landing.test_slot", out)
+            self.assertIn("tests.brigade.test_briefs", out)
             self.assertNotIn("No affected mapping", out)
+
+    def test_activity_source_and_twin_pick_activity_and_render_fails_when_transitive_import_not_closed(self):
+        root = str(self.archive_root())
+        for rel in ("t3/added/brigade/scripts/activity.py", "skills/brigade/scripts/activity.py"):
+            out = self.brigade("affected", "--root", root, "--paths", rel)
+            self.assertIn("tests.test_activity", out)
+            self.assertIn("tests.test_activity_render", out)
+            self.assertNotIn("No affected mapping", out)
+
+    def test_chain_outer_render_page_maps_fails_when_transitive_import_not_closed(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_page.py",
+                   "import runpy\nfrom pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "A = ROOT / \"src/a.py\"\n"
+                   "def test_p():\n    runpy.run_path(str(A))\n")
+        self.write("tests/test_render.py",
+                   "from tests import test_page\n"
+                   "def test_r():\n    assert test_page\n")
+        self.write("tests/test_outer.py",
+                   "from tests import test_render\n"
+                   "def test_o():\n    assert test_render\n")
+        self.track()
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("tests.test_page", out)
+        self.assertIn("tests.test_render", out)
+        self.assertIn("tests.test_outer", out)
+        self.assertIn(ALWAYS, out)
+        self.assertNotIn("No affected mapping", out)
+
+    def test_unresolved_test_import_falls_back_fails_when_open_index_ignored(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_page.py",
+                   "import runpy\nfrom pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "A = ROOT / \"src/a.py\"\n"
+                   "def test_p():\n    runpy.run_path(str(A))\n")
+        self.write("tests/test_bad.py",
+                   "import test_missing_zz\n"
+                   "def test_b():\n    assert test_missing_zz\n")
+        self.track()
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("full suite", out)
+        self.assertIn("test_missing_zz", out)
