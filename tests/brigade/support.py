@@ -1417,8 +1417,6 @@ class BrigadeTest(unittest.TestCase):
             return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
                     for table in ("lease", "log", "reservation", "owner", "entry")}
 
-    HELD_BACK = "held back, low tickets leave 1 worker idle while an urgent or normal ticket waits"
-
     @staticmethod
     def edit_block(number, path, old, new, fence="```"):
         return f"### Edit {number}\n\nFile: `{path}`\n\nOld text:\n\n{fence}\n{old}\n{fence}\n\nNew text:\n\n{fence}text\n{new}\n{fence}\n"
