@@ -1332,7 +1332,7 @@ class SkillCountCheckTest(unittest.TestCase):
 
 
 class MinimumT3CodeVersionCheckTest(unittest.TestCase):
-    """The tests cover agreeing minimum-version sentences and a different version in each document."""
+    """The tests cover agreeing minimum-version sentences, a different version in each document, and a gate string that cannot be read."""
 
     def _tree(self, readme, guide):
         temporary = tempfile.TemporaryDirectory()
@@ -1380,6 +1380,18 @@ class MinimumT3CodeVersionCheckTest(unittest.TestCase):
         )
         self.assertEqual(check.check_tree(root), [
             f"docs/guide.md:2: states the T3 Code minimum version 9.9.9, and the setup gate requires {gate}",
+        ])
+
+    def test_a_gate_string_that_cannot_be_read_is_named_instead_of_silently_skipping_the_comparison(self):
+        root = self._tree(
+            "Setup needs T3 Code 9.9.9 or later.\n",
+            "You need T3 Code `9.9.9` or later.\n",
+        )
+        gate = mock.patch.dict(check.REQUIRED_TOOLS, {"setup-pstack/SKILL.md": ("T3 Code soon or later",)})
+        gate.start()
+        self.addCleanup(gate.stop)
+        self.assertEqual(check.check_tree(root), [
+            "setup-pstack/SKILL.md: the setup gate's T3 Code minimum version could not be read",
         ])
 
 

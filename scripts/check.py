@@ -48,6 +48,8 @@ FORBIDDEN = [
     ),
 ]
 FRONTMATTER_REQUIRED = ("name", "description")
+# The setup gate's entry in REQUIRED_TOOLS, whose gate string names the minimum T3 Code version.
+SETUP_GATE = "setup-pstack/SKILL.md"
 # Generated files that teach a PR wait must name T3's watch tools. Absent files are not checked.
 REQUIRED_TOOLS = {
     "pstack-runtime/SKILL.md": ("watch_pull_request", "unwatch_pull_request"),
@@ -59,7 +61,7 @@ REQUIRED_TOOLS = {
     "poteto-mode/playbooks/orchestrate.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-full.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-stack.md": ("watch_pull_request",),
-    "setup-pstack/SKILL.md": ("watch_pull_request", "T3 Code 0.1.0 or later"),
+    SETUP_GATE: ("watch_pull_request", "T3 Code 0.1.0 or later"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
 # A T3 thread link is `t3-thread://v1/<threadId>`. It names no file.
@@ -271,7 +273,7 @@ _NAMED_MINIMUM = re.compile(
 
 def _setup_gate_version():
     """The minimum T3 Code version in the setup gate string REQUIRED_TOOLS requires in setup-pstack/SKILL.md. None when no required entry matches that string."""
-    for sentence in REQUIRED_TOOLS.get("setup-pstack/SKILL.md", ()):
+    for sentence in REQUIRED_TOOLS.get(SETUP_GATE, ()):
         match = _GATE_MINIMUM.fullmatch(sentence)
         if match:
             return match.group(1)
@@ -285,14 +287,15 @@ def minimum_version_findings(readme, guide):
     setup-pstack/SKILL.md. A stated version is the one a line names between T3 Code
     and "or later", in a plain sentence or a Markdown link with optional backticks.
     A stated version that differs from the gate is one finding that names the file,
-    the line, the stated version, and the gate version. A file that cannot be read
-    adds no finding, because readme_count_findings or guide_count_findings already
-    names it. An empty list means no stated minimum in a readable file differs
-    from the gate version, or `_setup_gate_version` returned None.
+    the line, the stated version, and the gate version. A gate string that no
+    REQUIRED_TOOLS entry fully matches is one finding that names the setup skill and
+    says the minimum version could not be read. A file that cannot be read adds no
+    finding, because readme_count_findings or guide_count_findings already names it.
+    An empty list means no stated minimum in a readable file differs from the gate version.
     """
     gate = _setup_gate_version()
     if gate is None:
-        return []
+        return [f"{SETUP_GATE}: the setup gate's T3 Code minimum version could not be read"]
     findings = []
     for label, path in (("README.md", readme), ("docs/guide.md", guide)):
         for number, line in enumerate((_readme_text(path) or "").splitlines(), 1):
