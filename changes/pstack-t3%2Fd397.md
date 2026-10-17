@@ -1,2 +1,3 @@
 - kind fix
 - A cut whose `height()` is still over the frame has its oldest current attempt lines trimmed with `fit_lines()`, and the cut-lines note states how many it left out.
+- An over-budget document has its attempt lines trimmed with `newest_ledger()`, which drops the oldest line of every work item in turn, a work item's fold payload before its current lines, so each work item keeps a suffix of its lines.

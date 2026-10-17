@@ -2261,6 +2261,10 @@ class FrameTest(OutputCase):
         self.assertLessEqual(MOD["height"](fitted), 1960)
         self.assertLess(len(document.encode()), 16000)
         self.assertGreater(fitted.hidden.cut_lines, 0)
+        # Each work item keeps its newest lines across the byte cut and the height repair too.
+        for one in MOD["items_of"](fitted):
+            self.assertEqual([line.seat for line in one.lines],
+                             seats[one.id][-len(one.lines):])
 
     def test_height_counts_wrapped_count_lines_and_gaps_for_eight_wide_groups(self):
         wide = "W" * 36
@@ -3851,17 +3855,18 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15969, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15974, 417))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
         self.assertEqual(data_of(html)["N"], [
-            "409 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "411 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
         self.assertEqual(summary, "attempts 1-499: 499 workers, all open")
-        self.assertEqual(payload, [phrase(number) for number in range(1, 91)])
+        # The byte cut drops the oldest attempt lines, so the folded payload keeps the newest of its own lines.
+        self.assertEqual(payload, [phrase(number) for number in range(412, 500)])
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
@@ -3877,16 +3882,16 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19955, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19968, 417))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
         self.assertEqual(data_of(html)["N"], [
-            "324 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "326 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
-        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(1, 176)]))
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(327, 500)]))
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
