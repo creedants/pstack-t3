@@ -405,12 +405,12 @@ brigade.py [flags] pass <action>
 
 record or check a review verdict for a dish at a head SHA
 
-`<action>` is one of `record`, `check`.
+`<action>` is one of `record`, `check`, `stats`.
 
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--member | --late] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--reason REASON] [--member | --late] dish
 ```
 
 Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The child rows come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
@@ -436,6 +436,7 @@ Any refusal happens before the pass row is written, so nothing is recorded and n
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
 | `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
 | `--reviewer-thread REVIEWER_THREAD` |  |  |  | the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt |
+| `--reason REASON` |  | `false-wording`, `missing-test`, `wrong-behavior`, `out-of-lease`, `scope`, `other` |  | why the review sent the work back, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other; --reason goes only with --verdict send-back |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 
@@ -452,6 +453,18 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 | `dish` | yes |  |  |  |
 | `--sha SHA` | yes |  |  |  |
 | `--json` |  |  |  | print verdict, author, verifier, note, and crossFamily of the latest row |
+
+## brigade.py pass stats
+
+```text
+brigade.py [flags] pass stats [--last LAST]
+```
+
+print the first-pass rate overall and per author, and send-back counts by reason, over the last N items with a verdict; a row with no reason counts as unrecorded
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--last LAST` |  |  | `20` | how many items to cover, counting back from the most recently reviewed; default 20 |
 
 ## brigade.py edits
 
