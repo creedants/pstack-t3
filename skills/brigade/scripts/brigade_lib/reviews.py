@@ -226,9 +226,9 @@ def threads_prose(line):
     """Whether a non-blank line of the ## Threads section is plain prose, so report_threads skips it.
 
     A prose line starts, after any leading whitespace, with neither a list marker nor a `#`, holds no
-    backticked thread id, that is no backticked value holding a colon, and names no child role. A list
-    marker is a hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing
-    parenthesis. Every other line that fails THREADS_ITEM is refused by its number.
+    backticked thread id, that is no backticked value holding a colon, and names no child role, that is
+    no code delegate, claims check, or architect runner. A list marker is a hyphen, an asterisk, a plus,
+    a bullet, or a number followed by a dot or a closing parenthesis.
     """
     stripped = line.lstrip()
     if THREADS_ITEM_START.match(stripped) or stripped.startswith("#"):
@@ -247,8 +247,8 @@ def report_threads(text):
     with no text is skipped, and so is a line of the section that is plain prose, that is a line that
     starts, after any leading whitespace, with neither a list marker nor a `#`, holds no backticked thread
     id, and names no child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
-    followed by a dot or a closing parenthesis. A line that is not prose and is not one item of the form
-    - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
+    followed by a dot or a closing parenthesis. A non-blank line that is not prose and is not one item of
+    the form - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
     second ## Threads heading while the first is still open is reported by its number and ends the scan. An
     item whose thread id the table would change is reported by its number too. A role that is well formed
     but is not one of CHILD_ROLES is reported by its number, and named with the command that writes it when
