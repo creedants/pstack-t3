@@ -111,7 +111,7 @@ def parser():
                         "before the contract changes")
     p.add_argument("--pr-item-line", choices=("on", "off"), default=None,
                    help="whether the queue appends the Kind and Goal line to the PR body. on appends the line after one "
-                        "blank line. off sends the submitted title and body unchanged. Omitted, a rerun keeps the stored "
+                        "blank line when the item has one. off sends the submitted title and body unchanged. Omitted, a rerun keeps the stored "
                         "setting and a first init stores off. An unknown value is refused before the contract changes")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
