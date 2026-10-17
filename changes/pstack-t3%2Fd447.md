@@ -1,0 +1,6 @@
+- kind fix
+- `init` stores `heartbeatMs` default 3600000 and `mergeHeartbeatMs` default 900000. A rerun without the flag keeps the stored value. A value that is not an integer or is below its floor is refused before the contract changes.
+- Repo status always prints `heartbeat everyMs N merge wait M` from the contract with the defaults when a key is absent.
+- The landing skill reads the fallback interval and the merge wait from `land.py status`. A landing contract may set a longer interval.
+- `governor.json` accepts `exclusiveMax`. It moves the `--for` ceiling from 7200. A value that is malformed or below 600 is refused with the key named. A bad `exclusiveMax` leaves a plain slot alone.
+- `land.py slot --for` help names the governor `exclusiveMax` default 7200 without reading the file.

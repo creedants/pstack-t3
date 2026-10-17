@@ -1545,6 +1545,41 @@ class LandingTest(LandingTestBase):
                     handle.write("x")
                 holder.wait(timeout=20)
 
+    def test_an_absent_exclusive_max_refuses_a_hold_past_7200(self):
+        self.governor(1)
+        result = self.run_exclusive(["slot", "--exclusive", "--for", "7201", "--", "true"], timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, "land: --for cannot pass 7200 seconds\n")
+
+    def test_a_configured_exclusive_max_moves_the_ceiling(self):
+        governor = self.governor(1)
+        (governor / "governor.json").write_text(json.dumps({"slots": 1, "exclusiveMax": 10000}))
+        allowed = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "9000", "--reason", "cold pricing bench", "--",
+             sys.executable, "-c", "print('ok')"], timeout=10)
+        self.assertEqual((allowed.returncode, allowed.stdout), (0, "ok\n"), allowed.stderr)
+        refused = self.run_exclusive(
+            ["slot", "--exclusive", "--for", "10001", "--reason", "cold pricing bench", "--", "true"],
+            timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stderr, "land: --for cannot pass 10000 seconds\n")
+
+    def test_a_malformed_exclusive_max_is_refused_and_names_the_key(self):
+        for value in (300, "x", True, 0, -1):
+            with self.subTest(exclusiveMax=value):
+                governor = self.governor(1)
+                (governor / "governor.json").write_text(json.dumps({"slots": 1, "exclusiveMax": value}))
+                result = self.run_exclusive(["slot", "--exclusive", "--for", "10", "--", "true"], timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("governor exclusiveMax", result.stderr)
+
+    def test_a_bad_exclusive_max_leaves_a_plain_slot_alone(self):
+        governor = self.governor(1)
+        (governor / "governor.json").write_text(json.dumps({"slots": 1, "exclusiveMax": "x"}))
+        result = real_process(
+            ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"], env=self.slot_env(), timeout=20)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+
     def test_an_exclusive_cap_at_the_default_needs_no_reason_and_the_maximum_needs_one(self):
         self.governor(1)
         plain = self.run_exclusive(
