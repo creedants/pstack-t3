@@ -1,0 +1,3 @@
+- kind polish
+- `t3/added/brigade/scripts/brigade_lib/briefs.py` `_Standing` names only `<reports>` and `<scratch>` as the placeholders its rules use, since the two `_RULES` entries use no other placeholder.
+- The regenerated `skills/brigade/scripts/brigade_lib/briefs.py` carries the same docstring.

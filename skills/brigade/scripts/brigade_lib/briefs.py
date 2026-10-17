@@ -37,7 +37,7 @@ MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 class _Standing:
     """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it.
 
-    The placeholders in `text` and the anchors are `<reports>`, `<base>`, and `<scratch>`. A rule whose
+    The placeholders in `text` and the anchors are `<reports>` and `<scratch>`. A rule whose
     placeholder has no value is not rendered. A rule is dropped when the coordinator's context and verify
     text already hold every one of its anchors.
     """
