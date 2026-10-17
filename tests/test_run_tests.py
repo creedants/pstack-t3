@@ -1726,11 +1726,19 @@ class RunTestsTest(unittest.TestCase):
     def test_named_macos_mutations_fail_the_pin_they_target(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         assert_macos_blocking(self, text)
+        markers = {
+            "drop_macos_312_1_from_needs": "macos needs",
+            "skipped_allowance_on_macos_312_1": "macos no skipped",
+            "continue_on_error_on_macos_test_part_1": "macos continue-on-error",
+            "restore_advisory_comment": "macos comment",
+            "or_true_on_macos_312_2": "macos no or true",
+        }
         for name in MACOS_MUTATIONS:
             with self.subTest(mutation=name):
                 mutated = workflow_with_macos_mutation(text, name)
-                with self.assertRaises(AssertionError):
+                with self.assertRaises(AssertionError) as caught:
                     assert_macos_blocking(self, mutated)
+                self.assertIn(markers[name], str(caught.exception))
                 if name == "skipped_allowance_on_macos_312_1":
                     for reader in gate_readers():
                         scripts = dict(gate_scripts(mutated, reader))
@@ -1773,35 +1781,36 @@ def macos_success_line(job_id: str) -> str:
 
 def assert_macos_blocking(case, text: str) -> None:
     expected_needs = "needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312, " + ", ".join(MACOS_PARTS) + "]"
-    case.assertIn(expected_needs, text)
+    case.assertIn(expected_needs, text, "macos needs pins the blocking rule.")
     for job_id in MACOS_PARTS:
-        case.assertIn(macos_success_line(job_id), text)
-    case.assertNotIn("continue-on-error", text)
+        case.assertIn(macos_success_line(job_id), text, "macos success line pins the blocking rule.")
     for phrase in (
         "No macOS part is in a needs list",
         "does not fail the job check",
         "Every step of this part uses continue-on-error",
     ):
-        case.assertNotIn(phrase, text)
+        case.assertNotIn(phrase, text, "macos comment pins the blocking rule.")
+    case.assertNotIn("continue-on-error", text, "macos continue-on-error pins the blocking rule.")
     for job_id in MACOS_PARTS:
         for line in text.splitlines():
             if job_id in line and "needs." in line:
-                case.assertNotIn("skipped", line)
-                case.assertNotIn("|| true", line)
+                case.assertNotIn("skipped", line, "macos no skipped pins the blocking rule.")
+                case.assertNotIn("|| true", line, "macos no or true pins the blocking rule.")
     for index, job_id in enumerate(MACOS_PARTS, start=1):
         case.assertIn(
             f"# Part {index} of 4. A step failure fails this job. test (3.12) lists {job_id} in needs and requires result success.",
             text,
+            "macos comment pins the blocking rule.",
         )
     try:
         import yaml
     except ImportError:
         return
     jobs = yaml.safe_load(text)["jobs"]
-    case.assertEqual(jobs["test_312"]["needs"], ["part_312_1", "part_312_2", "part_312_3", "part_312_4", "real_312"] + list(MACOS_PARTS))
+    case.assertEqual(jobs["test_312"]["needs"], ["part_312_1", "part_312_2", "part_312_3", "part_312_4", "real_312"] + list(MACOS_PARTS), "macos needs pins the blocking rule.")
     for job_id in MACOS_PARTS:
         steps = jobs[job_id]["steps"]
-        case.assertFalse(any("continue-on-error" in step for step in steps))
+        case.assertFalse(any("continue-on-error" in step for step in steps), "macos continue-on-error pins the blocking rule.")
 
 
 def workflow_with_macos_mutation(text: str, name: str) -> str:
