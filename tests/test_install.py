@@ -817,8 +817,8 @@ def restore_race(path, occupy, link_error=False, rename=None):
 
     `occupy` is a "file", a "directory", a "link", or a command line to run, such as another checkout's
     installer. `link_error` takes hard links away. `rename` takes `/proc` away as in `put_back_race`.
-    With `/proc` taken away, the occupant arrives as the held-descriptor link starts, the restore's first
-    attempt at `path` on every platform.
+    With `/proc` taken away, the occupant arrives as the held-descriptor link starts, before the
+    restore's first call that names `path`.
     """
     return (
         "import atexit, ctypes, errno, shutil, subprocess, tempfile\n"

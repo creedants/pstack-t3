@@ -974,7 +974,7 @@ def place_copy(source, path):
 def proved(path, fd):
     """Return Published when `path` names the entry `fd` holds. Else return a refusal naming `path`.
 
-    It moves nothing. It deletes nothing. Only `proved` makes a Published for a same-filesystem move. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until this check runs. That window stays.
+    It moves nothing. It deletes nothing. Only `proved` makes a Published for a same-filesystem move. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after this check refuses it. That window stays.
     """
     try:
         if same_entry(path, fd):
@@ -1040,7 +1040,7 @@ def drop_backup(backup, aside, published, fd):
 def place_proven(aside, path, fd):
     """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return Published or a refusal.
 
-    It moves `aside` with `place`. Right after the move it calls `proved`. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays. Only `proved` makes a Published for a same-filesystem move. A cross-filesystem copy returns Published after `place_copy` places the copy. `retire` runs only for that copy route.
+    It moves `aside` with `place`. Right after the move it calls `proved`. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays. Only `proved` makes a Published for a same-filesystem move. A cross-filesystem copy returns Published after `place_copy` places the copy. `retire` runs only for that copy route.
     """
     try:
         code = place(aside, path)
@@ -1121,7 +1121,7 @@ def keep(taken, backup, aside, fd, reason):
 def restore_aside(backup, aside, path, fd):
     """Move the proven entry at `aside` to `path` and prove it there. Return why the backup was kept.
 
-    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
     """
     try:
         # A second name leaves the backup where it is until the entry is proven.
@@ -1147,7 +1147,7 @@ def restore_aside(backup, aside, path, fd):
 def restore_backup(backup, path, held):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
 
-    It checks the backup before the move, links it by descriptor or moves it by private name, then calls `proved` right after a same-filesystem move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    It checks the backup before the move, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after a same-filesystem move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
     """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
