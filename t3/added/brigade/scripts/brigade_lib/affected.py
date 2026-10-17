@@ -322,6 +322,28 @@ def _resolve_import(edge, loader_path, root):
     return _found_files(root, cands)
 
 
+def _one_hop(norm, base, lay):
+    if not norm or not norm.endswith(".py"):
+        return ()
+    full = base / norm
+    try:
+        if not full.is_file():
+            return ()
+        text = full.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ()
+    try:
+        lmod = ast.parse(text, str(full))
+    except SyntaxError:
+        return ()
+    found = set()
+    for target in _import_targets(lmod):
+        for got in _resolve_import(target, norm, base):
+            for canon in _canonicals(_norm(got), lay):
+                found.add(canon)
+    return tuple(sorted(found))
+
+
 def _loads_of(mod, singles):
     found = set(_load_refs(mod, singles))
     for value in singles.values():
@@ -433,37 +455,23 @@ def _index(root):
         if own:
             combined[name] = own
     table = {}
+    hops = {}
     for name, refs in combined.items():
         for ref in refs:
             norm = _norm(ref)
-            if not norm or not _looks_repo(norm):
+            if norm and _looks_repo(norm):
+                for canon in _canonicals(norm, lay):
+                    table.setdefault(canon, set()).add(name)
+            if not norm or not norm.endswith(".py"):
                 continue
-            for canon in _canonicals(norm, lay):
+            if norm not in hops:
+                hops[norm] = _one_hop(norm, base, lay)
+            for canon in hops[norm]:
                 table.setdefault(canon, set()).add(name)
     for name, refs in direct.items():
         for ref in refs:
             for canon in _canonicals(_norm(ref), lay):
                 table.setdefault(canon, set()).add(name)
-    for name, refs in loads.items():
-        for ref in list(refs):
-            norm = _norm(ref)
-            if not norm or not norm.endswith(".py"):
-                continue
-            full = base / norm
-            try:
-                if not full.is_file():
-                    continue
-                text = full.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                continue
-            try:
-                lmod = ast.parse(text, str(full))
-            except SyntaxError:
-                continue
-            for target in _import_targets(lmod):
-                for got in _resolve_import(target, norm, base):
-                    for canon in _canonicals(_norm(got), lay):
-                        table.setdefault(canon, set()).add(name)
     if pins:
         outside = []
         for path in sorted(base.rglob("*")):
