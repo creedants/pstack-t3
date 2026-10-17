@@ -22,6 +22,7 @@ LAYOUT = {
     "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
     "suite": "python3 scripts/run_tests.py -j 8",
     "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10",
+    "importRoots": ["scripts", "t3/scripts"],
 }
 
 
@@ -643,3 +644,70 @@ class AffectedTest(BrigadeTest):
         self.assertEqual(got["src/a.py"], set(names))
         self.assertEqual({k: set(v) for k, v in got.items()},
                          reference_close({k: set(v) for k, v in table.items()}, edges))
+
+    def test_absent_import_roots_searches_entry_and_helper_dirs_fails_when_default_ignored(self):
+        self.git_project()
+        self.write("tool/run.py", "VALUE = 1\n")
+        self.write("tool/libx.py", "X = 1\n")
+        self.write("other/help.py", "VALUE = 1\n")
+        self.write("other/liby.py", "Y = 2\n")
+        self.write("tests/test_entry.py", "from libx import X\nfrom liby import Y\n\ndef test_e():\n assert X and Y\n")
+        self.track()
+        layout = dict(LAYOUT)
+        layout.pop("importRoots")
+        layout["entryPoints"] = ["tool/run.py"]
+        layout["helpers"] = ["other/help.py"]
+        self.restaurant(self.project, layout=layout)
+        for rel in ("tool/libx.py", "other/liby.py"):
+            out = self.affected("--paths", rel)
+            self.assertIn("tests.test_entry", out)
+            self.assertNotIn("No affected mapping", out)
+
+    def test_configured_import_roots_resolve_fails_when_list_ignored(self):
+        self.git_project()
+        self.write("tool/run.py", "VALUE = 1\n")
+        self.write("pkg/mod.py", "VALUE = 1\n")
+        self.write("tests/test_cfg.py", "import mod\n\ndef test_c():\n assert mod\n")
+        self.track()
+        self.restaurant(self.project, layout=dict(LAYOUT, entryPoints=["tool/run.py"], helpers=[],
+                                                  importRoots=["pkg"]))
+        out = self.affected("--paths", "pkg/mod.py")
+        self.assertIn("tests.test_cfg", out)
+        self.assertNotIn("No affected mapping", out)
+        self.restaurant(self.project, layout=dict(LAYOUT, entryPoints=["tool/run.py"], helpers=[], importRoots=[]))
+        out = self.affected("--paths", "pkg/mod.py")
+        self.assertIn("No affected mapping", out)
+        self.assertIn("pkg/mod.py", out)
+
+    def test_malformed_import_roots_refused_fails_when_accepted(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n pass\n")
+        self.track()
+        for bad in ("scripts", ["/abs"], ["../up"], ["a b"]):
+            with self.subTest(bad=bad):
+                self.restaurant(self.project, layout=dict(LAYOUT, importRoots=bad))
+                err = self.affected("--paths", "tests/test_a.py", ok=False)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("importRoots", err)
+
+    def test_d411_pair_maps_same_as_old_literals_fails_when_a_root_is_lost_or_gained(self):
+        self.close_function()
+        import sys
+        module = sys.modules["brigade_lib.affected"]
+        archive = self.archive_root()
+        entries = tuple(LAYOUT["entryPoints"])
+        helpers = tuple(LAYOUT["helpers"])
+        old = module.Layout(ALWAYS, WORKFLOW, entries, helpers, LAYOUT["suite"], LAYOUT["python"],
+                            ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"))
+        new = module.Layout(ALWAYS, WORKFLOW, entries, helpers, LAYOUT["suite"], LAYOUT["python"],
+                            ("scripts", "t3/scripts"))
+        old_index = module._index(archive, old)
+        new_index = module._index(archive, new)
+        self.assertIsInstance(old_index, module._Closed)
+        self.assertIsInstance(new_index, module._Closed)
+        self.assertEqual(old_index.table, new_index.table)
+        lost = set(old_index.table) - set(new_index.table)
+        gained = set(new_index.table) - set(old_index.table)
+        self.assertEqual(lost, set())
+        self.assertEqual(gained, set())

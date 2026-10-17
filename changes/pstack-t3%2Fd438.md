@@ -1,0 +1,4 @@
+- kind feature
+- `affectedTests` holds optional `importRoots`, a list of repository directories searched after the loader directory and the root, normalized deduped in order with no root entry, and an absent key means the directories of `entryPoints` and `helpers`
+- `t3/added/brigade/SKILL.md` names seven keys and its template carries `"importRoots": ["scripts", "t3/scripts"]`
+- `tests/brigade/test_affected.py` pins absent default search and configured resolution and malformed refusal and equal tables for the old three roots versus `["scripts", "t3/scripts"]`
