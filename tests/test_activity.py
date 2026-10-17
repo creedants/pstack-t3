@@ -2430,7 +2430,7 @@ class RendererTest(OutputCase):
                          ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, HOSTILE_DRAWN])
         self.assertEqual(built["titles"], ["done · 60s", HOSTILE_DRAWN, "model " + HOSTILE_DRAWN])
 
-    def test_item_block_lists_ledger_rows_in_attempt_order_with_role_seat_and_open_or_ended(self):
+    def test_item_block_lists_current_ledger_rows_in_attempt_order_and_folds_earlier_attempts_into_one_summary(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
@@ -2454,7 +2454,7 @@ class RendererTest(OutputCase):
             self.assertNotIn(ident, document)
             self.assertNotIn(ident, "\n".join(lines))
 
-    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open(self):
+    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open_and_the_earlier_worker_folds_into_one_summary_line(self):
         fixture = one_running(self.fixture).write()
         fixture.write_store()
         stamp = fixture.stamp(10)
