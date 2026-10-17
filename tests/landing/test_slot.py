@@ -47,6 +47,39 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def wait_for_pid(self, path, timeout=10):
+        """Return the pid in path once the whole file text parses as one int.
+
+        Path.write_text opens and truncates the file before it writes, so a reader that
+        trusts the file's existence can see an empty file. An empty, missing, or
+        non-integer file is not ready.
+        """
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                text = path.read_text()
+            except OSError:
+                text = None
+            if text is not None:
+                last = text
+                try:
+                    return int(text)
+                except ValueError:
+                    pass
+            time.sleep(0.02)
+        self.fail(f"{path} held no whole pid in {timeout}s: {last!r}")
+
+    def test_a_pid_file_read_waits_past_an_empty_file_the_writer_fills_later(self):
+        path = self.base / "empty-then-filled.pid"
+        path.write_text("")
+        filler = threading.Timer(0.2, path.write_text, args=("12345",))
+        filler.start()
+        try:
+            self.assertEqual(self.wait_for_pid(path), 12345)
+        finally:
+            filler.cancel()
+
     def test_an_exclusive_slot_waits_for_every_other_slot_and_refuses_nesting(self):
         import time
         governor = self.base / "state/pstack-t3/governor"
@@ -940,8 +973,8 @@ class LandingTest(LandingTestBase):
         self.assertEqual(result.returncode, 124)
         self.assertIn("1s exclusive cap", result.stderr)
         self.assertIn("--for", result.stderr)
-        self.assert_dead(int(parent_path.read_text()))
-        self.assert_dead(int(child_path.read_text()))
+        self.assert_dead(self.wait_for_pid(parent_path))
+        self.assert_dead(self.wait_for_pid(child_path))
         self.assert_slots_free()
 
     def test_an_exclusive_command_that_ignores_sigterm_is_killed_after_the_grace(self):
@@ -1051,7 +1084,7 @@ class LandingTest(LandingTestBase):
         try:
             child_line = self.wait_for_line(child_path)
             code = process.wait(timeout=10)
-            parent_pid = int(parent_path.read_text())
+            parent_pid = self.wait_for_pid(parent_path)
             child_pid, child_group = (int(part) for part in child_line.split())
             self.assertEqual(child_group, parent_pid)
             self.assert_dead(parent_pid)
@@ -1104,8 +1137,8 @@ class LandingTest(LandingTestBase):
             ["slot", "--exclusive", "--", sys.executable, "-c", GROUP_SLEEP, str(parent_path), str(child_path)],
             cap=1, grace=0.05, timeout=10, main=EXCLUSIVE_MAIN_WITHOUT_WAITID)
         self.assertEqual((result.returncode, result.stderr), (124, cap_line("1")))
-        self.assert_dead(int(parent_path.read_text()))
-        self.assert_dead(int(child_path.read_text()))
+        self.assert_dead(self.wait_for_pid(parent_path))
+        self.assert_dead(self.wait_for_pid(child_path))
         self.assert_slots_free()
 
         parent_path, child_path = self.base / "ignoring-parent.pid", self.base / "ignoring-child.pid"
@@ -1115,7 +1148,7 @@ class LandingTest(LandingTestBase):
         try:
             child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
             code = process.wait(timeout=10)
-            parent_pid = int(parent_path.read_text())
+            parent_pid = self.wait_for_pid(parent_path)
             self.assertEqual(child_group, parent_pid)
             self.assert_dead(parent_pid)
             self.assert_dead(child_pid)
@@ -1151,7 +1184,7 @@ class LandingTest(LandingTestBase):
                         cap=1, grace=30, main=main)
                     try:
                         child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
-                        parent_pid = int(parent_path.read_text())
+                        parent_pid = self.wait_for_pid(parent_path)
                         self.assertEqual(child_group, parent_pid)
                         deadline = time.monotonic() + 10
                         while not zombie(parent_pid) and time.monotonic() < deadline:
@@ -1254,7 +1287,7 @@ class LandingTest(LandingTestBase):
         try:
             child_line = self.wait_for_line(child_path)
             code = process.wait(timeout=20)
-            parent_pid = int(parent_path.read_text())
+            parent_pid = self.wait_for_pid(parent_path)
             child_pid, child_group = (int(part) for part in child_line.split())
             self.assertEqual(child_group, parent_pid)
             self.assert_dead(parent_pid)
@@ -1546,12 +1579,8 @@ class LandingTest(LandingTestBase):
             ["slot", "--exclusive", "--", sys.executable, "-c", GROUP_SLEEP, str(parent_path), str(child_path)],
             cap=30, grace=0.2)
         try:
-            deadline = time.monotonic() + 10
-            while not (parent_path.exists() and child_path.exists()) and time.monotonic() < deadline:
-                if process.poll() is not None:
-                    break
-                time.sleep(0.01)
-            self.assertTrue(child_path.exists(), "the command group did not start")
+            parent_pid = self.wait_for_pid(parent_path)
+            child_pid = self.wait_for_pid(child_path)
             os.kill(process.pid, signal.SIGTERM)
             code = process.wait(timeout=10)
             stderr = process.stderr.read()
@@ -1563,8 +1592,8 @@ class LandingTest(LandingTestBase):
             process.stderr.close()
         self.assertEqual(code, 143)
         self.assertNotIn("exclusive cap", stderr)
-        self.assert_dead(int(parent_path.read_text()))
-        self.assert_dead(int(child_path.read_text()))
+        self.assert_dead(parent_pid)
+        self.assert_dead(child_pid)
         self.assert_slots_free()
 
     def test_a_record_whose_holder_is_gone_is_not_shown_as_holding(self):

@@ -1,0 +1,4 @@
+- kind fix
+- `tests/landing/test_slot.py` adds `wait_for_pid`, which polls a pid file until its whole text parses as an int and fails with the path and the last text after a bounded timeout
+- `tests/landing/test_slot.py` reads a pid-only file through `wait_for_pid` in `test_sigterm_to_an_exclusive_land_py_stops_the_group_and_clears_the_record`, `test_an_exclusive_cap_stops_a_child_still_in_the_commands_process_group`, `test_cap_cases_without_os_waitid`, `test_an_exclusive_cap_kills_a_same_group_child_that_ignores_sigterm_after_the_leader_exits`, `test_a_signal_during_grace_after_the_leader_exits_kills_the_group`, and `test_an_exclusive_darwin_eperm_leaves_a_sigterm_ignoring_member_alive_after_the_cap`
+- `tests/landing/test_slot.py` adds `test_a_pid_file_read_waits_past_an_empty_file_the_writer_fills_later`, which fails if `wait_for_pid` does not wait past an empty read
