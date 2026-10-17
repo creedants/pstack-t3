@@ -1134,7 +1134,7 @@ class _Build:
             pass
 
     def _drain(self, until, grace_mark=None):
-        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. With a grace mark, return cut on a second arrival. Never reaps."""
+        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. With a grace mark, return cut when arrivals pass the mark and reach two. Never reaps."""
         while self._stdout is not None:
             if self._pending is not None and self.phase == _STARTED:
                 return "interrupt"
