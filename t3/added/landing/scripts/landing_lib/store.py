@@ -350,7 +350,7 @@ def pr_body(store, entry):
     """The body ensure_pr passes to gh pr create.
 
     The body is the submitted one when there is one, and otherwise the message body of the reviewed
-    commit. When the contract sets prItemLine and the item has a line, it follows that body after one
+    commit. When the contract sets prItemLine to on and the item has a line, it follows that body after one
     blank line and is the whole body when the body holds no text but whitespace. A missing key reads as off.
     """
     body = entry["body"] or seam.git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
