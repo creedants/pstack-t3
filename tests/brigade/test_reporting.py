@@ -247,7 +247,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no")
         self.assertEqual(self.brigade("status"),
-                         "thread thread-1\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nkinds: fix 1 waiting\nowner thread-1@1")
+                         "thread thread-1\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nkinds: fix 1 waiting\nowner thread-1@1")
         self.assertEqual(self.brigade("walk"), "\n".join([
             f"{_shown_root(self.project)}: no landing contract",
             "  Perf (reports milestones): waiting tickets: 1, decisions for you: 1",
@@ -261,11 +261,11 @@ class ReportingTest(BrigadeTest, _ReportingRace):
     def test_status_without_a_contract_ignores_a_stored_landing_field(self):
         self.open()
         self.assertNotIn("landing", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
         meta = json.loads((self.at / "restaurant.json").read_text())
         meta["landing"] = "merge"
         (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
         walked = self.brigade("walk")
         self.assertEqual(walked.splitlines()[0], f"{_shown_root(self.project)}: no landing contract")
         self.assertNotIn("lands by", walked)
@@ -293,7 +293,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
             self.land("mode", "merge")
-            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
             header = self.brigade("walk").splitlines()[0]
             self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
             self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
@@ -360,7 +360,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         meta = json.loads((self.at / "restaurant.json").read_text())
         self.assertEqual(meta["reporting"], "milestones")
         self.assertNotIn("landing", meta)
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
                                       "--reporting", "every-turn"), f"exists {self.at}")
@@ -383,7 +383,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         del meta["reporting"]
         (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
         self.assertIn("reports milestones", self.brigade("walk"))
         self.assertNotIn("reporting", json.loads((self.at / "restaurant.json").read_text()))
 
@@ -418,17 +418,80 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.open()
         self.assertEqual(self.brigade("status"),
                          "thread not recorded\nreporting: milestones, no landing contract\n"
-                         "workers: 0 of 2 running, 2 idle, auto-start: normal")
+                         "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                         "liveness: every 600000 ms (default for milestones)")
         self.brigade("set", "--thread", "t1", "--reports-to", "admin-thread", "--mode", "light")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "a")
         self.assertEqual(self.brigade("status").splitlines(), [
             "thread t1",
             "reporting: milestones, no landing contract, waiting tickets: 1",
             "workers: 0 of 2 running, 2 idle, auto-start: normal",
+            "liveness: every 600000 ms (default for milestones)",
             "kinds: fix 1 waiting",
             "reports to admin-thread",
             "mode light",
             "owner t1@1",
+        ])
+
+    def test_status_prints_the_stored_liveness_interval_instead_of_ignoring_it(self):
+        self.open()
+        for level in ("every-turn", "milestones", "digest"):
+            with self.subTest(level=level):
+                self.brigade("set", "--reporting", level)
+                self.brigade("set", "--liveness-ms", "3600000")
+                self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["livenessMs"], 3600000)
+                self.assertIn("liveness: every 3600000 ms", self.brigade("status").splitlines())
+
+    def test_status_marks_the_liveness_interval_as_the_default_for_the_reporting_level(self):
+        self.open()
+        defaults = (("every-turn", "liveness: every 600000 ms (default for every-turn)"),
+                    ("milestones", "liveness: every 600000 ms (default for milestones)"),
+                    ("digest", "liveness: every 1800000 ms (default for digest)"))
+        for level, line in defaults:
+            with self.subTest(level=level):
+                self.brigade("set", "--reporting", level)
+                self.assertNotIn("livenessMs", json.loads((self.at / "restaurant.json").read_text()))
+                self.assertIn(line, self.brigade("status").splitlines())
+
+    def test_clearing_liveness_ms_removes_the_key_and_restores_the_level_default(self):
+        self.open()
+        self.brigade("set", "--liveness-ms", "1200000")
+        self.assertIn("liveness: every 1200000 ms", self.brigade("status").splitlines())
+        self.brigade("set", "--liveness-ms", "")
+        self.assertNotIn("livenessMs", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertIn("liveness: every 600000 ms (default for milestones)", self.brigade("status").splitlines())
+
+    def test_set_refuses_a_liveness_ms_that_is_not_a_whole_number_of_at_least_60000(self):
+        self.open()
+        before = (self.at / "restaurant.json").read_bytes()
+        for value in ("10m", "1.5", "59999", "-1"):
+            with self.subTest(value=value):
+                error = self.brigade("set", "--liveness-ms", value, code=1)
+                self.assertIn("--liveness-ms", error)
+                self.assertIn(value, error)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_refuses_a_hand_edited_liveness_ms_before_writing_restaurant_json(self):
+        self.open()
+        for value in ("soon", 1000):
+            with self.subTest(value=value):
+                meta = json.loads((self.at / "restaurant.json").read_text())
+                meta["livenessMs"] = value
+                (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
+                before = (self.at / "restaurant.json").read_bytes()
+                error = self.brigade("set", "--workers", "3", code=1)
+                self.assertIn("livenessMs", error)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_status_prints_the_liveness_line_immediately_after_the_workers_line(self):
+        self.open()
+        self.brigade("set", "--thread", "thread-1")
+        self.assertEqual(self.brigade("status").splitlines(), [
+            "thread thread-1",
+            "reporting: milestones, no landing contract",
+            "workers: 0 of 2 running, 2 idle, auto-start: normal",
+            "liveness: every 600000 ms (default for milestones)",
+            "owner thread-1@1",
         ])
 
     def test_set_autofire_records_each_level_and_status_prints_it_as_auto_start(self):
@@ -563,6 +626,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             "thread not recorded",
             "reporting: milestones, no landing contract, waiting tickets: 4, in progress: 1, in review: 1, sent back: 1, merged: 2",
             "workers: 2 of 9 running, 7 idle, auto-start: normal",
+            "liveness: every 600000 ms (default for milestones)",
             # feature. T9 waits. fix. T4 waits and D2 is in flight. polish. T5 waits, and T3 is assigned so it is in no entry.
             # upkeep. D3 is in flight. study. D4 is in flight.
             "kinds: feature 1 waiting; fix 1 waiting, 1 in flight; polish 1 waiting; upkeep 1 in flight; study 1 in flight",
@@ -578,7 +642,8 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.brigade("ticket", "set", "T1", "--state", "dropped")
         self.assertEqual(self.brigade("status").splitlines(), [
             "thread not recorded", "reporting: milestones, no landing contract",
-            "workers: 0 of 9 running, 9 idle, auto-start: normal"])
+            "workers: 0 of 9 running, 9 idle, auto-start: normal",
+            "liveness: every 600000 ms (default for milestones)"])
 
     def test_status_prints_the_state_of_a_done_goal_that_has_a_waiting_ticket(self):
         self.two_goals()
@@ -588,12 +653,12 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.hand_edit("rail.tsv", "T1", state="done")
         self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
         self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
-        self.assertEqual(self.brigade("status").splitlines()[3:], ["kinds: polish 1 waiting", "goals: G1 done, 1 waiting"])
+        self.assertEqual(self.brigade("status").splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: polish 1 waiting", "goals: G1 done, 1 waiting"])
 
     def test_status_prints_the_unassigned_entry_alone_when_the_store_has_a_goal_and_no_work_under_it(self):
         self.two_goals()
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
-        self.assertEqual(self.brigade("status").splitlines()[3:], ["kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
+        self.assertEqual(self.brigade("status").splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
 
     def test_fire_of_a_ticket_whose_goal_cell_is_a_padded_id_warns_starts_an_unassigned_item_and_leaves_the_cell_as_it_was(self):
         self.two_goals()
@@ -606,7 +671,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.assertEqual(self.raw_cells("rail.tsv", "T1", "state", "kind", "goal"), (b"assigned", b"fix", b" G1 "))
         code, out, err = self.run_raw("status")
         self.assertEqual((code, err), (0, names + f"{self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand\n"))
-        self.assertEqual(out.splitlines()[3:], ["kinds: fix 1 in flight", "goals: unassigned 1 in flight"])
+        self.assertEqual(out.splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 1 in flight", "goals: unassigned 1 in flight"])
 
     def test_a_rewrite_of_its_table_leaves_each_kept_cell_byte_for_byte_and_the_warning_for_it_still_prints(self):
         self.two_goals()
@@ -649,7 +714,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         rail.write_bytes(rail.read_bytes().replace(b"\tG1\n", b"\tG1\r\n"))
         warning = (f"brigade: warning: T1 names goal 'G1\\r', {self.NO_GOAL_ROW}; "
                    "run ticket set T1 --goal G<n> or --no-goal\n")
-        unassigned = ["kinds: fix 2 waiting", "goals: unassigned 2 waiting"]
+        unassigned = ["liveness: every 600000 ms (default for milestones)", "kinds: fix 2 waiting", "goals: unassigned 2 waiting"]
         code, out, err = self.run_raw("status")
         self.assertEqual((code, err, out.splitlines()[3:]), (0, warning, unassigned))
         self.assertEqual(self.run_raw("ticket", "set", "T2", "--priority", "low"), (0, "T2 priority low\n", ""))
@@ -663,7 +728,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         before = self.store_files()
         self.assertEqual(self.run_raw("status"), (0, "\n".join([
             "thread not recorded", f"reporting: milestones, lands by local, {self.OLD_COUNTS}", self.OLD_WORKERS,
-            "untagged: 5"]) + "\n", ""))
+            "liveness: every 600000 ms (default for milestones)", "untagged: 5"]) + "\n", ""))
         self.assertEqual(self.store_files(), before)
 
     def test_goal_list_on_a_store_from_before_kinds_counts_each_ticket_and_item_as_unassigned_and_writes_nothing(self):
@@ -678,7 +743,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.store_from_before_kinds(rows=False)
         before = self.tables()
         idle = "workers: 0 of 2 running, 2 idle, auto-start: normal"
-        self.assertEqual(self.run_raw("status"), (0, f"thread not recorded\nreporting: milestones, lands by local\n{idle}\n", ""))
+        self.assertEqual(self.run_raw("status"), (0, f"thread not recorded\nreporting: milestones, lands by local\n{idle}\nliveness: every 600000 ms (default for milestones)\n", ""))
         self.assertEqual(self.brigade("ticket", "list"), "")
         self.assertEqual(self.brigade("startable"), f"{idle}\nno waiting tickets")
         self.assertEqual(self.brigade("watch"), f"{idle}\nno work in progress")

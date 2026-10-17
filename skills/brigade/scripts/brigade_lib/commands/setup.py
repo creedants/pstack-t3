@@ -25,7 +25,7 @@ from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
-from brigade_lib.store import AUTOFIRE, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, low_reserve_of, open_restaurant, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
+from brigade_lib.store import AUTOFIRE, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_liveness_ms, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
 from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
 
 COMMANDS = ("open", "set")
@@ -79,6 +79,8 @@ def register_set(sub):
     p.add_argument("--low-reserve", metavar="N",
                    help="the most workers still idle when a low ticket is held back while an urgent or normal "
                         "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
+    p.add_argument("--liveness-ms", metavar="N",
+                   help="milliseconds between liveness wakes, a whole number of at least 60000; \"\" removes the setting")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
@@ -93,13 +95,15 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    It checks contextCap, coordinatorProvider, caps, review, lowReserve, and affectedTests, by calling each setting's
-    reader predicate, so a value accepted here is a value that reader accepts. A missing key keeps its default.
+    It checks contextCap, coordinatorProvider, caps, review, lowReserve, livenessMs, and affectedTests, by calling
+    each setting's reader predicate, so a value accepted here is a value that reader accepts. A missing key keeps
+    its default.
     """
     effective_cap(meta)
     effective_provider(meta)
     kind_limits(meta)
     low_reserve_of(meta)
+    liveness_of(meta)
     layout(meta)
 
 
@@ -240,6 +244,11 @@ def setting_changes(restaurant, args):
             drop.append(LOW_RESERVE_KEY)
         else:
             changes[LOW_RESERVE_KEY] = parse_low_reserve(args.low_reserve)
+    if args.liveness_ms is not None:
+        if args.liveness_ms == "":
+            drop.append(LIVENESS_KEY)
+        else:
+            changes[LIVENESS_KEY] = parse_liveness_ms(args.liveness_ms)
     if args.context_cap is not None:
         if args.context_cap == "":
             drop.append("contextCap")
