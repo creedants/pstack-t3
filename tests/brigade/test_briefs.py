@@ -120,7 +120,7 @@ class BriefsTest(BrigadeTest):
         orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
         self.assertEqual(orders.rstrip("\n"), (self.at / "house-rules.md").read_text().strip())
 
-    def test_a_store_without_a_layout_gets_no_whole_suite_sentence_or_python_command(self):
+    def test_a_store_without_a_layout_gets_no_whole_suite_sentence_or_default_suite_command(self):
         """The generic slot sentence and the claims sentences stay; the suite sentence and its governor need a layout."""
         self.coordinator()
         verify = self.brigade(*self.BRIEF).split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]

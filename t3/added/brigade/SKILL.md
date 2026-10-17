@@ -18,7 +18,7 @@ A thread that is an executive admin, or that is asked to open, recover, or retir
 | Restaurant | One project or focus area, with a store directory. A project may hold several. |
 | Head chef | The restaurant's coordinator thread. |
 | Menu | `menu.md`: purpose, what good looks like, what is off the menu, budget. |
-| House rules | `house-rules.md`: numbered standing orders pasted into every brief. |
+| House rules | `house-rules.md`: the standing orders a worker brief pastes. |
 | Ticket | One incoming request on the rail (`rail.tsv`). |
 | Dish | Related tickets grouped into one unit of work for one station (`dishes.tsv`). |
 | Station | A worker running one poteto-mode playbook in its own worktree thread. |
@@ -156,7 +156,7 @@ To open a restaurant, read [opening.md](opening.md#open-a-restaurant) and run it
 
 ## House rules
 
-`house-rules.md` holds the numbered standing orders every brief pastes. `open` writes the file once, from a template, and never rewrites it. The template holds the two rules below, plus the worker size limit and the test standard. Those last two are a store's to edit or delete.
+`house-rules.md` holds the rules a worker brief pastes. `open` writes the file once, from a template, and never rewrites it. The template holds two project rules, the worker size limit, and the test standard. A store may edit or delete the last two.
 
 A store created before the template held them gains them only when the user pastes them into its `house-rules.md`. Paste this text at the end of the file:
 
