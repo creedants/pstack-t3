@@ -49,7 +49,7 @@ $B next [--failure fixable|stuck] [--unsent <kind>] [report-back <dish> | review
 $B status                                    # thread <id> or thread not recorded, the counts, reports to <thread> when set, and owner <thread>@<generation> when a generation is recorded
 $B set --thread <id> [--replace] --schedule <name>=<id>
 $B set --reporting every-turn|milestones|digest
-$B set --liveness-ms <N>                     # the interval a new liveness schedule uses, 60000 or more; "" removes it
+$B set --liveness-ms <N>                     # the interval a new liveness schedule uses, a whole number of at least 60000; "" removes it
 $B set --schedule <name>=                    # drops that name from restaurant.json
 $B set --intake github,<feed>                # the intake sources this restaurant owns
 $B set --workers <n>                         # dishes in progress or in review at once
