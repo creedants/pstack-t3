@@ -1,0 +1,3 @@
+- kind polish
+- `vendor_layout` in `tests/brigade/test_affected.py` copies `scripts/build.py` and `scripts/cli_reference.py` from the directory `archive_root` returns instead of the repository root
+- in `tests/brigade/test_affected.py` the name `ROOT` appears only on the import line and inside `archive_root`

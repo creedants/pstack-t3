@@ -50,8 +50,9 @@ class AffectedTest(BrigadeTest):
     def vendor_layout(self):
         target = self.project / "scripts"
         target.mkdir(parents=True, exist_ok=True)
+        archive = self.archive_root()
         for name in ("build.py", "cli_reference.py"):
-            (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+            (target / name).write_bytes((archive / "scripts" / name).read_bytes())
 
     def test_brigade_script_load_maps_fails_when_run_path_ignored(self):
         self.git_project()
