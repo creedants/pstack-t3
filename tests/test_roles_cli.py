@@ -5226,7 +5226,28 @@ class ExcludeRefusalOwnerCliTest(unittest.TestCase):
         self.assertEqual(verdicts[0].reason, self.CLAUSE)
         self.assertEqual(verdicts[0].notes, (f"dropped claudeAgent/claude-opus-5-5: {self.CLAUSE}",))
 
-    def test_backup_lists_a_refused_backups_seat_with_the_owner_clause(self):
+    def test_backup_skips_an_excluded_first_candidate_and_relaunches_on_the_allowed_second(self):
+        completed = run_backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            roles_file={
+                "version": 1,
+                "backups": {"bug-fix": [self.OPUS, {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}]},
+                "exclude": [{"model": "claude-opus-5-5"}],
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "relaunch")
+        self.assertNotEqual(payload["seat"]["model"], "claude-opus-5-5")
+        self.assertEqual(
+            payload["seat"],
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+        )
+
+    def test_validate_lists_a_refused_backups_seat_with_the_owner_clause(self):
         completed = self.validate({
             "version": 1,
             "roles": {"bug-fix": [{"providerInstanceId": "codex", "model": "gpt-6.1-sol"}]},
