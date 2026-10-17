@@ -107,7 +107,8 @@ def parser():
                         "credited also lands an entry whose commits by another author each carry a Co-authored-by trailer "
                         "equal to that commit's author as name <email> and whose body has a line that reads Based on #<n> by "
                         "@<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any "
-                        "when the contract has none, and a first init stores any")
+                        "when the contract has none, and a first init stores any. An unknown --author-policy value is refused "
+                        "before the contract changes")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "

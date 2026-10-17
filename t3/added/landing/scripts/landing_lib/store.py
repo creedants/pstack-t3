@@ -366,10 +366,10 @@ def foreign_author(store, entry):
 
     The contract's authorPolicy decides the check. any returns None without reading git or the commits.
     configured and credited run the check only when configured_identity gives a value. configured bounces the entry
-    when a reviewed commit's author is not that identity. credited lands the entry when every commit whose author is
-    not that identity carries a Co-authored-by trailer equal to its author as name <email> and a line of pr_body, with
-    surrounding whitespace removed, matches CREDIT_LINE, and bounces it otherwise. The reason names the oldest commit
-    that fails.
+    when a reviewed commit's author is not that identity. Both policies pass when no reviewed commit has another
+    author. Otherwise credited passes when every foreign commit carries a Co-authored-by trailer equal to its author
+    as name <email> and a line of pr_body, with surrounding whitespace removed, matches CREDIT_LINE. It bounces the
+    entry otherwise. The reason names the oldest commit that fails.
     """
     policy = store.contract.get("authorPolicy", "any")
     if policy == "any":
@@ -389,9 +389,9 @@ def foreign_author(store, entry):
 
 
 def author_policy_note(contract):
-    """The author policy a repo status line names, or "" unless the contract holds configured or credited."""
-    policy = contract.get("authorPolicy")
-    return f"author policy: {policy}" if policy in AUTHOR_POLICIES and policy != "any" else ""
+    """The stored author policy for repo status, defaulting to any when the key is absent."""
+    policy = contract.get("authorPolicy", "any")
+    return f"author policy: {policy}"
 
 
 IDENTITY_PAUSE = "the configured git identity is now "
