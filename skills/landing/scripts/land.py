@@ -113,6 +113,12 @@ def parser():
                    help="whether the queue appends the Kind and Goal line to the PR body. on adds the line when the item has one, "
                         "after one blank line when the body has text or as the whole body otherwise. off sends the submitted title and body "
                         "unchanged. Omitted, a rerun keeps the stored setting and a first init stores off. An unknown value is refused before the contract changes")
+    p.add_argument("--heartbeat-ms", type=int, default=None, dest="heartbeat_ms",
+                   help="fallback schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 3600000. "
+                        "A value below 3600000 is refused before the contract changes")
+    p.add_argument("--merge-heartbeat-ms", type=int, default=None, dest="merge_heartbeat_ms",
+                   help="merge wait schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 900000. "
+                        "A value below 900000 is refused before the contract changes")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
@@ -216,7 +222,7 @@ def parser():
                         "A value above the governor's worker slots is refused")
     p.add_argument("--for", dest="slot_for", metavar="SECONDS", default=None,
                    help=f"cap this exclusive hold at SECONDS. The default is {EXCLUSIVE_CAP:g}. "
-                        f"The maximum is {EXCLUSIVE_CAP_MAX:g}. A value over the default needs --reason")
+                        "The maximum is the governor exclusiveMax, 7200 by default. A value over the default needs --reason")
     p.add_argument("--reason", dest="slot_reason", metavar="TEXT", default=None,
                    help="why this exclusive hold may pass the default cap. Waiters see it")
     p.add_argument("--repo", dest="slot_repo", metavar="REPO", default=None,
@@ -244,7 +250,8 @@ def run(argv):
     if args.command == "init":
         pr_item_line = None if args.pr_item_line is None else args.pr_item_line == "on"
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line), 0
+                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line,
+                    args.heartbeat_ms, args.merge_heartbeat_ms), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -299,7 +306,8 @@ def run(argv):
             note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))
             policy_note = author_policy_note(store.contract)
             item_note = pr_item_line_note(store.contract)
-            text = " ".join(part for part in (note, policy_note, item_note) if part)
+            heartbeat = heartbeat_note(store.contract)
+            text = " ".join(part for part in (note, policy_note, item_note, heartbeat) if part)
             if text:
                 line = f"{line} {text}"
         return line, 0

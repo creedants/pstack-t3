@@ -21,7 +21,7 @@ Land many agents' work on one repository through one queue.
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
 ```
 
 write the repository's landing contract
@@ -39,6 +39,8 @@ write the repository's landing contract
 | `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository when gh can report the allowed methods, whenever it is set. omitted in merge mode, a first init stores the only allowed method, or prefers merge then squash when several are allowed, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
 | `--author-policy AUTHOR_POLICY` |  | `any`, `configured`, `credited` |  | how the queue judges a reviewed commit's author. any skips the check. configured and credited check only when the repository has a configured identity: configured requires that author, and credited also lands an entry whose commits by another author each carry a Co-authored-by trailer equal to that commit's author as name \<email> and whose body has a line that reads Based on #\<n> by @\<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any when the contract has none, and a first init stores any. An unknown --author-policy value is refused before the contract changes |
 | `--pr-item-line PR_ITEM_LINE` |  | `on`, `off` |  | whether the queue appends the Kind and Goal line to the PR body. on adds the line when the item has one, after one blank line when the body has text or as the whole body otherwise. off sends the submitted title and body unchanged. Omitted, a rerun keeps the stored setting and a first init stores off. An unknown value is refused before the contract changes |
+| `--heartbeat-ms HEARTBEAT_MS` |  |  |  | fallback schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 3600000. A value below 3600000 is refused before the contract changes |
+| `--merge-heartbeat-ms MERGE_HEARTBEAT_MS` |  |  |  | merge wait schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 900000. A value below 900000 is refused before the contract changes |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
@@ -282,7 +284,7 @@ run a heavy command under a governor slot
 | --- | --- | --- | --- | --- |
 | `--exclusive` |  |  |  | hold every slot: for benchmarks that need a quiet machine |
 | `--slots N` |  |  |  | take N worker slots in one admission. The default is 1. A value above the governor's worker slots is refused |
-| `--for SECONDS` |  |  |  | cap this exclusive hold at SECONDS. The default is 600. The maximum is 7200. A value over the default needs --reason |
+| `--for SECONDS` |  |  |  | cap this exclusive hold at SECONDS. The default is 600. The maximum is the governor exclusiveMax, 7200 by default. A value over the default needs --reason |
 | `--reason TEXT` |  |  |  | why this exclusive hold may pass the default cap. Waiters see it |
 | `--repo REPO` |  |  |  | the repository to name in the holder record (default: current directory) |
 | `cmd` |  |  |  |  |

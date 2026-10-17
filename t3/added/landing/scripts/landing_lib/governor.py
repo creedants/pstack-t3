@@ -33,6 +33,39 @@ def governor_slots():
     return max(1, min(4, (os.cpu_count() or 4) // 4))
 
 
+def exclusive_max():
+    """The longest exclusive hold in seconds. The governor exclusiveMax, or the built-in maximum when absent."""
+    try:
+        maximum = seam.EXCLUSIVE_CAP_MAX
+    except AttributeError:
+        maximum = 7200
+    config = governor_dir() / "governor.json"
+    if not config.exists():
+        return float(maximum)
+    try:
+        payload = json.loads(config.read_text())
+    except (OSError, ValueError):
+        raise seam.LandError("governor exclusiveMax must be a positive number of seconds")
+    if not isinstance(payload, dict) or "exclusiveMax" not in payload:
+        return float(maximum)
+    value = payload["exclusiveMax"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise seam.LandError("governor exclusiveMax must be a positive number of seconds")
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        raise seam.LandError("governor exclusiveMax must be a positive number of seconds")
+    if not math.isfinite(number) or number <= 0:
+        raise seam.LandError("governor exclusiveMax must be a positive number of seconds")
+    try:
+        floor = seam.EXCLUSIVE_CAP
+    except AttributeError:
+        floor = 600
+    if number < floor:
+        raise seam.LandError(f"governor exclusiveMax must be at or above {floor:g} seconds")
+    return number
+
+
 REPORT_AFTER = 15
 
 
@@ -354,7 +387,7 @@ def _cap_seconds(value):
 def _parse_exclusive_cap(text, reason):
     """Return the exclusive cap in seconds and its short reason, or raise LandError.
 
-    Reads EXCLUSIVE_CAP, EXCLUSIVE_CAP_MAX, and EXCLUSIVE_REASON_MAX at call time.
+    Reads EXCLUSIVE_CAP and EXCLUSIVE_REASON_MAX at call time, and the maximum from exclusive_max.
     A refusal takes no slot.
     """
     if text is None:
@@ -366,8 +399,9 @@ def _parse_exclusive_cap(text, reason):
             raise seam.LandError("--for must be a positive number of seconds") from None
         if not math.isfinite(seconds) or seconds <= 0:
             raise seam.LandError("--for must be a positive number of seconds")
-    if seconds > seam.EXCLUSIVE_CAP_MAX:
-        raise seam.LandError(f"--for cannot pass {seam.EXCLUSIVE_CAP_MAX:g} seconds")
+    limit = exclusive_max()
+    if seconds > limit:
+        raise seam.LandError(f"--for cannot pass {limit:g} seconds")
     short = _short_reason(reason)
     if seconds > seam.EXCLUSIVE_CAP and short is None:
         raise seam.LandError(f"--for over {seam.EXCLUSIVE_CAP:g} seconds needs --reason")
