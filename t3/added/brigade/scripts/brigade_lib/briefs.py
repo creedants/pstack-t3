@@ -278,10 +278,10 @@ def standing_rules(restaurant, base, context, verify):
 def worker_house_rules(text):
     """The house rules a worker brief carries.
 
-    A rule is a line that starts at column 0 and the indented lines under it. A rule whose first line
-    carries `[reviewer]` or `[coordinator]` is left out. A rule whose first line carries `[worker]`
-    keeps its place and loses the tag and the one space that follows it. Every other rule is kept as
-    it is, so a store with no tags renders the text it held before.
+    A rule is a line that starts at column 0 and the indented or blank lines under it. A rule whose
+    first line's first role tag is `[reviewer]` or `[coordinator]` is left out. One whose first tag is
+    `[worker]` keeps its place and loses that tag and the one space after it. Every other rule is kept
+    as it is, so a store with no tags renders the text it held before.
     """
     rules, current = [], []
     for line in text.strip().split("\n"):
