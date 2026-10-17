@@ -941,7 +941,7 @@ class PageTest(ActivityCase):
         page = page_of(fixture)
         self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "mail helper")]}))
 
-    def test_model_names_come_from_the_table_with_counts_count_desc_then_name(self):
+    def test_model_names_come_from_each_row_with_counts_count_desc_then_name(self):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
         fixture.thread(worker(1), model="model-b", turns=(("completed", 90, 80),))
