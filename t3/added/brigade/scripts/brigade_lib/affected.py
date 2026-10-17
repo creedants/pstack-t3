@@ -109,10 +109,10 @@ def layout(meta):
                            "'python' needs an absolute path whose file name is python<major> or python<major>.<minor>")
         if suite.split()[0] != "python3":
             refuse_setting(AFFECTED_KEY, value, "'suite' must start with python3 when 'python' is set")
-    raw_roots = value.get("importRoots")
-    if raw_roots is None:
+    if "importRoots" not in value:
         roots = _roots(list(entries) + list(helpers))
     else:
+        raw_roots = value["importRoots"]
         if not _repo_paths(raw_roots):
             refuse_setting(AFFECTED_KEY, value, "'importRoots' needs a list of repo paths")
         seen = []

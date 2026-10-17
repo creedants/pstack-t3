@@ -1,5 +1,6 @@
 import json
 import os
+import posixpath
 import tempfile
 from unittest import mock
 
@@ -41,6 +42,61 @@ def reference_close(table, edges):
                     members.add(importer)
                     changed = True
     return closed
+
+
+def _base_resolve_import(edge, loader_path, root, roots=None):
+    import sys
+    module = sys.modules["brigade_lib.affected"]
+    level, name, symbol = edge
+    if symbol == "*":
+        symbol = ""
+    parts = name.split(".") if name else []
+    if level and level > 0:
+        parent = posixpath.dirname(module._norm(loader_path) if loader_path else "")
+        bits = parent.split("/") if parent else []
+        if level - 1 > len(bits):
+            return ()
+        base = "/".join(bits[:len(bits) - (level - 1)]) if level - 1 else parent
+        cands = []
+        if parts:
+            rel = "/".join(parts)
+            if base:
+                cands.append(base + "/" + rel + ".py")
+                cands.append(base + "/" + rel + "/__init__.py")
+            else:
+                cands.append(rel + ".py")
+                cands.append(rel + "/__init__.py")
+        if symbol:
+            rel = "/".join(parts + [symbol]) if parts else symbol
+            if base:
+                cands.append(base + "/" + rel + ".py")
+                cands.append(base + "/" + rel + "/__init__.py")
+            else:
+                cands.append(rel + ".py")
+                cands.append(rel + "/__init__.py")
+        return module._found_files(root, cands)
+    parent = posixpath.dirname(module._norm(loader_path) if loader_path else "")
+    cands = []
+    rels = []
+    if parts:
+        rel = "/".join(parts)
+        rels.append(rel + ".py")
+        rels.append(rel + "/__init__.py")
+    if symbol:
+        rel = "/".join(parts + [symbol]) if parts else symbol
+        rels.append(rel + ".py")
+        rels.append(rel + "/__init__.py")
+    if not rels and parts:
+        rel = "/".join(parts)
+        rels = [rel + ".py", rel + "/__init__.py"]
+    for tail in rels:
+        if parent:
+            cands.append(parent + "/" + tail)
+        cands.append(tail)
+    for tail in rels:
+        for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
+            cands.append(prefix + "/" + tail)
+    return module._found_files(root, cands)
 
 
 class AffectedTest(BrigadeTest):
@@ -683,13 +739,22 @@ class AffectedTest(BrigadeTest):
         self.git_project()
         self.write("tests/test_a.py", "def test_a():\n pass\n")
         self.track()
-        for bad in ("scripts", ["/abs"], ["../up"], ["a b"]):
+        for bad in ("scripts", None, 123, {"roots": ["scripts"]}, ["/abs"], ["../up"], ["a b"],
+                    [None], [123], ["scripts", None]):
             with self.subTest(bad=bad):
                 self.restaurant(self.project, layout=dict(LAYOUT, importRoots=bad))
                 err = self.affected("--paths", "tests/test_a.py", ok=False)
                 self.assertIn("restaurant.json", err)
                 self.assertIn("affectedTests", err)
                 self.assertIn("importRoots", err)
+                before = (self.at / "restaurant.json").read_bytes()
+                before_store = self.store_files()
+                err = self.brigade("set", "--check-command", "echo NEW", code=1)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("importRoots", err)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+                self.assertEqual(self.store_files(), before_store)
 
     def test_d411_pair_maps_same_as_old_literals_fails_when_the_archive_tables_differ(self):
         self.close_function()
@@ -702,7 +767,12 @@ class AffectedTest(BrigadeTest):
                             ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"))
         new = module.Layout(ALWAYS, WORKFLOW, entries, helpers, LAYOUT["suite"], LAYOUT["python"],
                             ("scripts", "t3/scripts"))
-        old_index = module._index(archive, old)
+        current = module._resolve_import
+        module._resolve_import = _base_resolve_import
+        try:
+            old_index = module._index(archive, old)
+        finally:
+            module._resolve_import = current
         new_index = module._index(archive, new)
         self.assertIsInstance(old_index, module._Closed)
         self.assertIsInstance(new_index, module._Closed)
