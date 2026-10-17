@@ -61,7 +61,7 @@ A usage limit relaunches the failed seat on a `backups` seat when one is free. T
 | A worker, any role that is not a reviewer | The role's first `backups` seat whose provider is not the failed provider and is not out |
 | A reviewer role, such as `verifiers`, `interrogate reviewers`, or `arena cross-judge pool` | The role's first `backups` seat whose provider is not failed or out and whose model family did not write the diff |
 | A `review backups` seat | None. A `review backups` seat has no backup, so it counts as no pass |
-| A `verifiers` seat whose `backups` seats are all out, when `review backups` is set | The `review backups` panel, at least two seats |
+| A `verifiers` seat with no usable `backups` seat, when `review backups` is set | The `review backups` panel when it keeps at least two usable seats, otherwise the item parks |
 
 The backup comes only from the `backups` key in your roles file. Set a `backups` list per role to name the seats `roles.py backup` tries in order. A candidate is skipped when its provider is the failed provider, is already out, is not runnable or not in the catalog, the `exclude` list refuses it, or, for a review role, its model family wrote the diff. A seat parks when no candidate is left. A `review backups` seat has no backup. After the reset time in the error, `roles.py backup --resume` returns the original seat, whatever its provider, once that provider is back. Otherwise it returns the first usable `backups` seat. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to. Every `roles.py` command and flag is in the [command-line reference](cli/roles.md).
 
@@ -509,7 +509,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
 | A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role has a built-in model, an `exclude` list refuses a model, and a usage limit relaunches on a `backups` seat when one is free and parks otherwise. |
-| A fixed default panel of four Cursor models | Each panel role is a list of seats you set in `roles.json`, resolved against T3's live catalog. |
+| A fixed default panel of four Cursor models | Each panel role is the seats you set in `roles.json`, resolved against T3's live catalog. Unset, a panel role inherits this thread's seat. |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |

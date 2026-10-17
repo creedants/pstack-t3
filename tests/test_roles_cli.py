@@ -1657,7 +1657,7 @@ class VertexHaikuCliTest(unittest.TestCase):
 
     EXCLUDE = [{"model": "*claude-haiku-4-5*"}]
 
-    def test_the_exclude_glob_refuses_every_haiku_4_5_spelling(self):
+    def test_the_exclude_glob_refuses_the_haiku_4_5_spellings_it_lists(self):
         rules = roles.parse_exclude(self.EXCLUDE, "test")
         for model_id in (
             "claude-haiku-4-5",

@@ -297,7 +297,7 @@ def family(model_id):
 
 
 def model_matches(pattern, model_id):
-    """True when pattern, a case-folded glob, names this model id bare or namespaced."""
+    """True when pattern, a case-folded glob, names this model id's bare id or its normalized id."""
     if not isinstance(model_id, str) or not model_id:
         return False
     folded = pattern.lower()
@@ -793,7 +793,8 @@ def _resolve_inherit(catalog, budget, name, exclude=()):
     A parent the exclude list refuses becomes the same provider's first allowed
     model, or the role is refused when that provider cannot run children or has
     no allowed model. A parent whose provider carries RUNTIME_MODE_GAP is refused.
-    An explicit budget makes inherit explicit on the parent's own model.
+    A budget other than "default" makes inherit explicit on the parent's own model
+    when that model declares an effort option and its provider can run children.
     """
     parent = inherit_parent(catalog)
     if parent is None:
