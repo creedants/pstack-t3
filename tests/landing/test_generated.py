@@ -1163,7 +1163,7 @@ class GeneratedTest(LandingTest):
             "    os.waitpid(child, 0)\n"
         )
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)} {shlex.quote(str(pidfile))}"
-        # The build is a process because the test delivers SIGINT around a child process group.
+        # The command is a process whose detached grandchild holds the pipe open into grace.
         calls = []
         previous = signal.getsignal(signal.SIGINT)
         self.addCleanup(signal.signal, signal.SIGINT, previous)
