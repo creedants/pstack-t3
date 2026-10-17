@@ -44,13 +44,15 @@ class FireLayoutTest(BrigadeTest):
             subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "add paths"],
                            cwd=self.project, check=True, capture_output=True, text=True)
 
-    def layout_fire(self, paths, doc_item=False):
+    def layout_fire(self, paths, doc_item=False, note="changes"):
         self.git_project()
         self.vendor_layout()
         self.commit_paths(paths)
         self.init_landing()
         self.landing_env()
         self.open()
+        if note is not None:
+            self.brigade("set", "--change-note-dir", note)
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         args = ["fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                 "--paths", paths]
@@ -61,7 +63,7 @@ class FireLayoutTest(BrigadeTest):
     def dish_paths(self):
         return self.table_row(self.at, "dishes.tsv", "D1")["paths"]
 
-    def fresh_fire(self, given, with_layout, doc_item=False):
+    def fresh_fire(self, given, with_layout, doc_item=False, note="changes"):
         base = Path(self.temporary.name) / f"case-{self.case_no}"
         self.case_no += 1
         store = base / "store"
@@ -76,6 +78,8 @@ class FireLayoutTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        if note is not None:
+            self.brigade("set", "--change-note-dir", note)
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         args = ["fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                 "--paths", given]
@@ -113,6 +117,25 @@ class FireLayoutTest(BrigadeTest):
         self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {copy}, {page}")
         self.assertEqual(self.dish_paths(), f"{given},{copy},{page},{frag}")
         self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/brigade.md, skills/brigade/scripts/brigade.py, t3/added/brigade/scripts/brigade.py"])
+
+    def test_unset_key_leases_no_fragment(self):
+        given = "t3/added/brigade/scripts/brigade.py"
+        copy = "skills/brigade/scripts/brigade.py"
+        page = "docs/cli/brigade.md"
+        out = self.layout_fire(given, note=None)
+        self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {copy}, {page}")
+        self.assertEqual(self.dish_paths(), f"{given},{copy},{page}")
+        self.assertEqual(self.lease_lines(), ["L1 active perf/D1: docs/cli/brigade.md, skills/brigade/scripts/brigade.py, t3/added/brigade/scripts/brigade.py"])
+
+    def test_configured_subdirectory_leases_its_fragment(self):
+        given = "t3/added/brigade/scripts/brigade.py"
+        copy = "skills/brigade/scripts/brigade.py"
+        page = "docs/cli/brigade.md"
+        frag = "notes/sub/perf%2Fd1.md"
+        out = self.layout_fire(given, note="notes/sub")
+        self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {copy}, {page}")
+        self.assertEqual(self.dish_paths(), f"{given},{copy},{page},{frag}")
+        self.assertEqual(self.lease_lines(), [f"L1 active perf/D1: docs/cli/brigade.md, {frag}, {copy}, {given}"])
 
     def test_skill_source_adds_docs_skills_md_and_unrelated_omits_it(self):
         self.case_no = 0
@@ -218,6 +241,7 @@ class FireLayoutTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         out = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                            "--paths", "t3/runtime.md")
@@ -231,6 +255,7 @@ class FireLayoutTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
                      "--branch", "perf/d1", "--paths", "t3/runtime.md")
@@ -362,6 +387,7 @@ class FireLayoutTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("set", "--workers", "1")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")
@@ -437,6 +463,7 @@ class FireLayoutTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("set", "--workers", "1")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "b")

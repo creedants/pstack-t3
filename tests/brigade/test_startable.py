@@ -633,6 +633,7 @@ class StartableTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.land("lease", "claim", "--holder", "engine/D1",
                   "--paths", "t3/added/brigade/scripts/activity.py,tests/brigade/test_context_cap.py,changes/perf%2Fd1.md")
         self.filed("Fix the cap", "--paths", "tests/brigade/support.py,tests/brigade/test_startable.py")

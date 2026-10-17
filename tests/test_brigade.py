@@ -226,5 +226,46 @@ class ReleaseSectionsTest(unittest.TestCase):
                              "would delete changes/two.md\nnothing changed\n")
 
 
+class ChangeNoteDirTest(BrigadeTest):
+    """The changeNoteDir key: unset by default, set and cleared through set, refused when malformed."""
+
+    def meta(self):
+        return json.loads((self.at / "restaurant.json").read_text())
+
+    def test_set_records_a_normalized_directory_and_empty_clears_it(self):
+        self.open()
+        self.assertNotIn("changeNoteDir", self.meta())
+        meta = json.loads(self.brigade("set", "--change-note-dir", "notes/sub/"))
+        self.assertEqual(meta["changeNoteDir"], "notes/sub")
+        self.assertEqual(self.meta()["changeNoteDir"], "notes/sub")
+        meta = json.loads(self.brigade("set", "--change-note-dir", ""))
+        self.assertNotIn("changeNoteDir", meta)
+        self.assertNotIn("changeNoteDir", self.meta())
+
+    def test_set_refuses_a_bad_directory_and_writes_nothing(self):
+        self.open()
+        for text in ("/abs", "../up", "a/../..", "a,b", "has space"):
+            with self.subTest(text=text):
+                before = (self.at / "restaurant.json").read_bytes()
+                error = self.brigade("set", "--change-note-dir", text, ok=False)
+                self.assertIn("--change-note-dir", error)
+                self.assertIn(f"got '{text}'", error)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_refuses_a_stored_directory_that_does_not_parse(self):
+        self.open()
+        path = self.at / "restaurant.json"
+        meta = self.meta()
+        for stored in ("/abs", 5):
+            with self.subTest(stored=stored):
+                meta["changeNoteDir"] = stored
+                path.write_text(json.dumps(meta))
+                before = path.read_bytes()
+                error = self.brigade("set", "--reporting", "digest", ok=False)
+                self.assertIn("changeNoteDir", error)
+                self.assertEqual(path.read_bytes(), before)
+                del meta["changeNoteDir"]
+
+
 if __name__ == "__main__":
     unittest.main()

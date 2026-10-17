@@ -1095,6 +1095,7 @@ class BrigadeTest(unittest.TestCase):
     def renamed(self, hook=None):
         """Fire D1 on perf/d1, then run dish D1 --branch perf/d1-r2 in this process, calling hook at its lease list."""
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("set", "--thread", "coordinator")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
