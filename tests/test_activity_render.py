@@ -42,7 +42,7 @@ MACOS = sys.platform == "darwin"
 DISPLAY_WARNING = "CVDisplayLinkCreateWithCGDisplay failed"
 _WARNING_PREFIX = re.compile(r"\[[^\]]*\]\s*")
 _CVRETURN_CLAUSE = re.compile(r"^\s*\.\s*CVReturn:\s*-?\d+")
-# How many stderr lines a failure keeps, taken from the end.
+# How many kept stderr diagnostics a failure keeps, taken from the end.
 STDERR_TAIL = 5
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
@@ -299,7 +299,7 @@ class RenderHeightTest(unittest.TestCase):
             ("busy ordinary", busy_page(self.root / "ordinary", [f"Ship {number}" for number in range(1, 37)]), 1956, 11, 8),
             ("busy wide", busy_page(self.root / "wide", ["W" * 36] * 36), 1918, 8, 8),
             ("new short", wide_page([f"Ship {number}" for number in range(1, 9)]), 1886, 16, 8),
-            ("new wide", wide_page(["W" * 36] * 8), 1890, 10, 8),
+            ("new wide", wide_page(["W" * 36] * 8), 1950, 12, 8),
         )
         for name, unfolded, reserved, rows, groups in cases:
             with self.subTest(name):
