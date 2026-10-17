@@ -34,7 +34,7 @@ class Layout:
     means such a path is unmapped. entry_points and helpers are repository paths. suite is the whole-suite
     command, and it starts with python3 when python is set. python is the second interpreter, an absolute path
     whose file name is python<major> or python<major>.<minor>, and empty means the paragraph omits it.
-    import_roots are repo paths tried as prefixes for absolute imports, after the loader directory and the root.
+    import_roots are repo paths tried as prefixes for absolute imports, in candidate order after the loader directory and the root with every match kept.
     Relative imports never search them. They are normalized and deduped in order and never hold the root itself.
     An absent key means the directories of entry_points and helpers.
     """
