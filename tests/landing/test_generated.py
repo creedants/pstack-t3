@@ -7,6 +7,7 @@ from .support import (
     sh,
 )
 
+import contextlib
 import errno
 import os
 import shutil
@@ -34,6 +35,133 @@ one.write_text(f"built\\n{text}")
 two.write_text(f"built\\n{text}")
 three.write_text(f"built\\n{text}")
 """
+
+
+class _GroupTrace:
+    """Record killpg and reaping waitpid as event pairs with pids."""
+
+    def __init__(self, on_killpg=None):
+        """Keep the callback that runs after the record and before the real killpg."""
+        self._on_killpg = on_killpg
+        self.events = []
+        self._real_killpg = None
+        self._real_waitpid = None
+
+    def __enter__(self):
+        """Patch os.killpg and os.waitpid and return self."""
+        self._real_killpg = os.killpg
+        self._real_waitpid = os.waitpid
+        os.killpg = self._recording_killpg
+        os.waitpid = self._recording_waitpid
+        return self
+
+    def __exit__(self, *exc):
+        """Restore os.killpg and os.waitpid. Never swallows."""
+        os.killpg = self._real_killpg
+        os.waitpid = self._real_waitpid
+        return False
+
+    def clear(self):
+        """Drop recorded events. Patches stay in place."""
+        del self.events[:]
+
+    def leader(self):
+        """Return the one group id killpg named."""
+        groups = sorted({pgid for name, pgid in self.events if name == "killpg"})
+        assert len(groups) == 1
+        return groups[0]
+
+    def _recording_killpg(self, pgid, sig):
+        self.events.append(("killpg", pgid))
+        if self._on_killpg is not None:
+            self._on_killpg()
+        return self._real_killpg(pgid, sig)
+
+    def _recording_waitpid(self, pid, options):
+        try:
+            result = self._real_waitpid(pid, options)
+        except ChildProcessError:
+            if pid > 0:
+                self.events.append(("reaped", pid))
+            raise
+        if result[0] != 0:
+            self.events.append(("reaped", result[0]))
+        return result
+
+
+def _names(events, pid):
+    """Return event names for this pid in order."""
+    return [name for name, seen in events if seen == pid]
+
+
+def _signalled_after_reap(events):
+    """Return True when a killpg names a pid that an earlier event reaped."""
+    reaped = set()
+    for name, pid in events:
+        if name == "reaped":
+            reaped.add(pid)
+        if name == "killpg" and pid in reaped:
+            return True
+    return False
+
+
+def _zombie(pid):
+    """Return True when pid is a zombie on Linux and macOS."""
+    try:
+        with open(f"/proc/{pid}/stat") as handle:
+            stat = handle.read()
+        return stat.rpartition(")")[2].split()[0] == "Z"
+    except OSError:
+        pass
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        return False
+    if result.returncode != 0:
+        return False
+    return (result.stdout or "").strip().startswith("Z")
+
+
+_HOST = "host"
+
+
+_DARWIN = "darwin without waitid"
+
+
+def _platforms():
+    """Return the host row plus the simulated Darwin row, except on a Darwin host without os.waitid, where it returns only the Darwin row."""
+    if sys.platform == "darwin" and not hasattr(os, "waitid"):
+        return [_DARWIN]
+    return [_HOST, _DARWIN]
+
+
+@contextlib.contextmanager
+def _platform(name):
+    """Run the body on the host, or with sys.platform set to darwin and os.waitid removed."""
+    if name == _HOST:
+        yield
+        return
+    saved_platform = sys.platform
+    saved_waitid = getattr(os, "waitid", None)
+    had_waitid = hasattr(os, "waitid")
+    sys.platform = "darwin"
+    if had_waitid:
+        del os.waitid
+    try:
+        yield
+    finally:
+        sys.platform = saved_platform
+        if had_waitid:
+            os.waitid = saved_waitid
 
 
 class GeneratedTest(LandingTest):
@@ -811,14 +939,6 @@ class GeneratedTest(LandingTest):
             self.assertIsNotNone(helper_pid)
             self.assertIsNotNone(build_pgid)
 
-            def _zombie(pid):
-                try:
-                    with open(f"/proc/{pid}/stat") as handle:
-                        stat = handle.read()
-                except OSError:
-                    return False
-                return stat.rpartition(")")[2].split()[0] == "Z"
-
             deadline = time.monotonic() + 10
             while not _zombie(build_pgid) and time.monotonic() < deadline:
                 time.sleep(0.01)
@@ -996,54 +1116,44 @@ class GeneratedTest(LandingTest):
 
     def test_previous_callable_runs_after_the_reap(self):
         """Previous runs after the reap."""
-        real_killpg = os.killpg
-        real_waitpid = os.waitpid
         previous = signal.getsignal(signal.SIGINT)
-        order = []
-        calls = []
-        reaped = []
+        for platform in _platforms():
+            with self.subTest(platform=platform):
+                with _platform(platform):
+                    snapshots = []
+                    with _GroupTrace(on_killpg=lambda: signal.raise_signal(signal.SIGINT)) as trace:
+                        def returning_previous(signum, frame):
+                            snapshots.append(list(trace.events))
+                            try:
+                                os.waitpid(-1, os.WNOHANG)
+                            except ChildProcessError:
+                                pass
 
-        def recording_killpg(pgid, sig):
-            order.append("killpg")
-            signal.raise_signal(signal.SIGINT)
-            return real_killpg(pgid, sig)
+                        signal.signal(signal.SIGINT, returning_previous)
+                        try:
+                            land.run_build("sleep 5", str(self.work), 0.1)
+                            restored = signal.getsignal(signal.SIGINT)
+                        finally:
+                            signal.signal(signal.SIGINT, previous)
+                    leader = trace.leader()
+                    self.assertEqual(_names(trace.events, leader), ["killpg", "reaped"])
+                    self.assertEqual([_names(seen, leader) for seen in snapshots], [["killpg", "reaped"]])
+                    self.assertIs(restored, returning_previous)
 
-        def recording_waitpid(pid, options):
-            try:
-                result = real_waitpid(pid, options)
-            except ChildProcessError:
-                if not reaped:
-                    reaped.append(True)
-                    order.append("reaped")
-                raise
-            if result[0] != 0 and not reaped:
-                reaped.append(True)
-                order.append("reaped")
-            return result
-
-        def returning_previous(signum, frame):
-            calls.append(order[:])
-            try:
-                os.waitpid(-1, os.WNOHANG)
-            except ChildProcessError:
-                pass
-
-        os.killpg = recording_killpg
-        os.waitpid = recording_waitpid
-        signal.signal(signal.SIGINT, returning_previous)
-        try:
-            land.run_build("sleep 5", str(self.work), 0.1)
-            restored = signal.getsignal(signal.SIGINT)
-        finally:
-            os.killpg = real_killpg
-            os.waitpid = real_waitpid
-            signal.signal(signal.SIGINT, previous)
-        self.assertEqual(order, ["killpg", "reaped"])
-        self.assertEqual(calls, [["killpg", "reaped"]])
-        self.assertIs(restored, returning_previous)
+    def test_darwin_ps_reap_is_not_a_leader_reap(self):
+        """Reaps of a non-leader child are not leader reaps."""
+        with _platform(_DARWIN):
+            with _GroupTrace() as trace:
+                land.run_build("sleep 5", str(self.work), 0.1)
+            leader = trace.leader()
+            self.assertTrue(any(name == "reaped" and pid != leader for name, pid in trace.events))
+            self.assertEqual(_names(trace.events, leader), ["killpg", "reaped"])
+            self.assertFalse(_signalled_after_reap(trace.events))
 
     def test_sigint_sampled_lines_never_signal_after_reap(self):
         """Sampled lines never signal after the reap."""
+        entry = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, entry)
         codes = {land.run_build.__code__}
         for value in vars(land._Build).values():
             if callable(value):
@@ -1069,75 +1179,58 @@ class GeneratedTest(LandingTest):
             return seen
 
         builds = [("exit 0", 5), ("sleep 5", 0.05), ("(sleep 30) & exit 0", 0.05)]
-        counts = [len(line_events(command, timeout)) for command, timeout in builds]
-        real_killpg = os.killpg
-        real_waitpid = os.waitpid
-        order = []
-        calls = []
+        for platform in _platforms():
+            with self.subTest(platform=platform):
+                with _platform(platform):
+                    counts = [len(line_events(command, timeout)) for command, timeout in builds]
+                    with _GroupTrace() as trace:
+                        for kind in ("raising", "returning"):
+                            for (command, timeout), total in zip(builds, counts):
+                                for index in range(total):
+                                    trace.clear()
+                                    calls = []
 
-        def recording_killpg(pgid, sig):
-            order.append("killpg")
-            return real_killpg(pgid, sig)
+                                    def raising_previous(signum, frame):
+                                        calls.append(1)
+                                        raise KeyboardInterrupt
 
-        def recording_waitpid(pid, options):
-            try:
-                result = real_waitpid(pid, options)
-            except ChildProcessError:
-                order.append("reaped")
-                raise
-            if result[0] != 0:
-                order.append("reaped")
-            return result
+                                    def returning_previous(signum, frame):
+                                        calls.append(1)
 
-        os.killpg = recording_killpg
-        os.waitpid = recording_waitpid
-        try:
-            for kind in ("raising", "returning"):
-                for (command, timeout), total in zip(builds, counts):
-                    for index in range(total):
-                        del order[:]
-                        del calls[:]
+                                    entry = raising_previous if kind == "raising" else returning_previous
+                                    signal.signal(signal.SIGINT, entry)
+                                    fired = [0]
+                                    # hit records reach when raise interrupts before the increment.
+                                    hit = [False]
 
-                        def raising_previous(signum, frame):
-                            calls.append(1)
-                            raise KeyboardInterrupt
+                                    def tracer(frame, event, arg):
+                                        if frame.f_code in codes:
+                                            if event == "line":
+                                                if fired[0] == index:
+                                                    hit[0] = True
+                                                    signal.raise_signal(signal.SIGINT)
+                                                fired[0] += 1
+                                            return tracer
+                                        return None
 
-                        def returning_previous(signum, frame):
-                            calls.append(1)
-
-                        entry = raising_previous if kind == "raising" else returning_previous
-                        signal.signal(signal.SIGINT, entry)
-                        fired = [0]
-
-                        def tracer(frame, event, arg):
-                            if frame.f_code in codes:
-                                if event == "line":
-                                    if fired[0] == index:
-                                        signal.raise_signal(signal.SIGINT)
-                                    fired[0] += 1
-                                return tracer
-                            return None
-
-                        started = time.monotonic()
-                        sys.settrace(tracer)
-                        try:
-                            land.run_build(command, str(self.work), timeout)
-                        except KeyboardInterrupt:
-                            pass
-                        finally:
-                            sys.settrace(None)
-                        elapsed = time.monotonic() - started
-                        kinds = [name for name in order]
-                        after = "reaped" in kinds and "killpg" in kinds[kinds.index("reaped"):]
-                        restored = signal.getsignal(signal.SIGINT) is entry
-                        self.assertFalse(after, f"{kind} {command} line {index}: {kinds}")
-                        self.assertTrue(restored, f"{kind} {command} line {index}")
-                        self.assertEqual(calls, [1], f"{kind} {command} line {index}")
-                        self.assertLess(elapsed, 6, f"{kind} {command} line {index}")
-        finally:
-            os.killpg = real_killpg
-            os.waitpid = real_waitpid
-            signal.signal(signal.SIGINT, signal.default_int_handler)
+                                    started = time.monotonic()
+                                    sys.settrace(tracer)
+                                    try:
+                                        land.run_build(command, str(self.work), timeout)
+                                    except KeyboardInterrupt:
+                                        pass
+                                    finally:
+                                        sys.settrace(None)
+                                    elapsed = time.monotonic() - started
+                                    after = _signalled_after_reap(trace.events)
+                                    restored = signal.getsignal(signal.SIGINT) is entry
+                                    self.assertFalse(after, f"{platform} {kind} {command} line {index}: {trace.events}")
+                                    self.assertTrue(restored, f"{platform} {kind} {command} line {index}")
+                                    if hit[0]:
+                                        self.assertEqual(calls, [1], f"{platform} {kind} {command} line {index}")
+                                    else:
+                                        self.assertEqual(calls, [], f"{platform} {kind} {command} line {index}")
+                                    self.assertLess(elapsed, 6, f"{platform} {kind} {command} line {index}")
 
     def test_timeout_kills_live_build_with_no_exit_detector(self):
         """Timeout kills a live build without an exit detector."""
