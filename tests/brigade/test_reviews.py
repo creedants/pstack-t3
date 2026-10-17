@@ -280,7 +280,7 @@ class ReviewsTest(BrigadeTest):
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
 
-    def test_each_threads_third_line_in_the_review_table_is_refused_by_its_number_or_records_its_rows(self):
+    def test_each_threads_case_is_refused_by_its_number_or_records_its_rows(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--thread", THREAD_A)
         role = f"claims check `{THREAD_C}` {CODEX}"
