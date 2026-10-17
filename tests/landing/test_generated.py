@@ -1141,7 +1141,7 @@ class GeneratedTest(LandingTest):
                     self.assertIs(restored, returning_previous)
 
     def test_darwin_ps_reap_is_not_a_leader_reap(self):
-        """Reaps of the ps child are not leader reaps."""
+        """Reaps of a non-leader child are not leader reaps."""
         with _platform(_DARWIN):
             with _GroupTrace() as trace:
                 land.run_build("sleep 5", str(self.work), 0.1)
