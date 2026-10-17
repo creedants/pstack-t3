@@ -156,8 +156,8 @@ class SpendControlsTest(BrigadeTest):
 class OpenFlagHelpTest(BrigadeTest):
     """The two creation-only flags, as the open help states them to a user reopening a store."""
 
-    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing uses 300000; "
-                "an existing store syncs its saved cap")
+    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing adopts the "
+                "file's own value, or writes 300000 when it holds none; an existing store is left alone")
     PROVIDER_HELP = ("--coordinator-provider COORDINATOR_PROVIDER on creation, choose claude or other; "
                      "missing uses claude; an existing store uses its saved provider")
 
