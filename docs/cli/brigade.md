@@ -270,7 +270,7 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 brigade.py [flags] affected [--root ROOT] [--paths PATHS] [--diff DIFF]
 ```
 
-print the test modules the lease paths or diff names affect
+print the verify paragraph for the changed paths
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

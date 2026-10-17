@@ -24,8 +24,8 @@ class AffectedTest(BrigadeTest):
     def track(self):
         self.git("add", "-A")
 
-    def affected(self, *args, ok=True):
-        return self.brigade("affected", "--root", str(self.project), *args, ok=ok)
+    def affected(self, *args, ok=True, code=None):
+        return self.brigade("affected", "--root", str(self.project), *args, ok=ok, code=code)
 
     def vendor_layout(self):
         target = self.project / "scripts"
@@ -180,14 +180,14 @@ class AffectedTest(BrigadeTest):
         self.git_project()
         self.write("tests/test_other.py", "def test_o():\n    pass\n")
         self.track()
-        err = self.affected("--paths", "src/a.py", "--diff", "HEAD", ok=False)
+        err = self.affected("--paths", "src/a.py", "--diff", "HEAD", ok=False, code=1)
         self.assertIn("use either --paths or --diff", err)
 
     def test_neither_paths_nor_diff_exits_1_fails_when_neither_allowed(self):
         self.git_project()
         self.write("tests/test_other.py", "def test_o():\n    pass\n")
         self.track()
-        err = self.affected(ok=False)
+        err = self.affected(ok=False, code=1)
         self.assertIn("affected needs --paths or --diff", err)
 
     def test_import_one_hop_maps_fails_when_import_not_followed(self):

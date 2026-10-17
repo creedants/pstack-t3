@@ -189,7 +189,7 @@ def register_contract(sub):
 
 
 def register_affected(sub):
-    p = sub.add_parser("affected", help="print the test modules the lease paths or diff names affect")
+    p = sub.add_parser("affected", help="print the verify paragraph for the changed paths")
     p.add_argument("--root", default=None, help="project root to scan")
     p.add_argument("--paths", action="append", default=[], help="repo path the dish will change; repeatable")
     p.add_argument("--diff", default=None, help="git diff range to name changed files, such as origin/main...HEAD")

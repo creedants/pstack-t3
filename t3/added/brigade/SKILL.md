@@ -93,13 +93,13 @@ $B 86 add --dish D2 --round-budget           # the decision D2 owes at three sen
 $B 86 answer Q1 --answer "..." ; $B 86 list
 $B close [--dry-run | --to-file]             # report of what changed since the last one. --to-file prints only the written file's path
 python3 <skills>/brigade/scripts/brigade.py walk [--repo <project root>]
-python3 <skills>/brigade/scripts/brigade.py affected --root <project root> [--paths <path>] [--diff <range>]   # prints the affected test modules
+python3 <skills>/brigade/scripts/brigade.py affected --paths <file> [--paths <file>...] | --diff <base>   # verify paragraph for those paths; no store
 L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
 
 Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show. `$B <command> --help` prints every flag.
 
-Run affected to list the test modules a path change touches. It scans the tree and prints the targets.
+Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite.
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
