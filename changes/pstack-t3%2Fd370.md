@@ -4,6 +4,6 @@
 - The `macos-26-arm64` runner image at tag `20261013.0424` lists Google Chrome 155.0.8059.40 and Google Chrome for Testing 155.0.8059.39 under Browsers and lists no `chrome-headless-shell`, so the app bundle paths stay as they are (https://github.com/actions/runner-images/blob/macos-26-arm64/20261013.0424/images/macos/macos-26-arm64-Readme.md).
 - Every other platform keeps `--headless`, `--disable-gpu`, and `--no-sandbox`, in that order and byte for byte.
 - `stderr_segment` drops each non-empty stderr line that holds `CVDisplayLinkCreateWithCGDisplay failed` and keeps up to the last five other lines, in order, joined by single spaces. Stderr that holds only that warning adds no text.
-- `select_browser` runs `stderr_segment` for a nonzero exit and for a `TimeoutExpired`, so a probe that times out also carries the browser's stderr. With no remaining stderr line the failure text is what it was.
+- `select_browser` runs `stderr_segment` for a nonzero exit and for a `TimeoutExpired`, so a probe that times out also carries the browser's stderr. A `TimeoutExpired` from `subprocess.run` carries its stderr as bytes, so `stderr_segment` decodes a bytes value before it reads lines. With no remaining stderr line the failure text is what it was.
 - `RenderHeightTest` and `LiveAttemptFoldTest` treat macOS like CI, so a missed probe retries once and then fails rather than skipping.
 - `ProbeContractTest` pins the macOS and other-platform argument lists, the stderr filter and its five-line cap, the stderr in a timeout failure, and the retry then fail on macOS.

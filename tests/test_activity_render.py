@@ -156,8 +156,14 @@ def headless_flags(macos):
 
 
 def stderr_segment(failed):
-    """A colon and up to the last five non-empty stderr lines that are not the CVDisplayLink display warning, or an empty string when the browser wrote no other line."""
-    lines = [line.strip() for line in (failed.stderr or "").splitlines()
+    """A colon and up to the last five non-empty stderr lines that are not the CVDisplayLink display warning, or an empty string when the browser wrote no other line.
+
+    A TimeoutExpired from subprocess.run carries its stderr as bytes, so a bytes value is decoded before the lines are read.
+    """
+    stderr = failed.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    lines = [line.strip() for line in stderr.splitlines()
              if line.strip() and DISPLAY_WARNING not in line][-STDERR_TAIL:]
     return f": {' '.join(lines)}" if lines else ""
 
@@ -573,12 +579,21 @@ class ProbeContractTest(unittest.TestCase):
                 _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
                 self.assertEqual(unavailable[0], f"chromium (/opt/a) {expected}")
 
-    def test_timeout_failure_carries_the_browser_stderr_that_is_not_the_display_warning(self):
-        def runner(browser, *args, **kwargs):
-            raise subprocess.TimeoutExpired(browser, 7, stderr="[1:1:1:1:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[2:2:2:2:ERROR:startup.cc(9)] startup stalled\n")
+    def test_timeout_failure_decodes_the_bytes_stderr_a_real_timeout_carries(self):
+        warning = b"[1:1:1:1:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n"
+        cases = (
+            (warning + b"[2:2:2:2:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [2:2:2:2:ERROR:startup.cc(9)] startup stalled"),
+            (warning.decode() + "[3:3:3:3:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [3:3:3:3:ERROR:startup.cc(9)] startup stalled"),
+            (warning, "timed out after 7 seconds"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(stderr):
 
-        _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
-        self.assertEqual(unavailable[0], "chromium (/opt/a) timed out after 7 seconds: [2:2:2:2:ERROR:startup.cc(9)] startup stalled")
+                def runner(browser, *args, **kwargs):
+                    raise subprocess.TimeoutExpired(browser, 7, stderr=stderr)
+
+                _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+                self.assertEqual(unavailable[0], f"chromium (/opt/a) {expected}")
 
     def test_render_keeps_its_own_timeout(self):
         timeouts = []
