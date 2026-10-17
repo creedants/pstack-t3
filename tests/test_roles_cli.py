@@ -909,7 +909,7 @@ class ModeCliTest(unittest.TestCase):
             document = json.loads(repo.user.read_text())
         self.assertEqual(document, {"version": 1, "roles": {}, "budget": "default", "mode": "light"})
 
-    def test_a_roles_value_that_is_not_an_object_is_refused_by_default_and_replaced_by_replace(self):
+    def test_a_roles_value_that_is_not_an_object_is_refused_even_with_replace(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.user.parent.mkdir(parents=True)
@@ -921,10 +921,11 @@ class ModeCliTest(unittest.TestCase):
             self.assertIn(f"error: {repo.user}: roles must be an object", refused.stderr)
             self.assertEqual(repo.user.read_bytes(), before)
             replaced = repo.write("--replace", "--budget", "small")
-            self.assertEqual(replaced.returncode, 0, replaced.stderr)
-            document = json.loads(repo.user.read_text())
-            self.assertEqual(repo.user.with_name("roles.json.bak").read_bytes(), before)
-        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+            self.assertEqual(replaced.returncode, 2, replaced.stderr)
+            self.assertEqual(replaced.stdout, "")
+            self.assertIn(f"error: {repo.user}: roles must be an object", replaced.stderr)
+            self.assertEqual(repo.user.read_bytes(), before)
+            self.assertFalse(repo.user.with_name("roles.json.bak").exists())
 
     def test_keep_on_a_non_object_exits_2(self):
         with self.open_repo() as directory:
@@ -1012,7 +1013,7 @@ class ModeCliTest(unittest.TestCase):
             with_keep = repo.user.read_bytes()
         self.assertEqual(with_keep, plain)
 
-    def test_user_keep_drops_a_stored_escalate_list(self):
+    def test_user_keep_preserves_a_stored_escalate_list(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {
@@ -1025,7 +1026,7 @@ class ModeCliTest(unittest.TestCase):
             completed = repo.write("--keep")
             self.assertEqual(completed.returncode, 0, completed.stderr)
             document = json.loads(repo.user.read_text())
-        self.assertNotIn("escalate", document)
+        self.assertEqual(document["escalate"], ["**/migrations/**"])
         self.assertEqual(document["mode"], "light")
         self.assertEqual(document["budget"], "large")
         self.assertEqual(document["roles"], {"bug-fix": ["inherit"]})
@@ -5513,3 +5514,122 @@ class OpenCodeAllowCliTest(unittest.TestCase):
                 "bug-fix": [bare_seat("opencode-go", DEEPSEEK)],
             })))
             self.assertNotIn("opencodeAllow", repo.user.read_text())
+
+
+class WritePreservationTest(unittest.TestCase):
+    def targets(self, repo):
+        return (
+            (repo.user, ()),
+            (repo.directory / "custom.json", ("--config", str(repo.directory / "custom.json"))),
+            (repo.project, ("--project",)),
+        )
+
+    def test_overlay_keeps_unnamed_settings_in_any_project(self):
+        for target_index in range(3):
+            for budget_flags in ((), ("--budget", "small")):
+                for keep_flags in ((), ("--keep",)):
+                    with self.subTest(target=target_index, budget=budget_flags, keep=keep_flags):
+                        with tempfile.TemporaryDirectory() as directory:
+                            repo = Repo(directory)
+                            target, target_flags = self.targets(repo)[target_index]
+                            seed = {
+                                "version": 1,
+                                "roles": {
+                                    "bug-fix": ["inherit"],
+                                    "hillclimb": ["inherit"],
+                                    "arena runners": ["inherit", "inherit"],
+                                },
+                                "budget": "large",
+                                "mode": "light",
+                                "escalate": ["**/migrations/**"],
+                                "opencodeAllow": [],
+                                "custom": {"nested": [None, False, "seat"]},
+                            }
+                            repo.put(target, seed)
+                            completed = repo.write(
+                                *target_flags, *budget_flags, *keep_flags,
+                                "--set", "bug-fix=grok/grok-4.7",
+                                "--set", "arena runners=claudeAgent/claude-opus-5-5",
+                            )
+                            self.assertEqual(completed.returncode, 0, completed.stderr)
+                            expected = {**seed, "roles": {**seed["roles"],
+                                "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
+                                "arena runners": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
+                            }}
+                            if budget_flags:
+                                expected["budget"] = "small"
+                            self.assertEqual(json.loads(target.read_text()), expected)
+                            self.assertFalse(target.with_name(target.name + ".bak").exists())
+                            snapshot = repo.user.with_name("catalog.json")
+                            self.assertEqual(snapshot.exists(), target_index == 0)
+                            if snapshot.exists():
+                                self.assertEqual(json.loads(snapshot.read_text()), json.loads(CATALOG.read_text()))
+
+    def test_null_settings_are_refused_until_a_flag_names_them(self):
+        for target_index in range(3):
+            for key, valid, exit_code in (("budget", "large", 2), ("mode", "light", 1)):
+                with self.subTest(target=target_index, key=key):
+                    with tempfile.TemporaryDirectory() as directory:
+                        repo = Repo(directory)
+                        target, target_flags = self.targets(repo)[target_index]
+                        repo.put(target, {"roles": {}, key: None})
+                        before = target.read_bytes()
+                        completed = repo.write(*target_flags)
+                        self.assertEqual(completed.returncode, exit_code, completed.stderr)
+                        self.assertIn(str(target), completed.stderr)
+                        self.assertEqual(target.read_bytes(), before)
+                        self.assertFalse(target.with_name(target.name + ".bak").exists())
+                        repaired = repo.write(*target_flags, "--" + key, valid)
+                        self.assertEqual(repaired.returncode, 0, repaired.stderr)
+                        self.assertEqual(json.loads(target.read_text())[key], valid)
+
+    def test_malformed_roles_are_refused_even_with_replace(self):
+        for target_index in range(3):
+            for value in ([], None, "seat", 1, True):
+                for flags in ((), ("--keep",), ("--replace",), ("--replace", "--force")):
+                    with self.subTest(target=target_index, value=value, flags=flags):
+                        with tempfile.TemporaryDirectory() as directory:
+                            repo = Repo(directory)
+                            target, target_flags = self.targets(repo)[target_index]
+                            repo.put(target, {"roles": value, "custom": "keep"})
+                            before = target.read_bytes()
+                            completed = repo.write(*target_flags, *flags)
+                            self.assertEqual(completed.returncode, 2, completed.stderr)
+                            self.assertIn(f"{target}: roles must be an object", completed.stderr)
+                            self.assertEqual(target.read_bytes(), before)
+                            self.assertFalse(target.with_name(target.name + ".bak").exists())
+                            self.assertFalse(repo.user.with_name("catalog.json").exists())
+
+    def test_unreadable_json_is_refused_for_every_target_and_replace(self):
+        for target_index in range(3):
+            for content in (b"{not json", b"\xff\xfe"):
+                for flags in ((), ("--replace",)):
+                    with self.subTest(target=target_index, content=content, flags=flags):
+                        with tempfile.TemporaryDirectory() as directory:
+                            repo = Repo(directory)
+                            target, target_flags = self.targets(repo)[target_index]
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            target.write_bytes(content)
+                            completed = repo.write(*target_flags, *flags)
+                            self.assertEqual(completed.returncode, 2, completed.stderr)
+                            self.assertIn(f"{target}: invalid JSON:", completed.stderr)
+                            self.assertEqual(target.read_bytes(), content)
+                            self.assertFalse(target.with_name(target.name + ".bak").exists())
+
+    def test_backup_only_for_replace_and_only_for_existing_targets(self):
+        for target_index in range(3):
+            for flags in ((), ("--keep",), ("--replace",)):
+                with self.subTest(target=target_index, flags=flags):
+                    with tempfile.TemporaryDirectory() as directory:
+                        repo = Repo(directory)
+                        target, target_flags = self.targets(repo)[target_index]
+                        first = repo.write(*target_flags, *flags)
+                        self.assertEqual(first.returncode, 0, first.stderr)
+                        backup = target.with_name(target.name + ".bak")
+                        self.assertFalse(backup.exists())
+                        before = target.read_bytes()
+                        second = repo.write(*target_flags, *flags, "--budget", "small")
+                        self.assertEqual(second.returncode, 0, second.stderr)
+                        self.assertEqual(backup.exists(), "--replace" in flags)
+                        if backup.exists():
+                            self.assertEqual(backup.read_bytes(), before)

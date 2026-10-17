@@ -1628,12 +1628,12 @@ def command_write(args):
         if not args.replace:
             raise RolesError(f"{target}: expected an object")
         loaded = {}
-    # A default write keeps the stored keys the flags do not name; a user-file escalate is project-only and is dropped.
+    # A default write keeps the stored keys the flags do not name.
     # --replace starts over from the flags, the stored allow list, and a stored project escalate.
     raw = loaded
     allow = stored_allow(raw, target).remove_all(args.deny_opencode or []).add_all(args.allow_opencode or [])
     stored_roles = raw.get("roles", {})
-    if not args.replace and not isinstance(stored_roles, dict):
+    if not isinstance(stored_roles, dict):
         raise RolesError(f"{target}: roles must be an object")
     roles = {} if args.replace else dict(stored_roles)
     for assignment in args.set or []:
@@ -1644,12 +1644,12 @@ def command_write(args):
         roles[name] = [parse_seat(part) for part in value.split(";") if part.strip()]
     config = {"version": 1, "roles": roles}
     budget = args.budget if args.budget is not None else (None if args.replace else raw.get("budget"))
-    if budget is not None:
+    if budget is not None or (not args.replace and "budget" in raw):
         config["budget"] = budget
     elif not args.project:
         config["budget"] = "default"
     mode = args.mode if args.mode is not None else (None if args.replace else raw.get("mode"))
-    if mode is not None:
+    if mode is not None or (not args.replace and "mode" in raw):
         config["mode"] = mode
     elif not args.project:
         config["mode"] = "full"
@@ -1662,8 +1662,13 @@ def command_write(args):
         config["opencodeAllow"] = allow.to_json()
     if not args.replace:
         for key, value in raw.items():
-            if key not in config and key not in ("version", "roles", "budget", "mode", "escalate", "opencodeAllow"):
-                config[key] = value
+            if key in config or key in ("version", "roles", "budget", "mode"):
+                continue
+            if key == "escalate" and args.clear_escalate:
+                continue
+            if key == "opencodeAllow" and (args.allow_opencode or args.deny_opencode):
+                continue
+            config[key] = value
     check_shape(config, target)
     if "escalate" in config:
         config["escalate"] = list(config["escalate"])
