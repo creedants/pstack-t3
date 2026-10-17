@@ -844,9 +844,9 @@ MOVED = "moved"
 
 @dataclass(frozen=True)
 class Published:
-    """Proof that `path` now names the restored entry after the move onto `path`.
+    """Successful placement result for `path`.
 
-    For a same-filesystem move `proved` is the only function that makes one. A cross-filesystem copy returns one after `place_copy` places the copy. `drop_backup` takes one, so the backup's own name goes only with it.
+    For a same-filesystem move or descriptor link, `proved` makes one after checking the live entry against the held descriptor. The EXDEV route makes one after `place_copy` returns success, without checking the live entry against a held descriptor of the completed copy. `drop_backup` requires this result.
     """
 
     path: str
@@ -1016,10 +1016,10 @@ def link_held(fd, path):
 
 
 def drop_backup(backup, aside, published, fd):
-    """Delete the backup name now that `published` proves the entry is at its path.
+    """Delete the backup name after the caller reports successful placement in `published`.
 
-    It takes `published` where it took `path`, so nothing removes a backup without that proof.
-    Any other entry stays and is reported.
+    A same-filesystem move or descriptor link is checked by `proved`. The EXDEV route returns this result without checking the live entry against a held descriptor of the completed copy.
+    A backup entry that fails the identity check below stays and is reported.
     """
     path = published.path
     try:
@@ -1040,7 +1040,7 @@ def drop_backup(backup, aside, published, fd):
 def place_proven(aside, path, fd):
     """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return Published or a refusal.
 
-    It moves `aside` with `place`. Right after the move it calls `proved`. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays. Only `proved` makes a Published for a same-filesystem move. A cross-filesystem copy returns Published after `place_copy` places the copy. `retire` runs only for that copy route.
+    It tries `place(aside, path)`. A successful same-filesystem move calls `proved` immediately. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is and keeps the backup row. The caller's refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays. Only `proved` makes a Published for a same-filesystem move. On EXDEV, a successful `place_copy` leads to `retire` and Published without checking the live entry against a held descriptor of the completed copy. `retire` runs only for that copy route.
     """
     try:
         code = place(aside, path)
@@ -1119,12 +1119,12 @@ def keep(taken, backup, aside, fd, reason):
 
 
 def restore_aside(backup, aside, path, fd):
-    """Move the proven entry at `aside` to `path` and prove it there. Return why the backup was kept.
+    """Restore through the private name `aside` where the descriptor cannot be linked. Return why the backup was kept.
 
-    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
+    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
     """
     try:
-        # A second name leaves the backup where it is until the entry is proven.
+        # A second name keeps the backup name until place_proven reports successful placement.
         os.link(backup, aside, follow_symlinks=False)
         taken = TWIN
     except (OSError, NotImplementedError):
@@ -1147,7 +1147,7 @@ def restore_aside(backup, aside, path, fd):
 def restore_backup(backup, path, held):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
 
-    It checks the backup before it links or moves it, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after the descriptor link reaches `path`, or right after the move in `restore_aside` reaches `path`. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
+    It checks the backup before it links or moves it, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after the descriptor link reaches `path`, or right after a same-filesystem move in `restore_aside` reaches `path`. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
     """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"

@@ -1,5 +1,5 @@
 - kind fix
-- restore_aside hands the proven backup at its private name to place_proven, which moves it with place and calls proved with path and fd right after the move
+- restore_aside hands the proven backup at its private name to place_proven, which calls proved with path and fd right after a successful same filesystem move. The EXDEV copy route does not check the live entry against a held descriptor of the completed copy
 - proved returns Published when its pathname lookup matches the device and inode numbers of the descriptor it is given. Otherwise it reports that the moved entry could not be confirmed
 - place_proven returns the placement refusal when place refuses and returns the proof refusal when proved fails without touching the live occupant
 - retire runs only after a cross filesystem copy is placed. It requires a PrivateName argument
