@@ -448,7 +448,7 @@ class AffectedTest(BrigadeTest):
         self.assertIn("affectedTests", err)
         self.assertIn("'tests.test_pstack_t3'", err)
 
-    def test_a_layout_without_python_omits_the_second_interpreter_fails_when_a_default_is_printed(self):
+    def test_a_layout_without_python_omits_the_second_interpreter_fails_when_a_3_10_path_is_printed(self):
         self.git_project()
         self.write("src/a.py", "x = 1\n")
         self.write("tests/test_a.py",

@@ -27,7 +27,7 @@ _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*
 class Layout:
     """One store's affectedTests settings.
 
-    always is the module every result includes. workflow_module maps a .github/workflows/ path, and empty
+    always is the module every modules result includes. workflow_module maps a .github/workflows/ path, and empty
     means such a path is unmapped. entry_points and helpers are repository paths. suite is the whole-suite
     command. python is the second interpreter, and empty means the paragraph omits it.
     """
