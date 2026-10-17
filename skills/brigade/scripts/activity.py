@@ -1987,7 +1987,7 @@ def framed(page, limit):
     The first pass tries every row with a Running now or Queued line, the second every failed row, the third every other row.
     Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
     A group with no row left is cut with its heading. counted() counts the agents and items left out.
-    Unused worst case note room is reclaimed and rejected rows are retried in the same order. The taller result is kept only when its height stays at most limit.
+    Unused worst case note room is reclaimed and rejected rows are retried in the same order. The retried result is kept only when its height stays at most limit.
     """
     if height(page) <= limit:
         return page
@@ -2041,9 +2041,10 @@ def framed(page, limit):
 
     groups, cuts = build(kept)
     first_cut = cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
-    # Reclaim unused worst case note room. Keeping more rows only shrinks the notes, so the extra room stays valid.
+    # Reclaim unused worst case note room, except the attempt line floor that fit() may still add. The retried result is measured before it is kept.
     actual = counted(page.hidden, cuts, len(page.items) - len(items))
-    reclaimed = fixed_height(page, notes(replace(page, hidden=worst), items_of(page))) - fixed_height(page, notes(replace(page, hidden=actual), items_of(page)))
+    held = replace(actual, cut_lines=worst.cut_lines)
+    reclaimed = fixed_height(page, notes(replace(page, hidden=worst), items_of(page))) - fixed_height(page, notes(replace(page, hidden=held), items_of(page)))
     if reclaimed > 0:
         left += reclaimed
         for _, _, at, index in sorted(pieces):
