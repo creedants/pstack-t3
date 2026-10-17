@@ -1,0 +1,3 @@
+- kind polish
+- `docs/live-runs.md` drops the stale `(line 19)` and `(line 600)` citations from the two remaining `### Defects found` entries and names step 1's `judgment and prose` role and `show`'s `--role` flag instead.
+- Both changed sentences now record the code's behavior at the time of the run and name the text that covers the point now.
