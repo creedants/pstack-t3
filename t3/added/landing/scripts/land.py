@@ -109,6 +109,10 @@ def parser():
                         "@<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any "
                         "when the contract has none, and a first init stores any. An unknown --author-policy value is refused "
                         "before the contract changes")
+    p.add_argument("--pr-item-line", choices=("on", "off"), default=None,
+                   help="whether the queue appends the Kind and Goal line to the PR body. on appends the line after one "
+                        "blank line. off sends the submitted title and body unchanged. Omitted, a rerun keeps the stored "
+                        "setting and a first init stores off. An unknown value is refused before the contract changes")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
@@ -238,8 +242,9 @@ def run(argv):
         with slot(repo=args.slot_repo or args.repo, command=" ".join(command), count=count):
             return None, subprocess.run(command).returncode
     if args.command == "init":
+        pr_item_line = None if args.pr_item_line is None else args.pr_item_line == "on"
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy), 0
+                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -293,7 +298,8 @@ def run(argv):
         if not args.id:
             note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))
             policy_note = author_policy_note(store.contract)
-            text = " ".join(part for part in (note, policy_note) if part)
+            item_note = pr_item_line_note(store.contract)
+            text = " ".join(part for part in (note, policy_note, item_note) if part)
             if text:
                 line = f"{line} {text}"
         return line, 0

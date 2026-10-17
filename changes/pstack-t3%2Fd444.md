@@ -1,0 +1,6 @@
+- kind fix
+- `prItemLine` on appends the Kind and Goal line after one blank line and off sends the submitted title and body unchanged.
+- A first init without `--pr-item-line` stores off and a rerun without the flag keeps the stored value.
+- A missing `prItemLine` key reads as off.
+- An unknown `--pr-item-line` value is refused before the contract changes.
+- Repo status prints `pr item line: on` only when on.

@@ -146,7 +146,7 @@ def generated_note(generated, rebuild):
 
 
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
-         author_policy=None):
+         author_policy=None, pr_item_line=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
     common = seam.common_dir(path)
     repo = common.parent if common.name == ".git" else Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
@@ -207,6 +207,7 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                       "generated": generated_list(generated, current.get("generated") or []),
                       "rebuild": rebuild_command(rebuild, current.get("rebuild")),
                       "authorPolicy": filled(current, "authorPolicy", author_policy, "any"),
+                      "prItemLine": filled(current, "prItemLine", pr_item_line, False),
                       "paused": ""}
             for key, value in wanted.items():
                 if key != "paused" or key not in current:
