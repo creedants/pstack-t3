@@ -1,0 +1,7 @@
+- kind feature
+- The affected-test picker runs only when a store's `restaurant.json` holds an `affectedTests` layout; with the key absent it names no test module.
+- Without the key, a brief with an empty `--verify` runs the store's `checkCommand` in one foreground slot, and says `No verify command is set` when the store records no check command.
+- A present `affectedTests` that does not parse is refused with `restaurant.json`, the key, and the value, and two stores that record it differently are refused with both file paths.
+- Its six keys are `always`, `workflowModule`, `entryPoints`, `helpers`, `suite`, and `python`; `suite` defaults to `python3 -m unittest discover -s tests`, and an absent `python` leaves the second-interpreter sentence out.
+- The pstack-t3 value is `{"always": "tests.test_pstack_t3", "workflowModule": "tests.test_run_tests", "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"], "helpers": ["tests/brigade/support.py", "tests/landing/support.py"], "suite": "python3 scripts/run_tests.py -j 8", "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10"}`, and the same file's `buildCommand` `python3 scripts/build.py` and `checkCommand` `python3 scripts/check.py` with it reproduce the paragraph this repository prints today.
+- The command list carries `pass record --reason` and `pass stats [--last N]`.

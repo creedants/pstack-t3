@@ -21,9 +21,25 @@ from .support import (
 
 
 class BriefsTest(BrigadeTest):
+    LAYOUT = {
+        "always": "tests.test_pstack_t3",
+        "workflowModule": "tests.test_run_tests",
+        "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
+        "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
+        "suite": "python3 scripts/run_tests.py -j 8",
+        "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10",
+    }
+
+    def record_layout(self, value=None):
+        """Write affectedTests into this store's restaurant.json, using the pstack-t3 layout by default."""
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["affectedTests"] = self.LAYOUT if value is None else value
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+
     def test_brief_assembles_every_field_and_adds_the_exclusive_rule_for_measuring_stations(self):
         self.open()
         self.fire_one()
+        self.record_layout()
         self.brigade("set", "--thread", "thread-coord")
         text = self.brigade("brief", "D1", "--contract", "none", "--goal", "Cold start under 400 ms.", "--acceptance", "Median cold start below 400 ms",
                             "--verify", "npm run perf", "--paths", "src/boot.ts", "--lease", "L4", "--base", "origin/main")
@@ -804,16 +820,38 @@ class BriefsTest(BrigadeTest):
         self.assertEqual(self.tables(), before)
         self.assertFalse((self.at / "goals.tsv").exists())
 
-    def test_omitted_verify_writes_picker_paragraph_fails_when_picker_not_used(self):
+    def test_omitted_verify_runs_the_check_command_fails_when_the_picker_runs_without_a_layout(self):
+        self.started()
+        self.brigade("set", "--thread", "thread-coord")
+        self.brigade("set", "--check-command", "python3 scripts/check.py")
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                            "--paths", "README.md", "--lease", "L1", "--base", "origin/main")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("slot -- python3 scripts/check.py", verify)
+        self.assertIn("picker is off", verify)
+        self.assertNotIn("tests.test_pstack_t3", verify)
+        self.assertNotIn("run_tests.py", verify)
+        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+
+    def test_no_layout_and_no_check_command_says_no_verify_command_is_set(self):
         self.started()
         self.brigade("set", "--thread", "thread-coord")
         text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
                             "--paths", "README.md", "--lease", "L1", "--base", "origin/main")
         verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
-        self.assertIn("README.md", verify)
-        self.assertIn("full suite", verify)
-        self.assertIn("While working, run only the affected test modules.", verify)
-        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+        self.assertIn("No verify command is set", verify)
+        self.assertIn("picker is off", verify)
+        self.assertNotIn("tests.test_pstack_t3", verify)
+
+    def test_a_malformed_layout_refuses_the_brief_fails_when_the_value_is_ignored(self):
+        self.briefable()
+        self.record_layout("tests.test_pstack_t3")
+        error = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none", ok=False)
+        self.assertIn("restaurant.json", error)
+        self.assertIn("affectedTests", error)
+        self.assertIn("'tests.test_pstack_t3'", error)
+        self.assertFalse((self.at / "briefs" / "D1.md").exists())
+        self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
 
     def test_supplied_verify_unchanged_fails_when_override_ignored(self):
         self.briefable()
@@ -825,6 +863,7 @@ class BriefsTest(BrigadeTest):
 
     def test_mapped_verify_lists_modules_and_chain_fails_when_mapped_chain_missing(self):
         self.started(paths="src/a.py")
+        self.record_layout()
         self.brigade("set", "--thread", "thread-coord")
         (self.project / "src").mkdir(parents=True, exist_ok=True)
         (self.project / "src/a.py").write_text("x = 1\n")
@@ -848,6 +887,7 @@ class BriefsTest(BrigadeTest):
 
     def test_fallback_verify_lists_unmapped_and_chain_fails_when_fallback_chain_missing(self):
         self.started()
+        self.record_layout()
         self.brigade("set", "--thread", "thread-coord")
         text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
                             "--paths", "README.md", "--lease", "L1", "--base", "origin/main")

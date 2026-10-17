@@ -1,4 +1,7 @@
+import json
+import os
 import tempfile
+from unittest import mock
 
 from .support import (
     setUpModule,
@@ -10,6 +13,16 @@ from .support import (
 
 ALWAYS = "tests.test_pstack_t3"
 WORKFLOW = "tests.test_run_tests"
+# The exact layout pstack-t3 records, which reproduces the paragraph the picker printed before a store could
+# turn it off.
+LAYOUT = {
+    "always": ALWAYS,
+    "workflowModule": WORKFLOW,
+    "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
+    "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
+    "suite": "python3 scripts/run_tests.py -j 8",
+    "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10",
+}
 
 
 def reference_close(table, edges):
@@ -30,6 +43,26 @@ def reference_close(table, edges):
 
 
 class AffectedTest(BrigadeTest):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.dict(os.environ, {"BRIGADE_STORE": str(self.store)})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.restaurant(self.project, self.at)
+        self.restaurant(self.archive_root(), self.store / "archive" / "perf")
+
+    def restaurant(self, root, directory=None, layout=LAYOUT, check="python3 scripts/check.py"):
+        """Write a restaurant.json whose projectRoot is root, with or without an affectedTests layout."""
+        directory = self.at if directory is None else directory
+        directory.mkdir(parents=True, exist_ok=True)
+        meta = {"projectRoot": str(Path(root).resolve())}
+        if layout is not None:
+            meta["affectedTests"] = layout
+        if check is not None:
+            meta["checkCommand"] = check
+        (directory / "restaurant.json").write_text(json.dumps(meta))
+        return directory / "restaurant.json"
+
     def git(self, *args):
         import subprocess
         return subprocess.run(["git", *args], cwd=self.project, capture_output=True, text=True, check=True)
@@ -378,6 +411,55 @@ class AffectedTest(BrigadeTest):
         out = self.affected("--paths", "src/a.py")
         self.assertIn("full suite", out)
         self.assertIn("test_missing_zz", out)
+
+    def test_no_layout_prints_the_check_command_fails_when_the_picker_runs_without_one(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, layout=None)
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("slot -- python3 scripts/check.py", out)
+        self.assertIn("picker is off", out)
+        self.assertNotIn(ALWAYS, out)
+        self.assertNotIn("tests.test_a", out)
+
+    def test_two_layouts_that_differ_refuse_and_name_both_files_fails_when_the_first_wins(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        first = self.restaurant(self.project, self.at)
+        other = self.restaurant(self.project, self.store / "other" / "perf",
+                                layout=dict(LAYOUT, always="tests.test_other"))
+        err = self.affected("--paths", "tests/test_a.py", ok=False)
+        self.assertIn("affectedTests differs across", err)
+        self.assertIn(str(first), err)
+        self.assertIn(str(other), err)
+
+    def test_a_malformed_layout_refuses_with_the_file_key_and_value_fails_when_it_is_ignored(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        self.restaurant(self.project, layout="tests.test_pstack_t3")
+        err = self.affected("--paths", "tests/test_a.py", ok=False)
+        self.assertIn("restaurant.json", err)
+        self.assertIn("affectedTests", err)
+        self.assertIn("'tests.test_pstack_t3'", err)
+
+    def test_a_layout_without_python_omits_the_second_interpreter_fails_when_a_default_is_printed(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, layout={key: value for key, value in LAYOUT.items() if key != "python"})
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("tests.test_a", out)
+        self.assertIn("slot -- python3 -m unittest", out)
+        self.assertNotIn("3.10", out)
 
     def test_close_matches_reference_on_seeded_random_tables_fails_when_worklist_misses_an_importer(self):
         import random

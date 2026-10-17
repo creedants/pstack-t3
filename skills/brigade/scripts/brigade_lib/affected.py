@@ -1,24 +1,100 @@
 import ast
 import fnmatch
+import json
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from brigade_lib import seam
+from brigade_lib.compact import refuse_setting
 from brigade_lib.layout import _layout, _twins
 from brigade_lib.shared import BrigadeError
-from brigade_lib.store import HELD_LOCKS
+from brigade_lib.store import HELD_LOCKS, store_root
 
 
-ALWAYS = "tests.test_pstack_t3"
-WORKFLOW_MODULE = "tests.test_run_tests"
+AFFECTED_KEY = "affectedTests"
+DEFAULT_SUITE = "python3 -m unittest discover -s tests"
 PIN_CHARS = 40
-_ENTRYPOINTS = ("t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py")
-_HELPERS = ("tests/brigade/support.py", "tests/landing/support.py")
-_PY310 = "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10"
+_LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python")
+_MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+@dataclass(frozen=True)
+class Layout:
+    """One store's affectedTests settings.
+
+    always is the module every result includes. workflow_module maps a .github/workflows/ path, and empty
+    means such a path is unmapped. entry_points and helpers are repository paths. suite is the whole-suite
+    command. python is the second interpreter, and empty means the paragraph omits it.
+    """
+    always: str
+    workflow_module: str
+    entry_points: tuple
+    helpers: tuple
+    suite: str
+    python: str
+
+
+def _dotted(value):
+    return isinstance(value, str) and bool(_MODULE_NAME.match(value))
+
+
+def _repo_path(value):
+    if not isinstance(value, str) or not value or value.startswith("/") or ".." in value.split("/"):
+        return False
+    return not re.search(r"\s", value)
+
+
+def _repo_paths(value):
+    return isinstance(value, list) and all(_repo_path(one) for one in value)
+
+
+def _command(value):
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        return bool(shlex.split(value))
+    except ValueError:
+        return False
+
+
+def layout(meta):
+    """The picker's Layout from one store's restaurant.json, or None when meta is falsy or the key is absent.
+
+    A present value that does not parse is refused through refuse_setting, so the message names the file,
+    the key, and the value.
+    """
+    if not meta or AFFECTED_KEY not in meta:
+        return None
+    value = meta[AFFECTED_KEY]
+    if not isinstance(value, dict):
+        refuse_setting(AFFECTED_KEY, value, "it is not an object")
+    unknown = [key for key in value if key not in _LAYOUT_KEYS]
+    if unknown:
+        refuse_setting(AFFECTED_KEY, value, f"it has unknown key {unknown[0]!r}")
+    always = value.get("always")
+    if not _dotted(always):
+        refuse_setting(AFFECTED_KEY, value, "'always' needs a dotted module name")
+    workflow = value.get("workflowModule")
+    if workflow is not None and not _dotted(workflow):
+        refuse_setting(AFFECTED_KEY, value, "'workflowModule' needs a dotted module name")
+    entries = value.get("entryPoints")
+    if not _repo_paths(entries):
+        refuse_setting(AFFECTED_KEY, value, "'entryPoints' needs a list of repo paths")
+    helpers = value.get("helpers", [])
+    if not _repo_paths(helpers):
+        refuse_setting(AFFECTED_KEY, value, "'helpers' needs a list of repo paths")
+    suite = value.get("suite", DEFAULT_SUITE)
+    if not _command(suite):
+        refuse_setting(AFFECTED_KEY, value, "'suite' needs a command")
+    python = value.get("python")
+    if python is not None and not (isinstance(python, str) and python.startswith("/")):
+        refuse_setting(AFFECTED_KEY, value, "'python' needs an absolute path")
+    return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "")
 
 
 @dataclass(frozen=True)
@@ -393,9 +469,9 @@ def _test_files(root):
     return found
 
 
-def _helper_entries(base):
+def _helper_entries(base, layout):
     entries = {}
-    for helper_rel in _HELPERS:
+    for helper_rel in layout.helpers:
         try:
             helper_text = (Path(str(base)) / helper_rel).read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -408,7 +484,7 @@ def _helper_entries(base):
             continue
         helper_singles = _singles(helper_mod)
         found = frozenset(
-            _norm(ref) for ref in _loads_of(helper_mod, helper_singles) if _norm(ref) in _ENTRYPOINTS
+            _norm(ref) for ref in _loads_of(helper_mod, helper_singles) if _norm(ref) in layout.entry_points
         )
         entries[helper_rel] = found
     return entries
@@ -461,14 +537,14 @@ def _close(table, edges):
     return closed
 
 
-def _index(root):
+def _index(root, layout):
     base = Path(str(root))
     try:
-        lay = _layout(base)
+        spec = _layout(base)
     except Exception:
-        lay = None
+        spec = None
     files = _test_files(base)
-    helper_entries = _helper_entries(base)
+    helper_entries = _helper_entries(base, layout)
     loads = {}
     pins = {}
     direct = {}
@@ -524,17 +600,17 @@ def _index(root):
         for ref in refs:
             norm = _norm(ref)
             if norm and _looks_repo(norm):
-                for canon in _canonicals(norm, lay):
+                for canon in _canonicals(norm, spec):
                     table.setdefault(canon, set()).add(name)
             if not norm or not norm.endswith(".py"):
                 continue
             if norm not in hops:
-                hops[norm] = _one_hop(norm, base, lay)
+                hops[norm] = _one_hop(norm, base, spec)
             for canon in hops[norm]:
                 table.setdefault(canon, set()).add(name)
     for name, refs in direct.items():
         for ref in refs:
-            for canon in _canonicals(_norm(ref), lay):
+            for canon in _canonicals(_norm(ref), spec):
                 table.setdefault(canon, set()).add(name)
     if pins:
         outside = []
@@ -570,14 +646,14 @@ def _index(root):
                 continue
             classes = set()
             for rel in holders:
-                twins = _twins(_norm(rel), lay)
+                twins = _twins(_norm(rel), spec)
                 t3s = tuple(sorted(t for t in twins if t.startswith("t3/")))
                 key = t3s if t3s else (rel,)
                 classes.add(key)
             if len(classes) != 1:
                 continue
             key = next(iter(classes))
-            if set(key) & frozenset(_ENTRYPOINTS):
+            if set(key) & frozenset(layout.entry_points):
                 continue
             if key[0].startswith("t3/"):
                 for canon in key:
@@ -589,7 +665,7 @@ def _index(root):
     return _Closed(ordered)
 
 
-def _select(root, paths):
+def _select(root, paths, layout):
     base = Path(str(root))
     if isinstance(paths, str):
         raws = [part for part in paths.split(",") if part.strip() != ""]
@@ -602,13 +678,13 @@ def _select(root, paths):
     norms = [_norm(raw) for raw in raws]
     norms = [n if n != "" else "." for n in norms]
     if not norms:
-        return _Modules((ALWAYS,))
+        return _Modules((layout.always,))
     tracked = _tracked(base)
     try:
-        lay = _layout(base)
+        spec = _layout(base)
     except Exception:
-        lay = None
-    index = _index(base)
+        spec = None
+    index = _index(base, layout)
     if isinstance(index, _Open):
         return _Full((index.reason,))
     expanded = []
@@ -620,12 +696,15 @@ def _select(root, paths):
     if not expanded and unmapped:
         return _Full(tuple(sorted(set(unmapped))))
     if not expanded:
-        return _Modules((ALWAYS,))
+        return _Modules((layout.always,))
     modules = set()
     missing = set()
     for norm in expanded:
         if norm.startswith(".github/workflows/"):
-            modules.add(WORKFLOW_MODULE)
+            if layout.workflow_module:
+                modules.add(layout.workflow_module)
+            else:
+                missing.add(norm)
             continue
         if norm.startswith("changes/"):
             continue
@@ -633,13 +712,13 @@ def _select(root, paths):
             stem = norm[:-3]
             if "/test_" in "/" + stem or PurePosixPath(norm).name.startswith("test_"):
                 modules.add(stem.replace("/", "."))
-                for canon in _canonicals(norm, lay):
+                for canon in _canonicals(norm, spec):
                     hit = index.table.get(canon)
                     if hit:
                         modules.update(hit)
                 continue
         found = None
-        for canon in _canonicals(norm, lay):
+        for canon in _canonicals(norm, spec):
             hit = index.table.get(canon)
             if hit:
                 found = hit
@@ -650,33 +729,118 @@ def _select(root, paths):
             missing.add(norm)
     if missing or unmapped:
         return _Full(tuple(sorted(set(list(missing) + unmapped))))
-    modules.add(ALWAYS)
+    modules.add(layout.always)
     return _Modules(tuple(sorted(modules)))
 
 
-def _paragraph(result, land):
+def _alternate(command, python):
+    """The command with its leading python3 replaced by the second interpreter, or python in front of it."""
+    words = command.split()
+    if words[:1] == ["python3"]:
+        words[0] = python
+        return " ".join(words)
+    return f"{python} {command}"
+
+
+def _paragraph(result, land, layout):
     land_text = str(land)
+    tail = [f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. ",
+            f"Run `python3 {land_text} slot -- python3 scripts/check.py`. ",
+            f"Keep each build and test in a foreground slot."]
     if isinstance(result, _Full):
         names = ", ".join(f"`{name}`" for name in result.unmapped)
-        return (f"No affected mapping for {names}. "
-                f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
-                f"Run the same suite on Python 3.10 in the foreground as `python3 {land_text} slot --slots 2 -- {_PY310} scripts/run_tests.py -j 8`. "
-                f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. "
-                f"Run `python3 {land_text} slot -- python3 scripts/check.py`. "
-                f"Keep each build and test in a foreground slot.")
+        head = [f"No affected mapping for {names}. ",
+                f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- {layout.suite}`. "]
+        second = [f"Run the same suite on Python 3.10 in the foreground as "
+                  f"`python3 {land_text} slot --slots 2 -- {_alternate(layout.suite, layout.python)}`. "] \
+            if layout.python else []
+        return "".join(head + second + tail)
     names = ", ".join(f"`{name}`" for name in result.names)
     joined = " ".join(result.names)
-    return (f"Affected test modules are {names}. "
-            f"Run them in the foreground as `python3 {land_text} slot -- python3 -m unittest {joined}`. "
-            f"Run the same modules on Python 3.10 in the foreground as `python3 {land_text} slot -- {_PY310} -m unittest {joined}`. "
-            f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. "
-            f"Run `python3 {land_text} slot -- python3 scripts/check.py`. "
-            f"Keep each build and test in a foreground slot.")
+    head = [f"Affected test modules are {names}. ",
+            f"Run them in the foreground as `python3 {land_text} slot -- python3 -m unittest {joined}`. "]
+    second = [f"Run the same modules on Python 3.10 in the foreground as "
+              f"`python3 {land_text} slot -- {layout.python} -m unittest {joined}`. "] if layout.python else []
+    return "".join(head + second + tail)
 
 
-def verify_text(root, paths, land):
+def _stored_restaurants(root):
+    """The path and meta of every readable store whose resolved projectRoot is root, with plain reads and no lock."""
+    resolved = Path(str(root)).resolve()
+    found = []
+    try:
+        paths = sorted(store_root().glob("*/*/restaurant.json"))
+    except OSError:
+        return found
+    for path in paths:
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        project = value.get("projectRoot")
+        if not isinstance(project, str):
+            continue
+        try:
+            same = Path(project).resolve() == resolved
+        except (OSError, ValueError):
+            continue
+        if same:
+            found.append((path, value))
+    return found
+
+
+def _check_command(meta):
+    value = meta.get("checkCommand")
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _settings(root, meta):
+    """The layout and check command root's stores recorded.
+
+    meta names the store the caller already holds. Otherwise every store under the store root whose projectRoot
+    resolves to root is read. A present and malformed affectedTests is refused, and one recorded differently by
+    two stores is refused because neither can be trusted.
+    """
+    if meta is not None:
+        return layout(meta), _check_command(meta)
+    pick = None
+    picked_path = None
+    picked_value = None
+    check = ""
+    for path, one in _stored_restaurants(root):
+        if not check:
+            check = _check_command(one)
+        if AFFECTED_KEY not in one:
+            continue
+        got = layout(one)
+        if picked_path is None:
+            pick, picked_path, picked_value = got, path, one[AFFECTED_KEY]
+        elif one[AFFECTED_KEY] != picked_value:
+            raise BrigadeError(f"restaurant.json {AFFECTED_KEY} differs across {picked_path} and {path}; keep one value")
+    return pick, check
+
+
+def _fallback(land, check):
+    land_text = str(land)
+    if check:
+        return (f"Run the check command in the foreground as `python3 {land_text} slot -- {check}`. "
+                f"The affected-test picker is off because this store sets no `{AFFECTED_KEY}` layout.")
+    return (f"No verify command is set. The affected-test picker is off because this store sets no "
+            f"`{AFFECTED_KEY}` layout; record the project's check with `brigade.py set --check-command <command>`.")
+
+
+def verify_text(root, paths, land, meta=None):
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
+    picked, check = _settings(root, meta)
+    if picked is None:
+        return _fallback(land, check)
     if isinstance(paths, str):
         items = [part for part in paths.split(",") if part.strip() != ""]
     else:
@@ -685,5 +849,5 @@ def verify_text(root, paths, land):
             for part in str(one).split(","):
                 if part.strip() != "":
                     items.append(part)
-    result = _select(root, items)
-    return _paragraph(result, land)
+    result = _select(root, items, picked)
+    return _paragraph(result, land, picked)

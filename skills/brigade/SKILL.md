@@ -87,21 +87,35 @@ $B dish D2 --state dropped [--stopped <run id>|idle]   # releases the dish's lea
 $B dish D2 --state in-progress|in-review|queued|merged [--thread <id>] [--task <id>] [--pr <url>] [--sha <head>] [--timebox <m>] [--reported] [--lease <id>] [--paths <paths>] [--branch <name>]   # --thread writes the open worker row of threads.tsv for the current attempt
 $B dish D2 --mode full --reason "<one line>"   # records the item's move to full once
 $B dish D1 --worker-ended "<reason>"   # records that this attempt's worker ended or failed and wrote no report
-$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. Once the dish owes its round decision, each send-back it counts ends its line with <n> send-backs, decision pending
+$B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits [--reason <reason>] --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. Once the dish owes its round decision, each send-back it counts ends its line with <n> send-backs, decision pending
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
+$B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
 $B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 add --dish D2 --round-budget           # the decision D2 owes at three send-backs. prints Q<n>
 $B 86 answer Q1 --answer "..." ; $B 86 list
 $B close [--dry-run | --to-file]             # report of what changed since the last one. --to-file prints only the written file's path
 python3 <skills>/brigade/scripts/brigade.py walk [--repo <project root>]
-python3 <skills>/brigade/scripts/brigade.py affected --paths <file> [--paths <file>...] | --diff <base>   # verify paragraph for those paths; no store
+python3 <skills>/brigade/scripts/brigade.py affected --paths <file> [--paths <file>...] | --diff <base>   # verify paragraph for those paths; reads the store's restaurant.json for the affectedTests layout and prints the store's check command when no layout is set
 L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
 
 Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show. `$B <command> --help` prints every flag.
 
 Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite. Use the picked modules for worker verification. Leave the full suite to CI and the merge queue unless affected reports an unmapped path.
+
+`affected` reads the layout from the store's `restaurant.json`, which may hold one optional `affectedTests` object. Its six keys are `always`, the required dotted module every result includes; `workflowModule`, an optional dotted module a `.github/workflows/` path maps to; `entryPoints`, the required list of repository paths that carry tests; `helpers`, an optional list of repository paths; `suite`, the optional whole-suite command; and `python`, the optional absolute path of the second interpreter. Without the key the picker is off, and a brief with an empty `--verify` runs the store's `checkCommand` instead, or says no verify command is set. This value, with `buildCommand` `python3 scripts/build.py` and `checkCommand` `python3 scripts/check.py` in the same file, reproduces the paragraph this repository prints today:
+
+```json
+"affectedTests": {
+  "always": "tests.test_pstack_t3",
+  "workflowModule": "tests.test_run_tests",
+  "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
+  "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
+  "suite": "python3 scripts/run_tests.py -j 8",
+  "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10"
+}
+```
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
