@@ -1,7 +1,7 @@
 - kind fix
-- `roles.py write` keeps every stored role, the stored budget, the stored mode, and every other top-level key a flag does not name
-- `roles.py write --replace` starts over from the flags alone and writes `<file>.bak` first
+- `roles.py write` keeps every stored role, the stored budget, the stored mode, and every unknown top-level key
+- `roles.py write --replace` rewrites the roles, budget, and mode from the flags, keeps the stored allow list and a stored project `escalate` list, and writes `<file>.bak` first when the file exists
 - a write refuses a target it cannot parse as JSON, naming the file and the parse error, and writes nothing
 - a target that parses but is not a roles object is refused by a default write and replaced by `--replace`
-- `--keep` is accepted and changes nothing, because keeping the stored keys is the default
+- `--keep` is accepted and does nothing
 - `t3/setup.md` step 4 and the `skill tests` sentence describe the keep-by-default write and `--replace`
