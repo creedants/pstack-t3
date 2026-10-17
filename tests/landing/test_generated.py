@@ -1147,7 +1147,7 @@ class GeneratedTest(LandingTest):
         self.assertIs(signal.getsignal(signal.SIGCHLD), signal.SIG_IGN)
 
     def _grace_run(self, hits):
-        """Run a build whose detached grandchild holds the pipe, send hits SIGINTs during grace, and return the elapsed time and deliveries."""
+        """Run a build whose detached child holds the pipe, send hits SIGINTs during grace, and return the elapsed time and deliveries."""
         import selectors
         import shlex
         from unittest import mock
@@ -1163,7 +1163,7 @@ class GeneratedTest(LandingTest):
             "    os.waitpid(child, 0)\n"
         )
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)} {shlex.quote(str(pidfile))}"
-        # The command is a process whose detached grandchild holds the pipe open into grace.
+        # The command is a process whose detached child holds the pipe open into grace.
         calls = []
         previous = signal.getsignal(signal.SIGINT)
         self.addCleanup(signal.signal, signal.SIGINT, previous)
