@@ -38,6 +38,7 @@ class Command:
     register: object
     handle: object
     handle_locked: object
+    needs_store: bool = True
 
 
 @dataclass
@@ -47,12 +48,13 @@ class LockedView:
 
 
 COMMANDS = (
-    Command("open", _setup.register_open, _setup.handle_open, None),
+    Command("open", _setup.register_open, _setup.handle_open, None, needs_store=False),
     Command("set", _setup.register_set, _setup.handle_set, _setup.handle_locked),
     Command("ticket", _rail.register_ticket, _rail.handle_ticket, _rail.handle_locked),
     Command("goal", _rail.register_goal, _rail.handle, _rail.handle_locked),
     Command("fire", _items.register_fire, _items.handle_fire, None),
     Command("brief", _items.register_brief, _items.handle_brief, None),
+    Command("affected", _items.register_affected, _items.handle_affected, None, needs_store=False),
     Command("contract", _items.register_contract, _items.handle, _items.handle_locked),
     Command("watch", _liveness.register_watch, _liveness.handle, None),
     Command("startable", _liveness.register_startable, _liveness.handle, None),
@@ -69,7 +71,7 @@ COMMANDS = (
     Command("sync", _admin.register_sync, _admin.handle, None),
     Command("status", _report.register_status, _report.handle_status, _report.handle_locked),
     Command("close", _report.register_close, _report.handle, _report.handle_locked),
-    Command("walk", _report.register_walk, _report.handle_walk, None),
+    Command("walk", _report.register_walk, _report.handle_walk, None, needs_store=False),
     Command("next", _next.register_next, _next.handle, None),
     Command("launch", _tools.register_launch, _tools.handle, None),
     Command("spend", _tools.register_spend, _tools.handle, None),
