@@ -1098,7 +1098,7 @@ class GeneratedTest(LandingTest):
         needed = 1100
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         if hard < needed:
-            self.skipTest(f"hard fd limit {hard} forbids pipes above 1024")
+            self.skipTest(f"hard fd limit {hard} is below the test requirement of {needed}")
         if soft < needed:
             resource.setrlimit(resource.RLIMIT_NOFILE, (needed, hard))
             self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
