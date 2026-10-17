@@ -1,0 +1,2 @@
+- kind polish
+- activity.py: the live view sets each attempt summary's open state from the attempt state keyed by the printed work item id, so two summaries that print the same id are open together.

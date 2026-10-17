@@ -2741,6 +2741,7 @@ LIVE_FOLD = squeezed("""
           const open = id in openState ? openState[id] : byDefault;
           caret.textContent = open ? '\u25BE' : '\u25B8';
           const attemptOpen = !!attemptState[key];
+          if (block) block.open = attemptOpen;
           for (const r of rows) { const earlier = r.classList.contains('earlier'); r.style.display = !open ? 'none' : (earlier && !attemptOpen ? 'none' : ''); }
           const l = head.querySelector('.ldg');
           if (l) l.style.display = open ? '' : 'none';
