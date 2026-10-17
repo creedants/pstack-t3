@@ -1258,13 +1258,28 @@ class GeneratedTest(LandingTest):
                     self.assertEqual([_names(seen, leader) for seen in snapshots], [["killpg", "reaped"]])
                     self.assertIs(restored, returning_previous)
 
-    def test_darwin_ps_reap_is_not_a_leader_reap(self):
-        """Reaps of a non-leader child are not leader reaps."""
+    def test_darwin_ps_probe_reap_is_not_a_leader_reap(self):
+        """Reaps of the ps probe child are not leader reaps."""
+        from unittest import mock
+        real_popen = subprocess.Popen
+        ps_pids = []
+
+        def recording_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            argv = args[0] if args else kwargs.get("args", [])
+            if list(argv)[:1] == ["ps"]:
+                ps_pids.append(process.pid)
+            return process
+
         with _platform(_DARWIN):
             with _GroupTrace() as trace:
-                land.run_build("sleep 5", str(self.work), 0.1)
+                with mock.patch.object(subprocess, "Popen", recording_popen):
+                    land.run_build("sleep 5", str(self.work), 0.1)
             leader = trace.leader()
-            self.assertTrue(any(name == "reaped" and pid != leader for name, pid in trace.events))
+            self.assertTrue(ps_pids)
+            self.assertEqual(
+                {pid for name, pid in trace.events if name == "reaped" and pid != leader},
+                set(ps_pids))
             self.assertEqual(_names(trace.events, leader), ["killpg", "reaped"])
             self.assertFalse(_signalled_after_reap(trace.events))
 
