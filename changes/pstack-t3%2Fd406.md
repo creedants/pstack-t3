@@ -1,3 +1,3 @@
 - kind polish
 - `docs/live-runs.md` drops the stale line ranges from the two `### Defects found` citations and names the runtime's Top-level threads section and `copy_file` instead.
-- Each defect statement records what the code did then and names the text that covers it now.
+- Both changed sentences now record the code's behavior at the time of the run and name the text that covers the point now.
