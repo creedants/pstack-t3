@@ -3624,8 +3624,8 @@ class PriorPageTest(OutputCase):
         fixture = one_running(self.fixture).write()
         self.assertEqual([len(line.split("\t")) for line in (fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 15])
         self.assertFalse((fixture.store / "goals.tsv").exists())
-        # Running now no longer names the model, so the two documents differ there. The data element holds every value
-        # the page draws, and a store from before kinds writes the same one as the prior build.
+        # The style and script differ from the prior build, and the data element holds every non-constant string the
+        # page draws, so this compares the data only.
         html = fixture.stdout_bytes()
         self.assertEqual(DATA.search(html.decode()).group(1), DATA.search(frozen_bytes(script, fixture).decode()).group(1))
 
