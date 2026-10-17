@@ -215,8 +215,8 @@ def fragment_for(meta, branch):
     """The change-note fragment this branch leases, or None when the store records none.
 
     The fragment is the store's changeNoteDir holding <branch with % as %25 then / as %2F>.md.
-    A store with no changeNoteDir leases no fragment, and neither does a missing branch.
-    A malformed changeNoteDir is refused through change_note_dir.
+    A store with no changeNoteDir leases no fragment. An empty branch leases nothing without reading the key.
+    A malformed changeNoteDir is refused when the branch is present.
     """
     if not branch:
         return None

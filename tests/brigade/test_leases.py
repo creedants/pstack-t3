@@ -156,7 +156,7 @@ class LeasesTest(BrigadeTest):
                 self.assertIn(f"got '{text}'", error)
                 self.assertEqual(self.store_files(), before)
 
-    def test_a_fire_refuses_a_stored_change_note_dir_that_does_not_parse_and_claims_no_lease(self):
+    def test_a_fire_refuses_a_stored_change_note_dir_that_does_not_parse_and_writes_nothing(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         for stored in ("/abs", "../up", "a,b", "has space", 5, ["changes"]):
