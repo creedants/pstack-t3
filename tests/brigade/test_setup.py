@@ -2,7 +2,7 @@ from .support import BrigadeTest, Path, json, setUpModule
 
 
 class SetupBoundaryTest(BrigadeTest):
-    """The open and set commands refuse a malformed stored setting before they write."""
+    """The open and set commands refuse a malformed stored setting before they write restaurant.json or the settings file."""
 
     def settings(self):
         return Path(self.project) / ".claude" / "settings.local.json"
