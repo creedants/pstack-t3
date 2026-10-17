@@ -853,6 +853,17 @@ class BriefsTest(BrigadeTest):
         self.assertFalse((self.at / "briefs" / "D1.md").exists())
         self.assertFalse((self.at / "briefs" / "D1.contract.md").exists())
 
+    def test_a_layout_whose_always_module_is_not_the_change_note_module_gets_no_such_claim_fails_when_it_is_generic(self):
+        self.git_project()
+        self.briefable()
+        self.record_layout({"always": "checks.smoke", "entryPoints": [], "suite": "python3 -m pytest -q",
+                            "python": "/usr/bin/python3.11"})
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                            "--paths", "src/boot.ts", "--lease", "L1", "--base", "origin/main")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("The final run of the chain also includes `python3 -m unittest checks.smoke`.", verify)
+        self.assertNotIn("because that module checks the change note", verify)
+
     def test_supplied_verify_unchanged_fails_when_override_ignored(self):
         self.briefable()
         text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")

@@ -461,6 +461,87 @@ class AffectedTest(BrigadeTest):
         self.assertIn("slot -- python3 -m unittest", out)
         self.assertNotIn("3.10", out)
 
+    def test_the_pstack_layout_renders_the_paragraph_the_old_picker_printed_fails_when_a_sentence_changes(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        land = ROOT / "t3/added/landing/scripts/land.py"
+        interpreter = LAYOUT["python"]
+        self.assertEqual(
+            self.affected("--paths", "src/a.py"),
+            "Affected test modules are `tests.test_a`, `tests.test_pstack_t3`. "
+            f"Run them in the foreground as `python3 {land} slot -- python3 -m unittest tests.test_a tests.test_pstack_t3`. "
+            f"Run the same modules on Python 3.10 in the foreground as `python3 {land} slot -- {interpreter} -m unittest tests.test_a tests.test_pstack_t3`. "
+            f"Run `python3 {land} slot -- python3 scripts/build.py` and leave no regeneration diff. "
+            f"Run `python3 {land} slot -- python3 scripts/check.py`. "
+            "Keep each build and test in a foreground slot.")
+        self.assertEqual(
+            self.affected("--paths", "README.md"),
+            "No affected mapping for `README.md`. "
+            f"Run the full suite in the foreground as `python3 {land} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
+            f"Run the same suite on Python 3.10 in the foreground as `python3 {land} slot --slots 2 -- {interpreter} scripts/run_tests.py -j 8`. "
+            f"Run `python3 {land} slot -- python3 scripts/build.py` and leave no regeneration diff. "
+            f"Run `python3 {land} slot -- python3 scripts/check.py`. "
+            "Keep each build and test in a foreground slot.")
+
+    def test_an_explicit_store_root_keeps_its_layout_fails_when_the_environment_store_wins(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        empty = self.root / "empty-store"
+        empty.mkdir()
+        with mock.patch.dict(os.environ, {"BRIGADE_STORE": str(empty)}):
+            out = self.affected("--paths", "src/a.py")
+        self.assertIn("tests.test_a", out)
+        self.assertIn(ALWAYS, out)
+        self.assertNotIn("No verify command is set", out)
+
+    def test_a_check_command_of_none_is_no_check_command_fails_when_the_sentinel_is_run(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        self.restaurant(self.project, layout=None, check="none")
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("No verify command is set", out)
+        self.assertNotIn("slot -- none", out)
+
+    def test_a_python_with_a_suite_that_is_not_python3_is_refused_fails_when_the_pair_is_run(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        self.restaurant(self.project, layout=dict(LAYOUT, suite="npm test", python="/usr/bin/python3.11"))
+        err = self.affected("--paths", "tests/test_a.py", ok=False)
+        self.assertIn("restaurant.json", err)
+        self.assertIn("affectedTests", err)
+        self.assertIn("must start with python3", err)
+
+    def test_a_python_whose_file_name_names_no_version_is_refused_fails_when_any_path_is_taken(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        self.restaurant(self.project, layout=dict(LAYOUT, python="/usr/bin/pypy3"))
+        err = self.affected("--paths", "tests/test_a.py", ok=False)
+        self.assertIn("restaurant.json", err)
+        self.assertIn("affectedTests", err)
+        self.assertIn("/usr/bin/pypy3", err)
+
+    def test_a_second_interpreter_is_named_by_its_own_version_fails_when_a_3_10_label_is_printed(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n    pass\n")
+        self.track()
+        self.restaurant(self.project, layout=dict(LAYOUT, suite="python3 -m pytest -q", python="/usr/bin/python3.11"))
+        out = self.affected("--paths", "README.md")
+        self.assertIn("slot --slots 2 -- /usr/bin/python3.11 -m pytest -q", out)
+        self.assertIn("Python 3.11", out)
+        self.assertNotIn("Python 3.10", out)
+
     def test_close_matches_reference_on_seeded_random_tables_fails_when_worklist_misses_an_importer(self):
         import random
         close = self.close_function()

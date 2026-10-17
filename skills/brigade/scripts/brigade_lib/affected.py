@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from brigade_lib import seam
 from brigade_lib.compact import refuse_setting
+from brigade_lib.edits import NO_COMMAND
 from brigade_lib.layout import _layout, _twins
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS, store_root
@@ -21,6 +22,9 @@ DEFAULT_SUITE = "python3 -m unittest discover -s tests"
 PIN_CHARS = 40
 _LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python")
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+# A second interpreter's file name, python3 or python3.10.
+_PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")
+_PYTHON_PATH = re.compile(r"^/.+/python\d+(?:\.\d+)?$")
 
 
 @dataclass(frozen=True)
@@ -29,7 +33,8 @@ class Layout:
 
     always is the module every modules result includes. workflow_module maps a .github/workflows/ path, and empty
     means such a path is unmapped. entry_points and helpers are repository paths. suite is the whole-suite
-    command. python is the second interpreter, and empty means the paragraph omits it.
+    command, and it starts with python3 when python is set. python is the second interpreter, an absolute path
+    whose file name is python<major> or python<major>.<minor>, and empty means the paragraph omits it.
     """
     always: str
     workflow_module: str
@@ -66,7 +71,8 @@ def layout(meta):
     """The picker's Layout from one store's restaurant.json, or None when meta is falsy or the key is absent.
 
     A present value that does not parse is refused through refuse_setting, so the message names the file,
-    the key, and the value.
+    the key, and the value. python is an absolute path whose file name is python<major> or
+    python<major>.<minor>, and a value that sets python also needs a suite that starts with python3.
     """
     if not meta or AFFECTED_KEY not in meta:
         return None
@@ -92,8 +98,12 @@ def layout(meta):
     if not _command(suite):
         refuse_setting(AFFECTED_KEY, value, "'suite' needs a command")
     python = value.get("python")
-    if python is not None and not (isinstance(python, str) and python.startswith("/")):
-        refuse_setting(AFFECTED_KEY, value, "'python' needs an absolute path")
+    if python is not None:
+        if not (isinstance(python, str) and _PYTHON_PATH.match(python)):
+            refuse_setting(AFFECTED_KEY, value,
+                           "'python' needs an absolute path whose file name is python<major> or python<major>.<minor>")
+        if suite.split()[0] != "python3":
+            refuse_setting(AFFECTED_KEY, value, "'suite' must start with python3 when 'python' is set")
     return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "")
 
 
@@ -733,13 +743,19 @@ def _select(root, paths, layout):
     return _Modules(tuple(sorted(modules)))
 
 
+def _python_label(python):
+    """The paragraph's name for the second interpreter, taken from the version in its file name."""
+    return "Python " + _PYTHON_NAME.match(posixpath.basename(python)).group(1)
+
+
 def _alternate(command, python):
-    """The command with its leading python3 replaced by the second interpreter, or python in front of it."""
+    """The suite command with its leading python3 replaced by the second interpreter.
+
+    layout refuses a suite that does not start with python3 when python is set, so the first word is python3.
+    """
     words = command.split()
-    if words[:1] == ["python3"]:
-        words[0] = python
-        return " ".join(words)
-    return f"{python} {command}"
+    words[0] = python
+    return " ".join(words)
 
 
 def _paragraph(result, land, layout):
@@ -751,7 +767,7 @@ def _paragraph(result, land, layout):
         names = ", ".join(f"`{name}`" for name in result.unmapped)
         head = [f"No affected mapping for {names}. ",
                 f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- {layout.suite}`. "]
-        second = [f"Run the same suite on Python 3.10 in the foreground as "
+        second = [f"Run the same suite on {_python_label(layout.python)} in the foreground as "
                   f"`python3 {land_text} slot --slots 2 -- {_alternate(layout.suite, layout.python)}`. "] \
             if layout.python else []
         return "".join(head + second + tail)
@@ -759,17 +775,20 @@ def _paragraph(result, land, layout):
     joined = " ".join(result.names)
     head = [f"Affected test modules are {names}. ",
             f"Run them in the foreground as `python3 {land_text} slot -- python3 -m unittest {joined}`. "]
-    second = [f"Run the same modules on Python 3.10 in the foreground as "
+    second = [f"Run the same modules on {_python_label(layout.python)} in the foreground as "
               f"`python3 {land_text} slot -- {layout.python} -m unittest {joined}`. "] if layout.python else []
     return "".join(head + second + tail)
 
 
-def _stored_restaurants(root):
-    """The path and meta of every readable store whose resolved projectRoot is root, with plain reads and no lock."""
+def _stored_restaurants(root, store=None):
+    """The path and meta of every readable store under store whose resolved projectRoot is root, with plain reads and no lock.
+
+    store is the store root the caller resolved from its own --store flag, and None takes the default.
+    """
     resolved = Path(str(root)).resolve()
     found = []
     try:
-        paths = sorted(store_root().glob("*/*/restaurant.json"))
+        paths = sorted(store_root(store).glob("*/*/restaurant.json"))
     except OSError:
         return found
     for path in paths:
@@ -797,15 +816,18 @@ def _stored_restaurants(root):
 
 def _check_command(meta):
     value = meta.get("checkCommand")
-    return value.strip() if isinstance(value, str) and value.strip() else ""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    return "" if text == NO_COMMAND else text
 
 
-def _settings(root, meta):
+def _settings(root, meta, store=None):
     """The layout and check command root's stores recorded.
 
-    meta names the store the caller already holds. Otherwise every store under the store root whose projectRoot
-    resolves to root is read. A present and malformed affectedTests is refused, and one recorded differently by
-    two stores is refused because neither can be trusted.
+    meta names the store the caller already holds. Otherwise every store under store, the store root the
+    caller resolved, whose projectRoot resolves to root is read. A present and malformed affectedTests is
+    refused, and one recorded differently by two stores is refused because neither can be trusted.
     """
     if meta is not None:
         return layout(meta), _check_command(meta)
@@ -813,7 +835,7 @@ def _settings(root, meta):
     picked_path = None
     picked_value = None
     check = ""
-    for path, one in _stored_restaurants(root):
+    for path, one in _stored_restaurants(root, store):
         if not check:
             check = _check_command(one)
         if AFFECTED_KEY not in one:
@@ -835,10 +857,10 @@ def _fallback(land, check):
             f"`{AFFECTED_KEY}` layout; record the project's check with `brigade.py set --check-command <command>`.")
 
 
-def verify_text(root, paths, land, meta=None):
+def verify_text(root, paths, land, meta=None, store=None):
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
-    picked, check = _settings(root, meta)
+    picked, check = _settings(root, meta, store)
     if picked is None:
         return _fallback(land, check)
     if isinstance(paths, str):

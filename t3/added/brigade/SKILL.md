@@ -115,6 +115,8 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 }
 ```
 
+The second interpreter is an absolute path whose file name is `python<major>` or `python<major>.<minor>`, and the paragraph names it by that version. A layout that sets `python` also needs a `suite` that starts with `python3`, because the second interpreter reruns the same command. A store whose `checkCommand` is `none` records no check command.
+
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
 Each intake source has one owner. `set --intake`, and `open --intake` when it creates a restaurant, refuse a source a sibling already lists, with `brigade: <sibling> already owns intake from <source>; move tickets to it instead`. On an existing one it changes nothing. `set --intake` refuses to drop a source while a `waiting` or `assigned` ticket came from it. `ticket add --ref` refuses a ref that is already live here or in a sibling, with `brigade: <ref> is already T1 (waiting); nothing added`. The ref stays unchanged through every `ticket move` and `ticket take`. Before you file or update a ticket, change intake, or fix a malformed table line, read [Intake and refs](script.md#intake-and-refs).

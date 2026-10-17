@@ -241,7 +241,8 @@ def handle_brief(restaurant, args):
     return brief(restaurant, args.id, **fields)
 
 
-def handle_affected(args, _root):
+def handle_affected(args, store):
+    """store is the store root the entry resolved from --store; the picker reads its layout and check command from it."""
     paths = args.paths or []
     has_paths = bool([part for one in paths for part in str(one).split(",") if part.strip() != ""])
     has_diff = args.diff is not None and str(args.diff).strip() != ""
@@ -252,8 +253,8 @@ def handle_affected(args, _root):
     project = args.root or "."
     if has_diff:
         names = _affected_diff(project, str(args.diff))
-        return _affected_text(project, names, seam.LAND)
-    return _affected_text(project, paths, seam.LAND)
+        return _affected_text(project, names, seam.LAND, store=store)
+    return _affected_text(project, paths, seam.LAND, store=store)
 
 
 def handle_dish(restaurant, args):
@@ -281,8 +282,6 @@ def handle(restaurant, args):
         return handle_fire(restaurant, args)
     if args.command == "brief":
         return handle_brief(restaurant, args)
-    if args.command == "affected":
-        return handle_affected(args, None)
     if args.command == "dish":
         return handle_dish(restaurant, args)
     if args.command == "contract":
