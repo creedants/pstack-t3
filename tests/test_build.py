@@ -253,17 +253,91 @@ class OverrideLockTest(unittest.TestCase):
         )
 
 
-class BuildReferenceTest(unittest.TestCase):
-    def test_default_build_writes_the_committed_command_line_reference_pages(self):
-        if shutil.which("git") is None:
-            self.skipTest("git is not installed, so the tracked tree cannot be listed")
+def tree_files(root):
+    """List files under root. Use git when git owns root as a work tree directory, and walk the tree otherwise.
+
+    git owns root when ``git rev-parse --show-toplevel`` resolves to root, or to an ancestor of root
+    that tracks a file under root. A git archive copy has no tracked files under its root, so the
+    walk supplies its file list. The walk drops a .git entry, a __pycache__ directory, and a .pyc file.
+    """
+    root = Path(root)
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        top = None
+    owned = False
+    if top is not None and top.returncode == 0 and top.stdout:
+        toplevel = Path(top.stdout.rstrip("\n")).resolve()
+        if toplevel == root.resolve():
+            owned = True
+        elif toplevel in root.resolve().parents:
+            cached = subprocess.run(
+                ["git", "ls-files", "-z", "--cached"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            owned = cached.returncode == 0 and any(rel for rel in cached.stdout.split("\0"))
+    if owned:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            cwd=ROOT,
+            cwd=root,
             capture_output=True,
             text=True,
             check=True,
-        ).stdout.split("\0")
+        )
+        return [rel for rel in listed.stdout.split("\0") if rel]
+    found = []
+    for directory, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in {".git", "__pycache__"}]
+        for name in filenames:
+            path = Path(directory) / name
+            if name == ".git" or name.endswith(".pyc") or not path.is_file():
+                continue
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+class TreeFilesTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name) / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+
+    def test_tree_files_excludes_an_ignored_file_under_a_tracked_subdirectory_root(self):
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / ".gitignore").write_text("ignored.txt\n")
+        (sub / "tracked.txt").write_text("tracked\n")
+        (sub / "ignored.txt").write_text("ignored\n")
+        subprocess.run(["git", "add", "sub/.gitignore", "sub/tracked.txt"], cwd=self.repo, check=True)
+        listed = tree_files(sub)
+        self.assertIn("tracked.txt", listed)
+        self.assertNotIn("ignored.txt", listed)
+
+    def test_tree_files_walks_an_archive_copy_nested_beneath_an_unrelated_repository(self):
+        (self.repo / ".gitignore").write_text("*.log\n")
+        (self.repo / "tracked.txt").write_text("tracked\n")
+        subprocess.run(["git", "add", "tracked.txt", ".gitignore"], cwd=self.repo, check=True)
+        copy = self.repo / "copy"
+        copy.mkdir()
+        (copy / "data.txt").write_text("data\n")
+        (copy / "kept.log").write_text("kept\n")
+        listed = tree_files(copy)
+        self.assertIn("data.txt", listed)
+        self.assertIn("kept.log", listed)
+
+
+class BuildReferenceTest(unittest.TestCase):
+    def test_default_build_writes_the_committed_command_line_reference_pages(self):
+        listed = tree_files(ROOT)
         with tempfile.TemporaryDirectory() as directory:
             copy = Path(directory)
             for rel in listed:
