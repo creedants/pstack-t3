@@ -729,7 +729,7 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual((meta["thread"], meta["generation"], meta["contextCap"]), ("t2", 2, 400000))
         self.assertIn(("perf/", 2), self.landing_rows()["owner"])
 
-    def test_replace_with_a_context_cap_raises_no_landing_floor_when_the_settings_write_refuses(self):
+    def test_replace_with_a_context_cap_raises_no_landing_floor_when_the_settings_read_refuses(self):
         self.thread_landing()
         self.write_settings("{broken")
         settings_before, store_before = self.settings().read_bytes(), self.store_files()
