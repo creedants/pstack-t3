@@ -1314,6 +1314,14 @@ class LandingTest(LandingTestBase):
             while not zombie(parent_pid) and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertTrue(zombie(parent_pid), "the leader did not exit at the cap")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                state = Path(f"/proc/{process.pid}/stat").read_text().rpartition(")")[2].split()[0]
+                if state == "T":
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("the supervisor did not stop after its group SIGTERM")
             os.kill(process.pid, signal.SIGHUP)
             os.kill(process.pid, signal.SIGCONT)
             try:
