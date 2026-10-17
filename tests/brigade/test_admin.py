@@ -42,6 +42,7 @@ class AdminTest(StoresTest, _AdminRace):
         self.admin("ticket", "add", "--kind", "upkeep", "--summary", "Add a FAQ", "--goal", "G1")
         self.assertEqual(self.admin("status").splitlines(),
                          ["thread not recorded", "reporting: milestones, no landing contract, waiting tickets: 1",
+                          "liveness: every 600000 ms (default for milestones)",
                           "kinds: upkeep 1 waiting", "goals: G1 1 waiting"])
 
     def test_sync_relays_a_coordinators_goal_log_row_and_the_admins_close_prints_it_in_that_coordinators_block(self):
@@ -189,6 +190,7 @@ class AdminTest(StoresTest, _AdminRace):
                                     "--default", "docs"), "Q1")
         self.assertEqual(self.admin("status"),
                          "thread not recorded\nreporting: milestones, no landing contract, waiting tickets: 1, decisions for you: 1\n"
+                         "liveness: every 600000 ms (default for milestones)\n"
                          "kinds: fix 1 waiting")
 
     def test_the_admin_store_refuses_hang_and_leaves_the_store_unchanged(self):
@@ -785,10 +787,10 @@ class AdminTest(StoresTest, _AdminRace):
         self.brigade("docs", "set", "--reports-to", "th-admin")
         self.assertEqual(self.meta("docs")["reportsTo"], "th-admin")
         self.assertEqual(self.brigade("docs", "status"),
-                         "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nreports to th-admin\nowner th-docs@1")
+                         "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nreports to th-admin\nowner th-docs@1")
         self.brigade("docs", "set", "--reports-to", "")
         self.assertNotIn("reportsTo", self.meta("docs"))
-        self.assertEqual(self.brigade("docs", "status"), "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner th-docs@1")
+        self.assertEqual(self.brigade("docs", "status"), "thread th-docs\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nowner th-docs@1")
 
     # The owner fence.
 

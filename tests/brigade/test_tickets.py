@@ -100,7 +100,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued", "--sha", "def", ok=False),
                          "brigade: only reviewed work lands: D1 has no review verdict for def")
         self.assertEqual(self.brigade("dish", "D1", "--state", "queued"), "D1 queued")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, waiting to land: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nkinds: fix 1 in flight")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, waiting to land: 1\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nkinds: fix 1 in flight")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
         self.assertEqual(self.brigade("ticket", "list", "--state", "done"), "T1 done normal fix [user] s")
 
@@ -1191,7 +1191,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix")
         self.hand_edit("rail.tsv", "T1", kind="bugfix")
         out = self.assert_each_printing_command_warns(f"T1 has kind 'bugfix', {self.NOT_A_KIND}; run ticket set T1 --kind <kind>")
-        self.assertEqual(out["status"].splitlines()[3:], ["untagged: 1"])
+        self.assertEqual(out["status"].splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "untagged: 1"])
         self.assertEqual(out["ticket list"], "T1 waiting normal [user] a")
         self.assertEqual(out["startable"].splitlines()[2], "T1 normal, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a",
@@ -1212,7 +1212,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1")
         self.copy_goal_row("", "no id")
         out = self.assert_each_printing_command_warns("goals.tsv has a row with no id; it is not a goal; remove it from goals.tsv by hand")
-        self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 2 waiting", "goals: G1 1 waiting; unassigned 1 waiting"])
+        self.assertEqual(out["status"].splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 2 waiting", "goals: G1 1 waiting; unassigned 1 waiting"])
         self.assertEqual(out["goal list"].splitlines()[::3],
                          ["G1 open activity view: 1 waiting, 0 in flight, 0 merged, 0 send-backs",
                           "G2 open current with upstream: 0 waiting, 0 in flight, 0 merged, 0 send-backs",
@@ -1252,7 +1252,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.hand_edit("goals.tsv", "G1", id=" G1 ")
         out = self.assert_each_printing_command_warns(
             self.PADDED_GOAL_ROW, f"T1 names goal 'G1', {self.NO_GOAL_ROW}; run ticket set T1 --goal G<n> or --no-goal")
-        self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
+        self.assertEqual(out["status"].splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 1 waiting", "goals: unassigned 1 waiting"])
         self.assertEqual(out["goal list"].splitlines()[::3],
                          ["G2 open current with upstream: 0 waiting, 0 in flight, 0 merged, 0 send-backs",
                           "unassigned: 1 waiting, 0 in flight, 0 merged, 0 send-backs"])

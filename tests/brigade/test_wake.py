@@ -455,7 +455,7 @@ class WakeTest(BrigadeTest):
         self.assertEqual(self.brigade("status"),
                          "thread not recorded\n"
                          "reporting: milestones, no landing contract, waiting tickets: 1, in progress: 1, in review: 1\n"
-                         + workers + "\nkinds: fix 1 waiting, 2 in flight")
+                         + workers + "\nliveness: every 600000 ms (default for milestones)\nkinds: fix 1 waiting, 2 in flight")
         self.assertEqual(self.brigade("watch"), workers + "\nD1: running 0m of 60m (no worker recorded)\nD2: in review")
         self.brigade("pass", "record", "D2", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict", "send-back")
         workers = "workers: 1 of 3 running, 2 idle, auto-start: normal"

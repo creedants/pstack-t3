@@ -60,7 +60,7 @@ class StoreTest(BrigadeTest):
         self.open()
         self.brigade("set", "--reporting", "every-turn")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["reporting"], "every-turn")
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: every-turn, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: every-turn, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for every-turn)")
         self.brigade("set", "--reporting", "digest")
         before = (self.at / "restaurant.json").read_text()
         error = self.brigade("set", "--reporting", "hourly", ok=False)
@@ -302,14 +302,14 @@ class StoreTest(BrigadeTest):
                       "to light mode.\n", (self.at / "menu.md").read_text())
         self.brigade("set", "--thread", "c1")
         self.assertEqual(self.brigade("status"),
-                         "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nmode light\nowner c1@1")
+                         "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nmode light\nowner c1@1")
         self.assertIn("  Perf (reports milestones, mode light): nothing on record", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
                          f"exists {self.at}\nthread c1 already recorded\nmode stays light; change it with set --mode")
         self.assertEqual(json.loads(self.brigade("set", "--mode", "full"))["mode"], "full")
         self.assertEqual(self.brigade("set", "--mode", "fast", ok=False), 'brigade: --mode takes full, light, or ""')
         self.assertNotIn("mode", json.loads(self.brigade("set", "--mode", "")))
-        self.assertEqual(self.brigade("status"), "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nowner c1@1")
+        self.assertEqual(self.brigade("status"), "thread c1\nreporting: milestones, no landing contract\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nowner c1@1")
         self.assertIn("  Perf (reports milestones): nothing on record", self.brigade("walk"))
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "full"),
                          f"exists {self.at}\nthread c1 already recorded\nmode stays unset; change it with set --mode")
@@ -340,7 +340,7 @@ class StoreTest(BrigadeTest):
 
     def test_the_executive_admin_status_has_no_workers_line(self):
         self.open_admin()
-        self.assertEqual(self.admin("status"), "thread not recorded\nreporting: milestones, no landing contract")
+        self.assertEqual(self.admin("status"), "thread not recorded\nreporting: milestones, no landing contract\nliveness: every 600000 ms (default for milestones)")
 
     def test_startable_is_refused_in_the_executive_admin_store(self):
         self.open_admin()

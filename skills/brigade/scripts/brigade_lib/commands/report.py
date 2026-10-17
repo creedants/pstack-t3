@@ -27,7 +27,7 @@ from brigade_lib.reporting import REPAIR, log_rulings, report, reporting_of, sta
 from brigade_lib.reports import NOT_A_REPORT
 from brigade_lib.reviews import unrecorded_reviews
 from brigade_lib.shared import BrigadeError
-from brigade_lib.store import is_admin
+from brigade_lib.store import is_admin, liveness_of
 from brigade_lib.tickets import EVERY_ROW, count_labels, read_labels
 
 COMMANDS = ("status", "close", "walk")
@@ -95,6 +95,11 @@ def handle_locked(restaurant, args, view):
                  level if counts_text == "nothing on record" else f"{level}, {counts_text}"]
         if not is_admin(meta):
             lines.append(workers_line(meta, running_workers(restaurant)))
+        milliseconds, default_for = liveness_of(meta)
+        line = f"liveness: every {milliseconds} ms"
+        if default_for:
+            line += f" (default for {default_for})"
+        lines.append(line)
         labels = read_labels(restaurant, EVERY_ROW)
         lines += status_label_lines(labels, count_labels(restaurant, labels))
         if meta.get("reportsTo"):

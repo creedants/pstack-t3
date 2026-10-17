@@ -123,6 +123,11 @@ SCRATCH_KEY = "scratchDir"
 SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it"
 # The restaurant.json key that overrides LOW_RESERVE.
 LOW_RESERVE_KEY = "lowReserve"
+# The restaurant.json key that overrides the liveness interval.
+LIVENESS_KEY = "livenessMs"
+LIVENESS_FLOOR = 60000
+# The interval each reporting level uses when the store holds no livenessMs key.
+LIVENESS_DEFAULT_MS = {"every-turn": 600000, "milestones": 600000, "digest": 1800000}
 SNAPSHOT_CHUNK = 1 << 16
 
 MENU = """# Menu: {restaurant}
@@ -232,6 +237,37 @@ def parse_low_reserve(text):
         raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'") from None
     if value < 0:
         raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'")
+    return value
+
+
+def liveness_of(meta):
+    """The effective liveness interval in milliseconds and the reporting level it is the default for.
+
+    A missing livenessMs key returns the store's reporting level's default and that level, and a reporting level
+    the table does not hold reads as milestones. A present value returns it and "". A present value that is a
+    boolean, is not an integer, or is under LIVENESS_FLOOR is refused.
+    """
+    if LIVENESS_KEY not in meta:
+        level = reporting_of(meta)
+        if level not in LIVENESS_DEFAULT_MS:
+            level = "milestones"
+        return LIVENESS_DEFAULT_MS[level], level
+    value = meta[LIVENESS_KEY]
+    if isinstance(value, bool) or not isinstance(value, int):
+        refuse_setting(LIVENESS_KEY, value, "it is not an integer")
+    if value < LIVENESS_FLOOR:
+        refuse_setting(LIVENESS_KEY, value, f"it is under {LIVENESS_FLOOR}")
+    return value, ""
+
+
+def parse_liveness_ms(text):
+    """The integer a --liveness-ms flag stores. Empty string is the caller's clear signal, not this function's."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise BrigadeError(f"--liveness-ms takes a whole number of at least {LIVENESS_FLOOR}, got '{text}'") from None
+    if value < LIVENESS_FLOOR:
+        raise BrigadeError(f"--liveness-ms takes a whole number of at least {LIVENESS_FLOOR}, got '{text}'")
     return value
 
 

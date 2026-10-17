@@ -509,7 +509,8 @@ class ContextCapTest(BrigadeTest):
     def test_status_reports_a_drifted_missing_or_broken_settings_file(self):
         self.open()
         clean = ("thread not recorded\nreporting: milestones, no landing contract\n"
-                 "workers: 0 of 2 running, 2 idle, auto-start: normal")
+                 "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+                 "liveness: every 600000 ms (default for milestones)")
         self.assertEqual(self.brigade("status"), clean)
         drift = f"{self.settings()} needs autoCompactWindow 300000; run brigade.py set --context-cap 300000"
         self.settings().write_text('{\n  "autoCompactWindow": 1\n}\n')
@@ -691,6 +692,7 @@ class ContextCapTest(BrigadeTest):
             self.brigade("status"),
             "thread not recorded\nreporting: milestones, no landing contract\n"
             "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
+            "liveness: every 600000 ms (default for milestones)\n"
             "context cap 300000 is not enforced on this host")
         self.brigade("set", "--context-cap", "120000")
         self.assertEqual(self.meta()["contextCap"], 120000)

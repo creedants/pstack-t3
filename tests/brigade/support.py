@@ -2580,7 +2580,7 @@ class _ReportingRace:
         self.assertEqual(err.strip(), "brigade: nothing fired: T1 is assigned, not waiting")
         self.assertEqual(calls.read_text().splitlines(),
                          ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
-        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, in progress: 1\nworkers: 1 of 2 running, 1 idle, auto-start: normal\nkinds: fix 1 in flight")
+        self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, no landing contract, in progress: 1\nworkers: 1 of 2 running, 1 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)\nkinds: fix 1 in flight")
 
 
 class _WakeRace:
