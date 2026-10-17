@@ -38,7 +38,7 @@ BUNDLED = (
 )
 # The platform axis of headless_flags.
 MACOS = sys.platform == "darwin"
-# The warning a macOS runner with no display writes to stderr on every launch.
+# Chrome on the macOS runner writes this display warning to stderr. The failure text drops these lines.
 DISPLAY_WARNING = "CVDisplayLinkCreateWithCGDisplay failed"
 # How many stderr lines a failure keeps, taken from the end.
 STDERR_TAIL = 5
