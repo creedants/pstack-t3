@@ -100,7 +100,7 @@ Roles let one skill run on whatever providers the user has. A role value is a li
 
 1. `.pstack/t3-roles.json` in the project root. A role here replaces the same role from the user file.
 2. `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json`.
-3. Built-in defaults below.
+3. No file. The role resolves to `"inherit"`, per [Built-in defaults](#built-in-defaults).
 
 Print the merged roles for the current project with:
 
@@ -110,9 +110,9 @@ python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inherited
 
 When the brief this call seats has a `Mode:` line, replace the bracket with `--brief-mode <value>`. Copy that line's bare value, and pass no other mode flag. When the brief has no `Mode:` line and the session is light, replace the bracket with `--session-mode light`, except for a user's explicit reflect, which passes `--session-mode full`. Otherwise delete the bracket. A call with no mode flag takes its mode from the roles files.
 
-Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, the verifier panel treats no seat as this thread's own, and `show` cannot settle an `inherit` seat on a thread that runs an excluded model. `show`, `validate`, and `write` reject a malformed `--parent`. See [Excluded seats](#excluded-seats).
+Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, `show` cannot settle an `inherit` seat on a thread whose model the exclude list refuses. `show`, `validate`, and `write` reject a malformed `--parent`. See [Excluded seats](#excluded-seats).
 
-`<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A role that reports `"seats": "catalog-required"`, or an adaptive panel that reports `"seats": "default-panel"`, needs a catalog. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
+`<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A role that reports `"seats": "catalog-required"` needs a catalog. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
 
 ```bash
 python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "<name>" [--brief-mode <value> | --session-mode light] <<'JSON'
@@ -140,12 +140,12 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `reflect judgment, divergent, synthesizer` | 1 | reflect |
 | `arena runners` | N | arena, one candidate per seat |
 | `arena cross-judge pool` | N | arena, pick one seat whose model family differs from the parent's |
-| `swarm workers` | 1 | swarm, default model for every worker |
+| `swarm workers` | 1 | swarm, one seat for every worker |
 | `skill tests` | 1 | pstack-author-skill fresh-child test and description eval |
 | `architect runners` | N | architect, one runner per seat |
 | `interrogate reviewers` | N | interrogate, one reviewer per seat |
 | `verifiers` | N | swarm-verify, autopilot, shipping, orchestrate verification |
-| `review backups` | N | `roles.py backup`, when every paid reviewer backup is out |
+| `review backups` | N | `roles.py backup`, when no reviewer `backups` seat is left |
 
 ### Built-in defaults
 
@@ -153,21 +153,19 @@ Before you resolve a role's seats or weigh agreement between seats, read [roles.
 
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
-`roles.py show` owns this mapping. A skill must not rebuild it.
+There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. The one exception is `review backups`, which stays `"unset"` with its own note. `roles.py show` owns this mapping. A skill must not rebuild it.
 
-`verifiers` starts with `"inherit"` when this thread's provider can run children, then adds one seat per other runnable provider (`canRunChildTask: true`), using that provider's first pickable model and skipping a family already seated. A thread on an excluded model gets no `"inherit"` seat, and its own provider joins with its first pickable model instead. With only one runnable provider, `verifiers` is three `"inherit"` seats, or three copies of the one runnable provider's first pickable model when this thread cannot be inherited, and the report must say the models did not differ. The other panel roles do not use that three-seat rule.
-
-A model family is the leading word of the model ID. `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, and `grok-4.7` is `grok`. The normalizer in [Excluded seats](#excluded-seats) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
+A model family is the leading word of the model ID after the normalizer runs. `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, and `grok-4.7` is `grok`. The normalizer in [roles.md](roles.md#claude-haiku-55) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
 
 ### Excluded seats
 
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
-pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker.
+The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is a model-id glob string, or an object with `model` (a glob) and/or `options` (an object of option key to value). A rule holds when every part holds. A model glob matches the seat's bare id or its normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. A seat the exclude list refuses is refused everywhere: a configured role seat, a backup seat, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 
-- No picker chooses an excluded id.
-- Every seat on a Grok model that declares a boolean `fastMode` option comes back with `"fastMode": false`. No mode and no budget sets it to `true`.
-- A pickable model is one that is not excluded.
+[roles.md](roles.md#excluded-seats) lists the exact rule shape and the per-command behavior. In short, `show` skips a refused configured seat with a note, `validate` lists each refused seat and exits 1, and `write` refuses the config, even with `--force`. An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
+
+The Cursor `skill tests` exclusion stays, for a technical cause: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a skill tests seat that resolves to the cursor driver.
 
 ### Budget
 
@@ -179,9 +177,9 @@ The config may carry `"budget"`: `default`, `small`, `medium`, `large`, or `unli
 
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
-A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. This path is separate from the built-in order above. A configured excluded seat never takes this path. A `review backups` seat never takes it either. `show` drops that seat with a note. [Excluded seats](#excluded-seats) says how each command handles it.
+There is no built-in order. A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. A configured seat the exclude list refuses never takes this path. A `review backups` seat never takes it either. `show` drops a `review backups` seat with a note instead. [Excluded seats](#excluded-seats) says how each command handles it.
 
-1. Use the same provider's first pickable model. When it has none, `show` refuses the seat.
+1. When the model is missing, use the same provider's first model the exclude list allows. When it allows none, `show` refuses the seat with the exclude sentence `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 2. If the provider is not runnable, use `"inherit"`, settled per [Excluded seats](#excluded-seats).
 3. Say which seat changed and why. Never silently drop a seat, because the seat count is the panel size.
 
@@ -189,11 +187,9 @@ A configured seat whose provider is not runnable, or whose model is not in the c
 
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
-`skill tests`, `how explorer`, and `why investigators` use Claude Haiku 5.5 by default. `skill tests` runs at high effort. `how explorer` and `why investigators` run at medium.
+No role uses Claude Haiku 5.5 by default. When a role's resolved seat runs Haiku 5.5 by normalized model id, `roles.py show` prints the Haiku 5.5 brief as `haikuBrief` on that role entry. An `inherit` seat on a Haiku 5.5 thread counts too. Paste it per [Delegation](#delegation) step 4.
 
-`roles.py show` prints the Haiku 5.5 brief as `haikuBrief` on every role entry with a seat that runs Haiku 5.5, including `inherit` on a Haiku 5.5 thread.
-
-A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. Pass exactly one `--role "skill tests"`, a catalog, and `--parent`.
+A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. Pass exactly one `--role "skill tests"`, a catalog, and `--parent`. That form refuses a seat that runs on the cursor driver, including `inherit` on a cursor thread.
 
 ## Modes
 
@@ -225,7 +221,7 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
 
 Before a light `roles.py show` or `roles.py backup` call, read [roles.md](roles.md#budget).
 
-An explicit budget wins. No mode sets `fastMode` to `true`. A Grok seat that declares it gets `false`, per [Excluded seats](#excluded-seats). Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat of a capped role gets the cap.
+An explicit budget wins. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat of a capped role gets the cap.
 
 Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`. Nothing moves work from full to light mid-flight.
 
@@ -322,7 +318,7 @@ Before you call `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_f
 }
 ```
 
-- `modelSelection` is the seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged as the same object, including a boolean such as `{"fastMode": false}`. Omit `modelSelection` for an `inherit` seat.
+- `modelSelection` is the seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged as the same object. Omit `modelSelection` for an `inherit` seat.
 - Confirm a launched thread per [Delegation](#delegation) step 3.
 - For a stack, `baseRef` is the parent branch and `startFromOrigin` is false.
 - Omitted `workspaceStrategy` means the project root, not your worktree.

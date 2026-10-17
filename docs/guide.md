@@ -42,27 +42,28 @@ It calls `orchestrator_capabilities` first. That tool must be in the thread's to
 
 | Budget | Effect |
 | --- | --- |
-| `default` | Built-in Opus and Grok seats stay at xhigh. A configured seat keeps its level. An `inherit` `verifiers` seat stays `inherit`. Any other built-in `verifiers` seat gets no level, so that model's own default applies. |
+| `default` | A configured seat keeps its level. An `inherit` seat stays `inherit`. |
 | `small` | Medium reasoning everywhere. The cheapest. |
 | `medium` | High reasoning |
 | `large` | Extra-high reasoning |
-| `unlimited` | A seat that names no level gets the highest offered level at or below max. When every offered level is above that cap, the seat gets the lowest offered level. That includes a `verifiers` seat. An `inherit` seat becomes this thread's model at that level. A configured seat keeps its level when the level is at or below max. When its level is above max, it drops to the highest level at or below max, or to the lowest offered level when every offered level is above that cap. |
+| `unlimited` | A seat that names no level gets the highest offered level at or below max. When every offered level is above that cap, the seat gets the lowest offered level. An `inherit` seat becomes this thread's model at that level. A configured seat keeps its level when the level is at or below max. When its level is above max, it drops to the highest level at or below max, or to the lowest offered level when every offered level is above that cap. |
 
-Then it proposes a provider and model for each role. Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` uses Claude Haiku 5.5 at high. The `how` explorer and the `why` investigators use Claude Haiku 5.5 at medium. Haiku 5.5 suits reading, extraction, and sub-agent work, so a role that needs judgment keeps Opus. `unlimited` does not raise those seats, and no prompt length moves them. [`roles.py show`](cli/roles.md#rolespy-show) adds two paragraphs as `haikuBrief` to each role that runs Haiku 5.5, and the lead pastes them at the end of that child's brief. pstack never runs Claude Haiku 4.5 or a fast Grok model such as `grok-4.7-build-fast`, in any role. `roles.py show` skips either one in your roles file and says so. `validate` reports it and exits 1, and `write` refuses it even with `--force`. A skill test whose child launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. That form never returns a Cursor seat, because Cursor's harness cannot pass a seat's options object. Arena, architect, and interrogate panels are those two seats. `arena cross-judge pool` uses the same two seats. `verifiers` is this thread's model plus one seat per other model family you can run. With one runnable model family, `verifiers` is three copies of one seat. That seat is this thread's model only when this thread's provider can run children. Otherwise that seat is the runnable provider's first model. You can accept it or change any role. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
+Then it proposes a provider and model for each role, reasoning from the live catalog. It weighs each role's work, its cost, and whether the work is read-only, and it spreads review seats across model families. You can accept it or change any role. No role has a built-in model. A role set in no roles file resolves to `inherit`, so it runs on the thread's own seat, and `roles.py show` prints a note that says so. `review backups` stays unset until you set it. [`roles.py show`](cli/roles.md#rolespy-show) adds two paragraphs as `haikuBrief` to each role whose resolved seat runs Claude Haiku 5.5, and the lead pastes them at the end of that child's brief. An `exclude` entry refuses a model, such as a fast Grok id like `grok-4.7-build-fast`. `roles.py show` skips a refused seat and says so. `validate` reports it and exits 1, and `write` refuses it even with `--force`. A skill test whose child launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. That form refuses a seat that runs on the Cursor driver, because Cursor's harness cannot pass a seat's options object. `verifiers` is whatever panel you seat. Add one seat per model family you want represented. It finishes with a one-word smoke test to every provider it picked, so a signed-out provider shows up now rather than mid-task.
 
-You can skip setup entirely. The defaults in the previous paragraph still apply. A seat whose model you cannot run falls back, and the report names each replacement.
+You can skip setup entirely. Every role then resolves to `inherit`, so children run on the thread's own seat. A seat whose model you cannot run falls back, and the report names each replacement.
 
 ### When a provider hits its usage limit
 
-A usage limit relaunches the failed seat when a backup is free. The lead reads the failed child's error text and runs `roles.py backup` with it. The command prints `relaunch`, `park`, or `not-usage-limit`. On `relaunch` the lead starts a fresh child on the printed seat. On `park` the lead launches nothing, and that item waits for the reset.
+A usage limit relaunches the failed seat on a `backups` seat when one is free. The lead reads the failed child's error text and runs `roles.py backup` with it. The command prints `relaunch`, `panel`, `park`, or `not-usage-limit`. On `relaunch` the lead starts a fresh child on the printed seat. On `panel` the lead seats the printed `review backups` panel. On `park` the lead launches nothing, and that item waits for the reset.
 
-| Failed seat | Backup seat |
+| Failed seat | Backup |
 | --- | --- |
-| A worker, meaning any role that is not a reviewer or a Haiku role, such as code, `judgment and prose`, or `hardest tasks` | `claude-opus-5-5` on `claudeAgent` |
-| `how explorer`, `why investigators`, `skill tests`, when the failed seat is on another provider and `claudeAgent` is not out | `claude-sonnet-5-5` on `claudeAgent` |
-| `verifiers`, `interrogate reviewers`, `arena cross-judge pool` | `grok-4.7`, then `claude-opus-5-5`, skipping every model family that wrote the diff |
+| A worker, any role that is not a reviewer | The role's first `backups` seat whose provider is not the failed provider and is not out |
+| A reviewer role, such as `verifiers`, `interrogate reviewers`, or `arena cross-judge pool` | The role's first `backups` seat whose provider is not failed or out and whose model family did not write the diff |
+| A `review backups` seat | None. A `review backups` seat has no backup, so it counts as no pass |
+| A `verifiers` seat whose `backups` seats are all out, when `review backups` is set | The `review backups` panel, at least two seats |
 
-Backup never picks Codex or Cursor as an alternate seat. A seat parks when its backup family is out or the catalog lacks the backup model. A non-reviewer whose own seat is on `claudeAgent` has no other backup, so it parks, keeping its branch and lease. That includes a Haiku role. A reviewer parks when every family on its ladder wrote the diff or is out. After the reset time in the error, `roles.py backup --resume` returns the original seat, whatever its provider, once that provider is back. Otherwise it returns the backup. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to. Every `roles.py` command and flag is in the [command-line reference](cli/roles.md).
+The backup comes only from the `backups` key in your roles file. Set a `backups` list per role to name the seats `roles.py backup` tries in order. A candidate is skipped when its provider is the failed provider, is already out, is not runnable or not in the catalog, the `exclude` list refuses it, or, for a review role, its model family wrote the diff. A seat parks when no candidate is left. A `review backups` seat has no backup. After the reset time in the error, `roles.py backup --resume` returns the original seat, whatever its provider, once that provider is back. Otherwise it returns the next `backups` seat. The backup is one hop, so a second limit parks a worker. A standing coordinator relaunches first. Whatever `backup` prints, it then asks whether to run new work in [light mode](light-mode.md) until the limit resets, and it changes the mode only on your answer or when the menu's budget says to. Every `roles.py` command and flag is in the [command-line reference](cli/roles.md).
 
 ## 3. Your first rigorous task
 
@@ -416,7 +417,7 @@ Known limits.
 
 ## Earlier examples
 
-The next two runs are against a small repository with a planted bug that its own tests passed. Replies are excerpted and trimmed. They predate the current defaults. The default `$interrogate` panel is Claude Opus and Grok.
+The next two runs are against a small repository with a planted bug that its own tests passed. Replies are excerpted and trimmed. They predate the move to roles resolved against the live catalog.
 
 **A Codex thread ran a four-family review.**
 
@@ -456,7 +457,7 @@ $swarm audit stats.py: one read-only worker per public function.
 <details>
 <summary><b>Do I need every provider?</b></summary>
 
-No. Everything works with one provider. The default arena, architect, and interrogate panels are Claude Opus and Grok. A seat whose model you cannot run falls back, and the report names each replacement. `verifiers` is this thread's model plus one seat per other model family you can run. Signing in to a provider does not add a seat to the other three panels. Add Codex or another model in a roles file.
+No. Everything works with one provider. No panel has a built-in model. A seat whose model you cannot run falls back, and the report names each replacement. `verifiers` is whatever panel you seat in your roles file, so signing in to more providers lets you spread it across model families. Add a provider or another model in a roles file.
 </details>
 
 <details>
@@ -468,7 +469,7 @@ The playbooks, principles, rubrics, and their wording are the same. The plumbing
 <details>
 <summary><b>Does it cost more?</b></summary>
 
-The default `$interrogate` panel is two seats, Claude Opus and Grok, so that review costs about two reviews. A roles file can add seats. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work, or [light mode](light-mode.md) to cut the fan-out around the checks that catch real bugs. Skill tests and the read-only explorers in `$how` and `$why` run on Claude Haiku 5.5 by default.
+`$interrogate` costs one review per seat in your `interrogate reviewers` role, so a two-seat panel costs about two reviews. A roles file can add seats. Single-agent playbooks cost about the same as doing the work by hand, plus verification. Use the `small` budget in `$setup-pstack` for routine work, or [light mode](light-mode.md) to cut the fan-out around the checks that catch real bugs. Run skill tests and the read-only explorers in `$how` and `$why` on a cheap, high-volume model to keep their cost down.
 </details>
 
 <details>
@@ -507,8 +508,8 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 | --- | --- |
 | `Task` subagents with `subagent_type` and `model` | `delegate_task` children with a `role` and a resolved `target` |
 | Cloud agents | Local child tasks, or `t3_thread_launch` threads bound to their own worktree |
-| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role resolves to a fast Grok model or Claude Haiku 4.5, and a usage limit relaunches on Claude or Grok when a backup is free and parks otherwise. |
-| A fixed default panel of four Cursor models | Claude Opus and Grok for arena, architect, and `$interrogate`. `verifiers` is this thread's model plus one seat per other model family you can run. |
+| A Cursor rule file of model names | `roles.json` resolved against T3's live catalog. No role has a built-in model, an `exclude` list refuses a model, and a usage limit relaunches on a `backups` seat when one is free and parks otherwise. |
+| A fixed default panel of four Cursor models | Each panel role is a list of seats you set in `roles.json`, resolved against T3's live catalog. |
 | `/loop`, automations, hourly ticks | `schedule_task` for a cadence with no pull request event. A wait on checks, reviews, or conflicts is `watch_pull_request`. A wait whose predicate is the merge also keeps the `schedule_task` heartbeat the runtime's Pull request watching section requires. |
 | Cursor transcripts and cloud-agent URLs | T3 threads |
 | `control-ui` from `cursor-team-kit` | T3 preview and device tools |

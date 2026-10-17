@@ -1,0 +1,7 @@
+- kind feature
+- `roles.py` removes every built-in model pick. An unset role resolves to `inherit`, and `review backups` stays `unset`.
+- `roles.py` adds the optional `exclude` and `backups` keys. `exclude` refuses a seat by model-id glob or declared option. `backups` lists the seats `roles.py backup` tries in order.
+- `roles.py` keeps the Cursor `skill tests` exclusion, matched by `driverKind`.
+- The runtime, the roles reference, the failures reference, the setup skill, the guide, and the other pages describe the two keys, and setup proposes seats from the live catalog.
+- `tests/test_roles_cli.py` and `tests/test_pstack_t3.py` test the new behavior, including the owner's house-rule migration for `exclude` and `backups`.
+- `python3 scripts/build.py` refreshes the generated `skills/` copies and `docs/cli/roles.md`.
