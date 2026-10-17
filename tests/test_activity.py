@@ -2627,9 +2627,9 @@ class RendererTest(OutputCase):
         document = self.document()
         built = self.render(document)
         open_list = built["texts"][built["texts"].index("Running now") + 1:built["texts"].index("Timeline")]
-        self.assertEqual([text for text in open_list if text in set(data_of(document)["M"])], [])
+        self.assertEqual([text for text in open_list if any(model in text for model in set(data_of(document)["M"]))], [])
 
-    def test_the_timeline_draws_the_same_for_a_store_whose_goal_name_changes(self):
+    def test_the_timeline_draws_the_same_text_for_a_store_whose_goal_name_changes(self):
         fixture = one_running(self.fixture).write()
         write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "First goal", "purpose", "done", "1", "")])
         widen_items(fixture, {"D7": ("feature", "G1")})
