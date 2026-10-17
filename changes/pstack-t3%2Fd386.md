@@ -1,0 +1,3 @@
+- kind polish
+- `vendor_layout` in `tests/brigade/test_affected.py` copies `scripts/build.py` and `scripts/cli_reference.py` out of the `archive_root` fixture instead of the repository root
+- `archive_root` is the only helper in `tests/brigade/test_affected.py` that reads the repository root
