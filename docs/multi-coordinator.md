@@ -27,7 +27,7 @@ Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 
 
 ## Method
 
-**Sample record.** The counts below come from the pstack-t3 maintainers' own coordinator store and their own scratch experiment, not yours. Measure your own work items, leases, and hold times.
+**Sample record.** The counts below come from the pstack-t3 maintainers' own coordinator store, not yours. Measure your own work items, leases, and hold times.
 
 Two sources fed the audit.
 
@@ -38,7 +38,7 @@ The numbers about real use come from the pstack-t3 coordinator's store (`dishes.
 
 ## What happens today
 
-**Sample record.** Each section below reports what the pstack-t3 maintainers found in their own store and their own scratch experiment, by observation or by inference. Measure your own store and your own run, where the findings will differ.
+**Sample record.** Each section below reports what the pstack-t3 maintainers found in their own store, their own scratch experiment, and the code and skill text they read, by observation or by inference. Measure your own store and your own run, where the findings will differ.
 
 ### 1. Duplicate intake
 
