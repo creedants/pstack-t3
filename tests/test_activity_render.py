@@ -352,6 +352,48 @@ class LiveAttemptFoldTest(unittest.TestCase):
         seen = json.loads(html.unescape(TITLE.search(drawn).group(1)))
         self.assertEqual(seen, {"before": ["none", "none"], "after": ["grid", "grid"], "shut": ["none", "none"]})
 
+    def test_two_attempt_summaries_that_print_one_work_item_id_do_not_keep_separate_open_states(self):
+        fixture = Fixture(str(self.root / "shared"))
+        fixture.coordinator()
+        for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2")):
+            fixture.unit(ident, "in-progress", "Activity page", thread=test_activity.worker(offset + 3))
+            fixture.retired(ident, test_activity.worker(offset + 1))
+            fixture.retired(ident, test_activity.worker(offset + 2))
+            fixture.thread(test_activity.worker(offset + 3), title=f"worker {offset}", turns=(("running", 4.5, None),))
+            fixture.thread(test_activity.worker(offset + 1), turns=(("completed", 90, 80),))
+            fixture.thread(test_activity.worker(offset + 2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        test_activity.write_threads(fixture, [
+            {"at": stamp, "dish": ident, "attempt": str(attempt), "role": "worker", "thread": test_activity.worker(offset + attempt), "start": stamp, "end": stamp}
+            for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2"))
+            for attempt in (1, 2)
+        ] + [
+            {"at": stamp, "dish": ident, "attempt": "3", "role": "worker", "thread": test_activity.worker(offset + 3), "start": stamp, "end": ""}
+            for offset, ident in ((0, "mcp:shared1"), (10, "mcp:shared2"))
+        ])
+        fixture.write_database()
+        result = in_process.invoke(fixture.command())
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        probe = "".join((
+            "<script>", MOD["LIVE_FOLD"], "</script>",
+            "<script>",
+            "fold();",
+            "var details = [].slice.call(document.querySelectorAll('#o .ldg details'));",
+            "details[0].open = true;",
+            "details[0].dispatchEvent(new Event('toggle'));",
+            "document.title = JSON.stringify({ids: details.map(function (d) { return d.getAttribute('data-item'); }),",
+            " open: details.map(function (d) { return d.open; })});",
+            "</script>",
+        ))
+        target = Path(self.root) / "shared.html"
+        target.write_text(result.stdout.replace("<div id=o></div>", f"<div id=o></div>{PINNED}") + probe)
+        drawn = confined_run(self.browser, target, self.root, "s", RENDER_TIMEOUT)
+        seen = json.loads(html.unescape(TITLE.search(drawn).group(1)))
+        self.assertEqual(seen["ids"], ["work item", "work item"])
+        # Deleting `if (block) block.open = attemptOpen;` from LIVE_FOLD's apply() leaves [true, false].
+        self.assertEqual(seen["open"], [True, True])
+
 
 class BrowserSelectionTest(unittest.TestCase):
     def test_broken_browser_on_path_leaves_no_working_browser_and_names_its_exit(self):

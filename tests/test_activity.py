@@ -2211,6 +2211,16 @@ class FrameTest(OutputCase):
         self.assertEqual(cut.hidden, MOD["Hidden"](dropped_items=1, dropped_agents=2, cut_agents=1))
         self.assertEqual((MOD["height"](cut), cut.fold), (607, 0))
 
+    def test_framed_charges_the_heading_of_a_group_that_holds_an_earlier_row_so_the_cut_fits_the_limit(self):
+        built = page(
+            group(item("A"), replace(row("a0"), earlier=True), row("a1"), row("a2")),
+            group(item("B"), replace(row("b0"), earlier=True), row("b1"), row("b2")),
+            group(item("C"), row("c1"), row("c2"), row("c3")),
+            group(item("D"), row("d1"), row("d2"), row("d3")))
+        self.assertEqual(MOD["height"](built), 713)
+        # Deleting `left -= GROUP_PX * len(headed)` makes the cut 715 against 712.
+        self.assertLessEqual(MOD["height"](MOD["framed"](built, 712)), 712)
+
     def test_the_frame_keeps_room_for_each_strip_group(self):
         goal = MOD["Goal"]("G1", "Ship")
         chip = MOD["Item"]("D1", "one", "working", "go", "", True, "", 1, "feature", "G1")
@@ -4520,6 +4530,16 @@ class LiveTest(OutputCase):
     def test_live_page_with_empty_port_is_refused_with_the_origin_rule(self):
         refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
         self.assertEqual(self.fails(1, "--live-page", "https://home.example.ts.net:"), refused)
+
+    def test_live_page_with_no_value_ignores_serve_and_still_names_48731(self):
+        fixture = one_running(self.fixture).write()
+        wrapper = self.out("--serve", "5000", "--live-page")
+        token = (fixture.store / "activity-token").read_text().strip()
+        self.assertIn(f"http://127.0.0.1:48731/activity/{token}", wrapper)
+        self.assertNotIn("127.0.0.1:5000", wrapper)
+
+    def test_live_page_help_says_the_no_value_address_does_not_follow_serve(self):
+        self.assertIn("does not follow --serve", MOD["parser"]().format_help())
 
     def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
         fixture = one_running(self.fixture).write()
