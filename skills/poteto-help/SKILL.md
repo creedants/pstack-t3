@@ -31,7 +31,7 @@ Check the state that changes the answer, and mention it only when it does:
 When no roles file exists and it matters, ask whether the user wants to pick a model for each role and a reasoning budget now. It matters when the user is new, the question is about setup or cost, or the answer depends on which models run. Ask at most once per chat. If the need is also unclear, ask both questions together. Offer two choices:
 
 - Now: give them `$setup-pstack` to type, and answer their question too.
-- Later: answer their question, and add one line saying every role runs on the chat's model until they run `$setup-pstack`.
+- Later: answer their question, and add one line saying every role except `review backups` runs on the chat's model until they run `$setup-pstack`, and `review backups` stays unset.
 
 ## Get set up
 

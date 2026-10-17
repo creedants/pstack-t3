@@ -1726,7 +1726,7 @@ class ExcludeEntryShapeCliTest(unittest.TestCase):
             completed = repo.show_bug_fix()
             expected = (
                 f"error: {repo.user}: exclude entry 'grok-4.7' is a string; "
-                "write an object with model and/or options\n"
+                "write an object with model, options, provider, or roles\n"
             )
         self.assertEqual(completed.returncode, 2)
         self.assertEqual(completed.stdout, "")
@@ -4556,11 +4556,359 @@ class WritePreservationTest(unittest.TestCase):
                             self.assertEqual(backup.read_bytes(), before)
 
 
+def fixture_catalog():
+    return json.loads(CATALOG.read_text())
+
+
+class ExcludedParentCliTest(unittest.TestCase):
+    """B1. An unset role, and a role whose every seat is excluded, settle a refused parent against the catalog."""
+
+    def show(self, roles_file, *, catalog=None, parent="claudeAgent/claude-opus-5-5"):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog() if catalog is None else catalog)
+            repo.put(repo.user, roles_file)
+            return repo.run("show", "--catalog", str(path), "--parent", parent, "--role", "bug-fix")
+
+    def test_an_unset_role_replaces_an_excluded_parent_with_the_first_allowed_model(self):
+        completed = self.show({"version": 1, "roles": {}, "exclude": [{"model": "claude-opus-5-5"}]})
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"})
+        self.assertNotIn("note", entry)
+        self.assertTrue(
+            any(note.startswith("inherit replaced by claudeAgent/claude-haiku-4-5") for note in entry.get("notes", [])),
+            entry,
+        )
+
+    def test_a_role_whose_every_seat_is_excluded_replaces_the_refused_parent(self):
+        completed = self.show({
+            "version": 1,
+            "roles": {"bug-fix": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}]},
+            "exclude": [{"model": "claude-opus-5-5"}],
+        })
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertNotEqual(entry["seats"], "inherit")
+        self.assertEqual(entry["seats"], {"providerInstanceId": "claudeAgent", "model": "claude-haiku-4-5"})
+        notes = entry.get("notes", [])
+        self.assertTrue(any(note.startswith("skipped configured seat claudeAgent/claude-opus-5-5") for note in notes), entry)
+        self.assertTrue(
+            any(note.startswith("inherit replaced by claudeAgent/claude-haiku-4-5") for note in notes),
+            entry,
+        )
+
+    def test_a_provider_with_no_allowed_model_refuses_the_role(self):
+        catalog = {"providers": [{
+            "providerInstanceId": "claudeAgent",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [{"id": "claude-opus-5-5", "options": []}],
+        }]}
+        completed = self.show(
+            {"version": 1, "roles": {}, "exclude": [{"model": "claude-opus-5-5"}]},
+            catalog=catalog,
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertIn("has no model the exclude list allows", completed.stderr)
+        self.assertIn(roles.EXCLUDE_RULE, completed.stderr)
+
+
+B2_CONFIG = {
+    "version": 1,
+    "budget": "small",
+    "roles": {"bug-fix": [{
+        "providerInstanceId": "claudeAgent",
+        "model": "claude-opus-5-5",
+        "options": {"effort": "xhigh"},
+    }]},
+    "exclude": [{"options": {"effort": "medium"}}],
+}
+
+
+class ExcludeFinalTargetCliTest(unittest.TestCase):
+    """B2. The exclude list is checked on the final target, after option mapping and the budget cap."""
+
+    def show(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog())
+            repo.put(repo.user, B2_CONFIG)
+            completed = repo.run(
+                "show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", "bug-fix",
+            )
+        return completed
+
+    def test_show_refuses_a_budget_capped_seat_the_exclude_list_names(self):
+        completed = self.show()
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertIn("exclude", completed.stderr)
+        self.assertIn(roles.EXCLUDE_RULE, completed.stderr)
+
+    def test_validate_lists_a_budget_capped_seat_the_exclude_list_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog())
+            repo.put(repo.user, B2_CONFIG)
+            completed = repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stderr, "")
+        self.assertIn("bug-fix: claudeAgent/claude-opus-5-5", completed.stdout)
+        self.assertIn(roles.EXCLUDE_RULE, completed.stdout)
+
+
+def b2_next_candidate_catalog():
+    """backup_catalog with claude-sonnet-5-5 declaring no effort option."""
+    catalog = backup_catalog()
+    claude = next(provider for provider in catalog["providers"] if provider["providerInstanceId"] == "claudeAgent")
+    for model in claude["models"]:
+        if model["id"] == "claude-sonnet-5-5":
+            model["options"] = []
+    return catalog
+
+
+class ExcludeBackupTargetCliTest(unittest.TestCase):
+    """B2. A refused backup candidate lets the loop try the next one."""
+
+    def test_backup_parks_when_the_final_target_the_failed_level_produces_is_refused(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            roles_file={
+                "version": 1,
+                "backups": {"bug-fix": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}]},
+                "exclude": [{"options": {"effort": "high"}}],
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "park")
+        self.assertNotIn("seat", payload)
+
+    def test_backup_tries_the_next_candidate_when_the_first_is_refused(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            catalog=b2_next_candidate_catalog(),
+            roles_file={
+                "version": 1,
+                "backups": {"bug-fix": [
+                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                    {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5"},
+                ]},
+                "exclude": [{"options": {"effort": "high"}}],
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "relaunch")
+        self.assertEqual(payload["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5"})
+
+
+MALFORMED_BACKUP_SEATS = (
+    {"providerInstanceId": ["claudeAgent"], "model": "claude-opus-5-5"},
+    {"providerInstanceId": "claudeAgent", "model": ["claude-opus-5-5"]},
+    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort"]},
+    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": ["low"]}},
+)
+
+
+class BackupSeatShapeCliTest(unittest.TestCase):
+    """B3. A malformed backups seat is refused by name, never with a traceback."""
+
+    def test_every_malformed_backups_seat_is_refused_without_a_traceback(self):
+        for command in ("validate", "show"):
+            for seat in MALFORMED_BACKUP_SEATS:
+                with self.subTest(command=command, seat=seat):
+                    with tempfile.TemporaryDirectory() as directory:
+                        repo = Repo(directory)
+                        path = repo.directory / "catalog.json"
+                        repo.put(path, fixture_catalog())
+                        repo.put(repo.user, {"version": 1, "roles": {}, "backups": {"bug-fix": [seat]}})
+                        completed = repo.run(
+                            command, "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5",
+                        )
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    self.assertIn("backups.bug-fix", completed.stderr)
+                    self.assertNotIn("Traceback", completed.stdout)
+                    self.assertNotIn("Traceback", completed.stderr)
+
+    def test_write_force_refuses_a_malformed_backups_seat_and_leaves_the_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {},
+                "backups": {"bug-fix": [{"providerInstanceId": ["claudeAgent"], "model": "claude-opus-5-5"}]},
+            })
+            before = repo.user.read_bytes()
+            completed = repo.write("--force", "--set", "bug-fix=grok/grok-4.7")
+            self.assertEqual(repo.user.read_bytes(), before)
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertIn("backups.bug-fix", completed.stderr)
+
+    def test_validate_names_a_backups_option_the_catalog_does_not_offer(self):
+        for label, options, named in (
+            ("unknown id", {"typo": "xhigh"}, "typo"),
+            ("bad select value", {"effort": "banana"}, "effort"),
+        ):
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as directory:
+                    repo = Repo(directory)
+                    path = repo.directory / "catalog.json"
+                    repo.put(path, fixture_catalog())
+                    repo.put(repo.user, {"version": 1, "roles": {}, "backups": {"bug-fix": [{
+                        "providerInstanceId": "claudeAgent",
+                        "model": "claude-opus-5-5",
+                        "options": options,
+                    }]}})
+                    completed = repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                line = next(
+                    (line for line in completed.stdout.splitlines() if line.startswith("backups.bug-fix:")), None,
+                )
+                self.assertIsNotNone(line, completed.stdout)
+                self.assertIn(named, line)
+
+    def test_backup_refuses_when_its_own_backups_entry_has_a_bad_option(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
+            roles_file={"version": 1, "backups": {"bug-fix": [{
+                "providerInstanceId": "claudeAgent",
+                "model": "claude-opus-5-5",
+                "options": {"typo": "xhigh"},
+            }]}},
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout)
+        self.assertEqual(completed.stdout, "")
+        self.assertIn("backups.bug-fix", completed.stderr)
+
+
+class ExcludeOptionCliTest(unittest.TestCase):
+    """B4. A validate-only check reports an options pair no named catalog model can accept."""
+
+    def validate(self, rule):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog())
+            repo.put(repo.user, {"version": 1, "roles": {}, "exclude": [rule]})
+            return repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+
+    def test_validate_reports_an_exclude_options_pair_the_catalog_cannot_accept(self):
+        for label, rule, named in (
+            ("unknown id", {"options": {"typo": "high"}}, "typo"),
+            ("bad select value", {"options": {"effort": "banana"}}, "effort"),
+            ("wrong type", {"model": "claude-opus-5-5", "options": {"effort": True}}, "effort"),
+        ):
+            with self.subTest(label=label):
+                completed = self.validate(rule)
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                line = next(
+                    (line for line in completed.stdout.splitlines() if "exclude entry 1" in line), None,
+                )
+                self.assertIsNotNone(line, completed.stdout)
+                self.assertIn(named, line)
+
+    def test_a_rule_whose_provider_glob_matches_no_catalog_model_is_not_checked(self):
+        completed = self.validate({"provider": "gemini*", "options": {"effort": "high"}})
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("ok", completed.stdout)
+
+
+class ExcludeNarrowingCliTest(unittest.TestCase):
+    """B6. A provider glob and a roles list narrow a rule and AND with its model and options."""
+
+    CODEX = {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}
+    GROK = {"providerInstanceId": "grok", "model": "grok-4.7"}
+
+    def show(self, roles_file, role):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog())
+            repo.put(repo.user, roles_file)
+            return repo.run("show", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5", "--role", role)
+
+    def test_a_roles_narrowed_rule_refuses_only_the_named_role(self):
+        roles_file = {
+            "version": 1,
+            "roles": {"review backups": [self.CODEX], "bug-fix": [self.CODEX]},
+            "exclude": [{"provider": "codex", "roles": ["review backups"]}],
+        }
+        panel = self.show(roles_file, "review backups")
+        worker = self.show(roles_file, "bug-fix")
+        self.assertEqual(panel.returncode, 0, panel.stderr)
+        panel_entry = json.loads(panel.stdout)["roles"]["review backups"]
+        self.assertEqual(panel_entry["seats"], [])
+        self.assertTrue(any("codex/gpt-6.1-sol" in note for note in panel_entry.get("notes", [])), panel_entry)
+        self.assertEqual(worker.returncode, 0, worker.stderr)
+        self.assertEqual(json.loads(worker.stdout)["roles"]["bug-fix"]["seats"], [self.CODEX])
+
+    def test_a_provider_glob_refuses_a_seat_in_every_role(self):
+        roles_file = {
+            "version": 1,
+            "roles": {"bug-fix": [self.CODEX], "review backups": [self.GROK, self.CODEX]},
+            "exclude": [{"provider": "codex*"}],
+        }
+        worker = self.show(roles_file, "bug-fix")
+        panel = self.show(roles_file, "review backups")
+        self.assertEqual(worker.returncode, 0, worker.stderr)
+        worker_entry = json.loads(worker.stdout)["roles"]["bug-fix"]
+        self.assertEqual(worker_entry["seats"], "inherit")
+        self.assertTrue(
+            any("skipped configured seat codex/gpt-6.1-sol" in note for note in worker_entry.get("notes", [])),
+            worker_entry,
+        )
+        self.assertEqual(panel.returncode, 0, panel.stderr)
+        panel_entry = json.loads(panel.stdout)["roles"]["review backups"]
+        self.assertEqual(panel_entry["seats"], [self.GROK])
+        self.assertTrue(any("codex/gpt-6.1-sol" in note for note in panel_entry.get("notes", [])), panel_entry)
+
+
+class BackupCandidateOptionsCliTest(unittest.TestCase):
+    """B5. A backup candidate keeps its declared options and takes the failed level only when it names none."""
+
+    def test_a_candidate_keeps_its_options_and_a_bare_candidate_takes_the_failed_level(self):
+        cases = (
+            (
+                "declared options",
+                ("--provider", "claudeAgent", "--model", "claude-opus-5-5", "--options", '{"effort": "xhigh"}'),
+                {"providerInstanceId": "grok", "model": "grok-4.7",
+                 "options": {"reasoningEffort": "low", "fastMode": False}},
+                {"providerInstanceId": "grok", "model": "grok-4.7",
+                 "options": {"reasoningEffort": "low", "fastMode": False}},
+            ),
+            (
+                "no options",
+                ("--provider", "grok", "--model", "grok-4.7", "--options", '{"reasoningEffort": "medium"}'),
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            ),
+        )
+        for label, failed_flags, candidate, expected in cases:
+            with self.subTest(label=label):
+                completed = run_backup(
+                    "--role", "bug-fix", *failed_flags,
+                    roles_file={"version": 1, "backups": {"bug-fix": [candidate]}},
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["decision"], "relaunch")
+                self.assertEqual(payload["seat"], expected)
+
+
 MIGRATION_JSON = {
     "exclude": [
         {"model": "grok*fast*"},
-        {"options": {"fastMode": True}},
+        {"model": "grok*", "options": {"fastMode": True}},
         {"model": "*claude-haiku-4-5*"},
+        {"provider": "codex", "roles": ["review backups"]},
     ],
     "backups": {
         "feature, refactoring": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
@@ -4587,18 +4935,46 @@ MIGRATION_JSON = {
 LIMIT = "You've hit your usage limit. Try again later.\n"
 MIGRATION_CATALOG = {"providers": [
     plain_provider("claudeAgent", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"),
-    plain_provider("grok", "grok-4.7", "grok-4.7-build-fast"),
+    {
+        "providerInstanceId": "grok",
+        "canRunChildTask": True,
+        "constraints": [],
+        "models": [
+            {"id": "grok-4.7", "options": [{"id": "fastMode", "type": "boolean"}]},
+            {"id": "grok-4.7-build-fast", "options": []},
+        ],
+    },
     plain_provider("codex", "gpt-6.1-sol"),
-    plain_provider("cursor", "default"),
+    {"providerInstanceId": "cursor", "driverKind": "cursor", "canRunChildTask": True, "constraints": [],
+     "models": [{"id": "default", "options": []}]},
 ]}
 
 
 class HouseRuleMigrationCliTest(unittest.TestCase):
-    """The owner's house-rule JSON reproduces the four picks and three refusals this test names."""
+    """The owner's house-rule JSON reproduces the four picks, the three refusals, and the CLI paths this test names."""
 
     def setUp(self):
         self.exclude = roles.parse_exclude(MIGRATION_JSON["exclude"], "test")
         self.backups = roles.parse_backups(MIGRATION_JSON["backups"], "test")
+
+    def show(self, *args, roles_file):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, MIGRATION_CATALOG)
+            repo.put(repo.user, roles_file)
+            return repo.run("show", "--catalog", str(path), *args)
+
+    def validate(self, roles_file):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, MIGRATION_CATALOG)
+            repo.put(repo.user, roles_file)
+            return repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+
+    def exclude_roles_file(self, roles):
+        return {"version": 1, "roles": roles, "exclude": MIGRATION_JSON["exclude"]}
 
     def backup(self, role, failed, authors=()):
         return roles.backup_seat(
@@ -4637,3 +5013,81 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
         ):
             with self.subTest(seat=seat):
                 self.assertIsNotNone(roles.exclude_reason(seat, self.exclude))
+
+    def test_show_keeps_a_grok_seat_that_declares_fast_mode_false(self):
+        seat = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}
+        completed = self.show(
+            "--parent", "claudeAgent/claude-opus-5-5", "--role", "bug-fix",
+            roles_file=self.exclude_roles_file({"bug-fix": [seat]}),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [seat])
+
+    def test_show_keeps_a_claude_seat_that_declares_fast_mode_true(self):
+        seat = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"fastMode": True}}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, self.exclude_roles_file({"bug-fix": [seat]}))
+            completed = repo.show_bug_fix()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [seat])
+
+    def test_show_drops_only_the_codex_review_backups_seat(self):
+        codex = {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}
+        grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        claude = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        completed = self.show(
+            "--parent", "claudeAgent/claude-opus-5-5", "--role", "review backups",
+            roles_file=self.exclude_roles_file({"review backups": [codex, grok, claude]}),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["review backups"]
+        self.assertNotIn(codex, entry["seats"])
+        self.assertIn(grok, entry["seats"])
+        self.assertIn(claude, entry["seats"])
+        self.assertTrue(any("codex/gpt-6.1-sol" in note for note in entry.get("notes", [])), entry)
+
+    def test_validate_lists_the_codex_review_backups_seat(self):
+        codex = {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}
+        completed = self.validate(self.exclude_roles_file({"review backups": [codex]}))
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        self.assertTrue(
+            any(
+                line.startswith("review backups: codex/gpt-6.1-sol:") and roles.EXCLUDE_RULE in line
+                for line in completed.stdout.splitlines()
+            ),
+            completed.stdout,
+        )
+
+    def test_launches_seats_still_refuses_a_seat_that_resolves_to_a_cursor_parent(self):
+        completed = self.show(
+            "--parent", "cursor/default", "--role", "skill tests", "--launches-seats",
+            roles_file=self.exclude_roles_file({"skill tests": ["inherit"]}),
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertIn("cannot launch seats", completed.stderr)
+
+    def test_show_replaces_a_haiku_4_5_parent_the_exclude_list_refuses(self):
+        completed = self.show(
+            "--parent", "claudeAgent/claude-haiku-4-5", "--role", "bug-fix",
+            roles_file=self.exclude_roles_file({}),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"})
+        self.assertTrue(
+            any(note.startswith("inherit replaced by claudeAgent/claude-opus-5-5") for note in entry.get("notes", [])),
+            entry,
+        )
+
+    def test_backup_relaunches_on_the_backups_list_not_on_codex(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "codex", "--model", "gpt-6.1-sol",
+            catalog=MIGRATION_CATALOG,
+            roles_file={"version": 1, "backups": MIGRATION_JSON["backups"], "exclude": MIGRATION_JSON["exclude"]},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "relaunch")
+        self.assertEqual(payload["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"})

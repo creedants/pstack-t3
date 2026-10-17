@@ -6,7 +6,7 @@ Read this file before you write or validate a roles file, or when `roles.py` pri
 
 `roles.py show` owns this mapping. A skill must not rebuild it.
 
-There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. The one exception is `review backups`, which stays `"unset"` with its own note. No unset role resolves to a hard-coded model.
+There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. When the exclude list refuses the inherited parent, the role resolves to the replacement [Excluded seats](#excluded-seats) gives instead, and it carries no unset note. The one exception is `review backups`, which stays `"unset"` with its own note. No unset role resolves to a hard-coded model.
 
 The roles file may carry two optional keys. `exclude` is a list of rules that refuse a seat, per [Excluded seats](#excluded-seats). `backups` maps a role name to a non-empty ordered list of seats (`{"providerInstanceId", "model", ...}`) that `roles.py backup` tries when a seat hits a usage limit, per [failures.md](failures.md#usage-limit). An `inherit` seat is refused in `backups`. `validate` checks both keys, and `roles.py write` keeps them.
 
@@ -18,11 +18,11 @@ Agreement between seats on the same model is weak evidence. It shows the prompt 
 
 ## Excluded seats
 
-The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with `model` (a glob) and/or `options` (an object of option key to value). A string entry is refused. A model glob such as `grok-*-fast` goes in `model`, and the object `{"model": "grok-4.7", "options": {"fastMode": true}}` refuses by both. A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model.
+The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with at least one of `model` (a glob), `options` (an object of option key to value), `provider` (a glob on the provider instance id), and `roles` (a list of role names the rule applies to; an absent `roles` applies to every role). A string entry is refused. A model glob such as `grok-*-fast` goes in `model`, and the object `{"model": "grok-4.7", "options": {"fastMode": true}}` refuses by both. A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. `validate` reports an `options` pair no named catalog model can accept, and it does not check a rule whose `provider` or `model` glob matches no catalog model, because a later catalog may add the model.
 
 A seat the exclude list refuses is refused in each place a seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 
-- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. When no configured seat is left, the role resolves to `"inherit"`. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
+- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. When no configured seat is left, the role resolves to `"inherit"`, settled per the next bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
 - An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 - `roles.py backup` skips a refused backup seat.
 - `validate` lists each refused seat and exits 1. `write` refuses the config, even with `--force`.

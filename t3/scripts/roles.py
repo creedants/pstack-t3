@@ -7,8 +7,9 @@ T3's orchestrator_capabilities tool returns. An unset role resolves to "inherit"
 except "review backups", which resolves to "unset".
 
 Two optional keys tune the file. "exclude" is a list of rules that refuse a seat
-by model-id glob, by declared option, or by both. "backups" maps a role to the
-seats roles.py backup tries, in order, after a usage limit.
+by model-id glob, by declared option, by the provider instance id, by the role
+name, or by a combination of them. "backups" maps a role to the seats roles.py
+backup tries, in order, after a usage limit.
 """
 
 import argparse
@@ -308,12 +309,26 @@ def model_matches(pattern, model_id):
     )
 
 
-def exclude_rule_matches(rule, seat):
+def provider_matches(pattern, provider_id):
+    """True when pattern, a case-folded glob, names the provider instance id."""
+    return (
+        isinstance(provider_id, str)
+        and bool(provider_id)
+        and fnmatch.fnmatchcase(provider_id.lower(), pattern.lower())
+    )
+
+
+def exclude_rule_matches(rule, seat, role=None):
     """True when every part of this rule holds for the seat.
 
-    A rule with no model applies to every model. An option pair holds only when
-    the seat declares that option at that value.
+    A rule with no model applies to every model. A rule with roles applies only
+    when the caller names a role in that list. An option pair holds only when the
+    seat declares that option at that value.
     """
+    if "provider" in rule and not provider_matches(rule["provider"], seat.get("providerInstanceId")):
+        return False
+    if "roles" in rule and (role is None or role not in rule["roles"]):
+        return False
     if "model" in rule and not model_matches(rule["model"], seat.get("model")):
         return False
     declared = seat.get("options") or {}
@@ -321,17 +336,25 @@ def exclude_rule_matches(rule, seat):
 
 
 def exclude_label(rule):
+    """The parts the rule has, joined with " + ", in provider, roles, model, then options order."""
+    parts = []
+    if "provider" in rule:
+        parts.append(f"provider={rule['provider']}")
+    if "roles" in rule:
+        parts.append("roles=" + ", ".join(rule["roles"]))
+    if "model" in rule:
+        parts.append(rule["model"])
     if "options" in rule:
-        return ", ".join(f"{key}={value}" for key, value in rule["options"].items())
-    return rule["model"]
+        parts.append(", ".join(f"{key}={value}" for key, value in rule["options"].items()))
+    return " + ".join(parts)
 
 
-def exclude_reason(seat, exclude=()):
+def exclude_reason(seat, exclude=(), role=None):
     """Why the exclude list refuses this seat, or None. Needs no catalog."""
     if not isinstance(seat, dict):
         return None
     for number, rule in enumerate(exclude, 1):
-        if exclude_rule_matches(rule, seat):
+        if exclude_rule_matches(rule, seat, role):
             return f"{bare_id(seat['model'])} matches exclude entry {number} ({exclude_label(rule)})"
     return None
 
@@ -339,8 +362,9 @@ def exclude_reason(seat, exclude=()):
 def parse_exclude(value, origin):
     """Validate the exclude list and return it as a tuple of rule dicts.
 
-    Every entry is an object with a non-empty "model", a non-empty "options",
-    or both. A string entry is refused.
+    Every entry is an object with a non-empty "model", a non-empty "options", a
+    non-empty "provider", a non-empty "roles" list, or a combination of them. A
+    string entry is refused.
     """
     if not isinstance(value, list):
         raise RolesError(f"{origin}: exclude must be a list")
@@ -348,11 +372,13 @@ def parse_exclude(value, origin):
     for entry in value:
         if isinstance(entry, str):
             raise RolesError(
-                f"{origin}: exclude entry {entry!r} is a string; write an object with model and/or options"
+                f"{origin}: exclude entry {entry!r} is a string; write an object with model, options, provider, or roles"
             )
         if not isinstance(entry, dict) or not entry:
-            raise RolesError(f"{origin}: exclude entries must be an object with model, options, or both")
-        unknown = sorted(set(entry) - {"model", "options"})
+            raise RolesError(
+                f"{origin}: exclude entries must be an object with model, options, provider, or roles"
+            )
+        unknown = sorted(set(entry) - {"model", "options", "provider", "roles"})
         if unknown:
             raise RolesError(f"{origin}: exclude entry has unknown key {unknown[0]!r}")
         rule = {}
@@ -361,6 +387,21 @@ def parse_exclude(value, origin):
             if not isinstance(model, str) or not model:
                 raise RolesError(f"{origin}: exclude entry model must be a non-empty string")
             rule["model"] = model
+        if "provider" in entry:
+            provider = entry["provider"]
+            if not isinstance(provider, str) or not provider:
+                raise RolesError(f"{origin}: exclude entry provider must be a non-empty string")
+            rule["provider"] = provider
+        if "roles" in entry:
+            names = entry["roles"]
+            if not isinstance(names, list) or not names:
+                raise RolesError(f"{origin}: exclude entry roles must be a non-empty list of role names")
+            for name in names:
+                if not isinstance(name, str) or not name:
+                    raise RolesError(f"{origin}: exclude entry roles must be a non-empty list of role names")
+                if name not in ROLES:
+                    raise RolesError(f"{origin}: exclude entry roles names unknown role {name!r}")
+            rule["roles"] = list(names)
         if "options" in entry:
             options = entry["options"]
             if not isinstance(options, dict) or not options:
@@ -374,7 +415,11 @@ def parse_exclude(value, origin):
 
 
 def parse_backups(value, origin):
-    """Validate the backups object and return role name -> tuple of seats."""
+    """Validate the backups object and return role name -> tuple of seats.
+
+    A seat is an object with a non-empty string "providerInstanceId" and "model".
+    Its "options", when present, is an object of bool or string values.
+    """
     if not isinstance(value, dict):
         raise RolesError(f"{origin}: backups must be an object")
     backups = {}
@@ -387,9 +432,21 @@ def parse_backups(value, origin):
         for seat in seats:
             if seat == INHERIT:
                 raise RolesError(f"{origin}: backups for {name!r} refuses inherit")
-            if not isinstance(seat, dict) or not seat.get("providerInstanceId") or not seat.get("model"):
-                raise RolesError(f"{origin}: backups for {name!r} has a seat without providerInstanceId and model")
-            parsed.append(seat)
+            if not isinstance(seat, dict):
+                raise RolesError(f"{origin}: backups.{name}: each seat must be an object")
+            for key in ("providerInstanceId", "model"):
+                if not isinstance(seat.get(key), str) or not seat[key]:
+                    raise RolesError(f"{origin}: backups.{name}: {key} must be a non-empty string")
+            if "options" in seat:
+                options = seat["options"]
+                if not isinstance(options, dict):
+                    raise RolesError(f"{origin}: backups.{name}: options must be an object")
+                for key, value in options.items():
+                    if not isinstance(value, (bool, str)):
+                        raise RolesError(
+                            f"{origin}: backups.{name}: option {key!r} must be true, false, or a string"
+                        )
+            parsed.append({**seat})
         backups[name] = tuple(parsed)
     return backups
 
@@ -770,12 +827,14 @@ def apply_budget(seat, model, budget):
     return apply_level(seat, model, cap)
 
 
-def _first_pickable(provider, exclude=()):
+def _first_pickable(provider, exclude=(), role=None):
     """The provider's first model the exclude list allows, or None."""
     return next(
         (
             model for model in models_of(provider)
-            if exclude_reason({"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, exclude) is None
+            if exclude_reason(
+                {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, exclude, role
+            ) is None
         ),
         None,
     )
@@ -788,14 +847,44 @@ def default_seats(name):
     return DefaultSelection(INHERIT, (UNSET_ROLE_NOTE,))
 
 
+def inherit_replacement(catalog, budget, name, exclude=()):
+    """The seat that replaces an inherited parent the exclude list refuses, or None when it does not.
+
+    It returns None when there is no parent, or the parent is not refused.
+    """
+    parent = inherit_parent(catalog)
+    if parent is None:
+        return None
+    provider = providers_by_id(catalog).get(parent.provider)
+    parent_seat = {"providerInstanceId": parent.provider, "model": parent.model}
+    reason = exclude_reason(parent_seat, exclude, name)
+    if reason is None:
+        return None
+    if provider is None or not provider.get("canRunChildTask"):
+        detail = "; ".join((provider or {}).get("constraints") or []) or "cannot run child tasks"
+        raise RolesError(
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
+            f"{parent.provider} is not runnable ({detail})"
+        )
+    model = _first_pickable(provider, exclude, name) if runnable(provider) else None
+    if model is None:
+        raise RolesError(
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
+            f"{parent.provider} has no model the exclude list allows"
+        )
+    seat = finish_seat({"providerInstanceId": parent.provider, "model": model["id"]}, model, budget, exclude, name)
+    return seat, [f"inherit replaced by {parent.provider}/{model['id']}: {reason}, and {EXCLUDE_RULE}"]
+
+
 def _resolve_inherit(catalog, budget, name, exclude=()):
     """Settle an inherit seat and return resolve_seat's (seat, notes) shape.
 
     A parent the exclude list refuses becomes the same provider's first allowed
     model, or the role is refused when that provider cannot run children or has
-    no allowed model. A parent whose provider carries RUNTIME_MODE_GAP is refused.
-    A budget other than "default" makes inherit explicit on the parent's own model
-    when that model declares an effort option and its provider can run children.
+    no allowed model, per inherit_replacement. A parent whose provider carries
+    RUNTIME_MODE_GAP is refused. A budget other than "default" makes inherit
+    explicit on the parent's own model when that model declares an effort option
+    and its provider can run children.
     """
     parent = inherit_parent(catalog)
     if parent is None:
@@ -807,30 +896,37 @@ def _resolve_inherit(catalog, budget, name, exclude=()):
             f"role {name!r} cannot inherit {parent.provider}/{parent.model}: "
             f"{parent.provider} is not runnable ({gap})"
         )
+    replacement = inherit_replacement(catalog, budget, name, exclude)
+    if replacement is not None:
+        return replacement
     parent_seat = {"providerInstanceId": parent.provider, "model": parent.model}
-    reason = exclude_reason(parent_seat, exclude)
-    if reason is not None:
-        if provider is None or not provider.get("canRunChildTask"):
-            detail = "; ".join((provider or {}).get("constraints") or []) or "cannot run child tasks"
-            raise RolesError(
-                f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
-                f"{parent.provider} is not runnable ({detail})"
-            )
-        model = _first_pickable(provider, exclude) if runnable(provider) else None
-        if model is None:
-            raise RolesError(
-                f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
-                f"{parent.provider} has no model the exclude list allows"
-            )
-        seat = finish_seat({"providerInstanceId": parent.provider, "model": model["id"]}, model, budget, exclude)
-        return seat, [f"inherit replaced by {parent.provider}/{model['id']}: {reason}, and {EXCLUDE_RULE}"]
     model = find_model(provider, parent.model) if provider else None
     if model is None:
         return INHERIT, []
     if BUDGETS[budget] is not None and effort_option(model) is not None and runnable(provider):
-        seat = finish_seat(parent_seat, model, budget, exclude)
+        seat = finish_seat(parent_seat, model, budget, exclude, name)
         return seat, [{"info": f"inherit made explicit as {parent.provider}/{parent.model} so the {budget} budget applies"}]
     return INHERIT, []
+
+
+def settle_options(seat, model):
+    """(seat, notes, problems) after dropping options the catalog does not offer."""
+    notes, problems = [], []
+    known = {option["id"] for option in options_of(model)}
+    dropped = sorted(set(seat.get("options") or {}) - known)
+    if dropped:
+        note = f"dropped unknown options {', '.join(dropped)}"
+        notes.append(note)
+        problems.append(note)
+    invalid = check_option_values(seat, model)
+    problems.extend(invalid)
+    notes.extend(f"dropped {problem}" for problem in invalid)
+    bad = {problem.split("=", 1)[0].removeprefix("option ") for problem in invalid}
+    options = {key: value for key, value in (seat.get("options") or {}).items() if key in known and key not in bad}
+    seat = {key: value for key, value in seat.items() if key != "options"}
+    if options:
+        seat["options"] = options
+    return seat, notes, problems
 
 
 def resolve_seat(seat, catalog, budget, name, exclude=()):
@@ -847,7 +943,7 @@ def resolve_seat(seat, catalog, budget, name, exclude=()):
     notes, problems = [], []
     model = find_model(provider, seat["model"])
     if model is None:
-        model = _first_pickable(provider, exclude)
+        model = _first_pickable(provider, exclude, name)
         if model is None:
             raise RolesError(
                 f"{provider['providerInstanceId']} has no model the exclude list allows for {name!r}; {EXCLUDE_RULE}"
@@ -856,30 +952,20 @@ def resolve_seat(seat, catalog, budget, name, exclude=()):
         notes.append(note)
         problems.append(note)
         seat = {**seat, "providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
-    known = {option["id"] for option in options_of(model)}
-    dropped = sorted(set(seat.get("options") or {}) - known)
-    if dropped:
-        note = f"dropped unknown options {', '.join(dropped)}"
-        notes.append(note)
-        problems.append(note)
-    invalid = check_option_values(seat, model)
-    problems.extend(invalid)
-    notes.extend(f"dropped {problem}" for problem in invalid)
-    bad = {problem.split("=", 1)[0].removeprefix("option ") for problem in invalid}
-    options = {key: value for key, value in (seat.get("options") or {}).items() if key in known and key not in bad}
-    seat = {key: value for key, value in seat.items() if key != "options"}
-    if options:
-        seat["options"] = options
-    seat = finish_seat(seat, model, budget, exclude)
+    seat, option_notes, option_problems = settle_options(seat, model)
+    notes.extend(option_notes)
+    problems.extend(option_problems)
+    seat = finish_seat(seat, model, budget, exclude, name)
     return seat, notes, problems
 
 
-def finish_seat(seat, model, budget, exclude=()):
-    """Apply the budget to an explicit seat. Raise when the exclude list passed here refuses the seat."""
-    reason = exclude_reason(seat, exclude)
+def finish_seat(seat, model, budget, exclude=(), role=None):
+    """Apply the budget to an explicit seat, then raise when the exclude list refuses the result."""
+    seat = apply_budget(seat, model, budget)
+    reason = exclude_reason(seat, exclude, role)
     if reason is not None:
         raise RolesError(f"{seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}")
-    return apply_budget(seat, model, budget)
+    return seat
 
 
 def _seats_include_inherit(seats):
@@ -892,7 +978,7 @@ def settle_inherit_catalog(name, seats, catalog, parent, exclude=()):
     """When inherit needs a catalog to settle a refused parent, report catalog-required."""
     if catalog is None and parent is not None and _seats_include_inherit(seats):
         seat = {"providerInstanceId": parent.provider, "model": parent.model}
-        reason = exclude_reason(seat, exclude)
+        reason = exclude_reason(seat, exclude, name)
         if reason is not None:
             return CATALOG_REQUIRED, (
                 f"the parent {parent.provider}/{parent.model} {reason}, so inherit needs the catalog: "
@@ -902,7 +988,17 @@ def settle_inherit_catalog(name, seats, catalog, parent, exclude=()):
 
 
 def _store_settled(entry, name, catalog, parent, budget, exclude=()):
-    seats, note = settle_inherit_catalog(name, entry["seats"], catalog, parent, exclude)
+    """Settle the entry's seats. An inherit seat whose parent the exclude list refuses becomes a real seat."""
+    seats = entry["seats"]
+    if catalog is not None and _seats_include_inherit(seats):
+        replacement = inherit_replacement(catalog, budget, name, exclude)
+        if replacement is not None:
+            entry["seats"], notes = replacement
+            entry["notes"] = [*entry.get("notes", []), *notes]
+            if entry.get("note") == UNSET_ROLE_NOTE:
+                del entry["note"]
+            return
+    seats, note = settle_inherit_catalog(name, seats, catalog, parent, exclude)
     entry["seats"] = seats
     if note:
         entry["note"] = note
@@ -964,7 +1060,7 @@ def configured_seats(config, name, exclude=()):
         return None, []
     kept, notes = [], []
     for seat in seats:
-        reason = exclude_reason(seat, exclude)
+        reason = exclude_reason(seat, exclude, name)
         if reason is None:
             kept.append(seat)
         else:
@@ -977,7 +1073,7 @@ def excluded_problems(roles, exclude=()):
         f"{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}"
         for name, seats in roles.items()
         for seat in seats
-        if isinstance(seat, dict) and (reason := exclude_reason(seat, exclude))
+        if isinstance(seat, dict) and (reason := exclude_reason(seat, exclude, name))
     ]
 
 
@@ -986,8 +1082,25 @@ def excluded_backup_problems(backups, exclude=()):
         f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}"
         for name, seats in backups.items()
         for seat in seats
-        if (reason := exclude_reason(seat, exclude))
+        if (reason := exclude_reason(seat, exclude, name))
     ]
+
+
+def backup_option_problems(name, seat, catalog):
+    """Problems for one backups seat, each naming backups.<name>."""
+    where = f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}"
+    provider = providers_by_id(catalog).get(seat["providerInstanceId"]) if catalog else None
+    model = find_model(provider, seat["model"]) if runnable(provider) else None
+    if model is None:
+        return [f"{where}: not runnable or not in the catalog"]
+    known = {option["id"] for option in options_of(model)}
+    problems = [
+        f"{where}: option {key} is not in the catalog"
+        for key in (seat.get("options") or {})
+        if key not in known
+    ]
+    problems.extend(f"{where}: {problem}" for problem in check_option_values(seat, model))
+    return problems
 
 
 def backup_problems(backups, catalog, exclude=()):
@@ -996,14 +1109,41 @@ def backup_problems(backups, catalog, exclude=()):
     for name, seats in backups.items():
         for seat in seats:
             where = f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}"
-            reason = exclude_reason(seat, exclude)
+            reason = exclude_reason(seat, exclude, name)
             if reason is not None:
                 problems.append(f"{where}: {reason}, and {EXCLUDE_RULE}")
                 continue
-            provider = providers_by_id(catalog).get(seat["providerInstanceId"]) if catalog else None
-            if not runnable(provider) or find_model(provider, seat["model"]) is None:
-                problems.append(f"{where}: not runnable or not in the catalog")
+            problems.extend(backup_option_problems(name, seat, catalog))
     return problems
+
+
+def exclude_option_problems(number, rule, catalog):
+    """Problems for one exclude rule's options, against the catalog models the rule names.
+
+    A rule whose provider or model glob matches no catalog model is not checked,
+    because a later catalog may add the model.
+    """
+    if catalog is None or "options" not in rule:
+        return []
+    candidates = [
+        model
+        for provider in catalog.get("providers") or []
+        for model in models_of(provider)
+        if ("provider" not in rule or provider_matches(rule["provider"], provider.get("providerInstanceId")))
+        and ("model" not in rule or model_matches(rule["model"], model["id"]))
+    ]
+    if not candidates:
+        return []
+    problems = {
+        f"exclude entry {number} ({exclude_label(rule)}): option {key}={value!r} matches no catalog option"
+        for key, value in rule["options"].items()
+        if not any(
+            any(option["id"] == key for option in options_of(model))
+            and not check_option_values({"options": {key: value}}, model)
+            for model in candidates
+        )
+    }
+    return sorted(problems)
 
 
 def resolve(config, catalog=None, names=None, parent=None, launches_seats=False):
@@ -1117,12 +1257,22 @@ def _catalog_pair(catalog, provider_id, model_id, blocked=frozenset()):
     return provider, model
 
 
-def _emit_backup(role, label, provider, model, source_options, budget, resumed):
+def _emit_backup(role, label, provider, model, declared_options, failed_options, budget, resumed, exclude=()):
+    """Launch the candidate seat.
+
+    declared_options are the candidate's own. They are settled through the
+    catalog. When they name no effort, the failed seat's level applies.
+    """
     seat = {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
-    level = seat_level(source_options)
+    if declared_options:
+        seat["options"] = dict(declared_options)
+        seat, _option_notes, _option_problems = settle_options(seat, model)
+    level = seat_level(seat.get("options"))
+    if level is None:
+        level = seat_level(failed_options)
     if level is not None:
         seat = apply_level(seat, model, level)
-    seat = finish_seat(seat, model, budget)
+    seat = finish_seat(seat, model, budget, exclude, role)
     applied = seat_level(seat.get("options"))
     where = f"{seat['providerInstanceId']}/{seat['model']}"
     at = f" at {applied}" if applied else ""
@@ -1174,7 +1324,7 @@ def panel_verdicts(configured, catalog, budget, blocked=frozenset(), authors=(),
         provider_id, model_id = seat["providerInstanceId"], seat["model"]
         where = f"{provider_id}/{model_id}"
         seat_family = family(model_id)
-        reason = exclude_reason(seat, exclude)
+        reason = exclude_reason(seat, exclude, PANEL_BACKUP_ROLE)
         if reason is not None:
             pass
         elif provider_id in blocked:
@@ -1190,7 +1340,15 @@ def panel_verdicts(configured, catalog, budget, blocked=frozenset(), authors=(),
         if reason is not None:
             verdicts.append(PanelVerdict(where, reason=reason))
             continue
-        value, seat_notes, seat_problems = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE, exclude)
+        try:
+            value, seat_notes, seat_problems = resolve_seat(seat, catalog, budget, PANEL_BACKUP_ROLE, exclude)
+        except RolesError as error:
+            detail = str(error)
+            prefix = where + ": "
+            if detail.startswith(prefix):
+                detail = detail[len(prefix):]
+            verdicts.append(PanelVerdict(where, reason=detail))
+            continue
         seated.add(seat_family)
         verdicts.append(PanelVerdict(where, value, None, tuple(seat_notes), tuple(seat_problems)))
     return verdicts
@@ -1245,7 +1403,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
             return Backup("park", report)
         original = None if reviews_itself else _catalog_pair(catalog, provider_id, model_id, out)
         if original is not None:
-            return _emit_backup(role, label, *original, failed.get("options"), budget, True)
+            return _emit_backup(role, label, *original, {}, failed.get("options"), budget, True, ())
     elif not usage_limited(text):
         report = f"{role}: {label} failed without a usage limit; respawn per Failure handling"
         return Backup("not-usage-limit", report)
@@ -1253,11 +1411,17 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
     for candidate in backups_for(role, backups):
         if family(candidate["model"]) in skip:
             continue
-        if exclude_reason(candidate, exclude) is not None:
+        if exclude_reason(candidate, exclude, role) is not None:
             continue
         chosen = _catalog_pair(catalog, candidate["providerInstanceId"], candidate["model"], blocked)
-        if chosen is not None:
-            return _emit_backup(role, label, *chosen, failed.get("options"), budget, resume)
+        if chosen is None:
+            continue
+        try:
+            return _emit_backup(
+                role, label, *chosen, candidate.get("options") or {}, failed.get("options"), budget, resume, exclude
+            )
+        except RolesError:
+            continue
     if role == PANEL_BACKUP_ROLE:
         report = f"{role}: {label} hit its usage limit; a review backups seat has no backup, so it counts as no pass"
         return Backup("park", report)
@@ -1312,12 +1476,17 @@ def command_backup(args):
     if catalog is None:
         raise RolesError("backup needs a catalog. Pass --catalog, or save one with setup-pstack")
     catalog = for_runtime_mode(catalog, mode)
+    backups = config.get("backups", {})
+    if args.role in backups:
+        problems = backup_problems({args.role: backups[args.role]}, catalog, exclude)
+        if problems:
+            raise RolesError("the roles file's backups key has a problem:\n" + "\n".join(problems))
     options = parse_applied_options(args.options) if args.options else {}
     failed = {"provider": args.provider, "model": args.model, "options": options}
     review_backups = configured_seats(config, PANEL_BACKUP_ROLE, exclude) if PANEL_BACKUP_ROLE in config["roles"] else None
     result = backup_seat(
         args.role, failed, text, catalog, budget, args.out or [], authors, args.resume, review_backups,
-        config.get("backups", {}), exclude,
+        backups, exclude,
         panel_budget=panel_budget,
     )
     kept, _skipped = configured_seats(config, args.role, exclude)
@@ -1392,9 +1561,11 @@ def validate(config, catalog, exclude=(), backups=None):
     backups = backups or {}
     problems = excluded_problems(config["roles"], exclude)
     problems.extend(backup_problems(backups, catalog, exclude))
+    for number, rule in enumerate(exclude, 1):
+        problems.extend(exclude_option_problems(number, rule, catalog))
     skill_seats = None
     for name, seats in config["roles"].items():
-        seats = [seat for seat in seats if exclude_reason(seat, exclude) is None]
+        seats = [seat for seat in seats if exclude_reason(seat, exclude, name) is None]
         if name == PANEL_BACKUP_ROLE:
             verdicts = panel_verdicts(seats, catalog, config["budget"], exclude=exclude)
             problems.extend(f"{name}: {problem}" for verdict in verdicts for problem in verdict.problems)
@@ -1404,7 +1575,11 @@ def validate(config, catalog, exclude=(), backups=None):
             continue
         resolved = []
         for seat in seats:
-            value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude)
+            try:
+                value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude)
+            except RolesError as error:
+                problems.append(f"{name}: {error}")
+                continue
             resolved.append(value)
             problems.extend(f"{name}: {problem}" for problem in seat_problems)
         if name == "skill tests":
@@ -1467,7 +1642,7 @@ def command_validate(args):
     catalog = load_catalog(args.catalog)
     _parent, catalog = catalog_for_check(args, catalog, args.catalog)
     for name, seats in config["roles"].items():
-        kept = [seat for seat in seats if exclude_reason(seat, exclude) is None]
+        kept = [seat for seat in seats if exclude_reason(seat, exclude, name) is None]
         for line in opencode_allow_lines({name: kept}, allow_for(config, name), catalog):
             print(line)
     for name, seats in backups.items():

@@ -248,7 +248,7 @@ The runtime requires one executing fresh-child test per changed spawn or coordin
 
 - A leaf test runs on the `skill tests` seat and forbids spawning. It is allowed only when the changed behavior happens without delegation.
 - An executing test runs on the `skill tests` seat. It is required once for each changed spawn or coordination behavior. One test covers one behavior.
-- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which resolves to `inherit` when the user set no seat for it. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`. A seat that resolves to Cursor is refused with `cannot launch seats`.
+- The second-provider test is waived in light mode. The executing test runs on the `skill tests` seat, which resolves to `inherit` when the user set no seat for it. A test whose child launches seats resolves that seat with `roles.py show --role "skill tests" --launches-seats`. A configured seat that resolves to the cursor driver is refused with `cannot launch seats`. An unset `skill tests` keeps a note and is not refused.
 
 ## Decision
 
