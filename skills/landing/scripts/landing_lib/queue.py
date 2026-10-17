@@ -348,7 +348,7 @@ class Integration:
         commands = ([contract["setup"]] if contract.get("setup") else []) + contract["checks"]
         with seam.slot("landing", repo=self.path, command=" ".join(commands)):
             for command in commands:
-                code, output = seam.supervised(command, self.path, contract.get("timeout") or 1800)
+                code, output = seam.run_build(command, self.path, contract.get("timeout") or 1800)
                 if code != 0:
                     tail = " / ".join(output.strip().splitlines()[-3:])
                     reason = "timed out" if code is None else f"exited {code}"

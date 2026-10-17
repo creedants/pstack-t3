@@ -1268,6 +1268,3 @@ def run_build(command, cwd, timeout):
     return result
 
 
-def supervised(command, cwd, timeout):
-    """Run a shell command in its own process group and attempt SIGKILL at the timeout."""
-    return run_build(command, cwd, timeout)
