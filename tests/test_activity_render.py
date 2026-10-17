@@ -160,7 +160,7 @@ def headless_flags(macos):
 def _kept_text(line):
     """The stripped diagnostic of one stderr line, or an empty string when the line holds only the display warning sentence.
 
-    The sentence is the warning phrase with one leading bracket prefix and one trailing CVReturn clause removed. Any other text on the line is kept.
+    The sentence is the warning phrase with its trailing CVReturn clause removed, and with a leading bracket prefix removed only when the prefix is the sole text before the phrase. Any other text on the line is kept.
     """
     text = line.strip()
     if not text:
