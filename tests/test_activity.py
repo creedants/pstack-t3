@@ -2300,8 +2300,8 @@ class FrameTest(OutputCase):
             fixture.unit(f"D{number}", "in-progress", "x" * 340, thread=worker(number + 1))
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
         fitted, document = MOD["fit"](page_of(fixture), 16135, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16136 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
-        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15831))
+        # The reclaimed cut of twenty groups renders at 16169 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15864))
 
 
 class TextTest(OutputCase):
@@ -3746,16 +3746,16 @@ class GoalStripTest(OutputCase):
 
     def test_a_kind_outside_the_five_shows_no_tag(self):
         fixture = one_running(self.fixture).write()
-        widen_items(fixture, {"D7": ("nope", ""), "D6": ("feature", "")})
+        widen_items(fixture, {"D7": ("feature", ""), "D6": ("nope", "")})
         html, text = self.document(), self.out("--text")
         self.assertNotIn("nope", html)
         self.assertNotIn("nope", text)
         data = data_of(html)
-        self.assertEqual([(item[0], item[6]) for item in data["I"]], [("D6", "feature"), ("D7", "")])
+        self.assertEqual([(item[0], item[6]) for item in data["I"]], [("D6", ""), ("D7", "feature")])
         item_lines = [line for line in text.splitlines() if "   D6   " in line or "   D7   " in line]
         self.assertEqual(item_lines, [
-            "    D7   working   Agent activity page   1 agent, 63m at work   " + PR7,
-            "    feature   D6   landing   Queue fix   no activity in this window   " + PR6,
+            "    feature   D7   working   Agent activity page   1 agent, 63m at work   " + PR7,
+            "    D6   landing   Queue fix   no activity in this window   " + PR6,
         ])
         drawn = painted(self, html)["texts"]
         self.assertEqual(drawn.count("feature"), 1)
