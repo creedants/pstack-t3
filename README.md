@@ -25,11 +25,11 @@
 
 ## What it is
 
-pstack is Lauren Tan's (poteto) set of skills, playbooks, and principles for careful agent engineering, written for Cursor. pstack-t3 brings that set to T3 Code so the same workflows run on any provider T3 Code drives. It ships upstream files unchanged where it can and swaps each Cursor mechanism for its T3 Code equivalent. It adds a standing project coordinator for each project.
+pstack is Lauren Tan's (poteto) set of skills, playbooks, and principles for careful agent engineering, written for Cursor. pstack-t3 brings that set to T3 Code so the same workflows run on any provider T3 Code drives. It ships upstream files unchanged where it can and swaps each Cursor mechanism for its T3 Code equivalent. It adds a standing project coordinator.
 
 ### Staying current
 
-pstack-t3 keeps a byte-identical copy of the pinned upstream release and re-ports each changed file when upstream moves. Its runtime and setup text track T3 Code nightly releases. Setup needs T3 Code 0.0.46-nightly.20261005.2702 or later. See [How it works](docs/how-it-works.md) for the layers.
+The maintainers keep a byte-identical copy of the pinned upstream release and re-port each changed file when upstream moves. Its runtime and setup text follow T3 Code nightly releases. Setup needs T3 Code 0.0.46-nightly.20261005.2702 or later. See [How it works](docs/how-it-works.md) for the layers.
 
 ## What it does
 
