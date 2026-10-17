@@ -25,9 +25,11 @@
 
 ## What it is
 
-pstack is Lauren Tan's set of skills, playbooks, and principles for careful agent engineering. Lauren Tan wrote that set for Cursor. pstack-t3 ships an upstream file unchanged when the file needs no T3 change. It swaps each Cursor mechanism for its T3 Code equivalent. The same skills then run on any provider T3 drives. pstack-t3 adds a standing project coordinator.
+pstack is Lauren Tan's (poteto) set of skills, playbooks, and principles for careful agent engineering, written for Cursor. pstack-t3 brings that set to T3 Code so the same workflows run on any provider T3 Code drives. It ships upstream files unchanged where it can and swaps each Cursor mechanism for its T3 Code equivalent. It adds a standing project coordinator for each project.
 
-Run `python3 scripts/sync_upstream.py --check` to see what upstream changed. Nothing runs that check on a schedule. The check reads the commit pinned in `upstream.json`. `vendor/pstack` stays byte-identical to that commit. `t3/overrides` replaces each vendored file the port changes. pstack-t3 requires T3 Code nightly `0.0.46-nightly.20261005.2702` or later. It does not update T3 Code.
+### Staying current
+
+pstack-t3 keeps a byte-identical copy of the pinned upstream release and re-ports each changed file when upstream moves. Its runtime and setup text track T3 Code nightly releases. Setup needs T3 Code 0.0.46-nightly.20261005.2702 or later. See [How it works](docs/how-it-works.md) for the layers.
 
 ## What it does
 
