@@ -1,0 +1,3 @@
+- kind polish
+- activity.py: the live wrapper keys each group fold by the printed id plus its occurrence among that id, so two groups that print one id fold independently and attempt summaries keep the shared printed id key (T852).
+- activity.py: framed() adds the unused worst case note room back and retries rejected rows in tier order, and keeps the taller result only when its height stays at most the limit (T854).

@@ -1987,6 +1987,7 @@ def framed(page, limit):
     The first pass tries every row with a Running now or Queued line, the second every failed row, the third every other row.
     Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
     A group with no row left is cut with its heading. counted() counts the agents and items left out.
+    Unused worst case note room is reclaimed and rejected rows are retried in the same order. The taller result is kept only when its height stays at most limit.
     """
     if height(page) <= limit:
         return page
@@ -2028,13 +2029,40 @@ def framed(page, limit):
             headed.add(at)
             if opened:
                 lists.add(row.status)
-    groups, cuts = [], []
-    for at, group in enumerate(page.groups):
-        rows = tuple(kept_rows(group.rows, [(at, index) in kept for index in range(len(group.rows))]))
-        cuts.append((group, rows or None))
-        if rows:
-            groups.append(replace(group, rows=rows))
-    return cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
+
+    def build(kept):
+        groups, cuts = [], []
+        for at, group in enumerate(page.groups):
+            rows = tuple(kept_rows(group.rows, [(at, index) in kept for index in range(len(group.rows))]))
+            cuts.append((group, rows or None))
+            if rows:
+                groups.append(replace(group, rows=rows))
+        return groups, cuts
+
+    groups, cuts = build(kept)
+    first_cut = cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
+    # Reclaim unused worst case note room. Keeping more rows only shrinks the notes, so the extra room stays valid.
+    actual = counted(page.hidden, cuts, len(page.items) - len(items))
+    reclaimed = fixed_height(page, notes(replace(page, hidden=worst), items_of(page))) - fixed_height(page, notes(replace(page, hidden=actual), items_of(page)))
+    if reclaimed > 0:
+        left += reclaimed
+        for _, _, at, index in sorted(pieces):
+            if (at, index) in kept:
+                continue
+            row = page.groups[at].rows[index]
+            opened = row.open_seconds is not None
+            cost = ROW_PX + (at not in headed) * GROUP_PX + opened * (OPEN_PX + (row.status not in lists) * HEADING_PX)
+            if cost <= left:
+                left -= cost
+                kept.add((at, index))
+                headed.add(at)
+                if opened:
+                    lists.add(row.status)
+        groups, cuts = build(kept)
+        final = cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
+        if height(final) <= limit:
+            return final
+    return first_cut
 
 
 def line_count(page):
@@ -2717,7 +2745,7 @@ LIVE_FOLD = squeezed("""
     const openState = {};
     const attemptState = window.attemptState || (window.attemptState = {});
     let appliers = [];
-    const setAll = (open) => { for (const a of appliers) { openState[a.id] = open; a.apply(); } };
+    const setAll = (open) => { for (const a of appliers) { openState[a.fold] = open; a.apply(); } };
     function fold() {
       const lanes = document.querySelector('#o .tl');
       if (!lanes) return;
@@ -2728,10 +2756,13 @@ LIVE_FOLD = squeezed("""
         if (n.classList.contains('grp')) { g = {head: n, rows: []}; groups.push(g); }
         else if (g && n.classList.contains('row')) g.rows.push(n);
       }
+      const seen = {};
       for (const {head, rows} of groups) {
         const id = (head.querySelector('.one') || {}).textContent || head.textContent;
         const block = head.querySelector('.ldg details');
         const key = (block && block.getAttribute('data-item')) || id;
+        const nth = (seen[id] = (seen[id] || 0) + 1);
+        const fold = id + '\\0' + nth;
         const state = (head.querySelector(':scope>b.chip') || {}).textContent || '';
         const byDefault = !/merged|dropped|done/.test(state);
         const caret = document.createElement('span');
@@ -2739,7 +2770,7 @@ LIVE_FOLD = squeezed("""
         head.prepend(caret);
         head.style.cursor = 'pointer';
         const apply = () => {
-          const open = id in openState ? openState[id] : byDefault;
+          const open = fold in openState ? openState[fold] : byDefault;
           caret.textContent = open ? '\u25BE' : '\u25B8';
           const attemptOpen = !!attemptState[key];
           if (block) block.open = attemptOpen;
@@ -2747,9 +2778,9 @@ LIVE_FOLD = squeezed("""
           const l = head.querySelector('.ldg');
           if (l) l.style.display = open ? '' : 'none';
         };
-        head.onclick = (e) => { if (e.target.closest('a,summary,details')) return; openState[id] = !(id in openState ? openState[id] : byDefault); apply(); };
+        head.onclick = (e) => { if (e.target.closest('a,summary,details')) return; openState[fold] = !(fold in openState ? openState[fold] : byDefault); apply(); };
         apply();
-        appliers.push({id, key, apply});
+        appliers.push({fold, key, apply});
       }
       window.refreshAttempt = (itemId) => { for (const a of appliers) { if (a.key === itemId) a.apply(); } };
     }
