@@ -1,0 +1,2 @@
+- kind fix
+- `brigade.py open --help` for `--context-cap` now states the creation rule the code writes: a missing flag adopts the file's own value, or writes 300000 when it holds none; an existing store is left alone
