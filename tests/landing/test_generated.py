@@ -1466,3 +1466,40 @@ class GeneratedTest(LandingTest):
         self.assertIn(f"{sha[:12]} changes only generated paths skills/out.txt", err)
         self.assertNotIn("scripts/build.py", err)
         self.assertIn("the contract has no rebuild command", err)
+
+    def test_wildcard_generated_root_does_not_capture_source_directory(self):
+        """A generated root named out* captures its own directory, not the source directory out1."""
+        wildcard_build = (
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            "root = Path(__file__).resolve().parents[1]\n"
+            "out = root / 'out*'\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            "(out / 'gen.txt').write_text('built\\n')\n"
+        )
+        (self.work / "scripts").mkdir(exist_ok=True)
+        (self.work / "scripts/build.py").write_text(wildcard_build)
+        (self.work / "out1").mkdir(exist_ok=True)
+        (self.work / "out1/keep.txt").write_text("keep\n")
+        self._run_build(self.work)
+        self.commit("wildcard baseline")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init(generated="out*", rebuild=REBUILD)
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "out1/payload.txt").write_text("payload\n")
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "out1/payload.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        out = self.land("land")
+        self.assertIn("landed E1", out)
+        self.assertNotIn("bounced", out)
+        origin = self.base / "origin.git"
+        self.assertEqual(sh("git", "show", "main:out1/keep.txt", cwd=origin), "keep")
+        self.assertEqual(sh("git", "show", "main:out1/payload.txt", cwd=origin), "payload")
+        with land.Store.for_repo(self.work) as store:
+            snapshot = land.Integration(store)._generated_snapshot()
+        self.assertTrue([name for name in snapshot if name.startswith("out*")])
+        self.assertEqual([name for name in snapshot if name.startswith("out1")], [])

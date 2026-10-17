@@ -124,7 +124,7 @@ class Integration:
         generated = self._generated()
         if not generated:
             return {}
-        result = self.git("ls-files", "-s", "-z", "--", *generated, check=False, exact=True)
+        result = self.git("ls-files", "-s", "-z", "--", *[f":(literal){root}" for root in generated], check=False, exact=True)
         if result.returncode != 0:
             return None
         entries = {}
@@ -158,7 +158,7 @@ class Integration:
         self.git("reset", "--hard", before, check=False)
         generated = self._generated()
         if generated and not self._roots_escape():
-            self.git("clean", "-ffdx", "--", *generated, check=False)
+            self.git("clean", "-ffdx", "--", *[f":(literal){root}" for root in generated], check=False)
         return reason
 
     def _clear_generated(self):
@@ -168,10 +168,10 @@ class Integration:
         escaped = self._roots_escape()
         if escaped:
             return escaped
-        cleared = self.git("rm", "-r", "-f", "--ignore-unmatch", "--", *generated, check=False)
+        cleared = self.git("rm", "-r", "-f", "--ignore-unmatch", "--", *[f":(literal){root}" for root in generated], check=False)
         if cleared.returncode != 0:
             return f"rebuild failed. `git rm -r` for generated paths exited {cleared.returncode}. {_tail(cleared.stderr + cleared.stdout)}"
-        cleaned = self.git("clean", "-ffdx", "--", *generated, check=False)
+        cleaned = self.git("clean", "-ffdx", "--", *[f":(literal){root}" for root in generated], check=False)
         if cleaned.returncode != 0:
             return f"rebuild failed. `git clean -ffdx` for generated paths exited {cleaned.returncode}. {_tail(cleaned.stderr + cleaned.stdout)}"
         for path in generated:
@@ -246,7 +246,7 @@ class Integration:
                 sources = sorted(seam.source_paths(dirty, generated))
                 if sources:
                     return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-                staged = self.git("add", "--all", "--", *generated, check=False)
+                staged = self.git("add", "--all", "--", *[f":(literal){root}" for root in generated], check=False)
                 if staged.returncode != 0:
                     return self._give_up(before, f"rebuild failed. `git add` exited {staged.returncode}. {_tail(staged.stderr + staged.stdout)}")
                 snapshot = self._generated_snapshot()
@@ -263,7 +263,7 @@ class Integration:
                 sources = sorted(seam.source_paths(dirty, generated))
                 if sources:
                     return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-                restaged = self.git("add", "--all", "--", *generated, check=False)
+                restaged = self.git("add", "--all", "--", *[f":(literal){root}" for root in generated], check=False)
                 if restaged.returncode != 0:
                     return self._give_up(before, f"rebuild failed. `git add` exited {restaged.returncode}. {_tail(restaged.stderr + restaged.stdout)}")
                 again = self._generated_snapshot()
@@ -271,7 +271,7 @@ class Integration:
                     return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
                 if again != snapshot:
                     return self._give_up(before, "build did not reproduce generated entries")
-            added = self.git("add", "--all", "--", *generated, check=False)
+            added = self.git("add", "--all", "--", *[f":(literal){root}" for root in generated], check=False)
             if added.returncode != 0:
                 return self._give_up(before, f"rebuild failed. `git add` exited {added.returncode}. {_tail(added.stderr + added.stdout)}")
             if self.git("diff", "--cached", "--quiet", check=False).returncode != 0:
