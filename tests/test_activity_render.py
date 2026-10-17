@@ -38,6 +38,10 @@ BUNDLED = (
 )
 # The platform axis of headless_flags.
 MACOS = sys.platform == "darwin"
+# Chrome on the macOS runner writes this display warning to stderr. The failure text drops these lines.
+DISPLAY_WARNING = "CVDisplayLinkCreateWithCGDisplay failed"
+# How many stderr lines a failure keeps, taken from the end.
+STDERR_TAIL = 5
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
 SOCKET_LIMIT = 107
@@ -143,16 +147,24 @@ class BrowserBinary:
 def headless_flags(macos):
     """The flags the probe passes before the profile and target.
 
-    macOS returns --headless alone. Every other platform returns --headless with --disable-gpu and --no-sandbox.
+    macOS returns --headless with --no-first-run, --no-default-browser-check, --use-mock-keychain, and --disable-features=MediaRouter.
+    Every other platform returns --headless with --disable-gpu and --no-sandbox.
     """
     if macos:
-        return ["--headless"]
+        return ["--headless", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--disable-features=MediaRouter"]
     return ["--headless", "--disable-gpu", "--no-sandbox"]
 
 
 def stderr_segment(failed):
-    """A colon and the first three non-empty lines of the browser's stderr, or an empty string when it wrote none."""
-    lines = [line.strip() for line in (failed.stderr or "").splitlines() if line.strip()][:3]
+    """A colon and up to the last five non-empty stderr lines that are not the CVDisplayLink display warning, or an empty string when the browser wrote no other line.
+
+    A TimeoutExpired from subprocess.run carries its stderr as bytes, so a bytes value is decoded before the lines are read.
+    """
+    stderr = failed.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    lines = [line.strip() for line in stderr.splitlines()
+             if line.strip() and DISPLAY_WARNING not in line][-STDERR_TAIL:]
     return f": {' '.join(lines)}" if lines else ""
 
 
@@ -179,7 +191,7 @@ def confined_run(browser, target, directory, prefix, timeout):
 def skip_segments(items):
     """One segment per missing name and per failed binary, after later aliases are on the record.
 
-    A failed binary's segment names its failure. A nonzero exit also names the first three non-empty lines of the browser's stderr when it wrote any.
+    A failed binary's segment names its failure. A nonzero exit also names up to the last five non-empty lines of the browser's stderr that are not the CVDisplayLink display warning, when it wrote any.
     """
     lines = []
     for item in items:
@@ -227,7 +239,7 @@ def select_browser(directory, timeout=PROBE_TIMEOUT):
             except subprocess.CalledProcessError as failed:
                 binary.failure = f"exited {failed.returncode}{stderr_segment(failed)}"
             except subprocess.TimeoutExpired as failed:
-                binary.failure = f"timed out after {failed.timeout} seconds"
+                binary.failure = f"timed out after {failed.timeout} seconds{stderr_segment(failed)}"
             except OSError as failed:
                 binary.failure = f"failed to start with {failed}"
             else:
@@ -247,16 +259,16 @@ def measure(browser, document, directory):
 
 class RenderHeightTest(unittest.TestCase):
     def setUp(self):
-        in_ci = os.environ.get("CI") == "true"
+        required = os.environ.get("CI") == "true" or MACOS
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.browser, unavailable = select_browser(self.root)
-        if self.browser is None and in_ci:
+        if self.browser is None and required:
             self.browser, unavailable = select_browser(self.root)
         if self.browser is None:
             reason = f"no working headless browser: {'; '.join(unavailable)}"
-            if in_ci:
+            if required:
                 self.fail(reason)
             self.skipTest(reason)
 
@@ -281,16 +293,16 @@ class RenderHeightTest(unittest.TestCase):
 
 class LiveAttemptFoldTest(unittest.TestCase):
     def setUp(self):
-        in_ci = os.environ.get("CI") == "true"
+        required = os.environ.get("CI") == "true" or MACOS
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.browser, unavailable = select_browser(self.root)
-        if self.browser is None and in_ci:
+        if self.browser is None and required:
             self.browser, unavailable = select_browser(self.root)
         if self.browser is None:
             reason = f"no working headless browser: {'; '.join(unavailable)}"
-            if in_ci:
+            if required:
                 self.fail(reason)
             self.skipTest(reason)
 
@@ -528,8 +540,11 @@ class ProbeContractTest(unittest.TestCase):
         self.assertLessEqual(len(socket_path), SOCKET_LIMIT)
         self.assertEqual(SOCKET_LIMIT, 107)
 
-    def test_macos_probe_omits_disable_gpu_and_no_sandbox(self):
-        cases = ((True, ["--headless"]), (False, ["--headless", "--disable-gpu", "--no-sandbox"]))
+    def test_macos_probe_uses_the_macos_flags_and_other_platforms_keep_the_shared_three(self):
+        cases = (
+            (True, ["--headless", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--disable-features=MediaRouter"]),
+            (False, ["--headless", "--disable-gpu", "--no-sandbox"]),
+        )
         for macos, flags in cases:
             with self.subTest(macos), tempfile.TemporaryDirectory() as root:
                 seen = {}
@@ -548,12 +563,37 @@ class ProbeContractTest(unittest.TestCase):
                 self.assertTrue(seen["args"][1 + len(flags)].startswith("--user-data-dir="))
                 self.assertEqual(seen["args"][2 + len(flags):], ["--window-size=390,2000", "--dump-dom", str(target)])
 
-    def test_probe_failure_carries_the_browser_stderr(self):
-        def runner(browser, *args, **kwargs):
-            raise subprocess.CalledProcessError(2, browser, stderr="no usable sandbox\n[1:2:3:4:ERROR:headless_browser.cc(1)] Chrome cannot start\n\n[9:9:9:9:ERROR:page.cc(2)] third line\n[8:8:8:8:ERROR:fourth.cc(3)] fourth line\n")
+    def test_probe_failure_keeps_the_last_five_stderr_lines_that_are_not_the_display_warning(self):
+        warning = "[1:1:1:1:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670"
+        cases = (
+            (f"{warning}\nfirst\nsecond\nthird\n", "exited 2: first second third"),
+            (f"one\ntwo\n{warning}\nthree\nfour\nfive\nsix\n", "exited 2: two three four five six"),
+            (f"{warning}\n{warning}\n", "exited 2"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(stderr):
 
-        _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
-        self.assertEqual(unavailable[0], "chromium (/opt/a) exited 2: no usable sandbox [1:2:3:4:ERROR:headless_browser.cc(1)] Chrome cannot start [9:9:9:9:ERROR:page.cc(2)] third line")
+                def runner(browser, *args, **kwargs):
+                    raise subprocess.CalledProcessError(2, browser, stderr=stderr)
+
+                _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+                self.assertEqual(unavailable[0], f"chromium (/opt/a) {expected}")
+
+    def test_timeout_failure_decodes_the_bytes_stderr_a_real_timeout_carries(self):
+        warning = b"[1:1:1:1:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n"
+        cases = (
+            (warning + b"[2:2:2:2:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [2:2:2:2:ERROR:startup.cc(9)] startup stalled"),
+            (warning.decode() + "[3:3:3:3:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [3:3:3:3:ERROR:startup.cc(9)] startup stalled"),
+            (warning, "timed out after 7 seconds"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(stderr):
+
+                def runner(browser, *args, **kwargs):
+                    raise subprocess.TimeoutExpired(browser, 7, stderr=stderr)
+
+                _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+                self.assertEqual(unavailable[0], f"chromium (/opt/a) {expected}")
 
     def test_render_keeps_its_own_timeout(self):
         timeouts = []
@@ -574,12 +614,13 @@ class ProbeContractTest(unittest.TestCase):
         browser, _ = probe_with({"chromium": "/opt/link"}, {"/opt/link": "/snap/real"}, runner)
         self.assertEqual(browser, "/opt/link")
 
-    def test_ci_miss_fails_after_two_tries_and_a_local_miss_skips_after_one(self):
+    def test_a_missed_probe_skips_once_locally_and_retries_and_fails_under_ci_or_on_macos(self):
         calls = []
         miss = lambda _directory: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
+        cases = (("", False, 1, False), ("true", False, 2, True), ("", True, 2, True))
         with mock.patch(f"{__name__}.select_browser", miss):
-            for ci, n in (("", 1), ("true", 2)):
-                calls.clear()
-                with mock.patch.dict(os.environ, {"CI": ci}):
+            for ci, macos, tries, failed in cases:
+                with self.subTest(ci=ci, macos=macos), mock.patch.dict(os.environ, {"CI": ci}), mock.patch(f"{__name__}.MACOS", macos):
+                    calls.clear()
                     result = unittest.TextTestRunner(stream=io.StringIO()).run(RenderHeightTest("test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"))
-                self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * n, True, ci == "true", ci != "true"))
+                    self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * tries, True, failed, not failed))
