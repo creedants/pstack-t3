@@ -759,11 +759,12 @@ def _alternate(command, python):
     return " ".join(words)
 
 
-def _paragraph(result, land, layout):
+def _paragraph(result, land, layout, build, check):
     land_text = str(land)
-    tail = [f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. ",
-            f"Run `python3 {land_text} slot -- python3 scripts/check.py`. ",
-            f"Keep each build and test in a foreground slot."]
+    tail = [f"Run `python3 {land_text} slot -- {build}` and leave no regeneration diff. "] if build else []
+    if check:
+        tail.append(f"Run `python3 {land_text} slot -- {check}`. ")
+    tail.append(f"Keep each build and test in a foreground slot.")
     if isinstance(result, _Full):
         names = ", ".join(f"`{name}`" for name in result.unmapped)
         head = [f"No affected mapping for {names}. ",
@@ -823,20 +824,31 @@ def _check_command(meta):
     return "" if text == NO_COMMAND else text
 
 
+def _build_command(meta):
+    value = meta.get("buildCommand")
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    return "" if text == NO_COMMAND else text
+
+
 def _settings(root, meta, store=None):
-    """The layout and check command root's stores recorded.
+    """The layout, build command, and check command root's stores recorded.
 
     meta names the store the caller already holds. Otherwise every store under store, the store root the
     caller resolved, whose projectRoot resolves to root is read. A present and malformed affectedTests is
     refused, and one recorded differently by two stores is refused because neither can be trusted.
     """
     if meta is not None:
-        return layout(meta), _check_command(meta)
+        return layout(meta), _build_command(meta), _check_command(meta)
     pick = None
     picked_path = None
     picked_value = None
+    build = ""
     check = ""
     for path, one in _stored_restaurants(root, store):
+        if not build:
+            build = _build_command(one)
         if not check:
             check = _check_command(one)
         if AFFECTED_KEY not in one:
@@ -846,7 +858,7 @@ def _settings(root, meta, store=None):
             pick, picked_path, picked_value = got, path, one[AFFECTED_KEY]
         elif one[AFFECTED_KEY] != picked_value:
             raise BrigadeError(f"restaurant.json {AFFECTED_KEY} differs across {picked_path} and {path}; keep one value")
-    return pick, check
+    return pick, build, check
 
 
 def _fallback(land, check):
@@ -861,7 +873,7 @@ def _fallback(land, check):
 def verify_text(root, paths, land, meta=None, store=None):
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
-    picked, check = _settings(root, meta, store)
+    picked, build, check = _settings(root, meta, store)
     if picked is None:
         return _fallback(land, check)
     if isinstance(paths, str):
@@ -873,4 +885,4 @@ def verify_text(root, paths, land, meta=None, store=None):
                 if part.strip() != "":
                     items.append(part)
     result = _select(root, items, picked)
-    return _paragraph(result, land, picked)
+    return _paragraph(result, land, picked, build, check)

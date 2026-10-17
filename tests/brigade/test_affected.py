@@ -51,13 +51,16 @@ class AffectedTest(BrigadeTest):
         self.restaurant(self.project, self.at)
         self.restaurant(self.archive_root(), self.store / "archive" / "perf")
 
-    def restaurant(self, root, directory=None, layout=LAYOUT, check="python3 scripts/check.py"):
+    def restaurant(self, root, directory=None, layout=LAYOUT, build="python3 scripts/build.py",
+                   check="python3 scripts/check.py"):
         """Write a restaurant.json whose projectRoot is root, with or without an affectedTests layout."""
         directory = self.at if directory is None else directory
         directory.mkdir(parents=True, exist_ok=True)
         meta = {"projectRoot": str(Path(root).resolve())}
         if layout is not None:
             meta["affectedTests"] = layout
+        if build is not None:
+            meta["buildCommand"] = build
         if check is not None:
             meta["checkCommand"] = check
         (directory / "restaurant.json").write_text(json.dumps(meta))
@@ -511,6 +514,60 @@ class AffectedTest(BrigadeTest):
         out = self.affected("--paths", "src/a.py")
         self.assertIn("No verify command is set", out)
         self.assertNotIn("slot -- none", out)
+
+    def test_other_build_and_check_commands_name_both_fails_when_either_is_hard_coded(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, build="make gen", check="make check")
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("slot -- make gen` and leave no regeneration diff", out)
+        self.assertIn("slot -- make check`.", out)
+        self.assertNotIn("scripts/build.py", out)
+        self.assertNotIn("scripts/check.py", out)
+
+    def test_a_store_with_no_build_command_drops_the_build_sentence_fails_when_the_default_is_printed(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, build=None)
+        out = self.affected("--paths", "src/a.py")
+        self.assertNotIn("no regeneration diff", out)
+        self.assertNotIn("scripts/build.py", out)
+        self.assertIn("slot -- python3 scripts/check.py`.", out)
+        self.assertIn("Keep each build and test in a foreground slot.", out)
+
+    def test_a_build_command_of_none_drops_the_build_sentence_fails_when_the_sentinel_is_run(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, build="none")
+        out = self.affected("--paths", "src/a.py")
+        self.assertNotIn("no regeneration diff", out)
+        self.assertNotIn("slot -- none", out)
+        self.assertIn("slot -- python3 scripts/check.py`.", out)
+
+    def test_a_store_with_no_check_command_drops_the_check_sentence_fails_when_the_default_is_printed(self):
+        self.git_project()
+        self.write("src/a.py", "x = 1\n")
+        self.write("tests/test_a.py",
+                   "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                   "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        self.track()
+        self.restaurant(self.project, check=None)
+        out = self.affected("--paths", "src/a.py")
+        self.assertIn("slot -- python3 scripts/build.py` and leave no regeneration diff", out)
+        self.assertNotIn("scripts/check.py", out)
+        self.assertIn("Keep each build and test in a foreground slot.", out)
 
     def test_a_python_with_a_suite_that_is_not_python3_is_refused_fails_when_the_pair_is_run(self):
         self.git_project()
