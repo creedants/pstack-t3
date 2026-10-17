@@ -71,7 +71,7 @@ class BriefsTest(BrigadeTest):
         self.assertNotIn("Run builds and tests through", verify)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
-    def test_the_standing_rules_paste_the_failed_test_and_small_change_rules_between_verify_and_timebox(self):
+    def test_the_standing_rules_paste_the_failed_test_rule_between_verify_and_timebox(self):
         self.coordinator()
         text = self.brigade(*self.BRIEF)
         rules = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
@@ -79,11 +79,6 @@ class BriefsTest(BrigadeTest):
             "STANDING RULES:",
             f"- Save the full output of any failed test run to a file under {self.at}/reports/ before you rerun it, "
             "and name that file in the report.",
-            "- You may write the change yourself when it changes one file outside tests, the added and removed lines "
-            "outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee "
-            "safety, privacy, or integrity. Count those lines from `git diff --numstat origin/main...HEAD`, quote that "
-            "output in the report, and treat every round and commit as one diff. Past that size, or more than one file "
-            "outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.",
         ]))
         self.assertNotIn("mktemp -d -p", rules)
 
@@ -99,21 +94,15 @@ class BriefsTest(BrigadeTest):
         self.brigade("set", "--scratch-dir", "")
         self.assertNotIn("mktemp -d -p", self.brigade(*self.BRIEF))
 
-    def test_a_rule_the_context_or_verify_already_states_is_dropped_and_the_heading_goes_with_it(self):
+    def test_the_failed_test_rule_is_dropped_when_the_verify_already_states_it(self):
         self.coordinator()
         reports = f"{self.at}/reports"
         dropped = ("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
                    "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
         one = self.brigade(*dropped, "--verify", f"Save the full output under {reports}/ after a failed test run, before you rerun it")
-        self.assertIn("STANDING RULES:", one)
         self.assertNotIn("- Save the full output of any failed test run", one)
+        self.assertNotIn("STANDING RULES:", one)
         self.assertIn("- You may write the change yourself", one)
-        every = self.brigade(*dropped, "--verify",
-                             f"Save the full output under {reports}/ after a failed test run, before you rerun it. "
-                             "You may write the change yourself, without the playbook's code delegate, when it touches "
-                             "one file and is about 40 lines or fewer outside tests. Never skip the claims check.")
-        self.assertNotIn("STANDING RULES:", every)
-        self.assertNotIn("- You may write the change yourself", every)
 
     def test_a_pointer_to_a_failed_run_output_is_not_the_rule_and_the_line_stays(self):
         self.coordinator()
@@ -129,8 +118,34 @@ class BriefsTest(BrigadeTest):
     def test_an_untagged_house_rules_file_is_pasted_into_the_brief_byte_for_byte(self):
         self.coordinator()
         orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
-        self.assertTrue(orders.startswith((self.at / "house-rules.md").read_text().strip() + "\n\n1. A test earns its place"),
-                        orders[:200])
+        self.assertEqual(orders.rstrip("\n"), (self.at / "house-rules.md").read_text().strip())
+
+    def test_a_store_without_a_layout_gets_no_whole_suite_sentence_or_default_suite_command(self):
+        """The generic slot sentence and the claims sentences stay; the suite sentence and its governor need a layout."""
+        self.coordinator()
+        verify = self.brigade(*self.BRIEF).split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("Run all builds and tests through", verify)
+        self.assertIn("Run the claims check before the final verification.", verify)
+        self.assertIn("Run the full verification chain once, after the last commit.", verify)
+        self.assertNotIn("--slots 2", verify)
+        self.assertNotIn("python3 -m unittest", verify)
+        self.assertNotIn("An affected-module run stays one slot.", verify)
+
+    def test_a_new_store_house_rules_hold_the_self_write_rule_and_the_test_standard(self):
+        self.open()
+        text = (self.at / "house-rules.md").read_text()
+        self.assertIn("- You may write the change yourself when it changes one file outside tests", text)
+        self.assertIn("1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.", text)
+        self.assertIn("10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?", text)
+
+    def test_a_store_whose_house_rules_lack_the_moved_rules_gets_neither_in_its_brief(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n1. Plain rule.\n")
+        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        self.assertIn("1. Plain rule.", orders)
+        self.assertNotIn("write the change yourself", orders)
+        self.assertNotIn("A test earns its place", orders)
 
     def test_a_brief_keeps_untagged_and_worker_rules_and_leaves_out_reviewer_and_coordinator_rules(self):
         self.coordinator()
@@ -141,8 +156,8 @@ class BriefsTest(BrigadeTest):
             "3. [reviewer] Reviewer rule.\n"
             "4. [coordinator] Coordinator rule.\n")
         orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
-        self.assertIn("1. Plain rule.\n", orders)
-        self.assertIn("2. Worker rule.\n", orders)
+        self.assertIn("1. Plain rule.", orders)
+        self.assertIn("2. Worker rule.", orders)
         self.assertNotIn("[worker]", orders)
         self.assertNotIn("Reviewer rule", orders)
         self.assertNotIn("Coordinator rule", orders)
@@ -154,7 +169,7 @@ class BriefsTest(BrigadeTest):
             "1. Plain rule.\n"
             "2. [coordinator] Coordinator rule.\n")
         orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
-        self.assertIn("1. Plain rule.\n", orders)
+        self.assertIn("1. Plain rule.", orders)
         self.assertNotIn("Coordinator rule", orders)
 
     def test_a_coordinator_rule_takes_its_indented_lines_out_of_the_brief_with_it(self):
@@ -166,8 +181,8 @@ class BriefsTest(BrigadeTest):
             "    - Sub-bullet of the coordinator rule.\n"
             "3. Rule after it.\n")
         orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
-        self.assertIn("1. Plain rule.\n", orders)
-        self.assertIn("3. Rule after it.\n", orders)
+        self.assertIn("1. Plain rule.", orders)
+        self.assertIn("3. Rule after it.", orders)
         self.assertNotIn("Sub-bullet of the coordinator rule", orders)
 
     def test_the_built_skill_ships_the_verdict_protocol(self):
