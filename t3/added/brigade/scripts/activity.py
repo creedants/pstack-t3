@@ -2470,12 +2470,11 @@ RENDERER = squeezed("""
     };
     const chip = (p, i) => {
       const it = D.I[i], b = add(p, 'div');
+      if (it[6]) add(b, 'b', 'chip', it[6]);
       if (D.G.some((g) => g[0] === i) || (D.L || []).concat(D.E || []).some(([a]) => a === i)) {
-        if (it[6]) add(b, 'b', 'chip', it[6]);
         add(b, 'a', 'one', it[0]).href = '#g' + i;
       } else {
         const n = link(b, '', it[4]);
-        if (it[6]) add(n, 'b', 'chip', it[6]);
         add(n, 'b', 'one', it[0]);
         add(n, 'span', 'sum', it[1]);
       }
