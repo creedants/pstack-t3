@@ -925,14 +925,14 @@ def exclusive_command(command, repo, for_text, reason_text):
     def stop_group(process):
         if process.returncode is not None:
             return
-        try:
-            _killpg_like_linux(process, signal.SIGTERM)
-        except ProcessLookupError:
-            if process.returncode is None:
-                process.wait()
-            return
         # The unreaped leader is how SIGKILL stays on this command's group. Its pid is the process group id, and a zombie holds that pid until it is reaped, so the kernel cannot reuse the id for another process group.
         try:
+            try:
+                _killpg_like_linux(process, signal.SIGTERM)
+            except ProcessLookupError:
+                if process.returncode is None:
+                    process.wait()
+                return
             grace_ends = time.monotonic() + seam.EXCLUSIVE_CAP_GRACE
             if hasattr(os, "waitid"):
                 while True:

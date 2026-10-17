@@ -46,6 +46,34 @@ from .support import (
 )
 
 
+# EXCLUSIVE_MAIN with the group kill wrapped, so the supervisor stops itself once, right after its
+# SIGTERM to the group. A signal that arrives while it is stopped there lands in the interval
+# between that SIGTERM and the grace. The stop is once, so a second stop_group call still reaches
+# the grace and the SIGKILL after it.
+STOPPED_AFTER_TERM_MAIN = (
+    "import os, signal, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import land\n"
+    "cap, grace, cap_max = sys.argv[2:5]\n"
+    "if cap:\n"
+    "    land.EXCLUSIVE_CAP = float(cap)\n"
+    "if grace:\n"
+    "    land.EXCLUSIVE_CAP_GRACE = float(grace)\n"
+    "if cap_max:\n"
+    "    land.EXCLUSIVE_CAP_MAX = float(cap_max)\n"
+    "_original = land.exclusive_command.__globals__['_killpg_like_linux']\n"
+    "_state = {'stopped': False}\n"
+    "def _stop_after_term(process, sig):\n"
+    "    result = _original(process, sig)\n"
+    "    if sig == signal.SIGTERM and not _state['stopped']:\n"
+    "        _state['stopped'] = True\n"
+    "        os.kill(os.getpid(), signal.SIGSTOP)\n"
+    "    return result\n"
+    "land.exclusive_command.__globals__['_killpg_like_linux'] = _stop_after_term\n"
+    "sys.exit(land.main(sys.argv[5:]))\n"
+)
+
+
 class LandingTest(LandingTestBase):
     def wait_for_pid(self, path, timeout=10):
         """Return the pid in path once the whole file text parses as one int.
@@ -1256,6 +1284,63 @@ class LandingTest(LandingTestBase):
                         process.stdout.close()
                         process.stderr.close()
                         self.release_recorded_group(parent_path, child_path)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test reads a zombie state from /proc")
+    def test_a_signal_between_the_group_sigterm_and_the_grace_kills_the_group_at_once(self):
+        # The test starts a supervisor process to send it a signal and read its exit status. Its
+        # wrapper stops the supervisor right after the supervisor's SIGTERM to the group. The
+        # test waits for the leader's zombie, sends SIGHUP, and resumes the supervisor, which
+        # must exit with the signal status within 10s, one third of the 30s grace. A supervisor
+        # that lets the signal escape the interval runs the grace a second time and exits one
+        # grace later.
+        self.governor(1)
+
+        def zombie(pid):
+            try:
+                return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
+            except FileNotFoundError:
+                return False
+
+        parent_path, child_path = self.base / "term-gap-parent.pid", self.base / "term-gap-child.pid"
+        process = self.popen_exclusive(
+            ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
+             str(parent_path), str(child_path)],
+            cap=1, grace=30, main=STOPPED_AFTER_TERM_MAIN)
+        try:
+            child_pid, child_group = (int(part) for part in self.wait_for_line(child_path).split())
+            parent_pid = self.wait_for_pid(parent_path)
+            self.assertEqual(child_group, parent_pid)
+            deadline = time.monotonic() + 10
+            while not zombie(parent_pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(zombie(parent_pid), "the leader did not exit at the cap")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                state = Path(f"/proc/{process.pid}/stat").read_text().rpartition(")")[2].split()[0]
+                if state == "T":
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("the supervisor did not stop after its group SIGTERM")
+            os.kill(process.pid, signal.SIGHUP)
+            os.kill(process.pid, signal.SIGCONT)
+            try:
+                code = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+                self.fail("the supervisor did not exit within 10s of the signal, one third of the 30s grace")
+            self.assertEqual(code, 129)
+            self.assert_dead(child_pid)
+            self.assert_slots_free()
+            self.assertNotIn("exclusive cap", process.stderr.read())
+        finally:
+            if process.poll() is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+            process.stdout.close()
+            process.stderr.close()
+            self.release_recorded_group(parent_path, child_path)
 
     def test_an_exclusive_command_that_finishes_leaves_a_background_child(self):
         self.governor(1)
