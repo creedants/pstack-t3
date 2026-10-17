@@ -12,6 +12,16 @@ Worth a round. A blocker costs a fix round and a second review, so it must be wo
 
 Find every blocker in this one pass. Read every statement the diff adds or changes, not a sample. A later round checks only the fix and the points that failed, so anything missed now lands.
 
+## Rounds after the first
+
+Round one is unchanged. It reads the whole change against its base.
+
+In round two and later, review `git diff <previous reviewed SHA>...<head>` and check each blocker the previous round named. The brief names that SHA and gives you the previous round's review file.
+
+A new blocker must be in that fix diff or caused by it. Give a concrete reproduction you ran against the reviewed head.
+
+A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is a non-blocking note with one ticket line the coordinator can file. It is never a blocker.
+
 The first line of the report is exactly one of these.
 
 - `Verdict: pass`. No blocker.

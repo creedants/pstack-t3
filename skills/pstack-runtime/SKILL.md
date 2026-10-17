@@ -242,7 +242,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 - Tests and the build. The worker runs the project's test command and build before every gate review, and the landing queue reruns them.
 - The landing queue's checks.
 - One review by another model family at every head SHA before merge, per [Gate review](#gate-review).
-- A fix attempt's review reads the whole diff against its base, not only the change since the last review.
+- A fix attempt's review. Round one reads the whole diff against its base. A later round reads the fix diff since the last reviewed SHA, per [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first).
 - Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
 - A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
 - The code delegate, with the persona, the `roles.py mode` lines, and `roles.py check-brief`.
@@ -255,13 +255,13 @@ Light mode removes the panels that give full mode its model diversity. The gate 
 Every child that acts as the gate review runs steps 1 to 4. That includes the audit lane, the Shipping verifier, a cheap Orchestrate unit's gate, and a trail reviewer that runs with no gate at its head. Its step 2 brief adds that child's own verification tasks below the contract. Launch no second child for the same gate.
 
 1. **Seat.** Resolve `verifiers` per [Roles](#roles) with this work's mode flag. Take the first seat whose model family differs from the author's. The author is the code delegate's `providerInstanceId/model`, or this thread's when it wrote the code. When several models wrote the diff, the verifier's family differs from all of them. When no runnable seat qualifies, the verdict is `blocked`.
-2. **Brief.** A read-only brief. Give the base ref and the full head SHA, and ask for a read of `git diff <base>...<head>`, the whole diff. Paste the body of `agents/comment-sicko.md` unchanged and ask for its findings on the diff. Right after that body, paste the gate contract below unchanged. Add the child's own verification tasks after the contract. Name the chosen design's path when the light architect step picked one of two sketches. Name the decision log path and the run's `threadId` when the run kept a trail per `show-me-your-work`, and ask the reviewer to run that skill's audit checks itself with `t3_thread_read`. Flag weak evidence, skipped or unproven verification, misleading readiness, and a shell success that hides a failed check.
+2. **Brief.** A read-only brief. On round one, give the base ref and the full head SHA, and ask for a read of `git diff <base>...<head>`, the whole diff. On round two and later, give the previous reviewed SHA and the previous round's review file, ask for a read of `git diff <previous reviewed sha>...<head>`, and add a `FOCUS` section that carries the round rules from [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first). Paste the body of `agents/comment-sicko.md` unchanged and ask for its findings on the diff. Right after that body, paste the gate contract below unchanged. Add the child's own verification tasks after the contract. Name the chosen design's path when the light architect step picked one of two sketches. Name the decision log path and the run's `threadId` when the run kept a trail per `show-me-your-work`, and ask the reviewer to run that skill's audit checks itself with `t3_thread_read`. Flag weak evidence, skipped or unproven verification, misleading readiness, and a shell success that hides a failed check.
 
    ```text
    Gate review contract. These rules override the persona above and the tasks below where they differ.
    Do not edit files, commit, or push. Do not post on the PR. Return your report to the parent.
    Launch no child task, thread, or subagent. Do not run the how, why, architect, or interrogate skill. Do not launch show-me-your-work's trail reviewer.
-   Read the whole diff and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
+   Read the diff the brief names and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
    When a claim or finding needs investigation beyond those reads, return send-back. Name the file, the line, the claim, and the question the fix must answer.
    Report each comment the persona would delete as a send-back finding with its path and line. Make no edit.
    End with pass, send-back, or blocked, the full head SHA, the author, and the verifier.
