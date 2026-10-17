@@ -2299,9 +2299,13 @@ class FrameTest(OutputCase):
         for number in range(20):
             fixture.unit(f"D{number}", "in-progress", "x" * 340, thread=worker(number + 1))
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
-        fitted, document = MOD["fit"](page_of(fixture), 16135, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16169 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
+        page = page_of(fixture)
+        fitted, document = MOD["fit"](page, 15999, CLEAN, 1960)
+        # The last fold before the cap renders 16124 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
         self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15864))
+        shifted, shifted_document = MOD["fit"](page, 16135, CLEAN, 1960)
+        # The reclaimed cut of twenty groups renders at 16169 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (19, 1888, 15864))
 
 
 class TextTest(OutputCase):
