@@ -2261,7 +2261,7 @@ class FrameTest(OutputCase):
         self.assertLessEqual(MOD["height"](fitted), 1960)
         self.assertLess(len(document.encode()), 16000)
         self.assertGreater(fitted.hidden.cut_lines, 0)
-        # Each work item keeps its newest lines across the byte cut and the height repair too.
+        # Each work item on the fitted page keeps its newest current lines.
         for one in MOD["items_of"](fitted):
             self.assertEqual([line.seat for line in one.lines],
                              seats[one.id][-len(one.lines):])
