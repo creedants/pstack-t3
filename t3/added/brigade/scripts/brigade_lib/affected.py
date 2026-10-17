@@ -442,19 +442,22 @@ def _test_edges(targets, rel, base):
 
 
 def _close(table, edges):
+    pullers = {}
+    for importer, imported in edges.items():
+        for name in imported:
+            pullers.setdefault(name, []).append(importer)
     closed = {}
     for key, value in table.items():
-        closed[key] = set(value)
-    changed = True
-    while changed:
-        changed = False
-        for members in closed.values():
-            for importer, imported in edges.items():
+        members = set(value)
+        work = list(members)
+        while work:
+            name = work.pop()
+            for importer in pullers.get(name, ()):
                 if importer in members:
                     continue
-                if imported & members:
-                    members.add(importer)
-                    changed = True
+                members.add(importer)
+                work.append(importer)
+        closed[key] = members
     return closed
 
 
