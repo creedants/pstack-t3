@@ -2119,6 +2119,47 @@ def limit_ledger(page, keep):
     return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
 
 
+def newest_ledger(page, keep):
+    """The page with the last keep attempt lines in items_of order on every copy of each work item. cut_lines counts the lines the suffix leaves off.
+    items_of order is page.items first, then each group item not in page.items. Each work item key appears once, and its fold payload holds its older attempts, so its payload lines drop before its current lines.
+    A drop takes the oldest attempt line of every work item in turn, in items_of order, then the second oldest of every work item, and so on, so every work item keeps a suffix of its current lines and its fold payload as a suffix of its own lines.
+    """
+    listed, seen = [], set()
+    for item in items_of(page):
+        if item.key not in seen:
+            seen.add(item.key)
+            listed.append(item)
+    total = sum(len(item.lines) + len(item.fold.lines) for item in listed)
+    count = max(total - keep, 0)
+
+    def dropped(number):
+        taken, left, position = {}, number, 0
+        while left:
+            for item in listed:
+                if len(item.lines) + len(item.fold.lines) > position:
+                    taken[item.key] = position + 1
+                    left -= 1
+                    if not left:
+                        break
+            position += 1
+        return taken
+
+    taken = dropped(count)
+
+    def trimmed(item):
+        if item is None or item.key not in taken:
+            return item
+        cut, payload = taken[item.key], item.fold.lines
+        lines = item.lines[max(cut - len(payload), 0):]
+        fold = replace(item.fold, lines=payload[min(cut, len(payload)):]) if item.fold.summary else item.fold
+        return replace(item, lines=lines, fold=fold)
+
+    groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
+    items = tuple(trimmed(item) for item in page.items)
+    hidden = replace(page.hidden, cut_lines=page.hidden.cut_lines + count)
+    return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
+
+
 def fit_lines(page, limit):
     """The page with the oldest current attempt lines dropped until its height() is at most limit.
     A page whose height() is at most limit, or that has no current attempt line, is returned as it is.
@@ -2174,10 +2215,10 @@ def briefed(page):
     return cut_items(replace(page, groups=groups, items=items), items)
 
 
-def within_budget(page, budget, clean, render, brief=False):
+def within_budget(page, budget, clean, render, brief=False, ledger=limit_ledger):
     """The page, its render, and whether that render's UTF-8 length is at most budget.
     A page that already fits, or a page with no attempt line, is returned as it is.
-    Any other page keeps the longest prefix of its attempt lines whose render fits. When no prefix fits, the summaries are bounded to their attempt counts and the prefix search runs again, so a long enumeration of attempts that are not one contiguous range no longer adds bytes beyond its count. Counts and state stay exact, and no lane is dropped. When even the briefed zero line form is over budget, that form is returned as it is.
+    Any other page keeps the most attempt lines whose render fits, searched by count through ledger(page, count). limit_ledger(page, keep) keeps the first keep attempt lines in items_of order, and newest_ledger(page, keep) keeps each work item's newest lines. When no count fits, the summaries are bounded to their attempt counts and the search runs again, so a long enumeration of attempts that are not one contiguous range no longer adds bytes beyond its count. Counts and state stay exact, and no lane is dropped. When even the briefed zero line form is over budget, that form is returned as it is.
     """
     text = render(page, clean)
     count = line_count(page)
@@ -2188,7 +2229,7 @@ def within_budget(page, budget, clean, render, brief=False):
 
     def at(keep):
         if keep not in cache:
-            trimmed = limit_ledger(page, keep)
+            trimmed = ledger(page, keep)
             body = render(trimmed, clean)
             cache[keep] = (trimmed, body, len(body.encode()) <= budget)
         return cache[keep]
@@ -2204,7 +2245,7 @@ def within_budget(page, budget, clean, render, brief=False):
     if best is None:
         if brief:
             return at(0)
-        return within_budget(briefed(page), budget, clean, render, True)
+        return within_budget(briefed(page), budget, clean, render, True, ledger)
     for _ in range(count + 1):
         chosen = at(best)[2]
         nxt = best + 1
@@ -2221,12 +2262,12 @@ def within_budget(page, budget, clean, render, brief=False):
 
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    Each fold's page is measured with within_budget(), which keeps the longest prefix of its attempt lines whose document fits, and, when no prefix fits, bounds its fold summaries to their counts.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget cut keeps the longest prefix of its attempt lines whose document fits, and, when no prefix fits, bounds its fold summaries to their counts and keeps the longest prefix of that page whose document fits, or no attempt line when none of its prefixes does. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
+    Each fold's page is measured with within_budget() with ledger=newest_ledger(), which keeps the most attempt lines whose document fits, every work item's newest lines before its older ones, and, when no count fits, bounds its fold summaries to their counts.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget cut keeps the most attempt lines whose document fits with newest_ledger(), and, when no count fits, bounds its fold summaries to their counts and keeps the most attempt lines of that page whose document fits, or no attempt line when no count of it fits. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
-        trimmed, document, fits = within_budget(page, budget, clean, render_html)
+        trimmed, document, fits = within_budget(page, budget, clean, render_html, ledger=newest_ledger)
         last = done == len(FOLDS)
         if not fits and not last:
             continue
@@ -2238,7 +2279,7 @@ def fit(page, budget, clean, frame=None):
             for cut in frame_cuts(page, frame):
                 if cut is None:
                     continue
-                body, rendered, fits = within_budget(cut, budget, clean, render_html)
+                body, rendered, fits = within_budget(cut, budget, clean, render_html, ledger=newest_ledger)
                 if (fits or last) and height(body) <= frame:
                     page, document, accepted = body, rendered, True
                     break
