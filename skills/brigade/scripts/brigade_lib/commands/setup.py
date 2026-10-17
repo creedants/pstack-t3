@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import AUTOFIRE, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_liveness_ms, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
@@ -95,9 +96,9 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    It checks contextCap, coordinatorProvider, caps, review, lowReserve, livenessMs, and affectedTests, by calling
-    each setting's reader predicate, so a value accepted here is a value that reader accepts. A missing key keeps
-    its default.
+    It checks contextCap, coordinatorProvider, caps, review, lowReserve, livenessMs, affectedTests, sharedDocs,
+    and docTimebox, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    accepts. A missing key keeps its default.
     """
     effective_cap(meta)
     effective_provider(meta)
@@ -105,6 +106,7 @@ def validate_settings(meta):
     low_reserve_of(meta)
     liveness_of(meta)
     layout(meta)
+    doc_policy(meta)
 
 
 def preflight_settings(prospective, args):

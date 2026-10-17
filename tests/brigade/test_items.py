@@ -1645,6 +1645,33 @@ class ItemsTest(BrigadeTest, _ItemsRace):
                     self.assertEqual(self.store_files(), before)
                     self.assertEqual(self.land("lease", "list"), leases)
 
+    def test_set_refuses_a_malformed_shared_docs_and_leaves_restaurant_json_unchanged(self):
+        self.open()
+        self.seed_doc_settings(sharedDocs="not a list")
+        before = (self.at / "restaurant.json").read_bytes()
+        refused = self.brigade("set", "--reporting", "digest", ok=False)
+        self.assertIn("sharedDocs", refused)
+        self.assertIn("it is not a list", refused)
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_refuses_a_malformed_doc_timebox_and_leaves_restaurant_json_unchanged(self):
+        self.open()
+        self.seed_doc_settings(docTimebox=0)
+        before = (self.at / "restaurant.json").read_bytes()
+        refused = self.brigade("set", "--reporting", "digest", ok=False)
+        self.assertIn("docTimebox", refused)
+        self.assertIn("it is not a whole number of minutes above zero", refused)
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_writes_with_valid_shared_docs_and_doc_timebox(self):
+        self.open()
+        self.seed_doc_settings(sharedDocs=[{"path": "docs/guide.md", "kind": "file"}], docTimebox=30)
+        self.brigade("set", "--reporting", "digest")
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        self.assertEqual(meta["reporting"], "digest")
+        self.assertEqual(meta["sharedDocs"], [{"path": "docs/guide.md", "kind": "file"}])
+        self.assertEqual(meta["docTimebox"], 30)
+
     def test_the_skill_documents_the_shared_docs_value_this_suite_seeds(self):
         text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
         blocks = [block for block in re.findall(r"```json\n(.*?)```", text, re.S) if "sharedDocs" in block]
