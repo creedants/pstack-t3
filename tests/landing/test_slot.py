@@ -1463,31 +1463,31 @@ class LandingTest(LandingTestBase):
     def test_an_exclusive_cap_at_the_default_needs_no_reason_and_the_maximum_needs_one(self):
         self.governor(1)
         plain = self.run_exclusive(
-            ["slot", "--exclusive", "--for", "0.4", "--", sys.executable, "-c", "print('ok')"],
-            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+            ["slot", "--exclusive", "--for", "4", "--", sys.executable, "-c", "print('ok')"],
+            cap=4, cap_max=8, grace=0.05, timeout=10)
         self.assertEqual((plain.returncode, plain.stdout), (0, "ok\n"), plain.stderr)
         self.assertNotIn("exclusive cap", plain.stderr)
         longest = self.run_exclusive(
-            ["slot", "--exclusive", "--for", "0.8", "--reason", "cold pricing bench", "--",
+            ["slot", "--exclusive", "--for", "8", "--reason", "cold pricing bench", "--",
              sys.executable, "-c", "print('max')"],
-            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+            cap=4, cap_max=8, grace=0.05, timeout=10)
         self.assertEqual((longest.returncode, longest.stdout), (0, "max\n"), longest.stderr)
         shorter = self.run_exclusive(
-            ["slot", "--exclusive", "--for", "0.2", "--reason", "shorter cap", "--",
+            ["slot", "--exclusive", "--for", "2", "--reason", "shorter cap", "--",
              sys.executable, "-c", "print('short')"],
-            cap=0.4, cap_max=0.8, grace=0.05, timeout=10)
+            cap=4, cap_max=8, grace=0.05, timeout=10)
         self.assertEqual((shorter.returncode, shorter.stdout), (0, "short\n"), shorter.stderr)
         named = self.run_exclusive(
             ["slot", "--exclusive", "--reason", "cold pricing bench", "--",
              sys.executable, "-c", "print('why')"],
-            cap=2, grace=0.05, timeout=10)
+            cap=4, grace=0.05, timeout=10)
         self.assertEqual((named.returncode, named.stdout), (0, "why\n"), named.stderr)
         refused = self.run_exclusive(
-            ["slot", "--exclusive", "--for", "0.8", "--", sys.executable, "-c", "print('no')"],
-            cap=0.4, cap_max=0.8, timeout=10)
+            ["slot", "--exclusive", "--for", "8", "--", sys.executable, "-c", "print('no')"],
+            cap=4, cap_max=8, timeout=10)
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(refused.stdout, "")
-        self.assertEqual(refused.stderr, "land: --for over 0.4 seconds needs --reason\n")
+        self.assertEqual(refused.stderr, "land: --for over 4 seconds needs --reason\n")
 
     def test_an_exclusive_holder_record_and_its_wait_line_carry_the_cap_and_the_reason(self):
         self.governor(1)
