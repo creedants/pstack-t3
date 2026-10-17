@@ -29,6 +29,12 @@ CLEAN = test_activity.CLEAN
 MOD = test_activity.MOD
 
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome")
+# macOS installs Chrome and Chromium as app bundles, which are not on PATH.
+BUNDLED = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+)
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
 SOCKET_LIMIT = 107
@@ -162,25 +168,36 @@ def skip_segments(items):
     return lines
 
 
-def select_browser(directory, timeout=PROBE_TIMEOUT):
-    """The first browser of BROWSERS that starts on a small valid document under directory.
+def candidates():
+    """Each browser name on PATH with the path shutil.which resolves, then each app bundle path that is a file.
 
-    shutil.which resolves each name. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of timeout seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by the which path.
+    A PATH name that resolves to nothing is yielded with None. A bundle path that is not a file is skipped, so the sequence is unchanged where the bundles are absent.
+    """
+    for name in BROWSERS:
+        yield name, shutil.which(name)
+    for path in BUNDLED:
+        if os.path.isfile(path):
+            yield os.path.basename(path), path
+
+
+def select_browser(directory, timeout=PROBE_TIMEOUT):
+    """The first candidate that starts on a small valid document under directory.
+
+    A candidate is a PATH name with the path shutil.which resolves, or an app bundle path that is a file. os.path.realpath resolves each hit. Each distinct real path is probed at most once with a timeout of timeout seconds, except when the file name is snap or the resolved path is /usr/lib/snapd/snapd, and that path is keyed by its unresolved path.
     """
     items = []
     by_resolved = {}
     target = Path(directory) / "probe.html"
     target.write_text(f"<div id=o></div>{PINNED}{LOAD}")
-    for name in BROWSERS:
-        found = shutil.which(name)
+    for label, found in candidates():
         if found is None:
-            items.append(BrowserMiss(name))
+            items.append(BrowserMiss(label))
             continue
         resolved = os.path.realpath(found)
         key = found if os.path.basename(resolved) == "snap" or resolved == "/usr/lib/snapd/snapd" else resolved
         binary = by_resolved.get(key)
         if binary is None:
-            binary = BrowserBinary(found, [name])
+            binary = BrowserBinary(found, [label])
             by_resolved[key] = binary
             items.append(binary)
             try:
@@ -194,7 +211,7 @@ def select_browser(directory, timeout=PROBE_TIMEOUT):
             else:
                 return found, skip_segments(items)
         else:
-            binary.names.append(name)
+            binary.names.append(label)
     return None, skip_segments(items)
 
 
@@ -308,7 +325,7 @@ class BrowserSelectionTest(unittest.TestCase):
             stub = Path(bin_dir) / "chromium"
             stub.write_text("#!/bin/sh\nprintf 'browser cannot start\n' >&2\nexit 127\n")
             stub.chmod(0o755)
-            with mock.patch.dict(os.environ, {"PATH": bin_dir}):
+            with mock.patch.dict(os.environ, {"PATH": bin_dir}), mock.patch(f"{__name__}.BUNDLED", ()):
                 browser, unavailable = select_browser(root)
         self.assertIsNone(browser)
         self.assertEqual(len(unavailable), len(BROWSERS))
@@ -326,9 +343,33 @@ class BrowserSelectionTest(unittest.TestCase):
                 browser, _ = select_browser(root)
         self.assertEqual(browser, str(working))
 
+    def test_an_existing_app_bundle_browser_is_used_when_no_path_name_starts(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as root:
+            stub = Path(root) / "Chrome.app" / "Contents" / "MacOS" / "Google Chrome"
+            stub.parent.mkdir(parents=True)
+            stub.write_text("#!/bin/sh\nexit 0\n")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": bin_dir}), mock.patch(f"{__name__}.BUNDLED", (str(stub),)):
+                browser, unavailable = select_browser(root)
+        self.assertEqual(browser, str(stub))
+        self.assertEqual(unavailable, [f"{name} not found" for name in BROWSERS])
 
-def probe_with(which_map, resolved, runner):
-    """Call select_browser with stubbed which, realpath, and confined_run. No process starts."""
+    def test_a_path_name_is_used_before_an_existing_app_bundle_browser(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as root:
+            bundle = Path(root) / "Chrome.app" / "Contents" / "MacOS" / "Google Chrome"
+            bundle.parent.mkdir(parents=True)
+            bundle.write_text("#!/bin/sh\nexit 0\n")
+            bundle.chmod(0o755)
+            working = Path(bin_dir) / "chromium"
+            working.write_text("#!/bin/sh\nexit 0\n")
+            working.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": bin_dir}), mock.patch(f"{__name__}.BUNDLED", (str(bundle),)):
+                browser, _ = select_browser(root)
+        self.assertEqual(browser, str(working))
+
+
+def probe_with(which_map, resolved, runner, bundled=()):
+    """Call select_browser with stubbed which, realpath, and confined_run, and bundled as the app bundle paths. No process starts."""
     original = os.path.realpath
 
     def which(name):
@@ -342,7 +383,8 @@ def probe_with(which_map, resolved, runner):
     with tempfile.TemporaryDirectory() as root, \
             mock.patch("shutil.which", side_effect=which), \
             mock.patch("os.path.realpath", side_effect=realpath), \
-            mock.patch(f"{__name__}.confined_run", side_effect=runner):
+            mock.patch(f"{__name__}.confined_run", side_effect=runner), \
+            mock.patch(f"{__name__}.BUNDLED", bundled):
         return select_browser(root)
 
 
