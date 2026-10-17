@@ -691,7 +691,7 @@ class AffectedTest(BrigadeTest):
                 self.assertIn("affectedTests", err)
                 self.assertIn("importRoots", err)
 
-    def test_d411_pair_maps_same_as_old_literals_fails_when_a_root_is_lost_or_gained(self):
+    def test_d411_pair_maps_same_as_old_literals_fails_when_the_archive_tables_differ(self):
         self.close_function()
         import sys
         module = sys.modules["brigade_lib.affected"]
