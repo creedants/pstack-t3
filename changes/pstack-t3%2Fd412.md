@@ -1,0 +1,2 @@
+- kind fix
+- `t3/added/brigade/scripts/brigade_lib/affected.py` renders the verify paragraph's build and check sentences from the store's `buildCommand` and `checkCommand`. A value that is missing, non-text, or `none` is no command for the store that records it. A call that passes `meta` reads that one store. A call with no `meta` takes the first non-empty value across the stores whose project root matches. A build or check sentence is printed only when its lookup finds a usable command.
