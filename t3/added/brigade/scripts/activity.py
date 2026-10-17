@@ -1989,6 +1989,7 @@ def frame_cuts(page, limit):
     Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
     A group with no row left is cut with its heading. counted() counts the agents and items left out.
     Unused worst case counted note room is reclaimed, except the attempt line floor, and rejected rows are retried in the same order.
+    The cut before reclaim has its attempt lines trimmed with fit_lines().
     The reclaimed cut is returned with the cut before it as (final, first_cut) when its height stays at most limit, and as (None, first_cut) when it does not.
     """
     if height(page) <= limit:
@@ -2043,6 +2044,7 @@ def frame_cuts(page, limit):
 
     groups, cuts = build(kept)
     first_cut = cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
+    first_cut = fit_lines(first_cut, limit)
     # Reclaim unused worst case counted note room, except the attempt line floor that fit() may still add. The retried result is measured before it is kept.
     actual = counted(page.hidden, cuts, len(page.items) - len(items))
     held = replace(actual, cut_lines=worst.cut_lines)
@@ -2070,7 +2072,7 @@ def frame_cuts(page, limit):
 
 def framed(page, limit):
     """The cut frame_cuts() makes for height. A page whose height() is at most limit is returned as it is.
-    The cut after reclaim is returned when it is at most limit, and the cut before reclaim is returned otherwise.
+    The cut after reclaim is returned when it is at most limit, and the cut before reclaim, with its attempt lines trimmed with fit_lines(), is returned otherwise.
     """
     cut, fallback = frame_cuts(page, limit)
     return cut if cut is not None else fallback
@@ -2115,6 +2117,49 @@ def limit_ledger(page, keep):
     items = tuple(trimmed(item) for item in page.items)
     hidden = replace(page.hidden, cut_lines=page.hidden.cut_lines + removed)
     return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
+
+
+def fit_lines(page, limit):
+    """The page with the oldest current attempt lines dropped until its height() is at most limit.
+    A page whose height() is at most limit, or that has no current attempt line, is returned as it is.
+    A drop takes the oldest current line of every work item, in items_of order, then the second oldest of every work item, and so on, so each work item keeps its newest lines. Fold payload stays. cut_lines grows by the lines dropped.
+    The fewest drops whose height() is at most limit is kept, and every current line is dropped when none fits.
+    """
+    listed, seen = [], set()
+    for item in items_of(page):
+        if item.key not in seen:
+            seen.add(item.key)
+            listed.append(item)
+    total = sum(len(item.lines) for item in listed)
+    if total == 0 or height(page) <= limit:
+        return page
+
+    def dropped(count):
+        taken, left, position = {}, count, 0
+        while left:
+            for item in listed:
+                if len(item.lines) > position:
+                    taken[item.key] = position + 1
+                    left -= 1
+                    if not left:
+                        break
+            position += 1
+
+        def trimmed(item):
+            if item is None or item.key not in taken:
+                return item
+            return replace(item, lines=item.lines[taken[item.key]:])
+
+        groups = tuple(replace(group, item=trimmed(group.item)) if group.item is not None else group for group in page.groups)
+        items = tuple(trimmed(item) for item in page.items)
+        hidden = replace(page.hidden, cut_lines=page.hidden.cut_lines + count)
+        return cut_items(replace(page, groups=groups, items=items, hidden=hidden), items)
+
+    for count in range(1, total):
+        trimmed = dropped(count)
+        if height(trimmed) <= limit:
+            return trimmed
+    return dropped(total)
 
 
 def briefed(page):
@@ -2176,7 +2221,8 @@ def within_budget(page, budget, clean, render, brief=False):
 
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose document is at most budget bytes stays, or the first cut at all on the last fold. On the last fold, an over-budget cut keeps the longest prefix of its attempt lines whose document fits. Before the last fold, when both cuts are over budget the next fold runs, and on the last fold no attempt line is kept only when no prefix fits even with the summaries bounded to their counts.
+    Each fold's page is measured with within_budget(), which keeps the longest prefix of its attempt lines whose document fits, and, when no prefix fits, bounds its fold summaries to their counts.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget cut keeps the longest prefix of its attempt lines whose document fits, and, when no prefix fits, bounds its fold summaries to their counts and keeps the longest prefix of that page whose document fits, or no attempt line when none of its prefixes does. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
@@ -2192,10 +2238,9 @@ def fit(page, budget, clean, frame=None):
             for cut in frame_cuts(page, frame):
                 if cut is None:
                     continue
-                trimmed, document, fits = within_budget(cut, budget, clean, render_html)
-                if fits or last:
-                    page = trimmed
-                    accepted = True
+                body, rendered, fits = within_budget(cut, budget, clean, render_html)
+                if (fits or last) and height(body) <= frame:
+                    page, document, accepted = body, rendered, True
                     break
             if accepted:
                 break

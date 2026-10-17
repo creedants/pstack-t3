@@ -1,0 +1,2 @@
+- kind fix
+- A cut whose `height()` is still over the frame has its oldest current attempt lines trimmed with `fit_lines()`, and the cut-lines note states how many it left out.
