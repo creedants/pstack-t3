@@ -451,6 +451,22 @@ class AffectedTest(BrigadeTest):
         self.assertIn("affectedTests", err)
         self.assertIn("'tests.test_pstack_t3'", err)
 
+    def test_set_refuses_a_malformed_affected_tests_and_writes_nothing_fails_when_validate_settings_skips_the_layout(self):
+        self.restaurant(self.project, layout="tests.test_pstack_t3")
+        before = (self.at / "restaurant.json").read_bytes()
+        err = self.brigade("set", "--check-command", "echo NEW", code=1)
+        self.assertIn(
+            "brigade: warning: restaurant.json affectedTests 'tests.test_pstack_t3' is invalid: it is not an object",
+            err)
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_accepts_the_documented_affected_tests_template_fails_when_validate_settings_refuses_a_valid_layout(self):
+        self.restaurant(self.project)
+        self.brigade("set", "--check-command", "echo NEW")
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        self.assertEqual(meta["checkCommand"], "echo NEW")
+        self.assertEqual(meta["affectedTests"], LAYOUT)
+
     def test_a_layout_without_python_omits_the_second_interpreter_fails_when_a_3_10_path_is_printed(self):
         self.git_project()
         self.write("src/a.py", "x = 1\n")
