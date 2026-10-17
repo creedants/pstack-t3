@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The same case reports a T3 Code minimum version, stated on a line between `T3 Code` and `or later` in a plain sentence or a Markdown link with optional backticks, that disagrees with the version in the setup gate string. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -257,6 +257,51 @@ def readme_count_findings(readme, root):
                 )
     if not stated:
         findings.append(f"README.md: states no skill count, and the shipped skill count is {shipped}")
+    return findings
+
+
+# The setup gate string in REQUIRED_TOOLS names the minimum T3 Code version.
+_GATE_MINIMUM = re.compile(r"T3 Code (" + _VERSION_TOKEN + r") or later")
+# A document states the minimum with T3 Code, an optional Markdown link, the version in
+# optional backticks, then "or later", the shape README.md and docs/guide.md use.
+_NAMED_MINIMUM = re.compile(
+    r"T3 Code(?:\]\([^)\n]*\))?\s+`?(" + _VERSION_TOKEN + r")`?\s+or later\b"
+)
+
+
+def _setup_gate_version():
+    """The minimum T3 Code version in the setup gate string REQUIRED_TOOLS requires in setup-pstack/SKILL.md. None when no required entry matches that string."""
+    for sentence in REQUIRED_TOOLS.get("setup-pstack/SKILL.md", ()):
+        match = _GATE_MINIMUM.fullmatch(sentence)
+        if match:
+            return match.group(1)
+    return None
+
+
+def minimum_version_findings(readme, guide):
+    """Report a minimum T3 Code version stated in README.md or docs/guide.md that differs from the setup gate's.
+
+    The gate version comes from the setup gate string REQUIRED_TOOLS requires in
+    setup-pstack/SKILL.md. A stated version is the one a line names between T3 Code
+    and "or later", in a plain sentence or a Markdown link with optional backticks.
+    A stated version that differs from the gate is one finding that names the file,
+    the line, the stated version, and the gate version. A file that cannot be read
+    adds no finding, because readme_count_findings or guide_count_findings already
+    names it. An empty list means no stated minimum in a readable file differs
+    from the gate version, or `_setup_gate_version` returned None.
+    """
+    gate = _setup_gate_version()
+    if gate is None:
+        return []
+    findings = []
+    for label, path in (("README.md", readme), ("docs/guide.md", guide)):
+        for number, line in enumerate((_readme_text(path) or "").splitlines(), 1):
+            for match in _NAMED_MINIMUM.finditer(line):
+                if match.group(1) != gate:
+                    findings.append(
+                        f"{label}:{number}: states the T3 Code minimum version {match.group(1)}, "
+                        f"and the setup gate requires {gate}"
+                    )
     return findings
 
 
@@ -713,6 +758,7 @@ def check_tree(root, guide=True):
         if guide:
             findings.extend(guide_count_findings(GUIDE_PATH, root))
             findings.extend(readme_count_findings(README_PATH, root))
+            findings.extend(minimum_version_findings(README_PATH, GUIDE_PATH))
     return findings
 
 

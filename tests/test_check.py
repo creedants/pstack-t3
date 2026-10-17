@@ -1331,6 +1331,58 @@ class SkillCountCheckTest(unittest.TestCase):
         self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+class MinimumT3CodeVersionCheckTest(unittest.TestCase):
+    """The tests cover agreeing minimum-version sentences and a different version in each document."""
+
+    def _tree(self, readme, guide):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "pstack-runtime/scripts").mkdir(parents=True)
+        (root / "pstack-runtime/scripts/roles.py").write_text("")
+        skill = root / "demo"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
+        readme_path = root / "README.md"
+        readme_path.write_text("See all 1 skills and every playbook.\n" + readme)
+        guide_path = root / "docs/guide.md"
+        guide_path.parent.mkdir()
+        guide_path.write_text("`doctor` should show `1/1 pstack-t3` for each provider you use.\n" + guide)
+        for attribute, document in (("README_PATH", readme_path), ("GUIDE_PATH", guide_path)):
+            patcher = mock.patch.object(check, attribute, document)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return root
+
+    def test_a_readme_and_guide_that_name_the_gate_version_are_quiet(self):
+        gate = check._setup_gate_version()
+        root = self._tree(
+            f"Setup needs T3 Code {gate} or later.\n",
+            f"You need [T3 Code](https://example.test/releases) `{gate}` or later.\n",
+        )
+        self.assertEqual(check.check_tree(root), [])
+
+    def test_a_readme_naming_another_version_is_named_with_both_versions(self):
+        gate = check._setup_gate_version()
+        root = self._tree(
+            "Setup needs T3 Code 9.9.9 or later.\n",
+            f"You need T3 Code `{gate}` or later.\n",
+        )
+        self.assertEqual(check.check_tree(root), [
+            f"README.md:2: states the T3 Code minimum version 9.9.9, and the setup gate requires {gate}",
+        ])
+
+    def test_a_guide_naming_another_version_is_named_with_both_versions(self):
+        gate = check._setup_gate_version()
+        root = self._tree(
+            f"Setup needs T3 Code {gate} or later.\n",
+            "You need T3 Code `9.9.9` or later, and Python 3.10 or later.\n",
+        )
+        self.assertEqual(check.check_tree(root), [
+            f"docs/guide.md:2: states the T3 Code minimum version 9.9.9, and the setup gate requires {gate}",
+        ])
+
+
 def planted_entry():
     return next(label for label in check.REQUIRED_SCAN if label.endswith("t3-archive-threads.py"))
 
