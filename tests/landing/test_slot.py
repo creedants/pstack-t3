@@ -387,6 +387,59 @@ class LandingTest(LandingTestBase):
             statuses.append(result.returncode)
         self.assertEqual((mode, statuses), (0o600, [0, 0]), oct(mode))
 
+    def test_a_holder_under_umask_0o444_is_named_in_another_callers_wait_message(self):
+        """The holder is its own process so the test can set that process's umask.
+
+        The tickets and holds directories already exist, because this test pins the record file
+        the holder writes and not the mode of the directories a first caller creates.
+        """
+        self.governor(1)
+        governor = self.base / "state/pstack-t3/governor"
+        (governor / "tickets").mkdir()
+        (governor / "holds").mkdir()
+        directory = self.base / "umask-holder"
+        directory.mkdir()
+        ready, release = directory / "ready", directory / "release"
+        os.mkfifo(release)
+        holder = real_popen(
+            ProcessReason.GOVERNOR,
+            [sys.executable, "-c",
+             "import os, sys\n"
+             "from pathlib import Path\n"
+             "sys.path.insert(0, sys.argv[1])\n"
+             "import land\n"
+             "repo, command, ready, release = sys.argv[2:6]\n"
+             "os.umask(0o444)\n"
+             "with land.slot('worker', repo=repo, command=command):\n"
+             "    Path(ready).touch()\n"
+             "    os.read(os.open(release, os.O_RDONLY), 1)\n",
+             str(SCRIPT.parent), str(self.work), "make test", str(ready), str(release)],
+            env=self.slot_env(), cwd=directory, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop():
+            if holder.poll() is None:
+                with open(release, "w") as handle:
+                    handle.write("x")
+            holder.wait(timeout=20)
+
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(ready.exists(), "the restricted-umask holder did not take its slot")
+        mode = land._hold_path("worker-0").stat().st_mode & 0o777
+        gate = os.open(release, os.O_WRONLY)
+        try:
+            code, stdout, stderr, line = self.run_waiter(WAIT_SCRIPT, gate, after="0.2")
+        finally:
+            os.close(gate)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(stdout, "ran\n")
+        self.assertEqual(mode, 0o600, oct(mode))
+        self.assertRegex(line, rf"^land: waited \d+s for a slot; worker {re.escape(str(self.work))} "
+                                rf"for \d+s: make test$")
+
     def test_a_ticket_name_hard_linked_to_an_unreadable_file_does_not_stop_a_slot(self):
         """The slot command is a process because the test asserts its exit status."""
         tickets = self.base / "state/pstack-t3/governor/tickets"

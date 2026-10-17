@@ -291,7 +291,12 @@ def _dump_holder(path, holder):
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+    previous = os.umask(0o077)
+    try:
+        # os.open asks for 0o666 and the 0o077 umask leaves 0o600, so the name is owner-readable when it appears.
+        descriptor = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o666)
+    finally:
+        os.umask(previous)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         os.pwrite(descriptor, json.dumps(dict(zip(_Holder._fields, holder))).encode(), 0)

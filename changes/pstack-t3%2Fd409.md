@@ -1,0 +1,5 @@
+- kind fix
+- `_dump_holder` opens the holder record under a temporary `0o077` umask, as `_mint_ticket` already does for a ticket, so the record is mode `0o600` whatever umask the caller runs under
+- a waiting caller running as the same user can then read the record and names the running holder instead of `unknown`
+- `tests/landing/test_slot.py` pins a holder under umask `0o444` leaving a mode `0o600` record that another caller's wait message names
+- `python3 scripts/build.py` refreshes the generated `skills/landing/scripts/landing_lib/governor.py`
