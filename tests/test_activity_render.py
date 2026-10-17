@@ -169,7 +169,7 @@ def skip_segments(items):
 
 
 def candidates():
-    """Each browser name on PATH with the path shutil.which resolves, then each app bundle path that is a file.
+    """Each browser name with the result of shutil.which for it, then each app bundle path that is a file.
 
     A PATH name that resolves to nothing is yielded with None. A bundle path that is not a file is skipped, so the sequence is unchanged where the bundles are absent.
     """
