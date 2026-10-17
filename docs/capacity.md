@@ -1,6 +1,6 @@
 # Capacity of this machine
 
-**Sample record.** The host, the readings, and the tables on this page come from the pstack-t3 maintainers' own machine on the dates shown, not from yours. Measure your own host with `scripts/measure_capacity.py` as [What was measured](#what-was-measured) shows, and set your own agent count and stop lines from its rows.
+**Sample record.** The host, the readings, and the tables on this page come from the pstack-t3 maintainers' own machine on the dates shown, not from yours. Measure your own host with `scripts/measure_capacity.py` as [What was measured](#what-was-measured) shows, and read your own agent count and free memory from its rows.
 
 Forty idle Haiku agents fit on this host on 2026-10-05, with 5.9 GiB of memory still available. A rerun later that morning held forty Haiku agents again and ran four copies of this repo's build and unit suite. Each copy completed one passing iteration during the sample window. A heavier follow-up, four copies of the unit suite with no pause, also completed one passing iteration per copy. Swap, load, and the root HTTP probe stayed inside the stop lines. Both runs stopped because the plan stopped, with memory still available.
 

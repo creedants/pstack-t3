@@ -4,7 +4,7 @@ This is the design for running two or more brigade coordinators on one repositor
 
 In this document a coordinator is one standing coordinator thread and its store directory, and a work item is one unit of work handed to a worker. brigade's commands and files use kitchen names, and this document keeps those names only for commands and files, such as `fire`, `ticket add`, `dishes.tsv`, and `restaurant.json`. Two coordinators are siblings when their `restaurant.json` files name the same `projectRoot`.
 
-**Sample records.** The design below applies to any repository. The counts, caps, and lease times quoted in [Method](#method), [What happens today](#what-happens-today), and the [live two-coordinator run](#live-two-coordinator-run) come from the pstack-t3 maintainers' own coordinator store and their own runs. They are not facts about your repository. Measure those counts in your own store and your own run before you rely on them.
+**Sample records.** The design below applies to any repository. The counts, caps, and lease times quoted in [Method](#method) and [What happens today](#what-happens-today) come from the pstack-t3 maintainers' own coordinator store and their own runs. They are not facts about your repository. Measure those counts in your own store and your own run before you rely on them.
 
 ## Summary
 
@@ -38,7 +38,7 @@ The numbers about real use come from the pstack-t3 coordinator's store (`dishes.
 
 ## What happens today
 
-**Sample record.** Each section below reports what the pstack-t3 maintainers observed in their own store and their own scratch experiment. Your store and your run will differ.
+**Sample record.** Each section below reports what the pstack-t3 maintainers found in their own store and their own scratch experiment, by observation or by inference. Measure your own store and your own run, where the findings will differ.
 
 ### 1. Duplicate intake
 
@@ -537,7 +537,7 @@ The admin work waits for the live run. Changes 1 to 7 close every gap on their o
 
 ## Live two-coordinator run
 
-**Sample record.** This run targets the pstack-t3 maintainers' own scratch repository, not yours. Record your own numbers from your own clone.
+**Maintainers' own setup.** This run is planned for the pstack-t3 maintainers' own scratch repository, not yours. Record your own numbers from your own clone.
 
 Run after change 7 lands, on a clone of `creedants/pstack-t3-sandbox`, the scratch repository the request for this design names for the live run. Changes 8 to 11 start only after its first part records its numbers. Opening issues there is still a GitHub write outside pstack-t3's own PR flow. The ref check compares strings, so the run uses an existing sandbox issue URL, or a made-up ref, rather than opening an issue.
 
@@ -590,7 +590,7 @@ That part records three more numbers.
 
 ## The experiment script
 
-**Sample record.** This script is the pstack-t3 maintainers' own audit of their repository at the commit it names.
+**Maintainers' own setup.** This script is the pstack-t3 maintainers' own audit tool, run against a commit of their repository. Point it at the same commit in your own checkout, as the paragraph below says.
 
 This is the audit script, run against commit `5794d40`. It records what each command printed and asserts nothing. The tests in changes 2 to 7 are the asserting checks. Run it with the `skills/` directory of a checkout at `5794d40`, for example one made with `git worktree add /tmp/pstack-t3-5794d40 5794d40`, as `two_restaurants.sh /tmp/pstack-t3-5794d40/skills`. Never point it at a current `skills/` directory. After change 7, its `--landing` flags no longer parse. It writes only under a fresh `mktemp -d` and prints that path at the end.
 
