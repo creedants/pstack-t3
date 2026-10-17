@@ -1,0 +1,3 @@
+- kind fix
+- `tests/landing/test_slot.py` in `test_an_exclusive_cap_at_the_default_needs_no_reason_and_the_maximum_needs_one` raises the exclusive cap to 4 seconds and the maximum to 8, moves the `--for` values to 4 at the default, 2 below it, and 8 at the maximum, and expects the refused case to print `land: --for over 4 seconds needs --reason`
+- No case in that test runs a child under a cap below 2 seconds
