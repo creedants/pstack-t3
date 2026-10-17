@@ -1,0 +1,6 @@
+- kind polish
+- `failures.md` usage-limit detection follows the host Limited state. The backup-seat command stays.
+- `failures.md` drops the version-gated restart continuation sentence and the squash-merge cleanup sentence, both host behavior now.
+- `t3/runtime.md` drops the duplicated worktree-cleanup sentences and shortens the usage-limit pointer.
+- `t3/runtime.md` pull request watching drops the host wake-rule list it restated.
+- `python3 scripts/build.py` refreshes the generated `skills/pstack-runtime/` copies.

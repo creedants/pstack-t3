@@ -82,7 +82,7 @@ Children inherit this thread's runtime mode and interaction mode. Omit `runtimeM
 
 - A target is rejected: call `orchestrator_capabilities`, then fall back per [Roles](#roles), and say which seat changed and why.
 - A child fails or returns nothing usable: proceed with N-1 and record the dropout. Respawn once with a fresh child for a required slice. Never resume a failed child to fix its own work. When the failure carries a provider error, follow the next bullet before that respawn. A failure that reads `Killed: out of memory.` is an out-of-memory kill that T3 reports. Lower the load before you respawn that child. Run fewer children at once, or run builds through the slot in [Local command capacity](#local-command-capacity). Report a second kill as a blocker.
-- Check a usage limit only for a failed child that did not return the brief's result. When a failed child's error names a usage limit, follow [failures.md](failures.md#usage-limit) before you respawn it.
+- When a failed child shows as Limited and did not return the brief's result, follow [failures.md](failures.md#usage-limit) before you respawn it.
 - `hasPendingChildRuns` on `task_status` does not mean the child is still running. It reports later turns on the child's thread, even after the task ended, and it does not reopen the task, including a turn you start with `t3_thread_send`. Decide completion by `workState` alone. On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
 - A stalled child (see [Delegation](#delegation) step 5): first call `t3_pending_request_list` with the child's `childThreadId` as `threadId`. On T3 Code 0.0.46-nightly.20261015.3145 or later, `task_status` also shows `hasPendingQuestion: true` while a question blocks the child. A child with a question that blocks it waits on an answer and is not stalled. Answer it per [Pending requests](#pending-requests), and count its 10 minutes again from the answer. Otherwise read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
 
@@ -297,7 +297,6 @@ Before you delegate a child that needs a chosen branch or a different base, read
 - Read-only children share the current checkout.
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
-- T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
 
 ## Local command capacity
@@ -367,7 +366,7 @@ Private working state that must survive the session but never be committed lives
 
 Resume notes from Pause safely go to `.pstack/resume/<slug>.md` in the repository, untracked (add `.pstack/` to `.git/info/exclude`), and are also posted as the thread's final message. Rely on the final message, because storage cleanup can delete the file with its worktree.
 
-After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Storage cleanup can also remove a worktree after the thread's PR merges into the default branch by squash or rebase at the worktree's head SHA. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
+After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
 
 ## Verification surfaces
 
@@ -414,7 +413,7 @@ An owner that may already be settled reads [Settle on turn end](host.md#settle-o
 
 Call `watch_pull_request` after `link_pull_request`, when this thread is waiting on that PR's checks, reviews, or conflicts. Pass the PR URL, or the repository and number. T3 links the PR first if this thread has not linked it yet.
 
-T3 checks the open PR every two minutes. It wakes this thread when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
+T3 checks the open PR every two minutes and wakes this thread when checks, reviews, or conflicts need it. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
 
 One thread may hold several watches. Comments from the user's own account do not wake a watch, so a review left from that account needs another wake or the heartbeat. T3 documents both in [source control](https://github.com/pingdotgg/t3code/blob/main/docs/user/source-control.md).
 
