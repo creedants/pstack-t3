@@ -168,7 +168,16 @@ def register_fire(sub):
 
 
 def register_brief(sub):
-    p = sub.add_parser("brief", help="render the worker brief for a dish; refuses when a field or the coordinator thread is missing")
+    help_text = (
+        "Render the worker brief for a dish. Refuses when a field or the coordinator thread is missing. "
+        "House rules use the case-sensitive tags [worker], [reviewer], and [coordinator]. "
+        "The first tag anywhere on a rule's first line selects its role. "
+        "After outer whitespace is stripped, each non-empty line starting without a space or tab begins a rule. "
+        "Following blank lines and lines starting with a space or tab continue that rule, even after a blank line. "
+        "A brief keeps untagged and [worker] rules. It removes the [worker] tag and at most one following space. "
+        "It leaves out [reviewer] and [coordinator] rules with their continuation lines."
+    )
+    p = sub.add_parser("brief", help=help_text, description=help_text)
     p.add_argument("id")
     p.add_argument("--fields", help="JSON file of brief fields, or - for stdin")
     p.add_argument("--goal", default=None, help="one sentence: the outcome")

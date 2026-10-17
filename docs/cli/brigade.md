@@ -249,7 +249,7 @@ group tickets into one dish and assign it to a station
 brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--contract CONTRACT] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
 ```
 
-render the worker brief for a dish; refuses when a field or the coordinator thread is missing
+Render the worker brief for a dish. Refuses when a field or the coordinator thread is missing. House rules use the case-sensitive tags [worker], [reviewer], and [coordinator]. The first tag anywhere on a rule's first line selects its role. After outer whitespace is stripped, each non-empty line starting without a space or tab begins a rule. Following blank lines and lines starting with a space or tab continue that rule, even after a blank line. A brief keeps untagged and [worker] rules. It removes the [worker] tag and at most one following space. It leaves out [reviewer] and [coordinator] rules with their continuation lines.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
