@@ -2384,7 +2384,8 @@ class TextTest(OutputCase):
     def test_a_running_line_names_no_model_of_the_store(self):
         failed_child(self.fixture).write()
         lines = self.out("--text").split("\n")
-        self.assertEqual([line for line in lines[lines.index("Running now") + 1:lines.index("Work items")] if "model-a" in line or "model-b" in line], [])
+        models = set(data_of(self.document())["M"])
+        self.assertEqual([line for line in lines[lines.index("Running now") + 1:lines.index("Work items")] if any(model in line for model in models)], [])
 
     def render(self, build):
         build(self.fixture).write()
@@ -3749,7 +3750,7 @@ class GoalStripTest(OutputCase):
         for ident in ("D1", "D2", "D3", "D4", "D5"):
             self.assertEqual(drawn.count(ident), 1)
 
-    def test_a_goal_name_is_printed_once_in_the_work_items_in_flight_section(self):
+    def test_a_goal_name_is_printed_once_in_the_html_strip_and_the_plain_form(self):
         fixture = one_running(self.fixture).write()
         write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "Ship the parser", "purpose", "done", "1", "")])
         widen_items(fixture, {"D7": ("feature", "G1")})
