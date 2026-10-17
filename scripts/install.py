@@ -1147,7 +1147,7 @@ def restore_aside(backup, aside, path, fd):
 def restore_backup(backup, path, held):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
 
-    It checks the backup before the move, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after a same-filesystem move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
+    It checks the backup before it links or moves it, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after the descriptor link reaches `path`, or right after the move in `restore_aside` reaches `path`. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
     """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
