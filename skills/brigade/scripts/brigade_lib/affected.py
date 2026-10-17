@@ -20,7 +20,7 @@ from brigade_lib.store import HELD_LOCKS, store_root
 AFFECTED_KEY = "affectedTests"
 DEFAULT_SUITE = "python3 -m unittest discover -s tests"
 PIN_CHARS = 40
-_LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python")
+_LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python", "importRoots")
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 # A second interpreter's file name, python3 or python3.10.
 _PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")
@@ -34,6 +34,9 @@ class Layout:
     means such a path is unmapped. entry_points and helpers are repository paths. suite is the whole-suite
     command, and it starts with python3 when python is set. python is the second interpreter, an absolute path
     whose file name is python<major> or python<major>.<minor>, and empty means the paragraph omits it.
+    import_roots are repo paths tried as prefixes for absolute imports, in candidate order after the loader directory and the root with every match kept.
+    Relative imports never search them. They are normalized and deduped in order and never hold the root itself.
+    An absent key means the directories of entry_points and helpers.
     """
     always: str
     workflow_module: str
@@ -41,6 +44,7 @@ class Layout:
     helpers: tuple
     suite: str
     python: str
+    import_roots: tuple
 
 
 def _dotted(value):
@@ -105,7 +109,21 @@ def layout(meta):
                            "'python' needs an absolute path whose file name is python<major> or python<major>.<minor>")
         if suite.split()[0] != "python3":
             refuse_setting(AFFECTED_KEY, value, "'suite' must start with python3 when 'python' is set")
-    return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "")
+    if "importRoots" not in value:
+        roots = _roots(list(entries) + list(helpers))
+    else:
+        raw_roots = value["importRoots"]
+        if not _repo_paths(raw_roots):
+            refuse_setting(AFFECTED_KEY, value, "'importRoots' needs a list of repo paths")
+        seen = []
+        for raw in raw_roots:
+            normed = _norm(raw)
+            if not normed or normed in (".", "/"):
+                continue
+            if normed not in seen:
+                seen.append(normed)
+        roots = tuple(seen)
+    return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "", roots)
 
 
 @dataclass(frozen=True)
@@ -136,6 +154,18 @@ def _norm(raw):
     if made == "":
         return ""
     return made
+
+
+def _roots(paths):
+    """The parent directories of these repository paths in order with empties dropped and repeats removed."""
+    seen = []
+    for raw in paths:
+        parent = posixpath.dirname(_norm(raw))
+        if not parent or parent in (".", "/"):
+            continue
+        if parent not in seen:
+            seen.append(parent)
+    return tuple(seen)
 
 
 def _tracked(root):
@@ -339,29 +369,7 @@ def _found_files(root, cands):
     return tuple(seen)
 
 
-def _resolve_import(edge, loader_path, root):
-    if isinstance(edge, str):
-        parts = edge.split(".")
-        cands = []
-        if loader_path:
-            parent = posixpath.dirname(_norm(loader_path))
-            for depth in range(len(parts)):
-                tail = "/".join(parts[depth:]) + ".py"
-                if parent:
-                    cands.append(parent + "/" + tail)
-                cands.append("/".join(parts[depth:]) + ".py")
-            base_parts = parts[:-1]
-            if base_parts:
-                if parent:
-                    cands.append(parent + "/" + "/".join(base_parts) + ".py")
-                cands.append("/".join(base_parts) + ".py")
-        else:
-            cands.append("/".join(parts) + ".py")
-        cands.append("/".join(parts) + "/__init__.py")
-        for tail in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py"):
-            for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
-                cands.append(prefix + "/" + tail)
-        return _found_files(root, cands)
+def _resolve_import(edge, loader_path, root, roots):
     level, module, symbol = edge
     if symbol == "*":
         symbol = ""
@@ -409,12 +417,12 @@ def _resolve_import(edge, loader_path, root):
             cands.append(parent + "/" + tail)
         cands.append(tail)
     for tail in rels:
-        for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
+        for prefix in roots:
             cands.append(prefix + "/" + tail)
     return _found_files(root, cands)
 
 
-def _one_hop(norm, base, lay):
+def _one_hop(norm, base, lay, roots):
     if not norm or not norm.endswith(".py"):
         return ()
     full = base / norm
@@ -430,7 +438,7 @@ def _one_hop(norm, base, lay):
         return ()
     found = set()
     for target in _import_targets(lmod):
-        for got in _resolve_import(target, norm, base):
+        for got in _resolve_import(target, norm, base, roots):
             for canon in _canonicals(_norm(got), lay):
                 found.add(canon)
     return tuple(sorted(found))
@@ -501,7 +509,7 @@ def _helper_entries(base, layout):
     return entries
 
 
-def _test_edges(targets, rel, base):
+def _test_edges(targets, rel, base, roots):
     edges = set()
     for target in targets:
         level, module, symbol = target
@@ -512,7 +520,7 @@ def _test_edges(targets, rel, base):
         else:
             last = ""
         shaped = last.startswith("test_")
-        resolved = _resolve_import(target, rel, base)
+        resolved = _resolve_import(target, rel, base, roots)
         if shaped and len(resolved) != 1:
             if module and symbol and symbol != "*":
                 label = module + "." + symbol
@@ -585,11 +593,11 @@ def _index(root, layout):
         targets = _import_targets(mod)
         resolved = set()
         for target in targets:
-            for got in _resolve_import(target, rel, base):
+            for got in _resolve_import(target, rel, base, layout.import_roots):
                 resolved.add(got)
         if resolved:
             direct[name] = resolved
-        edge_set, open_reason = _test_edges(targets, rel, base)
+        edge_set, open_reason = _test_edges(targets, rel, base, layout.import_roots)
         if open_reason is not None:
             return _Open(open_reason)
         edges[name] = edge_set
@@ -616,7 +624,7 @@ def _index(root, layout):
             if not norm or not norm.endswith(".py"):
                 continue
             if norm not in hops:
-                hops[norm] = _one_hop(norm, base, spec)
+                hops[norm] = _one_hop(norm, base, spec, layout.import_roots)
             for canon in hops[norm]:
                 table.setdefault(canon, set()).add(name)
     for name, refs in direct.items():

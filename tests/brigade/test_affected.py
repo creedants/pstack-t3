@@ -1,5 +1,6 @@
 import json
 import os
+import posixpath
 import tempfile
 from unittest import mock
 
@@ -22,6 +23,7 @@ LAYOUT = {
     "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
     "suite": "python3 scripts/run_tests.py -j 8",
     "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10",
+    "importRoots": ["scripts", "t3/scripts"],
 }
 
 
@@ -40,6 +42,61 @@ def reference_close(table, edges):
                     members.add(importer)
                     changed = True
     return closed
+
+
+def _base_resolve_import(edge, loader_path, root, roots=None):
+    import sys
+    module = sys.modules["brigade_lib.affected"]
+    level, name, symbol = edge
+    if symbol == "*":
+        symbol = ""
+    parts = name.split(".") if name else []
+    if level and level > 0:
+        parent = posixpath.dirname(module._norm(loader_path) if loader_path else "")
+        bits = parent.split("/") if parent else []
+        if level - 1 > len(bits):
+            return ()
+        base = "/".join(bits[:len(bits) - (level - 1)]) if level - 1 else parent
+        cands = []
+        if parts:
+            rel = "/".join(parts)
+            if base:
+                cands.append(base + "/" + rel + ".py")
+                cands.append(base + "/" + rel + "/__init__.py")
+            else:
+                cands.append(rel + ".py")
+                cands.append(rel + "/__init__.py")
+        if symbol:
+            rel = "/".join(parts + [symbol]) if parts else symbol
+            if base:
+                cands.append(base + "/" + rel + ".py")
+                cands.append(base + "/" + rel + "/__init__.py")
+            else:
+                cands.append(rel + ".py")
+                cands.append(rel + "/__init__.py")
+        return module._found_files(root, cands)
+    parent = posixpath.dirname(module._norm(loader_path) if loader_path else "")
+    cands = []
+    rels = []
+    if parts:
+        rel = "/".join(parts)
+        rels.append(rel + ".py")
+        rels.append(rel + "/__init__.py")
+    if symbol:
+        rel = "/".join(parts + [symbol]) if parts else symbol
+        rels.append(rel + ".py")
+        rels.append(rel + "/__init__.py")
+    if not rels and parts:
+        rel = "/".join(parts)
+        rels = [rel + ".py", rel + "/__init__.py"]
+    for tail in rels:
+        if parent:
+            cands.append(parent + "/" + tail)
+        cands.append(tail)
+    for tail in rels:
+        for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
+            cands.append(prefix + "/" + tail)
+    return module._found_files(root, cands)
 
 
 class AffectedTest(BrigadeTest):
@@ -643,3 +700,84 @@ class AffectedTest(BrigadeTest):
         self.assertEqual(got["src/a.py"], set(names))
         self.assertEqual({k: set(v) for k, v in got.items()},
                          reference_close({k: set(v) for k, v in table.items()}, edges))
+
+    def test_absent_import_roots_searches_entry_and_helper_dirs_fails_when_default_ignored(self):
+        self.git_project()
+        self.write("tool/run.py", "VALUE = 1\n")
+        self.write("tool/libx.py", "X = 1\n")
+        self.write("other/help.py", "VALUE = 1\n")
+        self.write("other/liby.py", "Y = 2\n")
+        self.write("tests/test_entry.py", "from libx import X\nfrom liby import Y\n\ndef test_e():\n assert X and Y\n")
+        self.track()
+        layout = dict(LAYOUT)
+        layout.pop("importRoots")
+        layout["entryPoints"] = ["tool/run.py"]
+        layout["helpers"] = ["other/help.py"]
+        self.restaurant(self.project, layout=layout)
+        for rel in ("tool/libx.py", "other/liby.py"):
+            out = self.affected("--paths", rel)
+            self.assertIn("tests.test_entry", out)
+            self.assertNotIn("No affected mapping", out)
+
+    def test_configured_import_roots_resolve_fails_when_list_ignored(self):
+        self.git_project()
+        self.write("tool/run.py", "VALUE = 1\n")
+        self.write("pkg/mod.py", "VALUE = 1\n")
+        self.write("tests/test_cfg.py", "import mod\n\ndef test_c():\n assert mod\n")
+        self.track()
+        self.restaurant(self.project, layout=dict(LAYOUT, entryPoints=["tool/run.py"], helpers=[],
+                                                  importRoots=["pkg"]))
+        out = self.affected("--paths", "pkg/mod.py")
+        self.assertIn("tests.test_cfg", out)
+        self.assertNotIn("No affected mapping", out)
+        self.restaurant(self.project, layout=dict(LAYOUT, entryPoints=["tool/run.py"], helpers=[], importRoots=[]))
+        out = self.affected("--paths", "pkg/mod.py")
+        self.assertIn("No affected mapping", out)
+        self.assertIn("pkg/mod.py", out)
+
+    def test_malformed_import_roots_refused_fails_when_accepted(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n pass\n")
+        self.track()
+        for bad in ("scripts", None, 123, {"roots": ["scripts"]}, ["/abs"], ["../up"], ["a b"],
+                    [None], [123], ["scripts", None]):
+            with self.subTest(bad=bad):
+                self.restaurant(self.project, layout=dict(LAYOUT, importRoots=bad))
+                err = self.affected("--paths", "tests/test_a.py", ok=False)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("importRoots", err)
+                before = (self.at / "restaurant.json").read_bytes()
+                before_store = self.store_files()
+                err = self.brigade("set", "--check-command", "echo NEW", code=1)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("importRoots", err)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+                self.assertEqual(self.store_files(), before_store)
+
+    def test_d411_pair_maps_same_as_old_literals_fails_when_the_archive_tables_differ(self):
+        self.close_function()
+        import sys
+        module = sys.modules["brigade_lib.affected"]
+        archive = self.archive_root()
+        entries = tuple(LAYOUT["entryPoints"])
+        helpers = tuple(LAYOUT["helpers"])
+        old = module.Layout(ALWAYS, WORKFLOW, entries, helpers, LAYOUT["suite"], LAYOUT["python"],
+                            ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"))
+        new = module.Layout(ALWAYS, WORKFLOW, entries, helpers, LAYOUT["suite"], LAYOUT["python"],
+                            ("scripts", "t3/scripts"))
+        current = module._resolve_import
+        module._resolve_import = _base_resolve_import
+        try:
+            old_index = module._index(archive, old)
+        finally:
+            module._resolve_import = current
+        new_index = module._index(archive, new)
+        self.assertIsInstance(old_index, module._Closed)
+        self.assertIsInstance(new_index, module._Closed)
+        self.assertEqual(old_index.table, new_index.table)
+        lost = set(old_index.table) - set(new_index.table)
+        gained = set(new_index.table) - set(old_index.table)
+        self.assertEqual(lost, set())
+        self.assertEqual(gained, set())
