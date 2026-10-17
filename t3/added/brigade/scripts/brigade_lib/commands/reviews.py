@@ -107,9 +107,13 @@ def register_pass(sub):
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
-    a = t.add_parser("stats", help="print the first-pass rate overall and per author, and send-back counts by "
-                                  f"reason, over the last N items with a verdict; a send-back row whose reason is "
-                                  f"empty or is not one of {', '.join(REASONS)} counts as unrecorded")
+    stats_help = (
+        "Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. "
+        "Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. "
+        "Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. "
+        f"An empty reason or one outside {', '.join(REASONS)} counts as unrecorded. An empty window prints no items with a verdict."
+    )
+    a = t.add_parser("stats", help=stats_help, description=stats_help)
     a.add_argument("--last", type=non_negative_int, default=20,
                    help="how many items to cover, counting back from the most recently reviewed; default 20")
 

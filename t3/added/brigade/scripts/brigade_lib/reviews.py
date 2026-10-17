@@ -178,7 +178,8 @@ def pass_stats(restaurant, last):
     author. Send-back counts cover every non-member row of the selected items whose verdict is send-back, and
     a row with no reason counts as unrecorded. Items are newest first by their last verdict.
     """
-    items = reviewed_items(restaurant.rows("pass.tsv"), last)
+    with restaurant.read_lock(create=False):
+        items = reviewed_items(restaurant.rows("pass.tsv"), last)
     if not items:
         return "no items with a verdict"
     first = [item_rows[0] for _, item_rows in items]
