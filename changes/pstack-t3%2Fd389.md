@@ -1,0 +1,2 @@
+- kind feature
+- `brigade.py brief` keeps only the house rules that apply to a worker. A rule is a line that starts at column 0 and the indented lines under it. A rule whose first line carries `[reviewer]` or `[coordinator]` is left out. A rule whose first line carries `[worker]` is kept with the tag and the one space after it removed. A rule with no tag is kept as it is.
