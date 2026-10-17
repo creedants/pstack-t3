@@ -1,6 +1,6 @@
 - kind fix
-- restore_aside moves the proven backup into place with place and calls proved with path and fd right after the move
-- proved returns Published when its pathname lookup matches the supplied device and inode numbers. Otherwise it reports that the moved entry could not be confirmed
+- restore_aside hands the proven backup at its private name to place_proven, which moves it with place and calls proved with path and fd right after the move
+- proved returns Published when its pathname lookup matches the device and inode numbers of the descriptor it is given. Otherwise it reports that the moved entry could not be confirmed
 - place_proven returns the placement refusal when place refuses and returns the proof refusal when proved fails without touching the live occupant
 - retire runs only after a cross filesystem copy is placed. It requires a PrivateName argument
 - park and retire require a PrivateName argument. PrivateName construction requires its parent directory name to start with `.pstack-t3-`

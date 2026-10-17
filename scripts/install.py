@@ -901,7 +901,7 @@ class Stranded(OSError):
 class Holder:
     """A private directory beside `home`. `aside` is the one name an entry takes inside it.
 
-    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. A SCRAP directory holds an entry that `retire` moved there from a HOLDER directory: a backup whose copy is already in place, or a stranger that `park` could not move.
+    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. A SCRAP directory holds either a copy that `place_copy` is building or an entry that `retire` moved there from a HOLDER directory. That entry is a backup whose copy is already in place, or a stranger that `park` could not move.
     A STRANGER entry was parked there from a holder.
     This restore could not prove it. The sweep never restores or deletes it.
     As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
