@@ -367,7 +367,7 @@ Private working state that must survive the session but never be committed lives
 
 Resume notes from Pause safely go to `.pstack/resume/<slug>.md` in the repository, untracked (add `.pstack/` to `.git/info/exclude`), and are also posted as the thread's final message. Rely on the final message, because storage cleanup can delete the file with its worktree.
 
-After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Storage cleanup can also remove a worktree after the thread's PR merges into the default branch by squash or rebase at the worktree's head SHA. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
+After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
 
 ## Verification surfaces
 
@@ -414,7 +414,7 @@ An owner that may already be settled reads [Settle on turn end](host.md#settle-o
 
 Call `watch_pull_request` after `link_pull_request`, when this thread is waiting on that PR's checks, reviews, or conflicts. Pass the PR URL, or the repository and number. T3 links the PR first if this thread has not linked it yet.
 
-T3 checks the open PR every two minutes. It wakes this thread when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
+T3 checks the open PR every two minutes and wakes this thread when checks, reviews, or conflicts need it. Only comments posted after the call wake you, so handle the comments already on the PR, then end the turn.
 
 One thread may hold several watches. Comments from the user's own account do not wake a watch, so a review left from that account needs another wake or the heartbeat. T3 documents both in [source control](https://github.com/pingdotgg/t3code/blob/main/docs/user/source-control.md).
 
