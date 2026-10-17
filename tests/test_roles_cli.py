@@ -5168,9 +5168,10 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
 
 
 class ExcludeRefusalOwnerCliTest(unittest.TestCase):
-    """One owner words the exclude clause, so resolve, inherit, panel, backup, and validate refuse alike.
+    """One owner decides the exclude refusal, so resolve, inherit, panel, backup, and validate refuse the same seats.
 
     The clause is "<bare id> matches exclude entry <n> (<label>), and <EXCLUDE_RULE>".
+    resolve, inherit, panel, and validate report it. backup skips a refused candidate and relaunches on the next allowed one.
     """
 
     OPUS = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
