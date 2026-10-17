@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.layout import _layout, _one
-from brigade_lib.shared import BrigadeError, clean, slug
+from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
 from brigade_lib.tickets import tracked_paths
 
@@ -237,33 +237,19 @@ def _claim_norm(raw):
     return made
 
 
-def _check_checkout(project_root, raw_list):
+def missing_checkout_paths(project_root, raw_list):
     tracked = tracked_paths(project_root)
     if tracked is None:
-        raise BrigadeError("could not read the git index")
-    missing = []
+        return []
     seen = set()
     for raw in raw_list:
         made = _claim_norm(raw)
-        if made is None:
+        if not made:
             continue
-        if made == "":
+        if made in tracked.files or made in tracked.directories:
             continue
-        display = made if made is not None else raw.strip().replace("\\", "/")
-        if not display:
-            continue
-        if made is not None and (made in tracked.files or made in tracked.directories):
-            continue
-        if display not in seen:
-            seen.add(display)
-            missing.append(display)
-    if not missing:
-        return
-    if len(missing) == 1:
-        raise BrigadeError(f"{missing[0]} is not in the checkout. Drop it from --paths")
-    if len(missing) == 2:
-        raise BrigadeError(f"{missing[0]} and {missing[1]} are not in the checkout. Drop them from --paths")
-    raise BrigadeError(f"{', '.join(missing[:-1])}, and {missing[-1]} are not in the checkout. Drop them from --paths")
+        seen.add(made)
+    return sorted(seen)
 
 
 def claim_paths(project_root, paths, branch, doc_item=False):
@@ -272,7 +258,6 @@ def claim_paths(project_root, paths, branch, doc_item=False):
     raw_list = [part for part in paths.split(",") if part]
     if not raw_list:
         return Claim("", ())
-    _check_checkout(project_root, raw_list)
     try:
         lay = _layout(project_root)
     except KeyboardInterrupt:
@@ -429,11 +414,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    try:
-        text = claim_paths(project_root, requested, known, note.get("doc_item", False)).text
-    except BrigadeError as error:
-        return "lease", clean(str(error))
-    return lease_block(project_root, f"{prefix}/{ident}", text, note.get("kind") or "lease")
+    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known, note.get("doc_item", False)).text, note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):

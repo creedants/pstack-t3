@@ -576,12 +576,12 @@ class StartableTest(BrigadeTest):
                                       "--branch", "perf/d2"),
                          "D1 (lease L2 held by perf/D1)")
 
-    def test_startable_blocks_a_ticket_with_no_git_index_when_the_project_is_not_a_git_repository(self):
+    def test_startable_prints_one_line_for_a_ticket_the_landing_queue_refuses_in_a_project_that_is_not_a_git_repository(self):
         self.open()
         self.filed("Fix a", "--paths", "src/a.py")
         lines = self.brigade("startable").splitlines()
         self.assertEqual(len(lines), 3)
-        self.assertEqual(lines[2], "T1 normal fix, 0m: blocked, could not read the git index; src/a.py")
+        self.assertTrue(lines[2].startswith("T1 normal fix, 0m: blocked, waiting on the landing queue ("), lines[2])
 
     def test_startable_keeps_ticket_order_with_kinds_and_goals_with_paused_and_share_where_they_hold(self):
         self.queue("--workers", "3")
@@ -617,10 +617,3 @@ class StartableTest(BrigadeTest):
                                                                   "T5 normal, 0m: unknown, no paths recorded",
                                                                   "T6 normal, 0m: blocked, starts after T1; a.txt",
                                                                   "T4 low, 0m: below auto-start; d.txt"])
-
-    def test_startable_blocks_a_ticket_whose_path_is_missing_from_the_checkout(self):
-        self.queue()
-        self.filed("Fix missing", "--paths", "missing.txt")
-        text = self.brigade("startable")
-        self.assertIn("waiting tickets: 1, blocked: 1", text)
-        self.assertIn("T1 normal fix, 0m: blocked, missing.txt is not in the checkout. Drop it from --paths; missing.txt", text)

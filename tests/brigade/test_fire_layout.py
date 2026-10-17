@@ -3,6 +3,9 @@ from .support import (
     BrigadeTest,
     Path,
     ROOT,
+    SCRIPT,
+    _owner_words,
+    call,
 )
 import posixpath
 import subprocess
@@ -619,29 +622,64 @@ class FireLayoutTest(BrigadeTest):
         self.assertIn("T1 normal fix, 0m: startable; t1.txt", text)
         self.assertIn("T2 normal fix, 0m: blocked, starts after T1; .,t2.txt", text)
 
-    def test_fire_refuses_a_path_missing_from_the_checkout(self):
+    def test_fire_leases_a_stale_split_path_and_warns_on_stderr(self):
         self.git_project()
         self.vendor_layout()
         self.init_landing()
         self.landing_env()
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        error = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
-                             "--paths", "tests/test_landing.py", ok=False)
-        self.assertEqual(error, "brigade: tests/test_landing.py is not in the checkout. Drop it from --paths")
-        self.assertEqual(self.land("lease", "list"), "no leases held")
-        lines = (self.at / "dishes.tsv").read_text().splitlines()
-        self.assertEqual(len(lines), 1)
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "tests/test_landing.py"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: tests/test_landing.py is not in the checkout; a stale ticket path leases nothing real"])
+        self.assertIn("tests/test_landing.py", self.land("lease", "list"))
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("tests/test_landing.py", row["paths"])
 
-    def test_fire_refuses_a_missing_path_when_the_project_has_no_build_layout(self):
+    def test_fire_leases_a_missing_path_with_no_build_layout_and_warns_on_stderr(self):
         self.git_project()
         self.init_landing()
         self.landing_env()
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
-        error = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
-                             "--paths", "missing.txt", ok=False)
-        self.assertEqual(error, "brigade: missing.txt is not in the checkout. Drop it from --paths")
-        self.assertEqual(self.land("lease", "list"), "no leases held")
-        lines = (self.at / "dishes.tsv").read_text().splitlines()
-        self.assertEqual(len(lines), 1)
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "missing.txt"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: missing.txt is not in the checkout; a stale ticket path leases nothing real"])
+        self.assertIn("missing.txt", self.land("lease", "list"))
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("missing.txt", row["paths"])
+
+    def test_fire_warns_once_per_missing_path_sorted_and_deduplicated(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "zebra.txt,apple.txt,zebra.txt"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: apple.txt is not in the checkout; a stale ticket path leases nothing real",
+                          "fire: zebra.txt is not in the checkout; a stale ticket path leases nothing real"])
+        listed = self.land("lease", "list")
+        self.assertIn("apple.txt", listed)
+        self.assertIn("zebra.txt", listed)
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("zebra.txt,apple.txt,zebra.txt", row["paths"])

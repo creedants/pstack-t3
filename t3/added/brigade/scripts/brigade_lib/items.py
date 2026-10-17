@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, refusal_kind, refill_of, release_lease, running_workers, worker_cap
+from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, missing_checkout_paths, refusal_kind, refill_of, release_lease, running_workers, worker_cap
 from brigade_lib.reviews import fix_round_refusal, thread_binding, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug, stored
 from brigade_lib.store import IN_FLIGHT_STATES, KIND_CHOICE, LEASED_STATES, STATION_KIND, WORKER_ROLES
@@ -459,6 +459,11 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 for row in rows:
                     if row["id"] in ids:
                         restaurant.log("ticket", row["id"], "assigned", row["summary"])
+                if paths:
+                    for stale in missing_checkout_paths(restaurant.meta.get("projectRoot", ""),
+                                                        [part for part in paths.split(",") if part]):
+                        print(f"fire: {stale} is not in the checkout; a stale ticket path leases nothing real",
+                              file=sys.stderr)
                 return fired_line(dish, lease, holder(restaurant, dish), added)
             if full and not refusal:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
