@@ -32,8 +32,13 @@ class _Full:
 
 
 @dataclass(frozen=True)
-class _Index:
+class _Closed:
     table: dict
+
+
+@dataclass(frozen=True)
+class _Open:
+    reason: str
 
 
 def _norm(raw):
@@ -388,6 +393,71 @@ def _test_files(root):
     return found
 
 
+def _helper_entries(base):
+    entries = {}
+    for helper_rel in _HELPERS:
+        try:
+            helper_text = (Path(str(base)) / helper_rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            entries[helper_rel] = None
+            continue
+        try:
+            helper_mod = ast.parse(helper_text, helper_rel)
+        except SyntaxError:
+            entries[helper_rel] = None
+            continue
+        helper_singles = _singles(helper_mod)
+        found = frozenset(
+            _norm(ref) for ref in _loads_of(helper_mod, helper_singles) if _norm(ref) in _ENTRYPOINTS
+        )
+        entries[helper_rel] = found
+    return entries
+
+
+def _test_edges(targets, rel, base):
+    edges = set()
+    for target in targets:
+        level, module, symbol = target
+        if symbol and symbol != "*":
+            last = symbol
+        elif module:
+            last = module.split(".")[-1]
+        else:
+            last = ""
+        shaped = last.startswith("test_")
+        resolved = _resolve_import(target, rel, base)
+        if shaped and len(resolved) != 1:
+            if module and symbol and symbol != "*":
+                label = module + "." + symbol
+            elif module:
+                label = module
+            else:
+                label = symbol
+            return frozenset(), "unresolved import " + label + " in " + rel
+        for got in resolved:
+            mod_name = _module_name(Path(str(base)) / got, base)
+            if mod_name is not None:
+                edges.add(mod_name)
+    return frozenset(edges), None
+
+
+def _close(table, edges):
+    closed = {}
+    for key, value in table.items():
+        closed[key] = set(value)
+    changed = True
+    while changed:
+        changed = False
+        for members in closed.values():
+            for importer, imported in edges.items():
+                if importer in members:
+                    continue
+                if imported & members:
+                    members.add(importer)
+                    changed = True
+    return closed
+
+
 def _index(root):
     base = Path(str(root))
     try:
@@ -395,24 +465,11 @@ def _index(root):
     except Exception:
         lay = None
     files = _test_files(base)
-    helper_entry = set()
-    for helper_rel in _HELPERS:
-        try:
-            helper_text = (base / helper_rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        try:
-            helper_mod = ast.parse(helper_text, helper_rel)
-        except SyntaxError:
-            continue
-        helper_singles = _singles(helper_mod)
-        for ref in _loads_of(helper_mod, helper_singles):
-            norm = _norm(ref)
-            if norm in _ENTRYPOINTS:
-                helper_entry.add(norm)
+    helper_entries = _helper_entries(base)
     loads = {}
     pins = {}
     direct = {}
+    edges = {}
     mods = {}
     for path in files:
         name = _module_name(path, base)
@@ -442,16 +499,20 @@ def _index(root):
                 resolved.add(got)
         if resolved:
             direct[name] = resolved
+        edge_set, open_reason = _test_edges(targets, rel, base)
+        if open_reason is not None:
+            return _Open(open_reason)
+        edges[name] = edge_set
     combined = {}
     for name in set(list(loads) + list(direct)):
         own = set(loads.get(name, ()))
-        helpers_hit = False
         for ref in direct.get(name, ()):
-            if _norm(ref) in _HELPERS:
-                helpers_hit = True
-                break
-        if helpers_hit:
-            own = own | helper_entry
+            norm_ref = _norm(ref)
+            if norm_ref in helper_entries:
+                entry = helper_entries[norm_ref]
+                if entry is None:
+                    return _Open("unresolved helper " + norm_ref)
+                own = own | set(entry)
         if own:
             combined[name] = own
     table = {}
@@ -520,8 +581,9 @@ def _index(root):
                     table.setdefault(canon, set()).update(tests)
             else:
                 table.setdefault(key[0], set()).update(tests)
-    ordered = {key: tuple(sorted(value)) for key, value in table.items()}
-    return _Index(ordered)
+    closed = _close(table, edges)
+    ordered = {key: tuple(sorted(value)) for key, value in closed.items()}
+    return _Closed(ordered)
 
 
 def _select(root, paths):
@@ -544,6 +606,8 @@ def _select(root, paths):
     except Exception:
         lay = None
     index = _index(base)
+    if isinstance(index, _Open):
+        return _Full((index.reason,))
     expanded = []
     unmapped = []
     for norm in norms:
