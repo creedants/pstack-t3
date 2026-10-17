@@ -80,6 +80,7 @@ _RULES = (
     ),
 )
 STANDING_PLACEHOLDER = re.compile(r"<([a-z]+)>")
+HOUSE_RULE_TAG = re.compile(r"\[(worker|reviewer|coordinator)\](?: )?")
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -274,6 +275,32 @@ def standing_rules(restaurant, base, context, verify):
     return lines
 
 
+def worker_house_rules(text):
+    """The house rules a worker brief carries.
+
+    A rule is a line that starts at column 0 and the indented or blank lines under it. A rule whose
+    first line's first role tag is `[reviewer]` or `[coordinator]` is left out. One whose first tag is
+    `[worker]` keeps its place and loses that tag and the one space after it. Every other rule is kept
+    as it is, so a store with no tags renders the text it held before.
+    """
+    rules, current = [], []
+    for line in text.strip().split("\n"):
+        if line[:1] not in ("", " ", "\t") and current:
+            rules.append(current)
+            current = []
+        current.append(line)
+    rules.append(current)
+    kept = []
+    for lines in rules:
+        tag = HOUSE_RULE_TAG.search(lines[0])
+        if tag and tag.group(1) != "worker":
+            continue
+        if tag:
+            lines[0] = HOUSE_RULE_TAG.sub("", lines[0], count=1)
+        kept.append("\n".join(lines))
+    return "\n".join(kept)
+
+
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
     ident = dish["id"]
     if not dish["branch"]:
@@ -314,7 +341,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip() + "\n\n" + "\n".join(TEST_STANDARD),
+        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()) + "\n\n" + "\n".join(TEST_STANDARD),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")

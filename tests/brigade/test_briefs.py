@@ -110,6 +110,50 @@ class BriefsTest(BrigadeTest):
         self.assertIn("STANDING RULES:", text)
         self.assertIn("- Save the full output of any failed test run", text)
 
+    def test_an_untagged_house_rules_file_is_pasted_into_the_brief_byte_for_byte(self):
+        self.coordinator()
+        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        self.assertTrue(orders.startswith((self.at / "house-rules.md").read_text().strip() + "\n\n1. A test earns its place"),
+                        orders[:200])
+
+    def test_a_brief_keeps_untagged_and_worker_rules_and_leaves_out_reviewer_and_coordinator_rules(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "2. [worker] Worker rule.\n"
+            "3. [reviewer] Reviewer rule.\n"
+            "4. [coordinator] Coordinator rule.\n")
+        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        self.assertIn("1. Plain rule.\n", orders)
+        self.assertIn("2. Worker rule.\n", orders)
+        self.assertNotIn("[worker]", orders)
+        self.assertNotIn("Reviewer rule", orders)
+        self.assertNotIn("Coordinator rule", orders)
+
+    def test_a_house_rule_tagged_only_coordinator_is_left_out_of_the_brief(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "2. [coordinator] Coordinator rule.\n")
+        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        self.assertIn("1. Plain rule.\n", orders)
+        self.assertNotIn("Coordinator rule", orders)
+
+    def test_a_coordinator_rule_takes_its_indented_lines_out_of_the_brief_with_it(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "2. [coordinator] Coordinator rule.\n"
+            "    - Sub-bullet of the coordinator rule.\n"
+            "3. Rule after it.\n")
+        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        self.assertIn("1. Plain rule.\n", orders)
+        self.assertIn("3. Rule after it.\n", orders)
+        self.assertNotIn("Sub-bullet of the coordinator rule", orders)
+
     def test_the_built_skill_ships_the_verdict_protocol(self):
         text = (ROOT / "skills/brigade/verdict-protocol.md").read_text()
         self.assertIn("Rare:", text)
