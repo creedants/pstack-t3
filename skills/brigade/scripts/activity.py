@@ -95,7 +95,7 @@ DEFAULT_HOURS = 3.0
 MIN_HOURS = 0.01
 MAX_HOURS = 168.0
 BUDGET = 16000
-FIXED_BUDGET = 7900
+FIXED_BUDGET = 8000
 # html_preview and html_render refuse more than 512000 characters.
 MAX_BUDGET = 500000
 
@@ -1933,7 +1933,7 @@ def count_slots(text):
 
 
 def flight_column_px(flight):
-    """Pixels of the grouped count column and its headings. None reserves 0. A flight with no groups reserves 0. Each count line reserves COUNT_LINE_PX for each line it wraps to. COUNT_GAP_PX sits between count lines. Each heading reserves GROUP_PX."""
+    """Pixels the grouped strip's goal lines reserve. None reserves 0. A flight with no groups reserves 0. Each goal reserves GROUP_PX. The goal's name and counts wrap to one or more lines, and each line reserves COUNT_LINE_PX. COUNT_GAP_PX sits between goal lines."""
     if flight is None or not flight.groups:
         return 0
     rows = [text_lines(count_slots(count_line(group)), COUNT_CHARS) for group in flight.groups]
@@ -2263,13 +2263,20 @@ def within_budget(page, budget, clean, render, brief=False, ledger=limit_ledger)
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
     Each fold's page is measured with within_budget() with ledger=newest_ledger(), which keeps the most attempt lines whose document fits, a suffix of each work item's lines, and, when no count fits, bounds its fold summaries to their counts.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget cut keeps the most attempt lines whose document fits with newest_ledger(), and, when no count fits, bounds its fold summaries to their counts and keeps the most attempt lines of that page whose document fits, or no attempt line when no count of it fits. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget page at a fold that reaches FRAME_FOLDS tries those frame cuts before the next fold, and the first cut whose document is at most budget bytes and whose height() is at most frame is returned. An over-budget cut keeps the most attempt lines whose document fits with newest_ledger(), and, when no count fits, bounds its fold summaries to their counts and keeps the most attempt lines of that page whose document fits, or no attempt line when no count of it fits. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
         trimmed, document, fits = within_budget(page, budget, clean, render_html, ledger=newest_ledger)
         last = done == len(FOLDS)
         if not fits and not last:
+            if done >= FRAME_FOLDS and frame is not None:
+                for cut in frame_cuts(trimmed, frame):
+                    if cut is None:
+                        continue
+                    body, rendered, cut_fits = within_budget(cut, budget, clean, render_html, ledger=newest_ledger)
+                    if cut_fits and height(body) <= frame:
+                        return body, rendered
             continue
         page = trimmed
         if frame is None or height(page) <= frame:
@@ -2390,7 +2397,7 @@ STYLE = joined_lines("""
     .stat,.now div,.strip>*{border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px}
     .stat b{display:block;font-size:22px;line-height:1.1}
     .now div,.strip>*,.grp,.l{display:flex;gap:8px;align-items:baseline;min-width:0}
-    .now div{margin-bottom:4px}
+    .now{display:flex;flex-wrap:wrap;gap:6px}
     .mark{width:8px;height:8px;border-radius:50%;border:1px solid;box-sizing:border-box;align-self:center;flex:none}
     .pulse{border:0;background:var(--success)}
     .sum,.l span,.l small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2452,6 +2459,28 @@ RENDERER = squeezed("""
       node.textContent = text;
       return node;
     };
+    const link = (p, t, u) => {
+      const s = u.startsWith('https://'), n = add(p, s ? 'a' : 'span', '', t);
+      if (s) {
+        n.href = u;
+        n.target = '_blank';
+        n.rel = 'noopener';
+      }
+      return n;
+    };
+    const chip = (p, i) => {
+      const it = D.I[i], b = add(p, 'div');
+      if (it[6]) add(b, 'b', 'chip', it[6]);
+      if (D.G.some((g) => g[0] === i) || (D.L || []).concat(D.E || []).some(([a]) => a === i)) {
+        add(b, 'a', 'one', it[0]).href = '#g' + i;
+      } else {
+        const n = link(b, '', it[4]);
+        add(n, 'b', 'one', it[0]);
+        add(n, 'span', 'sum', it[1]);
+      }
+      add(b, 'b', 'chip ' + it[3], it[2]);
+      return b;
+    };
     let sum = 2166136261, D = null;
     for (let i = 0; i < raw.length; i++) sum = Math.imul(sum ^ raw.charCodeAt(i), 16777619) >>> 0;
     if (sum !== H) add(root, 'p', 'diff', 'This copy differs from what the tool wrote. Run the command again.');
@@ -2461,15 +2490,6 @@ RENDERER = squeezed("""
     if (D && D.v === 1) {
       const [start, length, span] = D.w, kinds = ['', 'run', 'f', 'stop', 'p0', 'q'];
       const clock = (t, day) => new Date(t * 1000).toLocaleString([], day ? {weekday: 'short', hour: 'numeric'} : {hour: 'numeric', minute: '2-digit'});
-      const link = (parent, text, url) => {
-        const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
-        if (safe) {
-          node.href = url;
-          node.target = '_blank';
-          node.rel = 'noopener';
-        }
-        return node;
-      };
       const stats = add(root, 'div', 'stats');
       ['running now', 'agents, last ' + span, 'sub-agents', 'failed'].forEach((label, i) => {
         const box = add(stats, 'div', 'stat' + (i ? i > 2 && D.n[i] ? ' alarm' : '' : ' live'));
@@ -2488,16 +2508,14 @@ RENDERER = squeezed("""
         if (open[i].length) {
           add(root, 'h2', '', heading);
           const list = add(root, 'div', 'now');
-          for (const [item, label, model, parent, elapsed] of open[i]) {
+          for (const [item, label, , parent, elapsed] of open[i]) {
             const line = add(list, 'div');
             add(line, 'i', i ? 'mark' : 'mark pulse');
             if (item) add(line, 'b', 'one', item);
             add(line, 'b', 'one', label);
-            const detail = add(line, 'span', 'sum');
-            add(detail, 'span', '', model);
             if (parent) {
-              add(detail, 'span', '', ' · under ');
-              add(detail, 'span', '', parent);
+              add(line, 'span', '', ' · under ');
+              add(line, 'span', '', parent);
             }
             add(line, 'span', '', elapsed);
           }
@@ -2535,6 +2553,7 @@ RENDERER = squeezed("""
       if (D.k) lane('co', 0, 'coordinator', ...D.k);
       for (const [index, rows] of D.G) {
         const head = add(lanes, 'div', 'grp'), item = D.I[index];
+        if (index >= 0) head.id = 'g' + index;
         if (item) {
           link(head, item[0], item[4]).className = 'one';
           add(head, 'span', 'sum', item[1]);
@@ -2542,16 +2561,11 @@ RENDERER = squeezed("""
         } else add(head, 'span', '', 'Not tied to a work item');
         for (const r of rows) lane('p' + (r[3] < 0 ? 0 : D.P[r[3]][1]), r[0], r[1], r[2], r[4], r[5], r[6]);
       }
-      const strip = D.I.filter(item => item[5]);
+      const strip = D.I.map((it, i) => [i, it]).filter(([, it]) => it[5]);
       if (strip.length) {
         add(root, 'h2', '', 'Work items in flight');
         const box = add(root, 'div', 'strip');
-        for (const item of strip) {
-          const chip = link(box, '', item[4]);
-          add(chip, 'b', 'one', item[0]);
-          add(chip, 'span', 'sum', item[1]);
-          add(chip, 'b', 'chip ' + item[3], item[2]);
-        }
+        for (const [i] of strip) chip(box, i);
       }
       const foot = add(root, 'div', 'foot');
       add(foot, 'span', '', 'As of ' + clock(start + length) + ' for ');
@@ -2564,7 +2578,7 @@ RENDERER = squeezed("""
     }
 """)
 
-STRIP_CSS = ".strip>.grp,.strip>.lg{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}.strip>.lg{flex-direction:column;align-items:flex-start}"
+STRIP_CSS = ".strip>.grp{flex:1 0 100%;border:0;background:transparent;border-radius:0;padding:2px 0}"
 # `.ldg` has a 100% flex basis, so `.tl>.grp` wraps it onto a line under the id, title, and state chip.
 LEDGER_CSS = ".tl>.grp{flex-wrap:wrap}.ldg{flex:1 0 100%;margin:0;padding:0;font-weight:400}.ldg span{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground)}"
 ATTEMPT_CSS = ".row.earlier{display:none}.ldg details{margin:0;padding:0}.ldg summary{display:block;height:16px;line-height:16px;overflow:hidden;white-space:nowrap;font-size:11.5px;color:var(--muted-foreground);cursor:pointer}"
@@ -2643,11 +2657,7 @@ LEDGER_HOOK = """
         seen.add(index);
         const item = D.I[index];
         const head = add(lanes, 'div', 'grp');
-        const link = (parent, text, url) => {
-          const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
-          if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
-          return node;
-        };
+        head.id = 'g' + index;
         link(head, item[0], item[4]).className = 'one';
         add(head, 'span', 'sum', item[1]);
         add(head, 'b', 'chip ' + item[3], item[2]);
@@ -2657,22 +2667,10 @@ LEDGER_HOOK = """
 """
 STRIP_HOOK = squeezed("""
     if (D && D.v === 1 && D.F && D.F.length) {
-      const link = (parent, text, url) => {
-        const safe = url.startsWith('https://'), node = add(parent, safe ? 'a' : 'span', '', text);
-        if (safe) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
-        return node;
-      };
-      const box = add(root, 'div', 'strip'), counts = add(box, 'div', 'lg');
-      for (const [count, heading, indexes] of D.F) {
-        add(counts, 'div', '', count);
-        add(box, 'div', 'grp', heading);
-        for (const index of indexes) {
-          const item = D.I[index], chip = link(box, '', item[4]);
-          if (item[6]) add(chip, 'b', 'chip', item[6]);
-          add(chip, 'b', 'one', item[0]);
-          add(chip, 'span', 'sum', item[1]);
-          add(chip, 'b', 'chip ' + item[3], item[2]);
-        }
+      const box = add(root, 'div', 'strip');
+      for (const [line, , indexes] of D.F) {
+        add(box, 'div', 'grp', line);
+        for (const index of indexes) chip(box, index);
       }
       const foot = root.querySelector('.foot'), title = add(root, 'h2', '', 'Work items in flight');
       root.insertBefore(title, foot);
@@ -2793,7 +2791,7 @@ def render_text(page, clean):
             name = f"{group.item.id} {row.label}" if group.item else row.label
             if row.open_seconds is not None:
                 waits = row.status is Status.QUEUED
-                (queued if waits else running).append(line(name, row.model, f"{'queued' if waits else 'running'} for {dur(row.open_seconds)}",
+                (queued if waits else running).append(line(name, f"{'queued' if waits else 'running'} for {dur(row.open_seconds)}",
                                                            f"under {above[row.depth - 1]}" if row.depth else ""))
             if row.status is Status.FAILED:
                 failed.append(line(name, row.model, worked([row])))
@@ -2819,8 +2817,7 @@ def render_text(page, clean):
     else:
         items = []
         for group in text_flight.groups:
-            items.append(line(group.heading, group.count))
-            items.append("  " + group.heading)
+            items.append(line(count_line(group)))
             for item in group.items:
                 items.extend(grouped_block(item))
     totals = page.totals

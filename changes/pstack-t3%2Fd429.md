@@ -1,0 +1,6 @@
+- kind feature
+- `t3/added/brigade/scripts/activity.py` Running now and Queued print the work item id when the row belongs to a work item, the row's label, and the elapsed time, plus `under <parent>` for a sub-agent, and no model name. The HTML form lays the entries out as one wrapped row.
+- In HTML the same file prints each goal that has an item in flight once under the Work items in flight heading, as its name when it has one and its counts. An item that carries a kind shows its kind chip before its id, whether or not the id links to a Timeline group. For an item with no Timeline group and a pull request link, the chip sits outside that link. An item that has a Timeline group shows its id linked to that group, its state, and no summary. An item with no Timeline group keeps its summary.
+- Each Timeline group header for a work item carries an `id` of `g` plus the work item's index, so an in-flight id link resolves to its group. The Timeline keeps the same row and bar rendering.
+- The same file's `fit()` tries the frame cuts before the last fold's cap when a page is still over the byte budget at the fold where the frame folds end, and keeps the first cut whose document is at most the budget and whose height is at most the frame.
+- The plain form prints the goal once and keeps the rest of each item's line, because it draws no Timeline.
