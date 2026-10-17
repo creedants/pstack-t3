@@ -16,6 +16,10 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def contract(self):
+        with land.Store.for_repo(self.work) as store:
+            return dict(store.contract)
+
     def test_merge_mode_reports_a_pr_opened_for_an_entry_left_without_one(self):
         with self.fake_gh():
             (self.base / "checks").write_text("pending")
@@ -1396,7 +1400,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.stored_merge_method(), "rebase")
             self.allow_methods(squash=True, rebase=True)
             self.init(mode="merge")
-            self.assertEqual(self.stored_merge_method(), "squash")
+            self.assertEqual(self.stored_merge_method(), "rebase")
             self.allow_methods(merge=True, squash=True)
             self.init(mode="merge")
             self.assertEqual(self.stored_merge_method(), "merge")
@@ -1438,6 +1442,63 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.stored_merge_method(), "merge")
             self.init(mode="merge", merge_method="rebase")
             self.assertEqual(self.stored_merge_method(), "rebase")
+            self.land("init", "--trunk", "main", "--mode", "merge")
+            self.assertEqual(self.stored_merge_method(), "rebase")
+            self.land("mode", "human")
+            before = self.contract()
+            self.land("init", "--trunk", "main", "--mode", "human")
+            self.assertEqual(self.contract(), before)
+
+    def test_a_rerun_keeps_an_omitted_check_setup_and_timeout_and_writes_a_passed_batch(self):
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh",
+                      "--setup", "make deps", "--batch", "2", "--timeout", "90")
+            self.land("init", "--trunk", "main", "--mode", "human", "--batch", "4")
+            stored = self.contract()
+            self.assertEqual(stored["checks"], ["./check.sh"])
+            self.assertEqual(stored["setup"], "make deps")
+            self.assertEqual(stored["batch"], 4)
+            self.assertEqual(stored["timeout"], 90)
+            self.land("init", "--trunk", "main", "--mode", "human", "--remote", "origin")
+            self.assertEqual(self.contract(), stored)
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "make verify",
+                      "--check", "make lint", "--setup", "", "--timeout", "45")
+            self.assertEqual(self.contract(), {**stored, "checks": ["make verify", "make lint"],
+                                              "setup": "", "timeout": 45})
+
+    def test_a_rerun_without_merge_method_keeps_rebase_while_it_stays_allowed(self):
+        with self.fake_gh():
+            self.allow_methods(squash=True, rebase=True)
+            self.init(mode="merge", merge_method="rebase")
+            self.assertEqual(self.stored_merge_method(), "rebase")
+            self.init(mode="merge")
+            self.assertEqual(self.stored_merge_method(), "rebase")
+            self.allow_methods(squash=True)
+            self.init(mode="merge")
+            self.assertEqual(self.stored_merge_method(), "squash")
+
+    def test_a_rerun_fills_only_missing_contract_keys(self):
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "make verify",
+                      "--setup", "make deps", "--batch", "7", "--timeout", "95")
+            before = self.contract()
+            with land.Store.for_repo(self.work) as store:
+                with store.tx() as db:
+                    db.execute("DELETE FROM contract WHERE key IN ('setup', 'batch')")
+            self.land("init", "--trunk", "main", "--mode", "human")
+            self.assertEqual(self.contract(), {**before, "setup": "", "batch": 1})
+
+    def test_a_rerun_with_no_allowed_merge_method_leaves_the_contract_unchanged(self):
+        with self.fake_gh():
+            self.allow_methods(rebase=True)
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "make verify",
+                      "--setup", "make deps", "--batch", "7", "--timeout", "95", "--merge-method", "rebase")
+            before = self.contract()
+            self.allow_methods()
+            self.assertEqual(
+                self.land("init", "--trunk", "main", "--mode", "human", "--batch", "4", ok=False),
+                "land: repository allows no merge method; allowed: none")
+            self.assertEqual(self.contract(), before)
 
     def test_a_refused_merge_method_names_the_command_that_changes_it(self):
         refusal = "GraphQL: Merge commits are not allowed on this repository. (mergePullRequest)"

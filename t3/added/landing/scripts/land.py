@@ -87,13 +87,18 @@ def parser():
                    help="human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref")
     p.add_argument("--remote", default="origin")
     p.add_argument("--base", default="", help="local mode: the commit the lane starts from")
-    p.add_argument("--check", action="append", default=[], help="command that must pass before landing; repeatable")
-    p.add_argument("--setup", default="", help="command run before checks in the clean integration worktree, such as npm ci")
-    p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
-    p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
+    p.add_argument("--check", action="append", default=None,
+                   help="command that must pass before landing; repeatable. Omitted, a rerun keeps the stored checks and a first init stores none")
+    p.add_argument("--setup", default=None,
+                   help="command run before checks in the clean integration worktree, such as npm ci. Omitted, a rerun keeps the stored setup and a first init stores none")
+    p.add_argument("--batch", type=int, default=None,
+                   help="entries checked together; a failed batch lands one at a time. Omitted, a rerun keeps the stored batch and a first init stores 1")
+    p.add_argument("--timeout", type=int, default=None,
+                   help="seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800")
     p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
                    help="merge mode: how the queue merges its PRs, checked against the repository whenever it is set. "
-                        "omitted in merge mode, init stores the one allowed method, or merge when gh cannot say")
+                        "omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, "
+                        "and a rerun keeps the stored method while the repository allows it")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
 
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
