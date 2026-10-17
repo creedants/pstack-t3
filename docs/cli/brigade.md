@@ -37,7 +37,7 @@ create a restaurant, or print an existing one
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review; missing reads as 2 |
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
-| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing adopts the file's own value, or writes 300000 when it holds none; an existing store is left alone |
+| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing uses 300000, except claude adopts an existing integer autoCompactWindow from the project's .claude/settings.local.json; claude attempts to write the cap there unless adopting it; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
 
 ## brigade.py set

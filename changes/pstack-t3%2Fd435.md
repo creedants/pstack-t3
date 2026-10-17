@@ -1,2 +1,2 @@
 - kind fix
-- `brigade.py open --help` for `--context-cap` now states the creation rule the code writes: a missing flag adopts the file's own value, or writes 300000 when it holds none; an existing store is left alone
+- `brigade.py open --help` for `--context-cap` now names the project's `.claude/settings.local.json` and its integer `autoCompactWindow`, scopes adoption and settings writes to `claude`, and states that reopening leaves an existing store alone
