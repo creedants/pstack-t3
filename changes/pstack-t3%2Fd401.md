@@ -1,0 +1,3 @@
+- kind polish
+- `pass_stats` states that an item's first pass is its first non-member row in table order
+- `pass_stats` states that a row with no reason, or a reason not in `REASONS`, counts as unrecorded
