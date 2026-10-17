@@ -148,6 +148,10 @@ def handle_set(restaurant, args):
     if args.thread or args.expect is not None:
         if args.thread is None:
             raise BrigadeError("--expect needs --thread")
+        if args.low_reserve is None:
+            low_reserve_of(restaurant.meta)
+        elif args.low_reserve != "":
+            parse_low_reserve(args.low_reserve)
         return set_thread(restaurant, args)
     with restaurant.checked():
         return seam.command(restaurant, args)

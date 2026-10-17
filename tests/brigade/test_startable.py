@@ -218,6 +218,16 @@ class StartableTest(BrigadeTest):
             "workers still idle are at most 2; b.txt",
         ]))
 
+    def test_set_replacing_thread_refuses_a_malformed_low_reserve_before_landing_writes(self):
+        self.queue()
+        self.brigade("set", "--thread", "t1")
+        path = self.at / "restaurant.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "lowReserve": "two"}))
+        before = self.store_files(), self.landing_rows()
+        error = self.brigade("set", "--thread", "t2", "--replace", code=1)
+        self.assertIn("restaurant.json lowReserve 'two' is invalid", error)
+        self.assertEqual((self.store_files(), self.landing_rows()), before)
+
     def test_set_records_and_clears_the_low_reserve(self):
         self.queue()
         self.brigade("set", "--low-reserve", "0")
