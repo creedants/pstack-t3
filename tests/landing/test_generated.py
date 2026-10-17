@@ -138,7 +138,7 @@ _DARWIN = "darwin without waitid"
 
 
 def _platforms():
-    """Return the host row plus the simulated Darwin row."""
+    """Return the host row plus the simulated Darwin row, except on a Darwin host without os.waitid, where it returns only the Darwin row."""
     if sys.platform == "darwin" and not hasattr(os, "waitid"):
         return [_DARWIN]
     return [_HOST, _DARWIN]
@@ -146,7 +146,7 @@ def _platforms():
 
 @contextlib.contextmanager
 def _platform(name):
-    """Run the body on the host or as macOS Python 3.12."""
+    """Run the body on the host, or with sys.platform set to darwin and os.waitid removed."""
     if name == _HOST:
         yield
         return
@@ -1141,11 +1141,12 @@ class GeneratedTest(LandingTest):
                     self.assertIs(restored, returning_previous)
 
     def test_darwin_ps_reap_is_not_a_leader_reap(self):
-        """Darwin ps reap is not a leader reap."""
+        """Reaps of the ps child are not leader reaps."""
         with _platform(_DARWIN):
             with _GroupTrace() as trace:
                 land.run_build("sleep 5", str(self.work), 0.1)
             leader = trace.leader()
+            self.assertTrue(any(name == "reaped" and pid != leader for name, pid in trace.events))
             self.assertEqual(_names(trace.events, leader), ["killpg", "reaped"])
             self.assertFalse(_signalled_after_reap(trace.events))
 
