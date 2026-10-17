@@ -1,2 +1,2 @@
 - kind fix
-- `pass record` skips a non-blank line of a report's `## Threads` section that starts no list item, where a line starts a list item when its first characters are a hyphen, an asterisk, or a plus followed by a space or a tab, and still refuses by its number a list item that is not one item of the form - <role> `<thread id>` <seat>.
+- `pass record` skips a non-blank, non-heading line of a report's `## Threads` section that starts no list item, where a line starts a list item when its first characters are a hyphen, an asterisk, or a plus followed by a space or a tab, and still refuses by its number a list item that is not one item of the form - <role> `<thread id>` <seat>.

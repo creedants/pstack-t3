@@ -416,7 +416,7 @@ brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AU
 
 Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The child rows come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
 
-That section starts with the heading `## Threads` on a line of its own. A line of it that is blank, is a heading, or is inside a fenced block that opens after up to three spaces is not read. A line that starts a list item must be of the form - \<role> `\<thread id>` \<seat>, where a list item starts with a hyphen, an asterisk, or a plus followed by a space or a tab. A line that starts no list item is skipped.
+That section starts with the heading `## Threads` on a line of its own. A line of it that is inside a fenced block that opens after up to three spaces is not read. Every other non-blank line of it is skipped unless it is a heading or starts a list item. A line that is read and starts a list item must be of the form - \<role> `\<thread id>` \<seat>, where a list item starts with a hyphen, an asterisk, or a plus followed by a space or a tab.
 
 This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is `mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.
 
