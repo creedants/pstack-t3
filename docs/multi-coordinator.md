@@ -250,7 +250,7 @@ The user asks any thread for an executive admin, through the brigade-admin skill
 
 ### Its services
 
-First service pins the thread with `t3_thread_organize`, and creates three schedules bound to it, recorded with `set --schedule`. Intake runs every hour, `3600000`, because each service also runs the idle check, which must run well inside the 6-hour lease expiry. The 09:00 service runs routing and checks. The evening update runs at 18:30, after the coordinators' 18:00 reports. It creates no liveness or drain schedule, because it runs no workers and owns no queue entries.
+First service pins the thread with `t3_thread_organize`, and creates three schedules bound to it, recorded with `set --schedule`. The opener asks for the intake interval in whole minutes and the morning and evening times as `HH:MM`. It refuses an interval above 120 minutes and asks again. Each service also runs the idle check, which must run before a coordinator's 6-hour leases lapse. A start message that carries no value for one of the three takes the default, `3600000` ms for intake, `09:00` for morning, and `18:30` for evening. The morning service runs routing and checks. The evening update runs after the coordinators' 18:00 reports. It creates no liveness or drain schedule, because it runs no workers and owns no queue entries.
 
 Every wake, whether a schedule, a message, or a user message, runs one service.
 
