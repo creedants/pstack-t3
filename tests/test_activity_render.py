@@ -438,7 +438,7 @@ class LiveAttemptFoldTest(unittest.TestCase):
         fixture.write_database()
         result = in_process.invoke(fixture.command())
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        # The second fold repeats the live tick rebuild on the same nodes.
+        # The second fold re-applies state after the click on the same nodes.
         probe = "".join((
             "<script>", MOD["LIVE_FOLD"], "</script>",
             "<script>",
