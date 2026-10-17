@@ -1,0 +1,4 @@
+- kind fix
+- brigade refuses a stored contextCap that is not an integer, a stored coordinatorProvider that is not claude or other, a stored caps or review value that is not an object, a caps entry of a known kind whose value is not an integer of 1 or more, and a review entry of a known kind whose value is not full or light, and prints a warning on stderr naming the key, restaurant.json, and the bad value.
+- An existing store's `open` and every `set` validate all four settings before their own write, including the other-provider path, and refuse a stored setting that does not parse unless that command replaces or clears it.
+- A missing key keeps its default.

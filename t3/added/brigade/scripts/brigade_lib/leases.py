@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.compact import refuse_setting
 from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
@@ -75,22 +76,27 @@ class Hold:
 def kind_limits(meta):
     """The caps and review depths restaurant.json holds, as a KindLimits.
 
-    set --cap and set --review are the boundary that refuses bad text, so an entry this drops was written by
-    hand. A cap is a whole number of 1 or more and a depth is full or light. A non-object value reads as no
-    setting.
+    A key absent from meta reads as no caps and no review depths. A present value that does not parse is refused with a
+    warning, and so is a caps or review entry of a known kind whose value does not parse. A cap is a whole number of 1
+    or more and a depth is full or light. An entry whose kind is not in KINDS is skipped.
     """
     caps, review = {}, {}
     for key, found in (("caps", caps), ("review", review)):
-        stored = meta.get(key)
-        if not isinstance(stored, dict):
+        if key not in meta:
             continue
+        stored = meta[key]
+        if not isinstance(stored, dict):
+            refuse_setting(key, stored, "it is not an object")
         for kind, value in stored.items():
             if kind not in KINDS:
                 continue
             if key == "review":
-                if value in MODES:
-                    review[kind] = value
-            elif isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+                if value not in MODES:
+                    refuse_setting("review", value, f"{kind!r} needs full or light")
+                review[kind] = value
+            else:
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    refuse_setting("caps", value, f"{kind!r} needs a whole number of 1 or more")
                 caps[kind] = value
     return KindLimits(caps, review)
 

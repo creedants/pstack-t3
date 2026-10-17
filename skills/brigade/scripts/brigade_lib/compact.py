@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -18,20 +19,35 @@ SETTINGS_KEY = "autoCompactWindow"
 SETTINGS_MODE = "100644"
 
 
+def refuse_setting(key, value, why):
+    """Print the warning and refuse a present restaurant.json setting that does not parse.
+
+    The warning goes to standard error, then the same sentence raises. A missing key takes its default
+    and never reaches here.
+    """
+    text = f"restaurant.json {key} {value!r} is invalid: {why}"
+    print(f"brigade: warning: {text}", file=sys.stderr)
+    raise BrigadeError(text)
+
+
 def effective_cap(meta):
-    """The cap this restaurant enforces. A missing or non-integer contextCap reads as the default."""
-    value = meta.get("contextCap")
-    if isinstance(value, bool) or not isinstance(value, int):
+    """The cap this restaurant enforces. A missing contextCap takes 300000, and a present value that is not an integer, or is a boolean, is refused."""
+    if "contextCap" not in meta:
         return DEFAULT_CONTEXT_CAP
+    value = meta["contextCap"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        refuse_setting("contextCap", value, "it is not a whole number")
     return value
 
 
 def effective_provider(meta):
-    """The coordinator host. A missing or unknown coordinatorProvider reads as claude."""
-    value = meta.get("coordinatorProvider")
-    if value in PROVIDERS:
-        return value
-    return DEFAULT_PROVIDER
+    """The coordinator host. A missing coordinatorProvider takes claude, and a present one that is not a known provider is refused."""
+    if "coordinatorProvider" not in meta:
+        return DEFAULT_PROVIDER
+    value = meta["coordinatorProvider"]
+    if value not in PROVIDERS:
+        refuse_setting("coordinatorProvider", value, "it is not claude or other")
+    return value
 
 
 def parse_context_cap(text):

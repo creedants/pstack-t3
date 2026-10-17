@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.compact import effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
-from brigade_lib.leases import next_owner, repository_cap, require_workers, set_thread, worker_cap
+from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import AUTOFIRE, MODES, REPORTING, SCRATCH_KEY, is_admin, open_restaurant, sibling_lines, siblings, scratch_parent_text
 from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
@@ -86,6 +86,17 @@ def register(sub):
     register_set(sub)
 
 
+def validate_settings(meta):
+    """Refuse a stored setting that does not parse, before this command writes it over.
+
+    The reader predicates decide all four settings, so a value accepted here is a value a reader accepts. A missing
+    key keeps its default.
+    """
+    effective_cap(meta)
+    effective_provider(meta)
+    kind_limits(meta)
+
+
 def handle_open(args, root):
     if args.admin and args.name:
         raise BrigadeError("open --admin takes no --name")
@@ -102,6 +113,7 @@ def handle_open(args, root):
                                           intake_list(args.intake), args.workers, args.admin, args.mode,
                                           context_cap=context_cap,
                                           coordinator_provider=coordinator_provider)
+    validate_settings(restaurant.meta)
     lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
     meta = restaurant.meta
     thread = (meta.get("thread") or "").strip()
@@ -147,7 +159,7 @@ def handle_locked(restaurant, args, view):
     if args.command != "set":
         return None
     meta = restaurant.meta
-    changes, drop = {}, []
+    changes, drop, logged = {}, [], None
     if args.intake is not None:
         changes["intake"] = set_intake(restaurant, intake_list(args.intake))["intake"]
     if args.thread is not None and (args.thread or args.expect is not None):
@@ -161,7 +173,7 @@ def handle_locked(restaurant, args, view):
             note += f"; stopped {clean(args.stopped)}" if args.stopped else ""
             ident = f"{args.thread}@{generation}"
             if not any(row["kind"] == "thread" and row["id"] == ident for row in restaurant.rows("log.tsv")):
-                restaurant.log("thread", ident, "recorded", note)
+                logged = ("thread", ident, "recorded", note)
     if args.reporting:
         changes["reporting"] = args.reporting
     if args.workers is not None:
@@ -231,11 +243,14 @@ def handle_locked(restaurant, args, view):
             else:
                 schedules.pop(name, None)
         changes["schedules"] = schedules
+    prospective = dict(meta)
+    prospective.update(changes)
+    for key in drop:
+        prospective.pop(key, None)
+    validate_settings(prospective)
+    if logged is not None:
+        restaurant.log(*logged)
     if args.context_cap is not None or args.coordinator_provider is not None:
-        prospective = dict(meta)
-        prospective.update(changes)
-        for key in drop:
-            prospective.pop(key, None)
         if effective_provider(prospective) == "claude":
             sync_meta(prospective)
     meta = restaurant.change_meta(drop, **changes)
