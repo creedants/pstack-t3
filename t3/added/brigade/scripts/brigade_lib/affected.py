@@ -24,7 +24,6 @@ _LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 # A second interpreter's file name, python3 or python3.10.
 _PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")
-_PYTHON_PATH = re.compile(r"^/.+/python\d+(?:\.\d+)?$")
 
 
 @dataclass(frozen=True)
@@ -99,7 +98,9 @@ def layout(meta):
         refuse_setting(AFFECTED_KEY, value, "'suite' needs a command")
     python = value.get("python")
     if python is not None:
-        if not (isinstance(python, str) and _PYTHON_PATH.match(python)):
+        named = (isinstance(python, str) and python.startswith("/")
+                 and bool(_PYTHON_NAME.match(posixpath.basename(python))))
+        if not named:
             refuse_setting(AFFECTED_KEY, value,
                            "'python' needs an absolute path whose file name is python<major> or python<major>.<minor>")
         if suite.split()[0] != "python3":

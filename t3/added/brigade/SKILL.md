@@ -115,7 +115,7 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 }
 ```
 
-The second interpreter is an absolute path whose file name is `python<major>` or `python<major>.<minor>`, and the paragraph names it by that version. A layout that sets `python` also needs a `suite` that starts with `python3`, because the second interpreter reruns the same command. A store whose `checkCommand` is `none` records no check command.
+The second interpreter is an absolute path whose file name is `python<major>` or `python<major>.<minor>`, and the paragraph names it by that version. A layout that sets `python` also needs a `suite` that starts with `python3`, because that interpreter replaces the leading `python3`. A store whose `checkCommand` is `none` records no check command.
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
