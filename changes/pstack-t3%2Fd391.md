@@ -1,0 +1,3 @@
+- kind polish
+- `tests/test_build.py` lists the copy with `git ls-files` only when `git rev-parse --show-toplevel` resolves to the test root, and walks the tree otherwise, so `test_default_build_writes_the_committed_command_line_reference_pages` passes in a `git archive` copy with no `.git`
+- the walk skips a `.git` or `__pycache__` directory, a `.git` file, and a `.pyc` file, and copies every other regular file under the root
