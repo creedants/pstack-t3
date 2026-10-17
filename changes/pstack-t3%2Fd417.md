@@ -3,5 +3,5 @@
 - `any` skips the authorship check; `configured` and `credited` check only when the repository has a configured identity, `configured` then bounces every reviewed commit whose author is not that identity, and `credited` also keeps the `Co-authored-by` trailer and `Based on #<n> by @<login>` exception.
 - A stored contract without the key reads as `any`.
 - A repo status line names the policy when it is `configured` or `credited`.
-- `t3/added/landing/SKILL.md` scopes the merge-method preference to a contract with no stored method and qualifies the check with when `gh` can report the allowed methods, and `--merge-method` help says the same.
+- `t3/added/landing/SKILL.md` scopes the merge-method preference to a contract with no stored method, and the SKILL.md sentence and the `--merge-method` help both carry the `gh` qualifier on the method check.
 - `tests/landing/test_identity.py` pins each policy, the default, a keyless store, a rerun, an unknown value, and a status line.

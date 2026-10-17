@@ -104,8 +104,8 @@ def parser():
                    help="how the queue judges a reviewed commit's author. any skips the check. configured and credited "
                         "check only when the repository has a configured identity: configured requires that author, and "
                         "credited also lands a commit by another author that carries a Co-authored-by trailer equal to "
-                        "it and a Based on #<n> by @<login> line in the body. Omitted, a rerun keeps the stored policy "
-                        "and a first init stores any")
+                        "it and a line in the body that reads Based on #<n> by @<login>, optionally with a trailing "
+                        "period. Omitted, a rerun keeps the stored policy and a first init stores any")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
