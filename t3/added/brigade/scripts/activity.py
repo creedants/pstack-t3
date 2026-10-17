@@ -2786,6 +2786,8 @@ def origin_of(value):
         host, port = parts.hostname, parts.port
     except ValueError:
         raise ActivityError(bad) from None
+    if parts.netloc.endswith(":"):
+        raise ActivityError(bad)
     if parts.scheme not in ("http", "https"):
         raise ActivityError(bad)
     if not host:

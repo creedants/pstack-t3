@@ -4523,6 +4523,10 @@ class LiveTest(OutputCase):
             with self.subTest(origin=origin):
                 self.assertEqual(self.fails(1, "--live-page", origin), refused)
 
+    def test_live_page_with_empty_port_is_refused_with_the_origin_rule(self):
+        refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
+        self.assertEqual(self.fails(1, "--live-page", "https://home.example.ts.net:"), refused)
+
     def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
         fixture = one_running(self.fixture).write()
         (fixture.store / "restaurant.json").unlink()
