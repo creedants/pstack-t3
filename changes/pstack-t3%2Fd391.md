@@ -1,4 +1,4 @@
 - kind polish
 - `tests/test_build.py` lists the tree at the test root with `git ls-files` only when `git rev-parse --show-toplevel` resolves to that root, and walks the tree otherwise
 - `test_default_build_writes_the_committed_command_line_reference_pages` raised `CalledProcessError` with exit status 128 in a `git archive` copy with no `.git`, because `git ls-files` finds no repository there
-- the walk lists every path under the root that `is_file()` reports, outside a `.git` or `__pycache__` directory and except a `.git` or `.pyc` file, and the test copies each listed path that is not under `docs/cli/`
+- the walk lists every path it reaches whose `is_file()` is true, outside a `.git` or `__pycache__` directory and except a `.git` or `.pyc` file, and the test copies each listed path that is not under `docs/cli/`
