@@ -31,6 +31,8 @@ CLAIMS_STATES = ("in-review", "passed")
 # The heading a worker report puts its child threads under, and the form of one item under it.
 THREADS_SECTION = (2, "Threads")
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
+# The start of a list item, so a line of the section that starts none is prose and is skipped.
+THREADS_ITEM_START = re.compile(r"^[-*+][ \t]")
 # Why report_threads cannot read one line of a report's ## Threads section. Each value finishes `line <n> `.
 THREADS_REFUSED = {
     "item": "is not one list item of the form - <role> `<thread id>` <seat>",
@@ -223,9 +225,11 @@ def report_threads(text):
 
     The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
     tuple of `(line number, reason)` pairs. A fenced block that opens after up to three spaces is
-    skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line of
-    the section that holds text but is not one item is reported by its number, and a line with no text is
-    skipped. A heading deeper than the
+    skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line
+    with no text is skipped, and so is a line of the section that starts no list item, that is a line
+    whose first characters are not a hyphen, an asterisk, or a plus followed by a space or a tab. A list
+    item that is not one item of the form - <role> `<thread id>` <seat> is reported by its number. A
+    heading deeper than the
     section's own or a second ## Threads heading while the first is still open is reported by its number
     and ends the scan. An item whose thread id the table would change is reported by its number too. A
     role that is well formed but is not one of CHILD_ROLES is reported by its number, and named with the
@@ -260,7 +264,8 @@ def report_threads(text):
             continue
         item = THREADS_ITEM.match(line)
         if not item:
-            unreadable.append((number, THREADS_REFUSED["item"]))
+            if THREADS_ITEM_START.match(line):
+                unreadable.append((number, THREADS_REFUSED["item"]))
             continue
         role, thread, seat = item.groups()
         if clean(thread) != thread:
