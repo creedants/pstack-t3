@@ -1114,7 +1114,7 @@ class GeneratedTest(LandingTest):
             os.close(second)
             held.append(os.open(os.devnull, os.O_RDONLY))
             held.append(os.open(os.devnull, os.O_RDONLY))
-        # The command is a process because the test reads back its exit status.
+        # The command exits 3 so the test can read the status back.
         code, out = land.run_build("exit 3", str(self.work), 10)
         self.assertEqual((code, out), (3, ""))
 
