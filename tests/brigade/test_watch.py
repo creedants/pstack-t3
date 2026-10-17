@@ -378,3 +378,24 @@ class WatchTest(BrigadeTest, _WakeRace):
                                                 "no work in progress")
         self.assertEqual([(row["id"], row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
                          [(seat, "skipped", "rate-limit"), (seat, "cleared", "smoke test passed")])
+
+    def test_watch_shows_a_checkout_block_for_a_waiting_ticket_whose_path_left_the_checkout(self):
+        self.git_project()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--workers", "1")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "filler")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "second")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "filler",
+                     "--paths", "a.txt")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "second",
+                                      "--paths", "b.txt", ok=False),
+                         "brigade: nothing fired: 1 of 1 workers running")
+        self.brigade("dish", "D1", "--state", "sent-back")
+        subprocess.run(["git", "rm", "-q", "b.txt"], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "drop b"],
+                       cwd=self.project, check=True, capture_output=True, text=True)
+        lines = self.brigade("watch").splitlines()
+        self.assertTrue(any(part.startswith("T2: b.txt is not in the checkout. Drop it from --paths") for part in lines), lines)

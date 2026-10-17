@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib.layout import _layout, _one
 from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
-from brigade_lib.shared import age, clean, slug
+from brigade_lib.shared import BrigadeError, age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, LOW_RESERVE, PRIORITIES_BY_RANK
 from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
 
@@ -124,8 +124,12 @@ def lease_refusals(meta, tickets):
             continue
         key = (ticket.paths, ticket.doc_item)
         if key not in asked:
-            asked[key] = lease_block(root, f"{prefix}/{ticket.id}",
-                                     claim_paths(root, ",".join(ticket.paths), "", ticket.doc_item).text)
+            try:
+                text = claim_paths(root, ",".join(ticket.paths), "", ticket.doc_item).text
+            except BrigadeError as error:
+                asked[key] = ("lease", clean(str(error)))
+            else:
+                asked[key] = lease_block(root, f"{prefix}/{ticket.id}", text)
         if asked[key]:
             refusals[ticket.id] = clean(asked[key][1])
     return refusals

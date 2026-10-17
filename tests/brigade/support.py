@@ -1131,7 +1131,14 @@ class BrigadeTest(unittest.TestCase):
             return
         run = lambda *command: subprocess.run(command, cwd=self.project, capture_output=True, text=True, check=True)
         run("git", "init", "-q", "-b", "main")
-        (self.project / "a.txt").write_text("a\n")
+        for name in ("a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "one.txt", "two.txt", "three.txt", "four.txt",
+                     "five.txt", "six.txt", "README.md", "srcx", "docs/guide.md", "docs/cli.md", "scripts/install.py",
+                     "src/app.py", "src/app/x.py", "src/a/one.py", "src/b/two.py", "src/a.py",
+                     "tests/brigade/support.py", "tests/brigade/test_startable.py",
+                     "tests/brigade/test_context_cap.py", "t3/added/brigade/scripts/activity.py"):
+            target = self.project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x\n")
         run("git", "add", "-A")
         run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
@@ -2570,6 +2577,7 @@ class _WakeRace:
             "    print('queue database is locked', file=sys.stderr)\n"
             "    sys.exit(1)\n"
             "sys.exit(0)\n")
+        self.git_project()
         self.open()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
         refused = real_process(

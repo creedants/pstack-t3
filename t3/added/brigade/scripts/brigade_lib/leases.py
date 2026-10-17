@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.layout import _layout, _one
-from brigade_lib.shared import BrigadeError, slug
+from brigade_lib.shared import BrigadeError, clean, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
 from brigade_lib.tickets import tracked_paths
 
@@ -245,6 +245,8 @@ def _check_checkout(project_root, raw_list):
     seen = set()
     for raw in raw_list:
         made = _claim_norm(raw)
+        if made is None:
+            continue
         if made == "":
             continue
         display = made if made is not None else raw.strip().replace("\\", "/")
@@ -270,6 +272,7 @@ def claim_paths(project_root, paths, branch, doc_item=False):
     raw_list = [part for part in paths.split(",") if part]
     if not raw_list:
         return Claim("", ())
+    _check_checkout(project_root, raw_list)
     try:
         lay = _layout(project_root)
     except KeyboardInterrupt:
@@ -278,7 +281,6 @@ def claim_paths(project_root, paths, branch, doc_item=False):
         lay = None
     if lay is None:
         return Claim(with_fragment(paths, branch), ())
-    _check_checkout(project_root, raw_list)
     seen = set()
     for raw in raw_list:
         made = _claim_norm(raw)
@@ -427,7 +429,11 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known, note.get("doc_item", False)).text, note.get("kind") or "lease")
+    try:
+        text = claim_paths(project_root, requested, known, note.get("doc_item", False)).text
+    except BrigadeError as error:
+        return "lease", clean(str(error))
+    return lease_block(project_root, f"{prefix}/{ident}", text, note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):

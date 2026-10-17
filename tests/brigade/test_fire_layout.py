@@ -632,3 +632,16 @@ class FireLayoutTest(BrigadeTest):
         self.assertEqual(self.land("lease", "list"), "no leases held")
         lines = (self.at / "dishes.tsv").read_text().splitlines()
         self.assertEqual(len(lines), 1)
+
+    def test_fire_refuses_a_missing_path_when_the_project_has_no_build_layout(self):
+        self.git_project()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        error = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                             "--paths", "missing.txt", ok=False)
+        self.assertEqual(error, "brigade: missing.txt is not in the checkout. Drop it from --paths")
+        self.assertEqual(self.land("lease", "list"), "no leases held")
+        lines = (self.at / "dishes.tsv").read_text().splitlines()
+        self.assertEqual(len(lines), 1)
