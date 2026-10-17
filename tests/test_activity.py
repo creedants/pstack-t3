@@ -2232,6 +2232,36 @@ class FrameTest(OutputCase):
         self.assertLessEqual(MOD["height"](cut), limit)
         self.assertLess(sum(len(one.rows) for one in cut.groups), 4)
 
+    def test_a_ledger_over_the_frame_after_every_group_is_removed_is_trimmed_to_the_frame(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        seats = {}
+        for number in range(8):
+            fixture.unit(f"D{number}", "in-progress", "Activity page", thread=worker(number + 1))
+            fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
+            seats[f"D{number}"] = [f"model-{number}-{record}" for record in range(12)]
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": f"D{number}", "attempt": "1", "role": "worker",
+                                 "thread": worker(1000 + number * 12 + record), "start": stamp, "end": stamp,
+                                 "seat": seats[f"D{number}"][record]}
+                                for number in range(8) for record in range(12)])
+        unfolded = page_of(fixture)
+        self.assertEqual(MOD["line_count"](unfolded), 96)
+        self.assertGreater(MOD["height"](unfolded), 1960)
+        cut = MOD["framed"](unfolded, 1960)
+        self.assertEqual(len(cut.groups), 0)
+        self.assertLessEqual(MOD["height"](cut), 1960)
+        self.assertEqual(cut.hidden.cut_lines, 96 - MOD["line_count"](cut))
+        # Each work item keeps its newest lines, so no work item loses its ledger to make room.
+        for one in MOD["items_of"](cut):
+            self.assertEqual([line.seat for line in one.lines], seats[one.id][-len(one.lines):])
+            self.assertGreater(len(one.lines), 0)
+        fitted, document = MOD["fit"](unfolded, 15999, CLEAN, 1960)
+        self.assertLessEqual(MOD["height"](fitted), 1960)
+        self.assertLess(len(document.encode()), 16000)
+        self.assertGreater(fitted.hidden.cut_lines, 0)
+
     def test_height_counts_wrapped_count_lines_and_gaps_for_eight_wide_groups(self):
         wide = "W" * 36
         wide_goals = tuple(MOD["Goal"](f"G{number}", wide) for number in range(8))
