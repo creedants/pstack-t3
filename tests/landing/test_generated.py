@@ -37,6 +37,11 @@ three.write_text(f"built\\n{text}")
 """
 
 
+GENERATED_TEXT = "skills,docs/cli,docs/skills.md"
+GENERATED_PATHS = ["skills", "docs/cli", "docs/skills.md"]
+REBUILD = "python3 scripts/build.py"
+
+
 class _GroupTrace:
     """Record killpg and reaping waitpid as event pairs with pids."""
 
@@ -165,6 +170,9 @@ def _platform(name):
 
 
 class GeneratedTest(LandingTest):
+    def init_generated(self, **extra):
+        return self.init(generated=GENERATED_TEXT, rebuild=REBUILD, **extra)
+
     def _run_build(self, path):
         result = subprocess.run([sys.executable, "scripts/build.py"], cwd=path, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -193,7 +201,7 @@ class GeneratedTest(LandingTest):
 
     def test_generated_only_conflict_lands_with_rebuilt_output(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         sha2, _ = self._worker_with_build("w2", {"src/two.txt": "two2\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
@@ -213,7 +221,7 @@ class GeneratedTest(LandingTest):
 
     def test_source_conflict_still_bounces(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one-A\n"})
         sha2, _ = self._worker_with_build("w2", {"src/one.txt": "one-B\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
@@ -232,7 +240,7 @@ class GeneratedTest(LandingTest):
 
     def test_build_failure_bounces(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("one1\n")
@@ -256,29 +264,29 @@ class GeneratedTest(LandingTest):
         base = sh("git", "rev-parse", "HEAD", cwd=self.work)
         (self.work / "skills/out.txt").write_text("tampered\n")
         gen_only = self.commit("gen only")
-        self.assertEqual(land.fingerprint(self.work, base, gen_only), "")
+        self.assertEqual(land.fingerprint(self.work, base, gen_only, GENERATED_PATHS), "")
         sh("git", "reset", "-q", "--hard", base, cwd=self.work)
         (self.work / "src/one.txt").write_text("changed\n")
         self._run_build(self.work)
         src_only = self.commit("src change")
-        self.assertNotEqual(land.fingerprint(self.work, base, src_only), "")
-        first_hash = land.fingerprint(self.work, base, src_only)
+        self.assertNotEqual(land.fingerprint(self.work, base, src_only, GENERATED_PATHS), "")
+        first_hash = land.fingerprint(self.work, base, src_only, GENERATED_PATHS)
         sh("git", "reset", "-q", "--hard", base, cwd=self.work)
         (self.work / "src/one.txt").write_text("changed again\n")
         self._run_build(self.work)
         src_other = self.commit("src different")
-        self.assertNotEqual(first_hash, land.fingerprint(self.work, base, src_other))
+        self.assertNotEqual(first_hash, land.fingerprint(self.work, base, src_other, GENERATED_PATHS))
         sh("git", "reset", "-q", "--hard", base, cwd=self.work)
         (self.work / "src/one.txt").write_text("changed\n")
         self._run_build(self.work)
         (self.work / "skills/out.txt").write_text("different generated\n")
         (self.work / "docs/skills.md").write_text("different\n")
         alt = self.commit("src same gen different")
-        self.assertEqual(land.fingerprint(self.work, base, src_only), land.fingerprint(self.work, base, alt))
+        self.assertEqual(land.fingerprint(self.work, base, src_only, GENERATED_PATHS), land.fingerprint(self.work, base, alt, GENERATED_PATHS))
 
     def test_source_only_submission_rebuilds_generated_output(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("reviewed-new\n")
@@ -296,7 +304,7 @@ class GeneratedTest(LandingTest):
 
     def test_source_only_failing_build_bounces(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("one1\n")
@@ -316,7 +324,7 @@ class GeneratedTest(LandingTest):
 
     def test_nested_generated_payload_is_dropped_on_land(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("one1\n")
@@ -356,7 +364,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("mode builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -391,7 +399,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("link builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -439,7 +447,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("dirty builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -465,7 +473,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("three builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/three.txt": "three1\n"})
         sha2, _ = self._worker_with_build("w2", {"src/two.txt": "two2\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/three.txt")
@@ -484,7 +492,7 @@ class GeneratedTest(LandingTest):
 
     def test_generated_conflict_after_empty_skip_lands(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         sha1, p1 = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         w1_skills = (p1 / "docs/skills.md").read_text()
         path = self.base / "w2"
@@ -514,14 +522,14 @@ class GeneratedTest(LandingTest):
         base = sh("git", "rev-parse", "HEAD", cwd=self.work)
         (self.work / "skills/space name.txt").write_text("generated\n")
         gen_only = self.commit("gen only spaced")
-        self.assertEqual(land.fingerprint(self.work, base, gen_only), "")
+        self.assertEqual(land.fingerprint(self.work, base, gen_only, GENERATED_PATHS), "")
 
     def test_quoted_generated_filename_yields_empty_fingerprint(self):
         self._setup_generated()
         base = sh("git", "rev-parse", "HEAD", cwd=self.work)
         (self.work / 'skills/quote"name.txt').write_text("generated\n")
         gen_only = self.commit("gen only quoted")
-        self.assertEqual(land.fingerprint(self.work, base, gen_only), "")
+        self.assertEqual(land.fingerprint(self.work, base, gen_only, GENERATED_PATHS), "")
 
     def test_leading_space_source_directory_is_fingerprinted(self):
         self._setup_generated()
@@ -530,7 +538,7 @@ class GeneratedTest(LandingTest):
         spaced.mkdir(exist_ok=True)
         (spaced / "x.txt").write_text("source\n")
         src_only = self.commit("src leading space")
-        self.assertNotEqual(land.fingerprint(self.work, base, src_only), "")
+        self.assertNotEqual(land.fingerprint(self.work, base, src_only, GENERATED_PATHS), "")
 
     def test_spaced_generated_rebase_lands_disjoint_sources(self):
         self._setup_generated()
@@ -539,7 +547,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("space builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         sha2, _ = self._worker_with_build("w2", {"src/two.txt": "two2\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
@@ -561,7 +569,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("carriage baseline")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/carriage\rname.txt": "one-A\n"})
         sha2, _ = self._worker_with_build("w2", {"src/carriage\rname.txt": "one-B\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src")
@@ -578,7 +586,7 @@ class GeneratedTest(LandingTest):
 
     def test_generated_snapshot_keeps_cr_and_newline_twins(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         with land.Store.for_repo(self.work) as store:
             integration = land.Integration(store)
             first = integration.path / "skills/twin\nname.txt"
@@ -596,7 +604,7 @@ class GeneratedTest(LandingTest):
         (self.work / "scripts/build.py").unlink()
         self.commit("drop builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("reviewed-new\n")
@@ -618,7 +626,7 @@ class GeneratedTest(LandingTest):
         payload.write_bytes(b"not produced by the real build")
         self.commit("trunk payload")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -631,7 +639,7 @@ class GeneratedTest(LandingTest):
 
     def test_source_symlink_parent_bounces_without_deleting_outside(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         outside = self.base / "outside"
         outside.mkdir()
         sentinel = outside / "cli"
@@ -656,7 +664,7 @@ class GeneratedTest(LandingTest):
 
     def test_failed_first_build_cleans_generated_remnants(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("one1\n")
@@ -697,7 +705,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("counting builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -726,7 +734,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("optional builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "delete\n"})
         sha2, _ = self._worker_with_build("w2", {"src/two.txt": "two2\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
@@ -749,7 +757,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("quote builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
         self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha1, "--lease", "L1", "--reviewer", REVIEWER)
@@ -766,7 +774,7 @@ class GeneratedTest(LandingTest):
         self._run_build(self.work)
         self.commit("quote builder")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
-        self.init()
+        self.init_generated()
         sha1, _ = self._worker_with_build("w1", {"src/one.txt": "one1\n"})
         sha2, _ = self._worker_with_build("w2", {"src/two.txt": "two2\n"})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "src/one.txt")
@@ -783,7 +791,7 @@ class GeneratedTest(LandingTest):
 
     def test_build_launch_exception_bounces_and_cleans(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         path = self.base / "w1"
         sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
         (path / "src/one.txt").write_text("reviewed-new\n")
@@ -816,7 +824,7 @@ class GeneratedTest(LandingTest):
 
     def test_user_interrupt_cleans_generated_remnants(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         sleep_build = BUILD_PY + (
             "\nimport os as _os, time as _time\n"
             "_slept = _os.path.join(str(root), 'skills', '.build_started')\n"
@@ -889,7 +897,7 @@ class GeneratedTest(LandingTest):
 
     def test_exited_leader_helper_dies_on_interrupt(self):
         self._setup_generated()
-        self.init()
+        self.init_generated()
         exited_build = BUILD_PY + (
             "\nimport os as _os, time as _time\n"
             "_marker = root / 'skills' / '.build_helper'\n"
@@ -1398,3 +1406,63 @@ class GeneratedTest(LandingTest):
             capture_output=True, text=True, timeout=60, cwd=work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("RESULT (None, None", result.stdout)
+
+    def test_no_generated_paths_lands_a_handwritten_skills_file(self):
+        self._setup_generated()
+        (self.work / "skills/sentinel.txt").write_text("sentinel\n")
+        self.commit("sentinel")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init()
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "skills/hand.txt").write_text("worker hand\n")
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "skills/hand.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        out = self.land("land")
+        self.assertIn("landed E1", out)
+        hand = sh("git", "show", "main:skills/hand.txt", cwd=self.base / "origin.git")
+        self.assertEqual(hand, "worker hand")
+        sentinel = sh("git", "show", "main:skills/sentinel.txt", cwd=self.base / "origin.git")
+        self.assertEqual(sentinel, "sentinel")
+
+    def test_init_refuses_a_bad_generated_path_before_the_store_exists(self):
+        for bad, named in (("/abs", "'/abs'"), ("../x", "'../x'"), (".", "'.'"), ("a,,b", "''")):
+            with self.subTest(generated=bad):
+                err = self.land("init", "--trunk", "main", "--mode", "auto", "--generated", bad, ok=False)
+                self.assertIn(named, err)
+                self.assertEqual(sorted((land.state_home() / "landing").glob("*/land.db")), [])
+
+    def test_rerun_keeps_generated_and_rebuild_and_an_empty_value_clears_each(self):
+        out = self.init_generated()
+        self.assertIn("generated: skills, docs/cli, docs/skills.md", out)
+        self.assertIn("rebuild: python3 scripts/build.py", out)
+        with land.Store.for_repo(self.work) as store:
+            self.assertEqual(store.contract["generated"], GENERATED_PATHS)
+            self.assertEqual(store.contract["rebuild"], REBUILD)
+        self.init()
+        with land.Store.for_repo(self.work) as store:
+            self.assertEqual(store.contract["generated"], GENERATED_PATHS)
+            self.assertEqual(store.contract["rebuild"], REBUILD)
+        self.init(generated="", rebuild="")
+        with land.Store.for_repo(self.work) as store:
+            self.assertEqual(store.contract["generated"], [])
+            self.assertIsNone(store.contract["rebuild"])
+
+    def test_generated_paths_without_rebuild_refuse_a_generated_only_change(self):
+        self._setup_generated()
+        self.init(generated=GENERATED_TEXT)
+        path = self.base / "w1"
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(path), "origin/main", cwd=self.work)
+        (path / "skills/out.txt").write_text("worker generated\n")
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "skills/out.txt")
+        err = self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1",
+                        "--reviewer", REVIEWER, ok=False)
+        self.assertIn(f"{sha[:12]} changes only generated paths skills/out.txt", err)
+        self.assertNotIn("scripts/build.py", err)
+        self.assertIn("the contract has no rebuild command", err)

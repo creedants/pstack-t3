@@ -122,7 +122,30 @@ def busy_queue_message(count):
     return f"{count} {noun} queued, landing, or awaiting merge; change the mode when the queue is empty"
 
 
-def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None):
+def generated_list(passed, stored):
+    """The generated paths an init stores. None keeps the stored list. An empty value clears it."""
+    if passed is None:
+        return list(stored)
+    if not passed.strip():
+        return []
+    return [seam.generated_path(part) for part in passed.split(",")]
+
+
+def rebuild_command(passed, stored):
+    """The rebuild command an init stores, or None. None keeps the stored value. An empty value clears it."""
+    if passed is None:
+        return stored
+    return passed.strip() or None
+
+
+def generated_note(generated, rebuild):
+    """The contract's generated paths and rebuild command, or "" when it holds neither."""
+    if not generated and not rebuild:
+        return ""
+    return f"generated: {', '.join(generated) if generated else 'none'}; rebuild: {rebuild or 'none'}"
+
+
+def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
     common = seam.common_dir(path)
     repo = common.parent if common.name == ".git" else Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
@@ -167,6 +190,9 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         if not seam.git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
             raise seam.LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
         seam.git("fetch", remote, trunk, cwd=repo)
+    # A bad generated path must be refused before the store exists, so a first init leaves no database.
+    if generated is not None:
+        generated_list(generated, [])
     with seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
@@ -177,6 +203,8 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                       "batch": filled(current, "batch", batch, 1),
                       "timeout": filled(current, "timeout", timeout, 1800),
                       "mergeMethod": merge_method_to_store(merge_method, current.get("mergeMethod"), mode, allowed),
+                      "generated": generated_list(generated, current.get("generated") or []),
+                      "rebuild": rebuild_command(rebuild, current.get("rebuild")),
                       "paused": ""}
             for key, value in wanted.items():
                 if key != "paused" or key not in current:
@@ -187,7 +215,9 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
             if not base:
                 raise seam.LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
             seam.git("update-ref", trunk_ref(wanted), seam.git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
-        return f"{'updated' if current else 'created'} {directory}"
+        note = f"{'updated' if current else 'created'} {directory}"
+        settings = generated_note(wanted["generated"], wanted["rebuild"])
+        return f"{note}. {settings}" if settings else note
 
 
 def set_cap(db, cap):

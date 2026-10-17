@@ -1702,6 +1702,10 @@ class LandingTest(unittest.TestCase):
             args += ["--merge-method", extra["merge_method"]]
         if "base" in extra:
             args += ["--base", extra["base"]]
+        if "generated" in extra:
+            args += ["--generated", extra["generated"]]
+        if "rebuild" in extra:
+            args += ["--rebuild", extra["rebuild"]]
         return self.land(*args)
 
     def worker(self, name, edits, base="origin/main"):
