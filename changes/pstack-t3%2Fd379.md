@@ -1,5 +1,5 @@
 - kind polish
 - `affected` gives a test the entrypoints of each helper that test imports
 - `affected` adds a test to a path when a test it imports covers that path
-- `affected` returns the full suite when a test-shaped import resolves to zero or many files
-- `affected` returns the full suite when a used helper cannot be read or parsed
+- `affected` returns the full suite for a changed path when a test-shaped import resolves to zero or many files
+- `affected` returns the full suite for a changed path when a used helper cannot be read, cannot be decoded, or has a syntax error
