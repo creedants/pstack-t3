@@ -16,6 +16,10 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def contract(self):
+        with land.Store.for_repo(self.work) as store:
+            return dict(store.contract)
+
     def test_merge_mode_reports_a_pr_opened_for_an_entry_left_without_one(self):
         with self.fake_gh():
             (self.base / "checks").write_text("pending")
@@ -1396,7 +1400,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.stored_merge_method(), "rebase")
             self.allow_methods(squash=True, rebase=True)
             self.init(mode="merge")
-            self.assertEqual(self.stored_merge_method(), "squash")
+            self.assertEqual(self.stored_merge_method(), "rebase")
             self.allow_methods(merge=True, squash=True)
             self.init(mode="merge")
             self.assertEqual(self.stored_merge_method(), "merge")
@@ -1438,6 +1442,28 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.stored_merge_method(), "merge")
             self.init(mode="merge", merge_method="rebase")
             self.assertEqual(self.stored_merge_method(), "rebase")
+
+    def test_a_rerun_keeps_an_omitted_check_setup_and_timeout_and_writes_a_passed_batch(self):
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh",
+                      "--setup", "make deps", "--batch", "2", "--timeout", "90")
+            self.land("init", "--trunk", "main", "--mode", "human", "--batch", "4")
+            stored = self.contract()
+            self.assertEqual(stored["checks"], ["./check.sh"])
+            self.assertEqual(stored["setup"], "make deps")
+            self.assertEqual(stored["batch"], 4)
+            self.assertEqual(stored["timeout"], 90)
+
+    def test_a_rerun_without_merge_method_keeps_rebase_while_it_stays_allowed(self):
+        with self.fake_gh():
+            self.allow_methods(squash=True, rebase=True)
+            self.init(mode="merge", merge_method="rebase")
+            self.assertEqual(self.stored_merge_method(), "rebase")
+            self.init(mode="merge")
+            self.assertEqual(self.stored_merge_method(), "rebase")
+            self.allow_methods(squash=True)
+            self.init(mode="merge")
+            self.assertEqual(self.stored_merge_method(), "squash")
 
     def test_a_refused_merge_method_names_the_command_that_changes_it(self):
         refusal = "GraphQL: Merge commits are not allowed on this repository. (mergePullRequest)"

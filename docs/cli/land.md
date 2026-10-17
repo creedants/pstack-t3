@@ -32,11 +32,11 @@ write the repository's landing contract
 | `--mode MODE` | yes | `human`, `merge`, `push`, `local`, `auto` |  | human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref |
 | `--remote REMOTE` |  |  | `origin` |  |
 | `--base BASE` |  |  |  | local mode: the commit the lane starts from |
-| `--check CHECK` (repeatable) |  |  |  | command that must pass before landing; repeatable |
-| `--setup SETUP` |  |  |  | command run before checks in the clean integration worktree, such as npm ci |
-| `--batch BATCH` |  |  | `1` | entries checked together; a failed batch lands one at a time |
-| `--timeout TIMEOUT` |  |  | `1800` | seconds before a check is killed |
-| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository whenever it is set. omitted in merge mode, init stores the one allowed method, or merge when gh cannot say |
+| `--check CHECK` (repeatable) |  |  |  | command that must pass before landing; repeatable. Omitted, a rerun keeps the stored checks and a first init stores none |
+| `--setup SETUP` |  |  |  | command run before checks in the clean integration worktree, such as npm ci. Omitted, a rerun keeps the stored setup and a first init stores none |
+| `--batch BATCH` |  |  |  | entries checked together; a failed batch lands one at a time. Omitted, a rerun keeps the stored batch and a first init stores 1 |
+| `--timeout TIMEOUT` |  |  |  | seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800 |
+| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository whenever it is set. omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
 
 ## land.py cap

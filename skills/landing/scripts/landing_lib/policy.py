@@ -128,30 +128,56 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
     repo = common.parent if common.name == ".git" else Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = seam.state_home() / "landing" / seam.store_name(common)
     directory.mkdir(parents=True, exist_ok=True)
-    if mode == "merge" or merge_method:
-        merge_method = pick_merge_method(merge_method, allowed_merge_methods(repo))
-    else:
-        merge_method = "merge"
+
+    def filled(stored, key, passed, default):
+        if passed is not None:
+            return passed
+        return stored[key] if key in stored else default
+
+    def merge_method_to_store(explicit, stored_method, mode, allowed):
+        if explicit is not None:
+            return pick_merge_method(explicit, allowed)
+        if stored_method is None:
+            return "merge" if mode != "merge" else pick_merge_method(None, allowed)
+        if allowed is None or stored_method in allowed:
+            return stored_method
+        return pick_merge_method(None, allowed)
+
+    stored = {}
+    if (directory / "land.db").exists():
+        with seam.Store(directory) as existing:
+            stored = existing.contract
+    stored_method = stored.get("mergeMethod")
+    allowed = None
+    if merge_method is not None or mode == "merge" or stored_method is not None:
+        allowed = allowed_merge_methods(repo)
+    # A refused method must fail before the store exists, so a first init leaves no database.
+    merge_method_to_store(merge_method, stored_method, mode, allowed)
+    fixed = {"commonDir": str(common), "trunk": trunk, "mode": mode, "remote": remote}
+
+    def refuse_clash(current):
+        current = {**current, "mode": seam.LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
+        clash = [key for key in fixed if key in current and current[key] != fixed[key]]
+        if clash:
+            raise seam.LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
+                            "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
+
+    refuse_clash(stored)
+    if mode in seam.REMOTE_MODES:
+        if not seam.git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
+            raise seam.LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
+        seam.git("fetch", remote, trunk, cwd=repo)
     with seam.Store(directory) as store:
-        wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
-                  "checks": checks, "setup": setup, "batch": batch, "timeout": timeout, "mergeMethod": merge_method, "paused": ""}
-        fixed = ("commonDir", "trunk", "mode", "remote")
-
-        def refuse_clash(current):
-            current = {**current, "mode": seam.LEGACY_MODES.get(current.get("mode"), current.get("mode"))} if "mode" in current else current
-            clash = [key for key in fixed if key in current and current[key] != wanted[key]]
-            if clash:
-                raise seam.LandError(f"the contract already sets {', '.join(f'{k}={current[k]!r}' for k in clash)}; "
-                                "change the mode with land.py mode; changing trunk or remote needs a new repository contract")
-
-        refuse_clash(store.contract)
-        if mode in seam.REMOTE_MODES:
-            if not seam.git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
-                raise seam.LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
-            seam.git("fetch", remote, trunk, cwd=repo)
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
             refuse_clash(current)
+            wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
+                      "checks": filled(current, "checks", checks, []),
+                      "setup": filled(current, "setup", setup, ""),
+                      "batch": filled(current, "batch", batch, 1),
+                      "timeout": filled(current, "timeout", timeout, 1800),
+                      "mergeMethod": merge_method_to_store(merge_method, current.get("mergeMethod"), mode, allowed),
+                      "paused": ""}
             for key, value in wanted.items():
                 if key != "paused" or key not in current:
                     db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
