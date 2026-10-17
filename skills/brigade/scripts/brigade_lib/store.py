@@ -254,7 +254,7 @@ def liveness_of(meta):
         return LIVENESS_DEFAULT_MS[level], level
     value = meta[LIVENESS_KEY]
     if isinstance(value, bool) or not isinstance(value, int):
-        refuse_setting(LIVENESS_KEY, value, "it is not a whole number")
+        refuse_setting(LIVENESS_KEY, value, "it is not an integer")
     if value < LIVENESS_FLOOR:
         refuse_setting(LIVENESS_KEY, value, f"it is under {LIVENESS_FLOOR}")
     return value, ""
