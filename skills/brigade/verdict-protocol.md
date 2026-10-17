@@ -12,16 +12,6 @@ Worth a round. A blocker costs a fix round and a second review, so it must be wo
 
 Find every blocker in this one pass. Read every statement the diff adds or changes, not a sample. A later round checks only the fix and the points that failed, so anything missed now lands.
 
-## Rounds after the first
-
-Round one is unchanged. It reads the whole change against its base.
-
-In round two and later, review `git diff <previous reviewed SHA>...<head>` and check each blocker the previous round named. The brief names that SHA and gives you the previous round's review file.
-
-A new blocker must be in that fix diff or caused by it. Give a concrete reproduction you ran against the reviewed head.
-
-A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is a non-blocking note with one ticket line the coordinator can file. It is never a blocker.
-
 The first line of the report is exactly one of these.
 
 - `Verdict: pass`. No blocker.
@@ -31,3 +21,13 @@ The first line of the report is exactly one of these.
 After the verdict line: blockers, then edits when there are any, then non-blocking notes, then the commands you ran with their results.
 
 Scratch space. When the review brief names a parent directory, make every scratch directory and archive copy with `mktemp -d -p <that parent>`. Never create them directly under `/tmp`, which is memory-backed and small on many systems. When the brief names no parent, say so in the report and do not use a memory-backed temporary directory. Delete your scratch directory when you finish. Do not set TMPDIR. A file name you report carries no home directory, user name, host name, or thread id of the machine that ran the review.
+
+## Rounds after the first
+
+Round one is unchanged. It reads the whole change against its base.
+
+In round two and later, review `git diff <previous reviewed SHA>...<head>` and check each blocker the previous round named. The brief names that SHA and gives you the previous round's review file.
+
+A new blocker must be in that fix diff or caused by it. Give a concrete reproduction you ran against the reviewed head.
+
+A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is a non-blocking note with one ticket line the coordinator can file. It is never a blocker.
