@@ -844,7 +844,10 @@ MOVED = "moved"
 
 @dataclass(frozen=True)
 class Published:
-    """`proved` is the only function that makes one. `publish` and the link branch of `restore_backup` call it after they create the path. It names a live path created from the held descriptor while the path was empty."""
+    """Proof that `path` now names the restored entry after the move onto `path`.
+
+    For a same-filesystem move `proved` is the only function that makes one. A cross-filesystem copy returns one after `place_copy` places the copy. `drop_backup` takes one, so the backup's own name goes only with it.
+    """
 
     path: str
 
@@ -952,25 +955,33 @@ def same_entry(path, fd):
     return identity(os.lstat(path))[:2] == identity(os.fstat(fd))[:2]
 
 
-def inode_of(fd):
-    """The device and inode numbers of the entry `fd` holds open."""
-    info = os.fstat(fd)
-    return (info.st_dev, info.st_ino)
+def place_copy(source, path):
+    """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
+    with Holder(path, SCRAP) as holder:
+        copy = holder.aside
+        try:
+            if os.path.isdir(source) and not os.path.islink(source):
+                shutil.copytree(source, copy, symlinks=True)
+            else:
+                shutil.copy2(source, copy, follow_symlinks=False)
+            return place(copy, path)
+        finally:
+            # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
+            if os.path.lexists(copy):
+                discard(copy)
 
 
-def proved(path, made):
-    """Return Published when `path` still names `made`. Else return a refusal saying the entry is still at `path`.
+def proved(path, fd):
+    """Return Published when `path` names the entry `fd` holds. Else return a refusal naming `path`.
 
-    It never moves `path`. It never deletes an occupant. Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
+    It moves nothing. It deletes nothing. Only `proved` makes a Published for a same-filesystem move. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until this check runs. That window stays.
     """
     try:
-        now = identity(os.lstat(path))[:2]
+        if same_entry(path, fd):
+            return Published(path)
     except OSError:
-        now = None
-    want = tuple(made)[:2]
-    if now is not None and tuple(now)[:2] == tuple(want)[:2]:
-        return Published(path)
-    return f"{CHANGED}. The entry that reached {path} in its place is still at {path}"
+        pass
+    return f"the entry moved to {path} could not be confirmed"
 
 
 def park(entry):
@@ -990,8 +1001,7 @@ def park(entry):
 def link_held(fd, path):
     """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
 
-    It links through `/proc/self/fd`, and it answers `ENOSYS` where the platform is not Linux. Publish tries it first.
-    It only links. It never renames the backup, so the backup keeps the name the caller gave it.
+    It links through `/proc/self/fd`, and it answers `ENOSYS` where the platform is not Linux. It only links. It never renames the backup, so the backup keeps the name the caller gave it.
     """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS
@@ -1003,369 +1013,6 @@ def link_held(fd, path):
     except (OSError, NotImplementedError) as error:
         return getattr(error, "errno", None) or errno.ENOSYS
     return 0
-
-
-def linkat_empty(fd, path):
-    """Link the entry `fd` holds open to `path` with linkat AT_EMPTY_PATH. Return 0, or the errno that stopped it.
-
-    It makes no platform test, so a Darwin simulation on Linux still binds files when NO_PROC blocks proc.
-    It never replaces an occupant. It returns EEXIST when `path` is taken.
-    """
-    try:
-        libc = ctypes.CDLL(None, use_errno=True)
-    except (OSError, AttributeError):
-        return errno.ENOSYS
-    call = getattr(libc, "linkat", None)
-    if call is None:
-        return errno.ENOSYS
-    call.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-    call.restype = ctypes.c_int
-    empty = 0x1000
-    if call(fd, b"", AT_FDCWD, os.fsencode(path), empty) == 0:
-        return 0
-    return ctypes.get_errno() or errno.ENOSYS
-
-
-def readable_of(fd):
-    """Return a readable descriptor on the entry `fd` holds, proved to be the same entry, or None.
-
-    It reopens through `/proc/self/fd` without NOFOLLOW, so it needs no backup pathname. It runs before
-    anything is created at the live path. It returns None when the reopen names another entry. When the reopen fails, it returns a duplicate of `fd` only if that names the same entry, else None.
-    On a host without proc it duplicates `fd` when that names the same entry.
-    """
-    try:
-        held = os.fstat(fd)
-    except OSError:
-        return None
-    if stat.S_ISLNK(held.st_mode):
-        return None
-    flags = os.O_RDONLY | os.O_NONBLOCK
-    if stat.S_ISDIR(held.st_mode):
-        flags |= os.O_DIRECTORY
-    try:
-        other = os.open(f"/proc/self/fd/{fd}", flags)
-    except OSError:
-        try:
-            other = os.dup(fd)
-        except OSError:
-            return None
-        try:
-            if (os.fstat(other).st_dev, os.fstat(other).st_ino) != (held.st_dev, held.st_ino):
-                os.close(other)
-                return None
-        except OSError:
-            with suppress(OSError):
-                os.close(other)
-            return None
-        return other
-    try:
-        if (os.fstat(other).st_dev, os.fstat(other).st_ino) != (held.st_dev, held.st_ino):
-            os.close(other)
-            return None
-    except OSError:
-        with suppress(OSError):
-            os.close(other)
-        return None
-    return other
-
-
-def symlink_target_of(fd):
-    """Return None when the target of the symlink `fd` holds cannot be read. It calls readlinkat with an empty pathname, which Linux rejects, so on Linux it always returns None."""
-    try:
-        held = os.fstat(fd)
-    except OSError:
-        return None
-    if not stat.S_ISLNK(held.st_mode):
-        return None
-    try:
-        libc = ctypes.CDLL(None, use_errno=True)
-    except (OSError, AttributeError):
-        return None
-    call = getattr(libc, "readlinkat", None)
-    if call is None:
-        return None
-    call.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t)
-    call.restype = ctypes.c_ssize_t
-    buf = ctypes.create_string_buffer(4096)
-    size = call(fd, b"", buf, 4096)
-    if size < 0 or size >= 4096:
-        return None
-    return os.fsdecode(buf.raw[:size])
-
-
-def copy_bytes(proven, live):
-    """Copy all bytes from `proven` to `live`. Return None, or the OSError that stopped it."""
-    try:
-        os.lseek(proven, 0, os.SEEK_SET)
-    except OSError:
-        pass
-    while True:
-        try:
-            chunk = os.read(proven, 65536)
-        except OSError as error:
-            return error
-        if not chunk:
-            return None
-        view = memoryview(chunk)
-        while view:
-            try:
-                wrote = os.write(live, view)
-            except OSError as error:
-                return error
-            view = view[wrote:]
-
-
-def copy_one_file(proven_dir, live_dir, name):
-    """Copy one regular entry named `name` from `proven_dir` to `live_dir`. Return None, or the OSError that stopped it."""
-    try:
-        proven = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=proven_dir)
-    except OSError as error:
-        return error
-    try:
-        info = os.fstat(proven)
-    except OSError as error:
-        with suppress(OSError):
-            os.close(proven)
-        return error
-    if stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-        with suppress(OSError):
-            os.close(proven)
-        return OSError(errno.EINVAL, "not a regular file")
-    try:
-        live = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=live_dir)
-    except OSError as error:
-        with suppress(OSError):
-            os.close(proven)
-        return error
-    failed = copy_bytes(proven, live)
-    try:
-        os.fchmod(live, stat.S_IMODE(info.st_mode))
-    except OSError as error:
-        if failed is None:
-            failed = error
-    try:
-        os.utime(live, ns=(info.st_atime_ns, info.st_mtime_ns))
-    except OSError as error:
-        if failed is None:
-            failed = error
-    with suppress(OSError):
-        os.close(proven)
-    with suppress(OSError):
-        os.close(live)
-    return failed
-
-
-def copy_tree(proven_dir, live_dir):
-    """Copy every entry from `proven_dir` into `live_dir`. Return None, or the OSError that stopped it."""
-    try:
-        names = [entry.name for entry in os.scandir(proven_dir)]
-    except OSError as error:
-        return error
-    for name in sorted(names):
-        try:
-            info = os.lstat(name, dir_fd=proven_dir)
-        except OSError as error:
-            return error
-        if stat.S_ISLNK(info.st_mode):
-            try:
-                target = os.readlink(name, dir_fd=proven_dir)
-            except OSError as error:
-                return error
-            try:
-                os.symlink(target, name, dir_fd=live_dir)
-            except OSError as error:
-                return error
-        elif stat.S_ISDIR(info.st_mode):
-            try:
-                proven_sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=proven_dir)
-            except OSError as error:
-                return error
-            try:
-                os.mkdir(name, 0o700, dir_fd=live_dir)
-            except OSError as error:
-                with suppress(OSError):
-                    os.close(proven_sub)
-                return error
-            try:
-                live_sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=live_dir)
-            except OSError as error:
-                with suppress(OSError):
-                    os.close(proven_sub)
-                return error
-            failed = copy_tree(proven_sub, live_sub)
-            try:
-                sub_info = os.fstat(proven_sub)
-                os.fchmod(live_sub, stat.S_IMODE(sub_info.st_mode))
-            except OSError as error:
-                if failed is None:
-                    failed = error
-            try:
-                sub_info = os.fstat(proven_sub)
-                os.utime(live_sub, ns=(sub_info.st_atime_ns, sub_info.st_mtime_ns))
-            except OSError as error:
-                if failed is None:
-                    failed = error
-            with suppress(OSError):
-                os.close(proven_sub)
-            with suppress(OSError):
-                os.close(live_sub)
-            if failed is not None:
-                return failed
-        else:
-            failed = copy_one_file(proven_dir, live_dir, name)
-            if failed is not None:
-                return failed
-    return None
-
-
-def remove_while_ours(path, made, is_dir):
-    """Remove `path` only after checking that it still names `made`. A same-user process that swaps the name between that check and the removal is not caught."""
-    try:
-        now = identity(os.lstat(path))[:2]
-    except OSError:
-        return
-    if tuple(now)[:2] != tuple(made)[:2]:
-        return
-    with suppress(OSError):
-        if is_dir and not os.path.islink(path):
-            shutil.rmtree(path)
-        else:
-            os.unlink(path)
-
-
-def copy_held(fd, path):
-    """Create `path` from the entry `fd` holds, only while `path` is empty. Return Published or a refusal.
-
-    It reads only from descriptors proved to be the held entry. It creates the live path with O_EXCL open,
-    mkdir, or symlink. It records the new inode and returns proved on that inode. Once its own create succeeds, it removes the live path on a later failure only while the path still names what this call created. If the first lstat of the new path fails, it leaves the path in place.
-    """
-    try:
-        held = os.fstat(fd)
-    except OSError as error:
-        return str(error)
-    if stat.S_ISLNK(held.st_mode):
-        target = symlink_target_of(fd)
-        if target is None:
-            return refusal(path, errno.ENOSYS)
-        try:
-            os.symlink(target, path)
-        except OSError as error:
-            if getattr(error, "errno", None) in (errno.EEXIST, errno.ENOTEMPTY):
-                return refusal(path, errno.EEXIST)
-            return str(error)
-        try:
-            made = identity(os.lstat(path))[:2]
-        except OSError as error:
-            return str(error)
-        return proved(path, made)
-    if stat.S_ISDIR(held.st_mode):
-        proven = readable_of(fd)
-        if proven is None:
-            return CHANGED
-        try:
-            try:
-                os.mkdir(path, 0o700)
-            except OSError as error:
-                if getattr(error, "errno", None) in (errno.EEXIST, errno.ENOTEMPTY):
-                    return refusal(path, errno.EEXIST)
-                return str(error)
-            try:
-                made = identity(os.lstat(path))[:2]
-            except OSError as error:
-                return str(error)
-            try:
-                live = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-            except OSError as error:
-                remove_while_ours(path, made, True)
-                return str(error)
-            failed = None
-            try:
-                if tuple(identity(os.fstat(live))[:2]) != tuple(made)[:2]:
-                    failed = OSError(errno.EEXIST, os.strerror(errno.EEXIST))
-                else:
-                    failed = copy_tree(proven, live)
-                    try:
-                        os.fchmod(live, stat.S_IMODE(held.st_mode))
-                    except OSError as error:
-                        if failed is None:
-                            failed = error
-                    try:
-                        os.utime(live, ns=(held.st_atime_ns, held.st_mtime_ns))
-                    except OSError:
-                        pass
-            finally:
-                with suppress(OSError):
-                    os.close(live)
-            if failed is not None:
-                remove_while_ours(path, made, True)
-                if getattr(failed, "errno", None) in (errno.EEXIST, errno.ENOTEMPTY):
-                    return refusal(path, errno.EEXIST)
-                return str(failed)
-            return proved(path, made)
-        finally:
-            with suppress(OSError):
-                os.close(proven)
-    proven = readable_of(fd)
-    if proven is None:
-        return CHANGED
-    try:
-        try:
-            live = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        except OSError as error:
-            if getattr(error, "errno", None) in (errno.EEXIST, errno.ENOTEMPTY):
-                return refusal(path, errno.EEXIST)
-            return str(error)
-        try:
-            made = identity(os.lstat(path))[:2]
-        except OSError as error:
-            with suppress(OSError):
-                os.close(live)
-            return str(error)
-        failed = copy_bytes(proven, live)
-        try:
-            os.fchmod(live, stat.S_IMODE(held.st_mode))
-        except OSError as error:
-            if failed is None:
-                failed = error
-        try:
-            os.utime(live, ns=(held.st_atime_ns, held.st_mtime_ns))
-        except OSError as error:
-            if failed is None:
-                failed = error
-        with suppress(OSError):
-            os.close(live)
-        if failed is not None:
-            remove_while_ours(path, made, False)
-            return str(failed)
-        return proved(path, made)
-    finally:
-        with suppress(OSError):
-            os.close(proven)
-
-
-def publish(fd, path):
-    """Create the live path from `fd` only while it is empty. Return Published or a refusal.
-
-    It tries link_held first. On 0 it returns proved on the held inode. On EEXIST it returns a refusal
-    and leaves the path alone. Else, unless `link_held` returned EXDEV, it tries linkat AT_EMPTY_PATH with no platform test, so a Darwin
-    simulation still binds files when NO_PROC blocks proc. Else it copies from descriptors proved to be
-    the held entry and creates the live path with an O_EXCL open, mkdir, or symlink. It records the new inode and returns proved on it.
-    After its own create succeeds, a copy failure removes the live path only while the path still names what this call created. If the first lstat of the new path fails, the path is left in place.
-    It never moves a holder name onto the live path or moves an occupant of it. It removes its own partial copy only after checking that the path still names that inode, so a same-user process that swaps the name between the check and the removal is not caught.
-    Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
-    """
-    code = link_held(fd, path)
-    if code == 0:
-        return proved(path, inode_of(fd))
-    if code in (errno.EEXIST, errno.ENOTEMPTY):
-        return refusal(path, code)
-    if code != errno.EXDEV:
-        other = linkat_empty(fd, path)
-        if other == 0:
-            return proved(path, inode_of(fd))
-        if other in (errno.EEXIST, errno.ENOTEMPTY):
-            return refusal(path, other)
-    return copy_held(fd, path)
 
 
 def drop_backup(backup, aside, published, fd):
@@ -1391,28 +1038,40 @@ def drop_backup(backup, aside, published, fd):
 
 
 def place_proven(aside, path, fd):
-    """Create `path` from `fd` only, then retire `aside` on success. Return Published or a refusal.
+    """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return Published or a refusal.
 
-    It never moves `aside` onto `path`. It never moves or deletes an occupant of `path`.
-    `aside` stays when publish refuses. Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
+    It moves `aside` with `place`. Right after the move it calls `proved`. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays. Only `proved` makes a Published for a same-filesystem move. A cross-filesystem copy returns Published after `place_copy` places the copy. `retire` runs only for that copy route.
     """
     try:
-        placed = publish(fd, path)
+        code = place(aside, path)
     except OSError as error:
         return str(error)
-    if isinstance(placed, Published):
-        try:
-            retire(aside, fd)
-        except FileNotFoundError:
-            return placed
-    return placed
+    if code == 0:
+        return proved(path, fd)
+    if code != errno.EXDEV:
+        return refusal(path, code)
+    try:
+        if not same_entry(aside, fd):
+            return CHANGED
+    except OSError:
+        return CHANGED
+    try:
+        copy_code = place_copy(aside, path)
+    except OSError as error:
+        return str(error)
+    if copy_code != 0:
+        return refusal(path, copy_code)
+    try:
+        retire(aside, fd)
+    except FileNotFoundError:
+        return Published(path)
+    return Published(path)
 
 
 def retire(aside, fd):
-    """Delete the holder entry at `aside` only while it is the entry `fd` holds.
+    """Retire the holder entry at `aside` after a cross-filesystem copy placed its copy.
 
-    It takes a PrivateName only. It moves into a SCRAP directory first, then proves it there.
-    Anything else is parked, or stays in its SCRAP directory when `park` cannot move it. It is never deleted.
+    It takes a PrivateName only. It moves into a SCRAP directory, then checks its identity there. A match is discarded. A mismatch triggers parking and a message naming the retained path. The identity check and deletion remain separate calls.
     """
     if not isinstance(aside, PrivateName):
         raise TypeError("retire takes a PrivateName only")
@@ -1427,7 +1086,10 @@ def retire(aside, fd):
 
 
 def give_back(taken, backup, aside, reason):
-    """Return the entry at `aside` to `backup` for a moved entry. Drop the second name or park its replacement for a twin. Return `reason` plus anything that stuck."""
+    """Try to return a moved entry to `backup`, or remove a twin's second name or park its replacement.
+
+    Return `reason` with a failed put-back or parking result when there is one. Twin unlink errors are suppressed.
+    """
     if taken == TWIN:
         if one_entry(aside, backup):
             with suppress(OSError):
@@ -1457,7 +1119,10 @@ def keep(taken, backup, aside, fd, reason):
 
 
 def restore_aside(backup, aside, path, fd):
-    """Restore through the private name `aside` where the descriptor cannot be linked. Return why the backup was kept."""
+    """Move the proven entry at `aside` to `path` and prove it there. Return why the backup was kept.
+
+    It checks `same_entry` before the move to authorize it, then calls `proved` right after the move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    """
     try:
         # A second name leaves the backup where it is until the entry is proven.
         os.link(backup, aside, follow_symlinks=False)
@@ -1480,7 +1145,10 @@ def restore_aside(backup, aside, path, fd):
 
 
 def restore_backup(backup, path, held):
-    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept."""
+    """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
+
+    It checks the backup before the move, moves by descriptor link or by private name, then calls `proved` right after the move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
     try:
@@ -1497,7 +1165,7 @@ def restore_backup(backup, path, held):
     if code == errno.EEXIST:
         return refusal(path, code)
     if code == 0:
-        proven = proved(path, inode_of(held.fd))
+        proven = proved(path, held.fd)
         if not isinstance(proven, Published):
             return proven
         try:

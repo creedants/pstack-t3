@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -816,7 +817,8 @@ def restore_race(path, occupy, link_error=False, rename=None):
 
     `occupy` is a "file", a "directory", a "link", or a command line to run, such as another checkout's
     installer. `link_error` takes hard links away. `rename` takes `/proc` away as in `put_back_race`.
-    The occupant arrives at link_held entry every route, and at os.open and os.mkdir and os.symlink onto `path`.
+    With `/proc` taken away, the occupant arrives as the held-descriptor link starts, the restore's first
+    attempt at `path` on every platform.
     """
     return (
         "import atexit, ctypes, errno, shutil, subprocess, tempfile\n"
@@ -841,44 +843,25 @@ def restore_race(path, occupy, link_error=False, rename=None):
         "def filling(original, hard_link=False):\n"
         "    def call(source, destination, *args, **kwargs):\n"
         "        entry = os.readlink(source) if str(source).startswith('/proc/self/fd/') else source\n"
-        "        if not filled and str(destination) == target:\n"
+        "        # A directory cannot be hard linked, so its occupant arrives at the rename that follows, when there is one.\n"
+        f"        directory = hard_link and {rename is None} and os.path.isdir(entry) and not os.path.islink(entry)\n"
+        "        if not filled and str(destination) == target and not directory:\n"
         "            fill()\n"
         "        return original(source, destination, *args, **kwargs)\n"
         "    return call\n"
         "shutil.move = filling(shutil.move)\n"
         "os.rename = filling(os.rename)\n"
         + without_noreplace(hooked="filling", link_error=link_error, rename=rename)
+        # The occupant also arrives at a hard link that is then refused.
         + "os.link = filling(os.link, hard_link=True)\n"
-        "rest_open = os.open\n"
-        "def rest_opening(path, *args, **kwargs):\n"
-        "    global filled\n"
-        "    if not filled and str(path) == target and kwargs.get('dir_fd') is None:\n"
-        "        fill()\n"
-        "    return rest_open(path, *args, **kwargs)\n"
-        "os.open = rest_opening\n"
-        "rest_mkdir = os.mkdir\n"
-        "def rest_making(path, *args, **kwargs):\n"
-        "    global filled\n"
-        "    if not filled and str(path) == target and kwargs.get('dir_fd') is None:\n"
-        "        fill()\n"
-        "    return rest_mkdir(path, *args, **kwargs)\n"
-        "os.mkdir = rest_making\n"
-        "rest_symlink = os.symlink\n"
-        "def rest_linking(source, destination, *args, **kwargs):\n"
-        "    global filled\n"
-        "    if not filled and str(destination) == target and kwargs.get('dir_fd') is None:\n"
-        "        fill()\n"
-        "    return rest_symlink(source, destination, *args, **kwargs)\n"
-        "os.symlink = rest_linking\n"
-        "rest_holding = module.link_held\n"
-        "def rest_occupied_first(fd, path):\n"
-        "    global filled\n"
-        "    if not filled and str(path) == target:\n"
-        "        fill()\n"
-        "    return rest_holding(fd, path)\n"
-        "module.link_held = rest_occupied_first\n"
-        f"if {link_error!r}:\n"
-        "    module.linkat_empty = lambda fd, path: errno.EPERM\n"
+        f"if {rename is not None}:\n"
+        "    holding = module.link_held\n"
+        "    def occupied_first(fd, path):\n"
+        "        global filled\n"
+        "        if not filled and str(path) == target:\n"
+        "            fill()\n"
+        "        return holding(fd, path)\n"
+        "    module.link_held = occupied_first\n"
         + "atexit.register(lambda: Path(os.getcwd(), 'filled').write_text(str(filled)))\n"
     )
 
@@ -889,8 +872,7 @@ def cross_device(backups, path, occupy=None, rename=None):
     A move that stays inside `backups` works. A hard link from a held descriptor counts as a move of the entry it holds.
 
     `occupy` is a "file" or a "directory" that fills `path` just before the first call that would write
-    anything else onto it. `rename` takes `/proc` away as in `put_back_race`. The occupant arrives at link_held
-    entry every route, and at os.open and os.mkdir and os.symlink onto `path`. At exit the
+    anything else onto it. `rename` takes `/proc` away as in `put_back_race`. At exit the
     run records how many moves it failed, read back with `crossings`, and how many of those left
     `backups` by name, read back with `crossings_by_name`.
     """
@@ -925,57 +907,6 @@ def cross_device(backups, path, occupy=None, rename=None):
         "os.link = crossing(os.link, raises=True)\n"
         "os.rename = crossing(os.rename, raises=True)\n"
         + without_noreplace(hooked="crossing", link_error=False, rename=rename)
-        + "cross_open = os.open\n"
-        + "def cross_opening(path, *args, **kwargs):\n"
-        + "    global filled\n"
-        + "    if occupy and not filled and str(path) == target and kwargs.get('dir_fd') is None:\n"
-        + "        filled = True\n"
-        + "        if occupy == 'file':\n"
-        + "            Path(target).write_bytes(b'occupant\\x00\\xff')\n"
-        + "        else:\n"
-        + "            os.mkdir(target)\n"
-        + "            Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
-        + "    return cross_open(path, *args, **kwargs)\n"
-        + "os.open = cross_opening\n"
-        + "cross_mkdir = os.mkdir\n"
-        + "def cross_making(path, *args, **kwargs):\n"
-        + "    global filled\n"
-        + "    if occupy and not filled and str(path) == target and kwargs.get('dir_fd') is None:\n"
-        + "        filled = True\n"
-        + "        if occupy == 'file':\n"
-        + "            Path(target).write_bytes(b'occupant\\x00\\xff')\n"
-        + "        else:\n"
-        + "            cross_mkdir(path, *args, **kwargs)\n"
-        + "            Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
-        + "            return None\n"
-        + "    return cross_mkdir(path, *args, **kwargs)\n"
-        + "os.mkdir = cross_making\n"
-        + "cross_symlink = os.symlink\n"
-        + "def cross_linking(source, destination, *args, **kwargs):\n"
-        + "    global filled\n"
-        + "    if occupy and not filled and str(destination) == target and kwargs.get('dir_fd') is None:\n"
-        + "        filled = True\n"
-        + "        if occupy == 'file':\n"
-        + "            Path(target).write_bytes(b'occupant\\x00\\xff')\n"
-        + "        else:\n"
-        + "            cross_mkdir(target)\n"
-        + "            Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
-        + "            return None\n"
-        + "    return cross_symlink(source, destination, *args, **kwargs)\n"
-        + "os.symlink = cross_linking\n"
-        + "cross_holding = module.link_held\n"
-        + "def cross_occupied_first(fd, path):\n"
-        + "    global filled\n"
-        + "    cm = occupy\n"
-        + "    if cm and not filled and str(path) == target:\n"
-        + "        filled = True\n"
-        + "        if cm == 'file':\n"
-        + "            Path(target).write_bytes(b'occupant\\x00\\xff')\n"
-        + "        else:\n"
-        + "            cross_mkdir(target)\n"
-        + "            Path(target, 'precious').write_bytes(b'directory bytes\\x00')\n"
-        + "    return cross_holding(fd, path)\n"
-        + "module.link_held = cross_occupied_first\n"
         + "atexit.register(lambda: Path(os.getcwd(), 'crossed').write_text(str(crossed)))\n"
         + "atexit.register(lambda: Path(os.getcwd(), 'crossed-by-name').write_text(str(crossed_by_name)))\n"
         + "atexit.register(lambda: Path(os.getcwd(), 'filled').write_text(str(filled)))\n"
@@ -998,16 +929,13 @@ def noreplace_result(home):
 
 
 def backup_race(backup, path, events, foreign="file", proc=True, links=True):
-    """Hook code that changes what the backup path names in the middle of a restore.
+    """Hook code that changes what the backup's path names in the middle of a restore.
 
-    Each event is `(call, role, when, action)`. `call` is "link", "rename", or "noreplace" for moves by name.
-    It is also "held" for link_held entry, "linkat" for linkat entry, and "open" or "mkdir" or "symlink" for
-    descriptor copy creation onto `path`. An onto event with call "link" also fires for open and mkdir and symlink
-    and held and linkat onto `path`, so old link onto expectations still fire for descriptor publication.
-    `role` is "from" for the first such call that reads the backup path, or "onto" for the first that writes `path`.
-    `when` is "before" the call, or "after" it once it worked. The "swap" action renames the backup to a `.saved` name
-    beside it and puts a `foreign` "file" or "directory" at its path. "squat" puts another file at the backup path.
-    "vanish" deletes the backup directory. "occupy" puts a file at `path`. Without `proc` a hard link from
+    Each event is `(call, role, when, action)`. `call` is "link", "rename", or "noreplace". `role` is "from" for
+    the first such call that reads the backup's path, or "onto" for the first that writes `path`. `when` is
+    "before" the call, or "after" it once it worked. The "swap" action renames the backup to a `.saved` name
+    beside it and puts a `foreign` "file" or "directory" at its path. "squat" puts another file at the backup's
+    path. "vanish" deletes the backup's directory. "occupy" puts a file at `path`. Without `proc` a hard link from
     a held descriptor finds nothing, and without `links` every hard link is refused. At exit the run records how
     many events fired, read back with `fired`.
     """
@@ -1062,86 +990,6 @@ def backup_race(backup, path, events, foreign="file", proc=True, links=True):
         "os.link = racing('link', limited)\n"
         "os.rename = racing('rename', renaming)\n"
         "module.rename_noreplace = racing('noreplace', module.rename_noreplace)\n"
-        "def onto_due(names):\n"
-        "    return [e for e in events if e not in fired and e[1] == 'onto' and (e[0] in names or (e[0] == 'link' and 'link' in names))]\n"
-        "holding = module.link_held\n"
-        "def held_call(fd, dst):\n"
-        "    due = [e for e in events if e not in fired and e[1] == 'onto' and e[0] in ('link', 'held') and str(dst) == target]\n"
-        "    for e in due:\n"
-        "        if e[2] == 'before':\n"
-        "            fired.append(e)\n"
-        "            change(e[3])\n"
-        "    result = holding(fd, dst)\n"
-        "    if result == 0:\n"
-        "        for e in due:\n"
-        "            if e not in fired:\n"
-        "                fired.append(e)\n"
-        "                change(e[3])\n"
-        "    return result\n"
-        "module.link_held = held_call\n"
-        "linking_empty = module.linkat_empty\n"
-        "def empty_call(fd, dst):\n"
-        "    due = [e for e in events if e not in fired and e[1] == 'onto' and e[0] in ('link', 'linkat') and str(dst) == target]\n"
-        "    for e in due:\n"
-        "        if e[2] == 'before':\n"
-        "            fired.append(e)\n"
-        "            change(e[3])\n"
-        "    result = linking_empty(fd, dst)\n"
-        "    if result == 0:\n"
-        "        for e in due:\n"
-        "            if e not in fired:\n"
-        "                fired.append(e)\n"
-        "                change(e[3])\n"
-        "    return result\n"
-        "module.linkat_empty = empty_call\n"
-        "real_open = os.open\n"
-        "def opening(path, *args, **kwargs):\n"
-        "    due = []\n"
-        "    if kwargs.get('dir_fd') is None:\n"
-        "        due = [e for e in events if e not in fired and e[1] == 'onto' and e[0] in ('link', 'open') and str(path) == target]\n"
-        "        for e in due:\n"
-        "            if e[2] == 'before':\n"
-        "                fired.append(e)\n"
-        "                change(e[3])\n"
-        "    result = real_open(path, *args, **kwargs)\n"
-        "    for e in due:\n"
-        "        if e not in fired:\n"
-        "            fired.append(e)\n"
-        "            change(e[3])\n"
-        "    return result\n"
-        "os.open = opening\n"
-        "real_mkdir = os.mkdir\n"
-        "def making(path, *args, **kwargs):\n"
-        "    due = []\n"
-        "    if kwargs.get('dir_fd') is None:\n"
-        "        due = [e for e in events if e not in fired and e[1] == 'onto' and e[0] in ('link', 'mkdir', 'noreplace') and str(path) == target]\n"
-        "        for e in due:\n"
-        "            if e[2] == 'before':\n"
-        "                fired.append(e)\n"
-        "                change(e[3])\n"
-        "    result = real_mkdir(path, *args, **kwargs)\n"
-        "    for e in due:\n"
-        "        if e not in fired:\n"
-        "            fired.append(e)\n"
-        "            change(e[3])\n"
-        "    return result\n"
-        "os.mkdir = making\n"
-        "real_symlink = os.symlink\n"
-        "def symlinking(source, destination, *args, **kwargs):\n"
-        "    due = []\n"
-        "    if kwargs.get('dir_fd') is None:\n"
-        "        due = [e for e in events if e not in fired and e[1] == 'onto' and e[0] in ('link', 'symlink') and str(destination) == target]\n"
-        "        for e in due:\n"
-        "            if e[2] == 'before':\n"
-        "                fired.append(e)\n"
-        "                change(e[3])\n"
-        "    result = real_symlink(source, destination, *args, **kwargs)\n"
-        "    for e in due:\n"
-        "        if e not in fired:\n"
-        "            fired.append(e)\n"
-        "            change(e[3])\n"
-        "    return result\n"
-        "os.symlink = symlinking\n"
         "atexit.register(lambda: Path(os.getcwd(), 'fired').write_text(str(len(fired))))\n"
     )
 
@@ -3162,26 +3010,9 @@ class OwnershipTest(unittest.TestCase):
                 a, swarm, rows = self.displaced_by(kind)
                 backup = Path(rows[0]["backup"])
                 full = (
-                    "import errno\n"
-                    f"target = {str(swarm)!r}\n"
-                    "real_open = os.open\n"
-                    "def full_open(path, *args, **kwargs):\n"
-                    "    if str(path) == target and kwargs.get('dir_fd') is None:\n"
-                    "        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
-                    "    return real_open(path, *args, **kwargs)\n"
-                    "os.open = full_open\n"
-                    "real_mkdir = os.mkdir\n"
-                    "def full_mkdir(path, *args, **kwargs):\n"
-                    "    if str(path) == target and kwargs.get('dir_fd') is None:\n"
-                    "        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
-                    "    return real_mkdir(path, *args, **kwargs)\n"
-                    "os.mkdir = full_mkdir\n"
-                    "real_symlink = os.symlink\n"
-                    "def full_symlink(source, destination, *args, **kwargs):\n"
-                    "    if str(destination) == target and kwargs.get('dir_fd') is None:\n"
-                    "        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
-                    "    return real_symlink(source, destination, *args, **kwargs)\n"
-                    "os.symlink = full_symlink\n"
+                    "def full(*args, **kwargs):\n"
+                    "    raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
+                    "shutil.copytree = shutil.copy2 = full\n"
                 )
                 hook = cross_device(state_dir(self.home) / "backups", swarm) + full
                 raced = uninstall_hooked(self.home, a, hook)
@@ -3228,212 +3059,79 @@ class OwnershipTest(unittest.TestCase):
             # The directory was already out of its path when the entry arrived, so only the proven directory is discarded.
             self.assert_swap_survived(raced, a, swarm, rows, "directory", "directory", saved=False, noted=False)
 
-    def test_a_backup_swapped_before_its_proof_never_reaches_the_restored_path(self):
-        """A backup swapped before its proof never reaches the live path. A reader at the publication boundary never sees foreign bytes."""
-        for kind in ("file", "directory"):
-            for route in ("no_proc", "darwin", "cross_device"):
-                with self.subTest(kind=kind, route=route):
-                    self.use_fresh()
-                    a, swarm, rows = self.displaced_by(kind)
-                    backup = rows[0]["backup"]
-                    saved = self.home / "saved"
-                    seen = self.home / "seen"
-                    foreign = "directory" if kind == "directory" else "file"
-                    if kind == "file":
-                        event = ("link", "from", "before", "swap")
-                    else:
-                        event = ("noreplace", "from", "before", "swap")
-                    prefix = ""
-                    crossing = False
-                    proc = True
-                    if route == "no_proc":
-                        proc = False
-                    elif route == "darwin":
-                        prefix = darwin_renamex() + "sys.platform = 'darwin'\n"
-                    else:
-                        crossing = True
-                    reader = (
-                        "import subprocess\n"
-                        f"target = {str(swarm)!r}\n"
-                        f"seen = {str(seen)!r}\n"
-                        "reader_code = (\"from pathlib import Path; import sys; p=Path(sys.argv[1]); \""
-                        "\"s=Path(sys.argv[2]); d=p if p.is_dir() else None; \""
-                        "\"s.write_bytes((d/'precious').read_bytes() if d and (d/'precious').exists() else (d/'SKILL.md').read_bytes() if d and (d/'SKILL.md').exists() else p.read_bytes())\")\n"
-                        "real_publish = module.publish\n"
-                        "def observed_publish(fd, path):\n"
-                        "    result = real_publish(fd, path)\n"
-                        "    if isinstance(result, module.Published) and str(path) == target:\n"
-                        "        subprocess.run([sys.executable, '-c', reader_code, str(path), seen], check=True)\n"
-                        "    return result\n"
-                        "module.publish = observed_publish\n"
-                        "real_proved = module.proved\n"
-                        "def observed_proved(path, made):\n"
-                        "    result = real_proved(path, made)\n"
-                        "    if isinstance(result, module.Published) and str(path) == target:\n"
-                        "        subprocess.run([sys.executable, '-c', reader_code, str(path), seen], check=True)\n"
-                        "    return result\n"
-                        "module.proved = observed_proved\n"
-                        "real_place = module.place\n"
-                        "def observed_place(source, path):\n"
-                        "    result = real_place(source, path)\n"
-                        "    if result == 0 and str(path) == target:\n"
-                        "        subprocess.run([sys.executable, '-c', reader_code, str(path), seen], check=True)\n"
-                        "    return result\n"
-                        "module.place = observed_place\n"
-                    )
-                    hook = backup_race(backup, swarm, [event], foreign=foreign, proc=proc)
-                    if crossing:
-                        hook = cross_device(state_dir(self.home) / "backups", swarm) + hook
-                    hook = prefix + hook + reader
-                    raced = uninstall_hooked(self.home, a, hook)
-                    self.assertEqual(fired(self.home), 1, raced.stdout + raced.stderr)
-                    if crossing:
-                        self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
-                        self.assert_no_copy_left(swarm)
-                    self.assert_swap_refused(raced, swarm, rows, kind, foreign)
-                    if seen.exists():
-                        if kind == "directory":
-                            self.assertEqual(seen.read_bytes(), b"displaced\x00\xfe")
-                        else:
-                            content = seen.read_bytes()
-                            self.assertNotEqual(content, b"foreign\x00\xff")
-                            self.assertNotEqual(content, b"foreign directory\x00")
-
-    def test_a_backup_swapped_after_its_descriptor_is_proven_publishes_only_the_held_bytes(self):
-        """A backup swapped after its descriptor proof still publishes only held bytes. A reader never sees foreign."""
-        for kind in ("file", "directory"):
-            for route in ("no_proc", "darwin"):
-                with self.subTest(kind=kind, route=route):
-                    self.use_fresh()
-                    a, swarm, rows = self.displaced_by(kind)
-                    backup = Path(rows[0]["backup"])
-                    saved = self.home / "saved"
-                    seen = self.home / "seen"
-                    foreign = "directory" if kind == "directory" else "file"
-                    prefix = NO_PROC if route == "no_proc" else darwin_renamex() + "sys.platform = 'darwin'\n"
-                    reader = (
-                        "import subprocess\n"
-                        f"target = {str(swarm)!r}\n"
-                        f"seen = {str(seen)!r}\n"
-                        "reader_code = (\"from pathlib import Path; import sys; p=Path(sys.argv[1]); \""
-                        "\"s=Path(sys.argv[2]); d=p if p.is_dir() else None; \""
-                        "\"s.write_bytes((d/'precious').read_bytes() if d and (d/'precious').exists() else (d/'SKILL.md').read_bytes() if d and (d/'SKILL.md').exists() else p.read_bytes())\")\n"
-                        "real_publish = module.publish\n"
-                        "def observed_publish(fd, path):\n"
-                        "    result = real_publish(fd, path)\n"
-                        "    if isinstance(result, module.Published) and str(path) == target:\n"
-                        "        subprocess.run([sys.executable, '-c', reader_code, str(path), seen], check=True)\n"
-                        "    return result\n"
-                        "module.publish = observed_publish\n"
-                    )
-                    raced = uninstall_hooked(self.home, a, prefix + holder_swap(saved, foreign) + reader)
-                    self.ok(raced, "removed 3 links, restored 1 entries")
-                    self.assert_displaced(swarm, kind)
-                    self.assert_displaced(saved, kind)
-                    if seen.exists():
-                        if kind == "directory":
-                            self.assertEqual((swarm / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
-                            self.assertEqual(seen.read_bytes(), b"displaced\x00\xfe")
-                        else:
-                            self.assertEqual(swarm.read_bytes(), b"displaced\x00\xfe")
-                            self.assertEqual(seen.read_bytes(), b"displaced\x00\xfe")
-                    self.assert_empty_records()
-
-    def test_an_entry_that_replaces_the_restored_path_before_its_proof_is_left_in_place(self):
-        """An occupant that replaces the live path after creation is left alone. No stranger dir appears. The row stays."""
+    def test_an_entry_swapped_just_before_the_move_is_left_at_the_path_with_the_row_kept(self):
+        """A swap in the instant before the move leaves the foreign entry at the live path and keeps the row."""
         for kind in ("file", "directory"):
             with self.subTest(kind=kind):
                 self.use_fresh()
                 a, swarm, rows = self.displaced_by(kind)
                 backup = Path(rows[0]["backup"])
                 saved = self.home / "saved"
-                actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); Path(sys.argv[1]).write_bytes(b'user occupant')"
-                hook = (
+                if kind == "file":
+                    actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); Path(sys.argv[1]).write_bytes(b'foreign\\x00\\xff')"
+                else:
+                    actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); os.mkdir(sys.argv[1]); Path(sys.argv[1], 'precious').write_bytes(b'foreign directory\\x00')"
+                swapping = (
                     "import subprocess\n"
-                    f"target = {str(swarm)!r}\n"
                     f"saved = {str(saved)!r}\n"
                     f"actor = {actor!r}\n"
-                    "acted = False\n"
-                    "real_proved = module.proved\n"
-                    "def observed_proved(path, made):\n"
-                    "    global acted\n"
-                    "    if not acted and str(path) == target and os.path.lexists(target):\n"
-                    "        acted = True\n"
-                    "        subprocess.run([sys.executable, '-c', actor, str(path), saved], check=True)\n"
-                    "    return real_proved(path, made)\n"
-                    "module.proved = observed_proved\n"
+                    "moved = False\n"
+                    "real_place = module.place\n"
+                    "def swapping_place(source, path):\n"
+                    "    global moved\n"
+                    "    if not moved and '.pstack-t3-' in str(source):\n"
+                    "        moved = True\n"
+                    "        subprocess.run([sys.executable, '-c', actor, str(source), saved], check=True)\n"
+                    "    return real_place(source, path)\n"
+                    "module.place = swapping_place\n"
                 )
+                hook = (NO_PROC if kind == "file" else "") + swapping
                 raced = uninstall_hooked(self.home, a, hook)
-                reason = f"the backup is no longer the entry uninstall read. The entry that reached {swarm} in its place is still at {swarm}"
+                reason = f"the entry moved to {swarm} could not be confirmed"
                 self.skipped(raced, "removed 3 links, restored 0 entries", f"skipped restore {backup}: {reason}")
-                self.assertEqual(swarm.read_bytes(), b"user occupant")
-                self.assertFalse(swarm.is_symlink())
+                if kind == "file":
+                    self.assertEqual(swarm.read_bytes(), b"foreign\x00\xff")
+                    self.assert_displaced(backup, kind)
+                    self.assert_displaced(saved, kind)
+                    self.assertTrue(os.path.samefile(backup, saved))
+                else:
+                    self.assertEqual(os.listdir(swarm), ["precious"])
+                    self.assertEqual((swarm / "precious").read_bytes(), b"foreign directory\x00")
+                    self.assert_displaced(saved, kind)
+                    self.assertFalse(os.path.lexists(backup))
+                self.assertEqual(read_legacy(self.home)["backups"], rows)
                 self.assertEqual(list(swarm.parent.glob(".pstack-t3-stranger-*")), [])
                 self.assert_no_copy_left(swarm)
-                self.assert_displaced(backup, kind)
-                self.assertEqual(read_legacy(self.home)["backups"], rows)
-                self.assert_displaced(saved, kind)
-                swarm.unlink()
-                self.ok(run(self.home, a, "--harness", "grok", "uninstall"), "removed 0 links, restored 1 entries")
-                self.assert_displaced(swarm, kind)
-                self.assert_empty_records()
 
-    def test_a_failed_copy_is_removed_from_the_path_only_while_the_path_names_it(self):
-        """A failed copy leaves nothing at the path while the path still names it. An occupant that replaced it stays."""
-        with self.subTest(stage="failed copy is removed"):
-            self.use_fresh()
-            a, swarm, rows = self.displaced_by("file")
-            backup = Path(rows[0]["backup"])
-            full = (
-                "import errno\n"
-                "real_copy = module.copy_bytes\n"
-                "def failing(proven, live):\n"
-                "    result = real_copy(proven, live)\n"
-                "    return OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
-                "module.copy_bytes = failing\n"
-            )
-            hook = cross_device(state_dir(self.home) / "backups", swarm) + full
-            raced = uninstall_hooked(self.home, a, hook)
-            self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
-            self.skipped(
-                raced,
-                "removed 3 links, restored 0 entries",
-                f"skipped restore {backup}: [Errno {errno.ENOSPC}] {os.strerror(errno.ENOSPC)}",
-            )
-            self.assertFalse(os.path.lexists(swarm))
-            self.assert_displaced(backup, "file")
-            self.assertEqual(read_legacy(self.home)["backups"], rows)
-            self.assert_no_copy_left(swarm)
-        with self.subTest(stage="occupant that replaced a failed copy stays"):
-            self.use_fresh()
-            a, swarm, rows = self.displaced_by("file")
-            backup = Path(rows[0]["backup"])
-            saved = self.home / "saved"
-            actor = "import os, sys; from pathlib import Path; os.rename(sys.argv[1], sys.argv[2]); Path(sys.argv[1]).write_bytes(b'user occupant')"
-            full = (
-                "import errno, subprocess\n"
-                f"target = {str(swarm)!r}\n"
-                f"saved = {str(saved)!r}\n"
-                f"actor = {actor!r}\n"
-                "real_copy = module.copy_bytes\n"
-                "def failing(proven, live):\n"
-                "    result = real_copy(proven, live)\n"
-                "    subprocess.run([sys.executable, '-c', actor, target, saved], check=True)\n"
-                "    return OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))\n"
-                "module.copy_bytes = failing\n"
-            )
-            hook = cross_device(state_dir(self.home) / "backups", swarm) + full
-            raced = uninstall_hooked(self.home, a, hook)
-            self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
-            self.skipped(
-                raced,
-                "removed 3 links, restored 0 entries",
-                f"skipped restore {backup}: [Errno {errno.ENOSPC}] {os.strerror(errno.ENOSPC)}",
-            )
-            self.assertEqual(swarm.read_bytes(), b"user occupant")
-            self.assertEqual(read_legacy(self.home)["backups"], rows)
-            self.assert_displaced(backup, "file")
-            self.assert_no_copy_left(swarm)
+    def test_a_directory_restore_preserves_hard_links_xattrs_fifo_modes_and_relative_symlinks(self):
+        """A same-filesystem directory move keeps hard links, xattrs, FIFO type, modes, and relative symlink targets."""
+        self.use_fresh()
+        a, swarm, rows = self.displaced_by("directory")
+        backup = Path(rows[0]["backup"])
+        os.chmod(backup, 0o751)
+        os.chmod(backup / "SKILL.md", 0o640)
+        (backup / "nested").mkdir(mode=0o711)
+        os.chmod(backup / "nested", 0o711)
+        (backup / "nested" / "deep").write_bytes(b"deep")
+        os.symlink("../SKILL.md", backup / "nested" / "alias")
+        os.mkfifo(backup / "pipe")
+        os.chmod(backup / "pipe", 0o620)
+        os.link(backup / "SKILL.md", backup / "hard")
+        os.setxattr(backup / "SKILL.md", "user.review", b"metadata")
+        raced = run(self.home, a, "--harness", "grok", "uninstall")
+        self.ok(raced, "removed 3 links, restored 1 entries")
+        self.assertEqual(stat.S_IMODE(swarm.stat().st_mode), 0o751)
+        self.assertEqual((swarm / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
+        self.assertEqual(stat.S_IMODE((swarm / "SKILL.md").stat().st_mode), 0o640)
+        self.assertEqual(os.getxattr(swarm / "SKILL.md", "user.review"), b"metadata")
+        self.assertTrue(os.path.samefile(swarm / "SKILL.md", swarm / "hard"))
+        self.assertEqual(stat.S_IMODE((swarm / "nested").stat().st_mode), 0o711)
+        self.assertEqual((swarm / "nested" / "deep").read_bytes(), b"deep")
+        self.assertEqual(os.readlink(swarm / "nested" / "alias"), "../SKILL.md")
+        self.assertTrue(stat.S_ISFIFO((swarm / "pipe").stat().st_mode))
+        self.assertFalse(os.path.lexists(backup))
+        self.assert_no_copy_left(swarm)
+        self.assert_empty_records()
 
     def test_an_entry_that_takes_a_withdrawn_backups_path_is_never_deleted(self):
         a, b = self.base()

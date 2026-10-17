@@ -1,7 +1,9 @@
 - kind fix
-- `place` treats a source that is gone after its hard link worked as moved. A restore whose backup directory vanishes after the entry reached its path reports it restored instead of failing with ENOENT, because `place_proven` publishes without `place` and returns the published entry when `retire` finds its holder gone.
-- `proved` is the only function that makes a Published. `publish` and the link branch of `restore_backup` call it after they create the path.
-- publish never moves a holder name onto the live path or moves an occupant of it. It removes its own partial copy only after checking that the path still names that inode, so a same-user process that swaps the name between the check and the removal is not caught.
-- proved returns Published only when the path still names the made inode, else it returns a refusal saying the entry is still at the path
-- park and retire take a PrivateName only, so a live occupant is never parked or deleted
-- `restore_race` and `cross_device` occupy at link_held entry every route and at os.open and os.mkdir and os.symlink onto the path
+- restore moves the proven backup into place with place and calls proved with path and fd right after the move
+- proved returns Published when its pathname lookup matches the supplied device and inode numbers. Otherwise it reports that the moved entry could not be confirmed
+- place_proven returns the placement refusal when place refuses and returns the proof refusal when proved fails without touching the live occupant
+- retire runs only after a cross filesystem copy is placed. It requires a PrivateName argument
+- park and retire require a PrivateName argument. PrivateName construction requires its parent directory name to start with `.pstack-t3-`
+- same filesystem moves keep hard links and extended attributes and modes and FIFO type and relative symlink targets. Symlink restore works on macOS again
+- a same user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays
+- base place_copy stays for EXDEV only with shutil in a SCRAP holder then place
