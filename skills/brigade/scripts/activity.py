@@ -2122,7 +2122,7 @@ def limit_ledger(page, keep):
 def newest_ledger(page, keep):
     """The page with keep attempt lines left, the newest lines of each work item, on every copy of that item. cut_lines counts the lines the suffix leaves off.
     items_of order is page.items first, then each group item not in page.items. Each work item key appears once, and its fold payload holds its older attempts, so its payload lines drop before its current lines.
-    A drop takes the oldest attempt line of every work item in turn, in items_of order, then the second oldest of every work item, and so on, so every work item keeps a suffix of its current lines and a suffix of its fold payload's lines.
+    A drop takes the oldest attempt line of each work item that has one, in items_of order, then the second oldest of each work item that still has one, and so on, so every work item keeps a suffix of its current lines and a suffix of its fold payload's lines.
     """
     listed, seen = [], set()
     for item in items_of(page):
