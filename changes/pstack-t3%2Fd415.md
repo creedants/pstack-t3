@@ -1,0 +1,2 @@
+- kind fix
+- `brigade set --thread ... --replace --context-cap` reads the settings file before it raises the landing owner floor, so a file the settings write refuses exits 1 with the same message and changes no restaurant.json, no settings file, and no landing owner row.
