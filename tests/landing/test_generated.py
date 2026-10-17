@@ -1133,6 +1133,19 @@ class GeneratedTest(LandingTest):
             elapsed = time.monotonic() - started
         self.assertLess(elapsed, 5)
 
+    def test_run_build_refuses_to_start_while_sigchld_is_ignored(self):
+        """Starting with SIGCHLD ignored cannot pin the group id."""
+        from unittest import mock
+        previous = signal.getsignal(signal.SIGCHLD)
+        self.addCleanup(signal.signal, signal.SIGCHLD, previous)
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+        with mock.patch.object(land.subprocess, "Popen", side_effect=AssertionError("spawned")) as spawned:
+            with self.assertRaises(ValueError) as raised:
+                land.run_build("exit 0", str(self.work), 10)
+        self.assertEqual(str(raised.exception), "run_build refuses to start while SIGCHLD is ignored")
+        spawned.assert_not_called()
+        self.assertIs(signal.getsignal(signal.SIGCHLD), signal.SIG_IGN)
+
     def test_install_race_restores_handler_after_interrupt(self):
         """Install race restores the entry handler."""
         real_signal = signal.signal

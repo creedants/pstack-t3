@@ -1257,6 +1257,8 @@ def run_build(command, cwd, timeout):
     """
     if threading.current_thread() is not threading.main_thread():
         raise ValueError("signal only works in main thread of the main interpreter")
+    if signal.getsignal(signal.SIGCHLD) is signal.SIG_IGN:
+        raise ValueError("run_build refuses to start while SIGCHLD is ignored")
     build = _Build(signal.getsignal(signal.SIGINT))
     try:
         build.start(command, cwd)
