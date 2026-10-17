@@ -453,6 +453,13 @@ class ReportingTest(BrigadeTest, _ReportingRace):
                 self.assertNotIn("livenessMs", json.loads((self.at / "restaurant.json").read_text()))
                 self.assertIn(line, self.brigade("status").splitlines())
 
+    def test_status_names_the_milestones_liveness_default_when_the_reporting_level_is_not_one_it_knows(self):
+        self.open()
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["reporting"] = "weekly"
+        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
+        self.assertIn("liveness: every 600000 ms (default for milestones)", self.brigade("status").splitlines())
+
     def test_clearing_liveness_ms_removes_the_key_and_restores_the_level_default(self):
         self.open()
         self.brigade("set", "--liveness-ms", "1200000")

@@ -244,12 +244,14 @@ def liveness_of(meta):
     """The effective liveness interval in milliseconds and the reporting level it is the default for.
 
     A missing livenessMs key returns the store's reporting level's default and that level, and a reporting level
-    the table does not hold takes the milestones default. A present value returns it and "". A present value that
-    is a boolean, is not an integer, or is under LIVENESS_FLOOR is refused.
+    the table does not hold reads as milestones. A present value returns it and "". A present value that is a
+    boolean, is not an integer, or is under LIVENESS_FLOOR is refused.
     """
     if LIVENESS_KEY not in meta:
         level = reporting_of(meta)
-        return LIVENESS_DEFAULT_MS.get(level, LIVENESS_DEFAULT_MS["milestones"]), level
+        if level not in LIVENESS_DEFAULT_MS:
+            level = "milestones"
+        return LIVENESS_DEFAULT_MS[level], level
     value = meta[LIVENESS_KEY]
     if isinstance(value, bool) or not isinstance(value, int):
         refuse_setting(LIVENESS_KEY, value, "it is not a whole number")
