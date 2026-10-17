@@ -1095,12 +1095,16 @@ class GeneratedTest(LandingTest):
     def test_build_watch_supports_descriptors_above_1024(self):
         """The build watch reads pipes above descriptor 1024."""
         import resource
-        needed = 1100
+        # Holding one descriptor per pass leaves the next pipe at 1025 and 1026
+        # with nothing open above 1024, so the runner's wake pipe, selector, and
+        # subprocess pipes run to 1031.
+        needed = 1032
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         if hard < needed:
             self.skipTest(f"hard fd limit {hard} is below the test requirement of {needed}")
-        if soft < needed:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (needed, hard))
+        budget = min(1100, hard)
+        if soft < budget:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (budget, hard))
             self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
         held = []
         self.addCleanup(lambda: [os.close(fd) for fd in held])
@@ -1112,7 +1116,6 @@ class GeneratedTest(LandingTest):
                 break
             os.close(first)
             os.close(second)
-            held.append(os.open(os.devnull, os.O_RDONLY))
             held.append(os.open(os.devnull, os.O_RDONLY))
         # The command exits 3 so the test can read the status back.
         code, out = land.run_build("exit 3", str(self.work), 10)

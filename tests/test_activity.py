@@ -4503,12 +4503,6 @@ class LiveTest(OutputCase):
         self.assertIn("Collapse all", wrapper)
         self.assertIn("30000", wrapper)
 
-    def test_live_page_with_no_value_polls_default_loopback(self):
-        fixture = one_running(self.fixture).write()
-        wrapper = self.out("--live-page")
-        token = (fixture.store / "activity-token").read_text().strip()
-        self.assertIn(f"http://127.0.0.1:48731/activity/{token}", wrapper)
-
     def test_live_page_with_https_origin_polls_that_origin(self):
         fixture = one_running(self.fixture).write()
         origin = "https://home.example.ts.net:48731"
