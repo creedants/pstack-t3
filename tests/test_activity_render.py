@@ -38,8 +38,10 @@ BUNDLED = (
 )
 # The platform axis of headless_flags.
 MACOS = sys.platform == "darwin"
-# Chrome on the macOS runner writes this display warning to stderr. The failure text drops these lines.
+# Chrome on the macOS runner writes this display warning to stderr. The failure text drops the warning sentence and keeps any other diagnostic on the same line.
 DISPLAY_WARNING = "CVDisplayLinkCreateWithCGDisplay failed"
+_WARNING_PREFIX = re.compile(r"\[[^\]]*\]\s*")
+_CVRETURN_CLAUSE = re.compile(r"^\s*\.\s*CVReturn:\s*-?\d+")
 # How many stderr lines a failure keeps, taken from the end.
 STDERR_TAIL = 5
 PROBE_TIMEOUT = 20
@@ -155,16 +157,35 @@ def headless_flags(macos):
     return ["--headless", "--disable-gpu", "--no-sandbox"]
 
 
-def stderr_segment(failed):
-    """A colon and up to the last five non-empty stderr lines that are not the CVDisplayLink display warning, or an empty string when the browser wrote no other line.
+def _kept_text(line):
+    """The stripped diagnostic of one stderr line, or an empty string when the line holds only the display warning sentence.
 
-    A TimeoutExpired from subprocess.run carries its stderr as bytes, so a bytes value is decoded before the lines are read.
+    The sentence is the warning phrase with one leading bracket prefix and one trailing CVReturn clause removed. Any other text on the line is kept.
+    """
+    text = line.strip()
+    if not text:
+        return ""
+    index = text.find(DISPLAY_WARNING)
+    if index < 0:
+        return text
+    before = text[:index]
+    after = text[index + len(DISPLAY_WARNING):]
+    if _WARNING_PREFIX.fullmatch(before):
+        before = ""
+    after = _CVRETURN_CLAUSE.sub("", after, count=1)
+    return " ".join(part for part in (before.strip(), after.strip()) if part)
+
+
+def stderr_segment(failed):
+    """A colon and up to the last five kept stderr diagnostics, or an empty string when the browser wrote no other diagnostic.
+
+    A TimeoutExpired from subprocess.run carries its stderr as bytes, so a bytes value is decoded before the lines are read. A line that holds only the display warning sentence keeps nothing. A line that holds other text with the warning keeps that text.
     """
     stderr = failed.stderr or ""
     if isinstance(stderr, bytes):
         stderr = stderr.decode(errors="replace")
-    lines = [line.strip() for line in stderr.splitlines()
-             if line.strip() and DISPLAY_WARNING not in line][-STDERR_TAIL:]
+    kept = [_kept_text(line) for line in stderr.splitlines()]
+    lines = [line for line in kept if line][-STDERR_TAIL:]
     return f": {' '.join(lines)}" if lines else ""
 
 
@@ -191,7 +212,7 @@ def confined_run(browser, target, directory, prefix, timeout):
 def skip_segments(items):
     """One segment per missing name and per failed binary, after later aliases are on the record.
 
-    A failed binary's segment names its failure. A nonzero exit also names up to the last five non-empty lines of the browser's stderr that are not the CVDisplayLink display warning, when it wrote any.
+    A failed binary's segment names its failure. A nonzero exit also names up to the last five kept diagnostics from the browser stderr, when it wrote any.
     """
     lines = []
     for item in items:
@@ -611,6 +632,8 @@ class ProbeContractTest(unittest.TestCase):
             (f"{warning}\nfirst\nsecond\nthird\n", "exited 2: first second third"),
             (f"one\ntwo\n{warning}\nthree\nfour\nfive\nsix\n", "exited 2: two three four five six"),
             (f"{warning}\n{warning}\n", "exited 2"),
+            (f"{warning} renderer exited\n", "exited 2: renderer exited"),
+            (f"one\ntwo\nthree\nfour\nfive\n{warning} six\n", "exited 2: two three four five six"),
         )
         for stderr, expected in cases:
             with self.subTest(stderr):
@@ -627,6 +650,7 @@ class ProbeContractTest(unittest.TestCase):
             (warning + b"[2:2:2:2:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [2:2:2:2:ERROR:startup.cc(9)] startup stalled"),
             (warning.decode() + "[3:3:3:3:ERROR:startup.cc(9)] startup stalled\n", "timed out after 7 seconds: [3:3:3:3:ERROR:startup.cc(9)] startup stalled"),
             (warning, "timed out after 7 seconds"),
+            (warning.strip() + b" renderer exited\n", "timed out after 7 seconds: renderer exited"),
         )
         for stderr, expected in cases:
             with self.subTest(stderr):
@@ -659,10 +683,15 @@ class ProbeContractTest(unittest.TestCase):
     def test_a_missed_probe_skips_once_locally_and_retries_and_fails_under_ci_or_on_macos(self):
         calls = []
         miss = lambda _directory: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
+        subjects = (
+            (RenderHeightTest, "test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"),
+            (LiveAttemptFoldTest, "test_live_fold_script_on_the_static_document_shows_earlier_rows_when_attempt_details_open_and_hides_them_on_close"),
+        )
         cases = (("", False, 1, False), ("true", False, 2, True), ("", True, 2, True))
         with mock.patch(f"{__name__}.select_browser", miss):
-            for ci, macos, tries, failed in cases:
-                with self.subTest(ci=ci, macos=macos), mock.patch.dict(os.environ, {"CI": ci}), mock.patch(f"{__name__}.MACOS", macos):
-                    calls.clear()
-                    result = unittest.TextTestRunner(stream=io.StringIO()).run(RenderHeightTest("test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"))
-                    self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * tries, True, failed, not failed))
+            for subject, method in subjects:
+                for ci, macos, tries, failed in cases:
+                    with self.subTest(subject=subject.__name__, ci=ci, macos=macos), mock.patch.dict(os.environ, {"CI": ci}), mock.patch(f"{__name__}.MACOS", macos):
+                        calls.clear()
+                        result = unittest.TextTestRunner(stream=io.StringIO()).run(subject(method))
+                        self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * tries, True, failed, not failed))
