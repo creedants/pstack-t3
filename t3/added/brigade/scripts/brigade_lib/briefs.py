@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.affected import verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
@@ -194,6 +195,10 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
             inputs = mode_inputs(restaurant, dish, used_paths, thread)
         mode = seam.roles_mode(inputs)
+        if not (verify or "").strip():
+            picked = affected_verify_text(inputs.project_root, used_paths, seam.LAND)
+        else:
+            picked = verify
         with restaurant.checked():
             restaurant.fence()
             dish, used_paths, used_lease, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
@@ -201,7 +206,7 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
                 continue
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
-            return write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, used_paths, used_lease, base,
+            return write_brief(restaurant, dish, mode, goal, acceptance, contract, picked, used_paths, used_lease, base,
                                context, thread)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 

@@ -101,7 +101,7 @@ def parser():
 def run(argv):
     args = parser().parse_args(argv)
     root = store_root(args.store)
-    if args.command in ("open", "walk"):
+    if not BY_NAME[args.command].needs_store:
         return BY_NAME[args.command].handle(args, root)
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")

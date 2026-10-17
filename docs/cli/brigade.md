@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -263,6 +263,20 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it; given once |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
+
+## brigade.py affected
+
+```text
+brigade.py [flags] affected [--root ROOT] [--paths PATHS] [--diff DIFF]
+```
+
+print the test modules the lease paths or diff names affect
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--root ROOT` |  |  |  | project root to scan |
+| `--paths PATHS` (repeatable) |  |  |  | repo path the dish will change; repeatable |
+| `--diff DIFF` |  |  |  | git diff range to name changed files, such as origin/main...HEAD |
 
 ## brigade.py contract
 

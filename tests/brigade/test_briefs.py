@@ -755,3 +755,22 @@ class BriefsTest(BrigadeTest):
         self.assertEqual(self.brigade("contract", "D1", ok=False), "brigade: D1 has no contract on record; run brief with --contract")
         self.assertEqual(self.tables(), before)
         self.assertFalse((self.at / "goals.tsv").exists())
+
+    def test_omitted_verify_writes_picker_paragraph_fails_when_picker_not_used(self):
+        self.started()
+        self.brigade("set", "--thread", "thread-coord")
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                            "--paths", "README.md", "--lease", "L1", "--base", "origin/main")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("README.md", verify)
+        self.assertIn("full suite", verify)
+        self.assertIn("While working, run only the affected test modules.", verify)
+        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+
+    def test_supplied_verify_unchanged_fails_when_override_ignored(self):
+        self.briefable()
+        text = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertTrue(verify.startswith("- v\n"))
+        self.assertNotIn("Affected test modules are", verify)
+        self.assertNotIn("No affected mapping", verify)

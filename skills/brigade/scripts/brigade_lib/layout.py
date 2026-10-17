@@ -462,3 +462,50 @@ def _one(norm, lay, doc_item=False):
         if "docs/skills.md" not in found:
             found.append("docs/skills.md")
     return tuple(found)
+
+
+def _twins(norm, lay):
+    """One twin class holds the path and its skills copies. It also holds the source when the path is a generated copy.
+
+    Forward copies come from _one filtered to skills. The inverse reads the same lay copies. Doc pages are never twins. An unreadable layout returns the path alone.
+    """
+    if lay is None:
+        return (norm,)
+    try:
+        found = {norm}
+        try:
+            for dest in _one(norm, lay):
+                if dest.startswith("skills/"):
+                    found.add(dest)
+        except Exception:
+            pass
+        sources = set()
+        for item in lay.copies:
+            if isinstance(item, _Exact):
+                if norm == item.dst:
+                    sources.add(item.src)
+            elif isinstance(item, _Prefix):
+                if norm == item.dst:
+                    sources.add(item.src)
+                elif norm.startswith(item.dst + "/"):
+                    rest = norm[len(item.dst) + 1:]
+                    if rest:
+                        sources.add(item.src + "/" + rest)
+            elif isinstance(item, _Glob):
+                if norm == item.dst:
+                    sources.add(item.src)
+                elif norm.startswith(item.dst + "/"):
+                    rest = norm[len(item.dst) + 1:]
+                    if rest and "/" not in rest and fnmatch.fnmatch(rest, item.pat):
+                        sources.add(item.src + "/" + rest)
+        for src in list(sources):
+            found.add(src)
+            try:
+                for dest in _one(src, lay):
+                    if dest.startswith("skills/"):
+                        found.add(dest)
+            except Exception:
+                pass
+        return tuple(sorted(found))
+    except Exception:
+        return (norm,)

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.affected import _diff_names as _affected_diff, verify_text as _affected_text
 from brigade_lib.briefs import brief, stored_contract
 from brigade_lib.commands.once import Once
 from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, fire, item_escalation, record_escalation, retired_worker_threads, workers_full
@@ -30,7 +31,7 @@ from brigade_lib.shared import BrigadeError, stored
 from brigade_lib.store import COUNTED_STATES, DISH_STATES, KINDS, NEEDS_CONTRACT, WORKER_ROLES
 from brigade_lib.wake import record_worker_end
 
-COMMANDS = ("fire", "dish", "brief", "contract")
+COMMANDS = ("fire", "dish", "brief", "affected", "contract")
 
 
 def brief_contract(value):
@@ -65,7 +66,7 @@ def _brief_fields(args):
         unknown = [key for key in payload if key not in allowed]
         if unknown:
             raise BrigadeError(f"brief fields: unknown key {unknown[0]}")
-        for key in ("goal", "acceptance", "verify", "base"):
+        for key in ("goal", "acceptance", "base"):
             if key not in payload:
                 raise BrigadeError(f"brief fields: missing {key}")
         for key, value in payload.items():
@@ -82,21 +83,21 @@ def _brief_fields(args):
             "goal": payload["goal"],
             "acceptance": payload["acceptance"],
             "contract": brief_contract(payload.get("contract")),
-            "verify": payload["verify"],
+            "verify": payload.get("verify", ""),
             "paths": payload["paths"] if "paths" in payload else "",
             "lease": payload["lease"] if "lease" in payload else "",
             "base": payload["base"],
             "context": payload["context"] if "context" in payload else [],
         }
-    if args.goal is None or args.verify is None or args.base is None:
-        raise BrigadeError("brief needs --fields, or --goal, --verify, and --base")
+    if args.goal is None or args.base is None:
+        raise BrigadeError("brief needs --fields, or --goal and --base")
     if not args.base.strip():
         raise BrigadeError("brief --base takes a trunk ref, such as origin/main")
     return {
         "goal": args.goal,
         "acceptance": args.acceptance,
         "contract": brief_contract(args.contract),
-        "verify": args.verify,
+        "verify": args.verify or "",
         "paths": args.paths or "",
         "lease": args.lease or "",
         "base": args.base,
@@ -187,6 +188,13 @@ def register_contract(sub):
     p.add_argument("id")
 
 
+def register_affected(sub):
+    p = sub.add_parser("affected", help="print the test modules the lease paths or diff names affect")
+    p.add_argument("--root", default=None, help="project root to scan")
+    p.add_argument("--paths", action="append", default=[], help="repo path the dish will change; repeatable")
+    p.add_argument("--diff", default=None, help="git diff range to name changed files, such as origin/main...HEAD")
+
+
 def register_dish(sub):
     p = sub.add_parser("dish", help="update a dish")
     p.add_argument("id")
@@ -206,6 +214,7 @@ def register_dish(sub):
 def register(sub):
     register_fire(sub)
     register_brief(sub)
+    register_affected(sub)
     register_contract(sub)
     register_dish(sub)
 
@@ -221,6 +230,21 @@ def handle_fire(restaurant, args):
 def handle_brief(restaurant, args):
     fields = _brief_fields(args)
     return brief(restaurant, args.id, **fields)
+
+
+def handle_affected(args, _root):
+    paths = args.paths or []
+    has_paths = bool([part for one in paths for part in str(one).split(",") if part.strip() != ""])
+    has_diff = args.diff is not None and str(args.diff).strip() != ""
+    if has_paths and has_diff:
+        raise BrigadeError("use either --paths or --diff, not both")
+    if not has_paths and not has_diff:
+        raise BrigadeError("affected needs --paths or --diff")
+    project = args.root or "."
+    if has_diff:
+        names = _affected_diff(project, str(args.diff))
+        return _affected_text(project, names, seam.LAND)
+    return _affected_text(project, paths, seam.LAND)
 
 
 def handle_dish(restaurant, args):
@@ -248,6 +272,8 @@ def handle(restaurant, args):
         return handle_fire(restaurant, args)
     if args.command == "brief":
         return handle_brief(restaurant, args)
+    if args.command == "affected":
+        return handle_affected(args, None)
     if args.command == "dish":
         return handle_dish(restaurant, args)
     if args.command == "contract":
