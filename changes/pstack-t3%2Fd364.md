@@ -1,0 +1,4 @@
+- kind fix
+- `tests/landing/test_generated.py` records each killpg and each reaping waitpid with its pid and reports signal after reap only when a killpg names a pid that an earlier event reaped
+- `tests/landing/test_generated.py` finds a zombie through `/proc` and then through `ps -o stat=` when `/proc` is absent
+- `tests/landing/test_generated.py` runs the order checks on the host and on simulated Darwin without `os.waitid`
