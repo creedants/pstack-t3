@@ -3032,7 +3032,7 @@ class OwnershipTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"foreign\x00\xff")
 
     def assert_swap_refused(self, raced, swarm, rows, kind, foreign="file"):
-        """The restore moved nothing. The foreign entry is at the backup's path, the backup is where the swap saved it, and the row stays."""
+        """The restore moved nothing. The foreign entry is at the backup's path, the displaced backup is at `<backup>.saved`, and the row stays."""
         backup = Path(rows[0]["backup"])
         self.skipped(
             raced,

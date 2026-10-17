@@ -898,7 +898,7 @@ class Stranded(OSError):
 class Holder:
     """A private directory beside `home`. `aside` is the one name an entry takes inside it.
 
-    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. A SCRAP directory holds a copy being built, or a backup whose copy is already in place, which `retire` moved there from a HOLDER directory.
+    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. A SCRAP directory holds a backup whose copy is already in place, which `retire` moved there from a HOLDER directory.
     A STRANGER entry was parked there from a holder.
     This restore could not prove it. The sweep never restores or deletes it.
     As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
@@ -1070,10 +1070,7 @@ def readable_of(fd):
 
 
 def symlink_target_of(fd):
-    """Return the target of the symlink `fd` holds, read from the descriptor, or None.
-
-    It uses readlinkat on the descriptor itself where available. Else it refuses.
-    """
+    """Return None when the target of the symlink `fd` holds cannot be read. It calls readlinkat with an empty pathname, which Linux rejects, so on Linux it always returns None."""
     try:
         held = os.fstat(fd)
     except OSError:
@@ -1352,7 +1349,7 @@ def publish(fd, path):
     It tries link_held first. On 0 it returns proved on the held inode. On EEXIST it returns a refusal
     and leaves the path alone. Else, unless `link_held` returned EXDEV, it tries linkat AT_EMPTY_PATH with no platform test, so a Darwin
     simulation still binds files when NO_PROC blocks proc. Else it copies from descriptors proved to be
-    the held entry and creates the live path with O_EXCL. It records the new inode and returns proved on it.
+    the held entry and creates the live path with an O_EXCL open, mkdir, or symlink. It records the new inode and returns proved on it.
     After its own create succeeds, a copy failure removes the live path only while the path still names what this call created. If the first lstat of the new path fails, the path is left in place.
     It never moves a holder name onto the live path or moves an occupant of it. It removes its own partial copy only after checking that the path still names that inode, so a same-user process that swaps the name between the check and the removal is not caught.
     Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
@@ -1494,7 +1491,7 @@ def restore_backup(backup, path, held):
     # The held descriptor keeps the planned inode in use, so an entry made since has other numbers. The change time also catches one changed in place.
     if now is None or now[:2] != identity(os.fstat(held.fd))[:2] or now != held.entry:
         return CHANGED
-    # The backup path can name another entry from here on, so every later step acts on the held entry or on one first moved where only this call looks.
+    # The backup path can name another entry from here on, so every later step acts on the held entry, on a name this call makes in a holder directory, or on one first moved where only this call looks.
     # Another installer can take `path` after the plan saw it empty. Each step refuses it instead of replacing it.
     code = link_held(held.fd, path)
     if code == errno.EEXIST:
