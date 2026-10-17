@@ -35,6 +35,11 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
+# Why a review sent the work back. pass record takes one of these with --verdict send-back and with no other verdict.
+REASONS = ("false-wording", "missing-test", "wrong-behavior", "out-of-lease", "scope", "other")
+REASON_VERDICTS = ("send-back",)
+# A pass.tsv row that carries no reason counts as this in `pass stats`.
+UNRECORDED_REASON = "unrecorded"
 # The roles a row of threads.tsv may hold. A report item or --role naming anything else is refused.
 THREAD_ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
 # The worker roles. dish --thread writes these, and a report may not name them.
@@ -76,7 +81,7 @@ TABLES = {
     "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision", "kind", "goal"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported",
                    "kind", "goal"),
-    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member"),
+    "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member", "reason"),
     "threads.tsv": ("at", "dish", "attempt", "role", "thread", "seat", "start", "end"),
     "86.tsv": ("id", "at", "state", "dish", "question", "options", "default", "answer", "kind", "answered"),
     "log.tsv": ("at", "kind", "id", "state", "note"),
@@ -86,7 +91,7 @@ TABLES = {
     "rulings.tsv": ("id", "at", "kind", "parties", "question", "rule", "decision", "supersedes", "state"),
 }
 # How many trailing cells a row of each table may lack. A missing cell reads as empty.
-ADDED_COLUMNS = {"pass.tsv": 2, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
+ADDED_COLUMNS = {"pass.tsv": 3, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
 ADMIN_DIR = ".admin"
 ADMIN_NAME = "executive admin"

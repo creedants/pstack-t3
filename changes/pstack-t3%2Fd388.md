@@ -1,0 +1,6 @@
+- kind feature
+- `pass.tsv` gains a `reason` column, added the way the existing added columns are, so a row written before it reads as empty.
+- `pass record` takes `--reason` with `--verdict send-back`, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, and other.
+- `--reason` with any other verdict is refused before a row is appended.
+- `pass stats --last N` prints the first-pass rate overall and per author and the send-back counts by reason over the last N items with a verdict, and a send-back row with no reason counts as unrecorded.
+- The tests cover the refusal on another verdict, a reason outside the list, the stored reason, an old row that reads as empty and unrecorded, and the stats output.

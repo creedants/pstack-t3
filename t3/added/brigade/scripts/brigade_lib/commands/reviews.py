@@ -22,12 +22,23 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import announce_archive
-from brigade_lib.reviews import latest_verdict, pass_check, pass_json, record_pass, round_decision, verify_edits, write_threads
+from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
-from brigade_lib.store import EDITS_VERDICT, ROUND_BUDGET, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
+from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_BUDGET, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
 
 COMMANDS = ("thread", "pass", "edits", "86")
+
+
+def non_negative_int(text):
+    """An argparse type that returns a non-negative integer and refuses anything else."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer value: {text!r}")
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"{value} is negative")
+    return value
 
 
 def register_thread(sub):
@@ -84,6 +95,9 @@ def register_pass(sub):
                         "and no other verdict takes it; refused with one line that says why when its edits cannot be read")
     a.add_argument("--reviewer-thread", default="",
                    help="the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt")
+    a.add_argument("--reason", default="", choices=REASONS,
+                   help=f"why the review sent the work back, one of {', '.join(REASONS)}; --reason goes only with "
+                        "--verdict send-back")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -93,6 +107,11 @@ def register_pass(sub):
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
+    a = t.add_parser("stats", help="print the first-pass rate overall and per author, and send-back counts by "
+                                  "reason, over the last N items with a verdict; a row with no reason counts as "
+                                  "unrecorded")
+    a.add_argument("--last", type=non_negative_int, default=20,
+                   help="how many items to cover, counting back from the most recently reviewed; default 20")
 
 
 def register_edits(sub):
@@ -137,6 +156,8 @@ def register(sub):
 def handle(restaurant, args):
     if args.command == "edits":
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
+    if args.command == "pass" and args.action == "stats":
+        return pass_stats(restaurant, args.last)
     if args.command in ("thread", "pass", "86"):
         with restaurant.checked():
             return seam.command(restaurant, args)
@@ -152,7 +173,7 @@ def handle_locked(restaurant, args, view):
         if args.action == "record":
             result = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
                                  args.note, args.same_family, args.report, args.member, args.late, args.edits,
-                                 args.reviewer_thread)
+                                 args.reviewer_thread, args.reason)
             announce_archive(restaurant, args.dish, "review", thread=args.reviewer_thread)
             return result
         ok, why = pass_check(restaurant, args.dish, args.sha)
