@@ -4,6 +4,7 @@ from .support import (
     BrigadeTest,
     CLAUDE,
     CODEX,
+    DOC_SETTINGS,
     Path,
     ROOT,
     SCRIPT,
@@ -21,6 +22,7 @@ from .support import (
     json,
     mock,
     os,
+    re,
     runpy,
     shlex,
     subprocess,
@@ -1315,6 +1317,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_with_two_tickets_is_refused(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings()
         for doc in self.SHARED_DOCS:
             with self.subTest(doc=doc):
                 self.brigade("ticket", "add", "--kind", "fix", "--summary", f"First {doc}")
@@ -1328,6 +1331,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_with_ride_along_counts_every_ticket(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings()
         self.goal("activity view")
         self.goal("current with upstream")
         self.brigade("ticket", "add", "--summary", "Lead work", "--kind", "fix", "--goal", "G1")
@@ -1340,6 +1344,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_refusal_order(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.seed_doc_settings()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Third")
@@ -1362,6 +1367,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.open()
+        self.seed_doc_settings()
         self.rail_before_kinds("a")
         before = self.store_files()
         proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "feature", "--summary", "Do a",
@@ -1377,6 +1383,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             self.land("lease", "claim", "--holder", "engine/D9", "--paths", "docs/guide.md")
             leases = self.land("lease", "list")
@@ -1403,6 +1410,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             leases = self.land("lease", "list")
             before = self.store_files()
@@ -1451,6 +1459,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_fire_untracked_skill_file_path_refuses(self):
         self.git_project()
         self.open()
+        self.seed_doc_settings()
         for path in ("t3/added/new-skill/SKILL.md", "skills/new-skill/SKILL.md"):
             with self.subTest(path=path):
                 (self.project / path).parent.mkdir(parents=True, exist_ok=True)
@@ -1465,6 +1474,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_fire_untracked_skill_directory_refuses(self):
         self.git_project()
         self.open()
+        self.seed_doc_settings()
         for directory, doc in (("t3/added/new-skill", "t3/added/new-skill/SKILL.md"),
                                ("skills/new-skill", "skills/new-skill/SKILL.md")):
             with self.subTest(directory=directory):
@@ -1482,6 +1492,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             nested = self.project / "t3/added/new-skill"
             (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
@@ -1505,6 +1516,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             nested = self.project / "t3/added/new-skill"
             (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
@@ -1519,6 +1531,124 @@ class ItemsTest(BrigadeTest, _ItemsRace):
                                           "--paths", "t3/added/new-skill", "--timebox", "120", ok=False),
                              self.doc_line(("t3/added/new-skill/SKILL.md",), timebox=120))
             self.assertEqual(self.store_files(), before)
+
+    def test_fire_with_no_shared_docs_set_fires_on_a_shared_path(self):
+        case = self.fake_land()
+        (case / "claim-proceed").touch()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
+        proc = self.fire_with_fake_land(case, "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Both",
+                                        "--paths", "README.md", "--timebox", "120")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""))
+        self.assertTrue(out.strip().startswith("D1"), out)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Third")
+        proc = self.fire_with_fake_land(case, "--tickets", "T3", "--station", "bug-fix", "--summary", "Doc",
+                                        "--paths", "README.md", "--doc-item")
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, err.strip()), (0, ""))
+        self.assertEqual(self.doc_log_note(self.at, out.strip().split()[0]), "doc-item")
+
+    def test_fire_reads_the_catalog_from_the_store_only(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
+            self.seed_doc_settings(sharedDocs=[{"path": "src/app.py", "kind": "file"}])
+            self.assertIn("D1", self.brigade("fire", "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Both",
+                                             "--paths", "README.md", "--timebox", "120"))
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Third")
+            before = self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Third",
+                                          "--paths", "src/app.py", "--timebox", "120", ok=False),
+                             self.doc_line(("src/app.py",), timebox=120))
+            self.assertEqual(self.store_files(), before)
+
+    def test_fire_reads_a_file_directory_prefix_and_a_skill_prefix_from_the_store(self):
+        self.tracked_project("README.md", "docs/guide.md", "docs/skills.md", "lib/thing/SKILL.md")
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long work")
+        cases = (
+            ([{"path": "docs/", "kind": "file"}], "docs", ("docs/guide.md", "docs/skills.md")),
+            ([{"path": "lib/", "kind": "skill"}], "lib/thing", ("lib/thing/SKILL.md",)),
+            ([{"path": "lib", "kind": "skill"}], "lib/thing", ("lib/thing/SKILL.md",)),
+        )
+        for shared, given, held in cases:
+            with self.subTest(shared=shared, given=given):
+                self.seed_doc_settings(sharedDocs=shared)
+                before = self.store_files()
+                self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                              "--paths", given, "--timebox", "120", ok=False),
+                                 self.doc_line(held, timebox=120))
+                self.assertEqual(self.store_files(), before)
+
+    def test_fire_reads_the_doc_timebox_from_the_store(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.seed_doc_settings(sharedDocs=[{"path": "docs/guide.md", "kind": "file"}], docTimebox=30)
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "At the limit")
+            self.assertIn("D1", self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "At",
+                                             "--paths", "docs/guide.md", "--timebox", "30"))
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Over the limit")
+            before = self.store_files()
+            self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Over",
+                                          "--paths", "docs/guide.md", "--timebox", "31", ok=False),
+                             self.doc_line(("docs/guide.md",), timebox=31, minutes=30))
+            self.assertEqual(self.store_files(), before)
+
+    def test_a_malformed_shared_docs_refuses_before_any_write(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            cases = (
+                ("not a list", "it is not a list"),
+                (["not an object"], "an entry is not an object"),
+                ([{"path": "a.md", "kind": "file", "extra": 1}], "an entry has unknown key 'extra'"),
+                ([{"kind": "file"}], "an entry's 'path' is not a repository path: None"),
+                ([{"path": "../a.md", "kind": "file"}], "an entry's 'path' is not a repository path: '../a.md'"),
+                ([{"path": "a.md", "kind": "doc"}], "an entry's 'kind' is not file or skill: 'doc'"),
+            )
+            for bad, why in cases:
+                with self.subTest(bad=bad):
+                    self.seed_doc_settings(sharedDocs=bad)
+                    before = self.store_files()
+                    leases = self.land("lease", "list")
+                    sentence = f"restaurant.json sharedDocs {bad!r} is invalid: {why}"
+                    refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                           "--paths", "docs/guide.md", "--timebox", "120", ok=False)
+                    self.assertIn(f"brigade: warning: {sentence}", refused)
+                    self.assertIn(f"brigade: {sentence}", refused)
+                    self.assertEqual(self.store_files(), before)
+                    self.assertEqual(self.land("lease", "list"), leases)
+
+    def test_a_malformed_doc_timebox_refuses_before_any_write(self):
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
+            for bad in (True, 0, "90", 2.5):
+                with self.subTest(bad=bad):
+                    self.seed_doc_settings(docTimebox=bad)
+                    before = self.store_files()
+                    leases = self.land("lease", "list")
+                    sentence = (f"restaurant.json docTimebox {bad!r} is invalid: "
+                                "it is not a whole number of minutes above zero")
+                    refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Long",
+                                           "--paths", "docs/guide.md", "--timebox", "120", ok=False)
+                    self.assertIn(f"brigade: warning: {sentence}", refused)
+                    self.assertIn(f"brigade: {sentence}", refused)
+                    self.assertEqual(self.store_files(), before)
+                    self.assertEqual(self.land("lease", "list"), leases)
+
+    def test_the_skill_documents_the_shared_docs_value_this_suite_seeds(self):
+        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        blocks = [block for block in re.findall(r"```json\n(.*?)```", text, re.S) if "sharedDocs" in block]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(json.loads(blocks[0]), DOC_SETTINGS)
 
     def test_a_refused_fire_that_records_a_block_records_paths_on_a_ticket_that_has_none(self):
         self.init_landing()

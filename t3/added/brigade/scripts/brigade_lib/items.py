@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.compact import refuse_setting
 from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, missing_checkout_paths, refusal_kind, refill_of, release_lease, running_workers, worker_cap
 from brigade_lib.reviews import fix_round_refusal, thread_binding, write_threads
 from brigade_lib.shared import BrigadeError, clean, slug, stored
@@ -179,31 +180,81 @@ class _SharedDoc:
     kind: str
 
 
-_CATALOG = (
-    _SharedDoc("README.md", "file"),
-    _SharedDoc("docs/guide.md", "file"),
-    _SharedDoc("t3/runtime.md", "file"),
-    _SharedDoc("t3/setup.md", "file"),
-    _SharedDoc("t3/added/", "skill"),
-    _SharedDoc("t3/overrides/", "skill"),
-    _SharedDoc("skills/", "skill"),
-)
+# A store's sharedDocs supplies every entry, so the tool builds in none.
+_CATALOG = ()
 
 
-def _fixed_docs():
-    return tuple(doc.root for doc in _CATALOG if doc.kind == "file")
+@dataclass(frozen=True)
+class DocPolicy:
+    docs: tuple[_SharedDoc, ...]
+    minutes: int
 
 
-def _skill_roots():
-    return tuple(doc.root for doc in _CATALOG if doc.kind == "skill")
+def _repo_relative(value):
+    """The repository-relative path one sharedDocs entry names, or None when it is not one."""
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.replace("\\", "/")
+    if text.startswith("/") or ".." in text.split("/") or re.search(r"\s", text):
+        return None
+    made = posixpath.normpath(text).lstrip("/")
+    if made in ("", "."):
+        return None
+    return made
+
+
+def doc_policy(meta):
+    """The shared-document catalog and timebox the store records.
+
+    A missing key keeps its default. A present value that does not parse is refused through
+    refuse_setting, so the message names the file, the key, and the value. A file entry names
+    one document, and a file entry whose path ends with a slash names a directory prefix, so
+    files under it are documents. A skill entry names a directory whose SKILL.md files are
+    documents.
+    """
+    raw = meta.get("sharedDocs", [])
+    if not isinstance(raw, list):
+        refuse_setting("sharedDocs", raw, "it is not a list")
+    docs = list(_CATALOG)
+    for entry in raw:
+        if not isinstance(entry, dict):
+            refuse_setting("sharedDocs", raw, f"an entry is not an object: {entry!r}")
+        unknown = [key for key in entry if key not in ("path", "kind")]
+        if unknown:
+            refuse_setting("sharedDocs", raw, f"an entry has unknown key {unknown[0]!r}")
+        given = entry.get("path")
+        path = _repo_relative(given)
+        if path is None:
+            refuse_setting("sharedDocs", raw, f"an entry's 'path' is not a repository path: {given!r}")
+        kind = entry.get("kind")
+        if kind not in ("file", "skill"):
+            refuse_setting("sharedDocs", raw, f"an entry's 'kind' is not file or skill: {kind!r}")
+        directory = kind == "skill" or given.replace("\\", "/").endswith("/")
+        docs.append(_SharedDoc(path + "/" if directory else path, kind))
+    minutes = meta.get("docTimebox", 90)
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1:
+        refuse_setting("docTimebox", minutes, "it is not a whole number of minutes above zero")
+    return DocPolicy(tuple(docs), minutes)
+
+
+def _fixed_docs(catalog):
+    return tuple(doc.root for doc in catalog if doc.kind == "file" and not doc.root.endswith("/"))
+
+
+def _prefix_docs(catalog):
+    return tuple(doc.root for doc in catalog if doc.kind == "file" and doc.root.endswith("/"))
+
+
+def _skill_roots(catalog):
+    return tuple(doc.root for doc in catalog if doc.kind == "skill")
 
 
 def _covers(lease, doc):
     return lease == "" or doc == lease or doc.startswith(lease + "/")
 
 
-def _is_skill_file(doc):
-    return doc.endswith("/SKILL.md") and doc.startswith(("t3/added/", "t3/overrides/", "skills/"))
+def _is_skill_file(doc, roots):
+    return doc.endswith("/SKILL.md") and doc.startswith(roots)
 
 
 def _lease_parts(paths):
@@ -225,14 +276,21 @@ def _lease_parts(paths):
     return found
 
 
-def _can_cover_catalog(parts):
+def _can_cover_catalog(parts, catalog):
+    fixed = _fixed_docs(catalog)
+    prefixes = _prefix_docs(catalog)
+    roots = _skill_roots(catalog)
     for part in parts:
         if part == "":
             return True
-        for fixed in _fixed_docs():
-            if fixed == part or fixed.startswith(part + "/"):
+        for doc in fixed:
+            if doc == part or doc.startswith(part + "/"):
                 return True
-        for root in _skill_roots():
+        for doc in prefixes:
+            stripped = doc.rstrip("/")
+            if part == stripped or stripped.startswith(part + "/") or part.startswith(doc):
+                return True
+        for root in roots:
             stripped = root.rstrip("/")
             if part == stripped or stripped.startswith(part + "/") or part.startswith(stripped + "/"):
                 return True
@@ -255,13 +313,15 @@ def _can_cover_catalog(parts):
 # Other commands keep their tracked only behavior.
 # An explicit SKILL dot md path counts by its form whether or not the index holds it.
 # The check never opens the user path and never reads outside that repository.
-# The four fixed names count even when the index omits them.
-# A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one of the three roots.
-# Vendor is not in the catalog.
+# Every catalog file entry that does not end in a slash counts even when the index omits it.
+# A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one catalog skill root.
+# The catalog is the store's sharedDocs, so no path is built into the tool.
 # The changelog fragment that with fragment appends is not part of the check.
-# When git ls files fails, the four fixed names still match by prefix.
-# When git ls files fails, a lease path that is exactly one skill directory counts as that path plus slash SKILL dot md.
+# When git ls files fails, every catalog file entry and file directory prefix still matches by prefix.
+# When git ls files fails, a lease path that is a direct child of a skill root counts as that path plus slash SKILL dot md.
+# When git ls files fails, a lease path equal to a skill root counts as that root with trailing slash.
 # When git ls files fails, a wider path that covers a skill root counts as that root with trailing slash.
+# When git ls files fails, a path inside a file directory prefix or a wider path that covers it counts as that prefix with trailing slash.
 def _walk_opaque(directory, prefix):
     found = set()
     for current, directories, filenames in os.walk(directory, followlinks=False):
@@ -288,32 +348,40 @@ def _gate_inventory(project_root):
     return frozenset(names)
 
 
-def _held_from_tracked(parts, tracked, gate_files=None):
+def _held_from_tracked(parts, tracked, gate_files=None, catalog=()):
     held = set()
-    for fixed in _fixed_docs():
+    prefixes = _prefix_docs(catalog)
+    roots = _skill_roots(catalog)
+    for fixed in _fixed_docs(catalog):
         if any(_covers(part, fixed) for part in parts):
             held.add(fixed)
     if tracked is not None:
         for part in parts:
-            if _is_skill_file(part):
+            if _is_skill_file(part, roots):
                 held.add(part)
         files = gate_files if gate_files is not None else tracked.files
         for path in files:
-            if _is_skill_file(path) and any(_covers(part, path) for part in parts):
+            if path.endswith("/"):
+                continue
+            covered = any(_covers(part, path) for part in parts)
+            if not covered:
+                continue
+            if _is_skill_file(path, roots) or any(path.startswith(prefix) for prefix in prefixes):
                 held.add(path)
         return tuple(sorted(held))
     for part in parts:
-        if _is_skill_file(part):
+        if _is_skill_file(part, roots):
             held.add(part)
-        comps = part.split("/") if part else []
-        if len(comps) == 3 and comps[0] == "t3" and comps[1] in ("added", "overrides") and comps[2]:
-            held.add(part + "/SKILL.md")
-        elif len(comps) == 2 and comps[0] == "skills" and comps[1]:
-            held.add(part + "/SKILL.md")
-        for root in _skill_roots():
+        for root in roots:
             stripped = root.rstrip("/")
             if part == "" or part == stripped or stripped.startswith(part + "/"):
                 held.add(root)
+            elif part.startswith(root) and "/" not in part[len(root):]:
+                held.add(part + "/SKILL.md")
+        for prefix in prefixes:
+            stripped = prefix.rstrip("/")
+            if part == "" or part == stripped or stripped.startswith(part + "/") or part.startswith(prefix):
+                held.add(prefix)
     return tuple(sorted(held))
 
 
@@ -335,6 +403,7 @@ class DocAllowed:
 @dataclass(frozen=True)
 class PreparedDocFire:
     _held: tuple[str, ...]
+    _minutes: int
     _timebox: int
     _ticket_count: int
     _doc_item: bool
@@ -345,7 +414,7 @@ class PreparedDocFire:
             return DocAllowed("doc-item" if self._doc_item else None)
         if self._doc_item:
             return DocAllowed("doc-item: " + ", ".join(held))
-        if not (self._timebox > 90 or self._ticket_count > 1):
+        if not (self._timebox > self._minutes or self._ticket_count > 1):
             return DocAllowed(None)
         if len(held) == 1:
             docs = f"{held[0]} is a shared document"
@@ -354,8 +423,8 @@ class PreparedDocFire:
         else:
             docs = f"{', '.join(held[:-1])}, and {held[-1]} are shared documents"
         reasons = []
-        if self._timebox > 90:
-            reasons.append(f"--timebox is {self._timebox}, over 90 minutes")
+        if self._timebox > self._minutes:
+            reasons.append(f"--timebox is {self._timebox}, over {self._minutes} minutes")
         if self._ticket_count > 1:
             reasons.append(f"--tickets names {self._ticket_count} tickets")
         reason = ", and ".join(reasons)
@@ -363,17 +432,20 @@ class PreparedDocFire:
         return DocRefused(f"{docs} and {reason}; {drop} from --paths and give the sentences as follow-ups, or pass --doc-item")
 
 
-def prepare_doc_fire(project_root, paths, timebox, ticket_count, doc_item):
+def prepare_doc_fire(project_root, paths, timebox, ticket_count, doc_item, policy):
     parts = _lease_parts(paths)
     if not parts:
-        return PreparedDocFire((), timebox, ticket_count, doc_item)
-    if not (doc_item or timebox > 90 or ticket_count > 1):
-        return PreparedDocFire((), timebox, ticket_count, doc_item)
-    if not _can_cover_catalog(parts):
-        return PreparedDocFire((), timebox, ticket_count, doc_item)
+        return PreparedDocFire((), policy.minutes, timebox, ticket_count, doc_item)
+    if not policy.docs:
+        return PreparedDocFire((), policy.minutes, timebox, ticket_count, doc_item)
+    if not (doc_item or timebox > policy.minutes or ticket_count > 1):
+        return PreparedDocFire((), policy.minutes, timebox, ticket_count, doc_item)
+    if not _can_cover_catalog(parts, policy.docs):
+        return PreparedDocFire((), policy.minutes, timebox, ticket_count, doc_item)
     tracked = tracked_paths(project_root)
     gate_files = _gate_inventory(project_root) if tracked is not None else None
-    return PreparedDocFire(_held_from_tracked(parts, tracked, gate_files), timebox, ticket_count, doc_item)
+    return PreparedDocFire(_held_from_tracked(parts, tracked, gate_files, policy.docs), policy.minutes, timebox, ticket_count,
+                           doc_item)
 
 
 def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths, reason=None, kind="", ride_along=(), doc_item=False):
@@ -390,8 +462,10 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
     of a ticket changes, so a ticket that rides along keeps its own.
     """
     while True:
-        project_root = restaurant.meta.get("projectRoot", "")
-        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item)
+        meta = restaurant.meta
+        project_root = meta.get("projectRoot", "")
+        policy = doc_policy(meta)
+        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
         with restaurant.checked():
             restaurant.fence()
             refusal = unfireable(restaurant, ids)
@@ -425,7 +499,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
                                kind, ride_along, doc_item)
             raise BrigadeError(f"nothing fired: {error}") from error
-        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item)
+        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
         with restaurant.checked():
             refusal = unfireable(restaurant, ids)
             gate = prepared.decide()
