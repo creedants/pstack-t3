@@ -145,7 +145,7 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `architect runners` | N | architect, one runner per seat |
 | `interrogate reviewers` | N | interrogate, one reviewer per seat |
 | `verifiers` | N | swarm-verify, autopilot, shipping, orchestrate verification |
-| `review backups` | N | `roles.py backup`, when no reviewer `backups` seat is left |
+| `review backups` | N | `roles.py backup`, when no `verifiers` backups seat is left |
 
 ### Built-in defaults
 
@@ -165,7 +165,7 @@ The roles file may carry `"exclude"`, a list of rules that refuse a seat. An ent
 
 [roles.md](roles.md#excluded-seats) lists the exact rule shape and the per-command behavior. In short, `show` skips a refused configured seat with a note, `validate` lists each refused seat and exits 1, and `write` refuses the config, even with `--force`. An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 
-The Cursor `skill tests` rule stays, for a technical cause: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a skill tests seat that resolves to the cursor driver.
+The Cursor `skill tests` rule stays, for a technical cause: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a configured skill tests seat that resolves to the cursor driver. An unset `skill tests` keeps the note and is not refused.
 
 ### Budget
 
@@ -189,7 +189,7 @@ Read [roles.md](roles.md) before you write or validate a roles file, or when `ro
 
 No role uses Claude Haiku 5.5 by default. When a role's resolved seat runs Haiku 5.5 by normalized model id, `roles.py show` prints the Haiku 5.5 brief as `haikuBrief` on that role entry. An `inherit` seat on a Haiku 5.5 thread counts too. Paste it per [Delegation](#delegation) step 4.
 
-A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. Pass exactly one `--role "skill tests"`, a catalog, and `--parent`. That form refuses a seat that runs on the cursor driver, including `inherit` on a cursor thread.
+A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. Pass exactly one `--role "skill tests"`, a catalog, and `--parent`. That form refuses a configured seat that runs on the cursor driver, including a configured `inherit` on a cursor thread. An unset `skill tests` keeps the note and is not refused.
 
 ## Modes
 

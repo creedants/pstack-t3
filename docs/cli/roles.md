@@ -12,7 +12,7 @@ roles.py <command>
 
 Resolve pstack-t3 roles into T3 delegate_task targets.
 
-Roles map a pstack role name to a list of seats. A seat is "inherit" or a target {"providerInstanceId", "model", "options"} drawn from the catalog that T3's orchestrator_capabilities tool returns. An unset role resolves to "inherit".
+Roles map a pstack role name to a list of seats. A seat is "inherit" or a target {"providerInstanceId", "model", "options"} drawn from the catalog that T3's orchestrator_capabilities tool returns. An unset role resolves to "inherit", except "review backups", which resolves to "unset".
 
 Two optional keys tune the file. "exclude" is a list of rules that refuse a seat by model-id glob, by declared option, or by both. "backups" maps a role to the seats roles.py backup tries, in order, after a usage limit.
 

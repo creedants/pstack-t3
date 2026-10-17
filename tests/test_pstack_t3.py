@@ -1850,7 +1850,7 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
     def test_haiku_section_send_a_seat_launching_test_through_launches_seats(self):
         section = runtime_doc_section("roles.md", "## Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
-        self.assertIn("That form refuses a resolved seat that runs on the cursor driver", section)
+        self.assertIn("That form refuses a configured seat that runs on the cursor driver", section)
         self.assertIn("A configured non-cursor seat is not limited by `--launches-seats`.", section)
         self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()

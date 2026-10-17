@@ -1819,7 +1819,7 @@ def cursor_only_catalog():
 
 
 class SkillTestsCursorCliTest(unittest.TestCase):
-    """The cursor driver cannot launch seats, so a seat that runs on it is refused under --launches-seats."""
+    """The cursor driver cannot launch seats, so a configured seat that runs on it is refused under --launches-seats."""
 
     def run_show(self, roles, *extra):
         with tempfile.TemporaryDirectory() as directory:
