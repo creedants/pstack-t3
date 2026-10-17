@@ -1,0 +1,2 @@
+- kind polish
+- `docs/guide.md` under `An executive admin` now says the opener also asks for the intake interval in whole minutes and the morning and evening times as `HH:MM`, and offers one hour, `09:00`, and `18:30` as the defaults, matching the brigade-admin skill's `Open an executive admin` step 5.
