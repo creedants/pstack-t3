@@ -93,8 +93,8 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    The reader predicates decide all six settings, so a value accepted here is a value a reader accepts. The settings
-    are contextCap, coordinatorProvider, caps, review, lowReserve, and affectedTests. A missing key keeps its default.
+    It checks contextCap, coordinatorProvider, caps, review, lowReserve, and affectedTests, by calling each setting's
+    reader predicate, so a value accepted here is a value that reader accepts. A missing key keeps its default.
     """
     effective_cap(meta)
     effective_provider(meta)

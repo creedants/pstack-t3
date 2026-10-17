@@ -451,7 +451,7 @@ class AffectedTest(BrigadeTest):
         self.assertIn("affectedTests", err)
         self.assertIn("'tests.test_pstack_t3'", err)
 
-    def test_set_refuses_a_malformed_affected_tests_and_writes_nothing_fails_when_validate_settings_skips_the_layout(self):
+    def test_set_refuses_a_malformed_affected_tests_and_leaves_restaurant_json_unchanged_fails_when_validate_settings_skips_the_layout(self):
         self.restaurant(self.project, layout="tests.test_pstack_t3")
         before = (self.at / "restaurant.json").read_bytes()
         err = self.brigade("set", "--check-command", "echo NEW", code=1)
