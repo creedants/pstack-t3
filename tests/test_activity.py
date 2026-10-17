@@ -2359,7 +2359,7 @@ class TextTest(OutputCase):
                 at = lines.index("Work items")
                 self.assertEqual((lines[1], lines[at + 1:at + 12]), ("10 running now, 10 agents, 0 sub-agents, 0 failed", [*listed, "  and 1 more work item", ""]))
 
-    def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_each_have_their_own_entry_or_are_counted_in_the_document_at_max_bytes_16000(self):
+    def test_the_document_at_max_bytes_16000_gives_each_of_ten_work_items_with_the_same_summary_state_and_link_its_own_entry_or_counts_it(self):
         fixture = self.fixture
         fixture.coordinator()
         fixture.meta["restaurant"] = "name " * 10000
