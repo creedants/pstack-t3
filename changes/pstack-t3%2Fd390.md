@@ -1,4 +1,4 @@
 - kind polish
 - `_close` in `t3/added/brigade/scripts/brigade_lib/affected.py` closes each table entry through a worklist of reverse edges instead of rescanning every edge until a pass adds nothing.
 - `AffectedTest` in `tests/brigade/test_affected.py` builds its archive copy once in `setUpClass` and shares it across the five real-tree checks and the two layout checks.
-- A new check in `tests/brigade/test_affected.py` compares `_close` with a reference fixed-point closure on 300 seeded random tables and on a chain of depth 14.
+- Two new checks in `tests/brigade/test_affected.py` compare `_close` with a reference fixed-point closure, one on 300 seeded random tables and one on a chain of 14 nodes joined by 13 edges.
