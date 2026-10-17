@@ -77,8 +77,8 @@ def kind_limits(meta):
     """The caps and review depths restaurant.json holds, as a KindLimits.
 
     A key absent from meta reads as no caps and no review depths. A present value that does not parse is refused with a
-    warning. A cap is a whole number of 1 or more and a depth is full or light. An entry whose kind is not in KINDS is
-    skipped.
+    warning, and so is a caps or review entry of a known kind whose value does not parse. A cap is a whole number of 1
+    or more and a depth is full or light. An entry whose kind is not in KINDS is skipped.
     """
     caps, review = {}, {}
     for key, found in (("caps", caps), ("review", review)):

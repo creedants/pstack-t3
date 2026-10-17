@@ -95,7 +95,7 @@ class LeasesTest(BrigadeTest):
         self.assertTrue(self.brigade("fire", "--tickets", "T1", "--station", "perf-issue",
                                      "--summary", "Tidy the guide").startswith("D1"))
 
-    def test_a_brief_refuses_a_stored_review_depth_that_does_not_parse_and_names_it(self):
+    def test_a_brief_refuses_a_stored_review_setting_that_does_not_parse_and_names_it(self):
         self.briefable()
         for stored, shown in (("light", "'light'"), ({"fix": "fullish"}, "'fullish'")):
             with self.subTest(stored=stored):
