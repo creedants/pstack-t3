@@ -8,7 +8,7 @@ import math
 import os
 import posixpath
 import re
-import select
+import selectors
 import shlex
 import signal
 import sqlite3
@@ -1039,6 +1039,7 @@ class _Build:
         self._popen = None
         self._wake_r = None
         self._wake_w = None
+        self._selector = None
         self._stdout = None
         self._chunks = []
         self.returncode = None
@@ -1048,6 +1049,8 @@ class _Build:
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)
         os.set_blocking(self._wake_w, False)
+        self._selector = selectors.DefaultSelector()
+        self._selector.register(self._wake_r, selectors.EVENT_READ)
         self.phase = _ARMED
         if self._intercept:
             signal.signal(signal.SIGINT, self._on_sigint)
@@ -1055,6 +1058,7 @@ class _Build:
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.phase = _STARTED
         self._stdout = self._popen.stdout
+        self._selector.register(self._stdout.fileno(), selectors.EVENT_READ)
 
     def run(self, timeout):
         """Drive STARTED to REAPED. Returns a pair. Timeout returns None as the status."""
@@ -1095,6 +1099,12 @@ class _Build:
                 except OSError:
                     pass
                 self._wake_w = None
+            if self._selector is not None:
+                try:
+                    self._selector.close()
+                except (OSError, ValueError):
+                    pass
+                self._selector = None
 
     def deliver(self):
         """Hand a postponed SIGINT to the entry disposition. Runs after close."""
@@ -1129,26 +1139,15 @@ class _Build:
             remaining = until - time.monotonic()
             if remaining <= 0:
                 return "deadline"
-            readers = [self._wake_r] if self._wake_r is not None else []
-            if self._stdout is not None:
-                try:
-                    readers.append(self._stdout.fileno())
-                except (OSError, ValueError):
-                    self._close_stdout()
-                    return "eof"
-            try:
-                ready, _, _ = select.select(readers, [], [], remaining)
-            except (OSError, ValueError):
-                continue
-            for descriptor in ready:
-                if descriptor == self._wake_r:
+            for key, _ in self._selector.select(remaining):
+                if key.fd == self._wake_r:
                     try:
                         os.read(self._wake_r, 512)
                     except OSError:
                         pass
                 else:
                     try:
-                        chunk = os.read(descriptor, 65536)
+                        chunk = os.read(key.fd, 65536)
                     except BlockingIOError:
                         continue
                     if not chunk:
@@ -1168,10 +1167,7 @@ class _Build:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "deadline"
-            try:
-                select.select([self._wake_r] if self._wake_r is not None else [], [], [], min(delay, remaining))
-            except (OSError, ValueError):
-                pass
+            self._selector.select(min(delay, remaining))
             if self._wake_r is not None:
                 try:
                     os.read(self._wake_r, 512)
@@ -1235,6 +1231,11 @@ class _Build:
     def _close_stdout(self):
         """Close the build pipe and forget it. Ignores close errors."""
         if self._stdout is not None:
+            if self._selector is not None:
+                try:
+                    self._selector.unregister(self._stdout.fileno())
+                except (KeyError, OSError, ValueError):
+                    pass
             try:
                 self._stdout.close()
             except (OSError, ValueError):

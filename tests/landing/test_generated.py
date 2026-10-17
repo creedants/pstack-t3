@@ -1035,18 +1035,18 @@ class GeneratedTest(LandingTest):
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import select, signal, sys",
+            "import selectors, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_IGN)",
-            "real = select.select",
+            "real = selectors.DefaultSelector.select",
             "sent = []",
-            "def wrapping(*args, **kwargs):",
+            "def wrapping(self, timeout=None):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(*args, **kwargs)",
-            "select.select = wrapping",
+            "    return real(self, timeout)",
+            "selectors.DefaultSelector.select = wrapping",
             f"try:\n    code, out = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -1066,18 +1066,18 @@ class GeneratedTest(LandingTest):
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import select, signal, sys",
+            "import selectors, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_DFL)",
-            "real = select.select",
+            "real = selectors.DefaultSelector.select",
             "sent = []",
-            "def wrapping(*args, **kwargs):",
+            "def wrapping(self, timeout=None):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(*args, **kwargs)",
-            "select.select = wrapping",
+            "    return real(self, timeout)",
+            "selectors.DefaultSelector.select = wrapping",
             f"try:\n    result = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -1091,6 +1091,47 @@ class GeneratedTest(LandingTest):
         self.assertEqual(result.returncode, -signal.SIGINT, result.stdout + result.stderr)
         self.assertNotIn("RETURNED", result.stdout)
         self.assertNotIn("CAUGHT", result.stdout + result.stderr)
+
+    def test_build_watch_supports_descriptors_above_1024(self):
+        """The build watch reads pipes above descriptor 1024."""
+        import resource
+        needed = 1100
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard < needed:
+            self.skipTest(f"hard fd limit {hard} forbids pipes above 1024")
+        if soft < needed:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (needed, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        held = []
+        self.addCleanup(lambda: [os.close(fd) for fd in held])
+        while True:
+            first, second = os.pipe()
+            if first > 1024 and second > 1024:
+                os.close(first)
+                os.close(second)
+                break
+            os.close(first)
+            os.close(second)
+            held.append(os.open(os.devnull, os.O_RDONLY))
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        # The command is a process because the test reads back its exit status.
+        code, out = land.run_build("exit 3", str(self.work), 10)
+        self.assertEqual((code, out), (3, ""))
+
+    def test_watch_error_fails_fast_instead_of_waiting_to_the_deadline(self):
+        """Watch errors fail fast instead of waiting to the deadline."""
+        import selectors
+        from unittest import mock
+
+        def failing(self, timeout=None):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+        with mock.patch.object(selectors.DefaultSelector, "select", failing):
+            started = time.monotonic()
+            with self.assertRaises(OSError):
+                land.run_build("exit 0", str(self.work), 30)
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 5)
 
     def test_install_race_restores_handler_after_interrupt(self):
         """Install race restores the entry handler."""
