@@ -2554,6 +2554,7 @@ class _ReportingRace:
             "    print('L7')\n"
             "else:\n    print('L7 released')\n")
         self.open()
+        self.brigade("set", "--change-note-dir", "changes")
         (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
         firing = real_popen(
