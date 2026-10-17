@@ -1,0 +1,3 @@
+- kind polish
+- `tests/brigade/test_launch.py` starts the deep-JSON fixture's nesting depth at 20000 and doubles it until `json.loads` raises `RecursionError` or the depth passes its 1048576 bound. The two deep rows use that string, so they exercise the `RecursionError` refusal on Python 3.10, 3.12, and 3.14.
+- The loop's `else` fails the test when nothing it tries raises, so an interpreter that accepts every tried depth fails the test instead of passing it.
