@@ -1,0 +1,5 @@
+- kind polish
+- `scripts/check.py` reports as one finding any case where no `REQUIRED_TOOLS` entry under `SETUP_GATE` is exactly `T3 Code <version> or later`. The finding names `setup-pstack/SKILL.md` and says the minimum T3 Code version could not be read
+- a gate string that cannot be read returns that finding instead of an empty list, so a `check_tree` run that includes the guide and README checks no longer passes silently with the comparison switched off
+- `SETUP_GATE` names the setup gate's `REQUIRED_TOOLS` key, and the entry, the reader, and the finding share that one string
+- `tests/test_check.py` pins that an unparseable gate entry is named instead of skipping the comparison
