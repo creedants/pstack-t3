@@ -1,0 +1,4 @@
+- kind feature
+- `skills/brigade/verdict-protocol.md` states three rules for rounds after the first, the diff since the last reviewed SHA with each named blocker of the previous round, a new blocker that must be in that fix diff or caused by it with a reproduction, and a defect present at the previous reviewed head that the fix neither touches nor makes worse becoming a non-blocking note with a ticket line
+- the gate review brief in `skills/pstack-runtime/SKILL.md` and `skills/brigade/SKILL.md` step 6 gives a later-round reviewer the previous reviewed SHA, the previous round's review file, and a `FOCUS` section with those rules
+- the round budget stays at three send-backs

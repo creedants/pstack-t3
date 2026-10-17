@@ -950,7 +950,7 @@ GATE_CONTRACT = """\
 Gate review contract. These rules override the persona above and the tasks below where they differ.
 Do not edit files, commit, or push. Do not post on the PR. Return your report to the parent.
 Launch no child task, thread, or subagent. Do not run the how, why, architect, or interrogate skill. Do not launch show-me-your-work's trail reviewer.
-Read the whole diff and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
+Read the diff the brief names and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
 When a claim or finding needs investigation beyond those reads, return send-back. Name the file, the line, the claim, and the question the fix must answer.
 Report each comment the persona would delete as a send-back finding with its path and line. Make no edit.
 End with pass, send-back, or blocked, the full head SHA, the author, and the verifier.
