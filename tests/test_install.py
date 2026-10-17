@@ -1089,6 +1089,82 @@ def darwin_renamex():
     )
 
 
+def extended_attribute(path, name, value=None):
+    """Set an xattr when `value` is given, else get it. Return True or the value when the platform keeps it.
+
+    Linux keeps user names through os.setxattr. On darwin the helper tries libc setxattr with its six-argument signature. Where neither works the caller gets False or None and omits xattr asserts but keeps hard link, FIFO, mode, and symlink checks.
+    """
+    target = Path(path)
+    if value is not None:
+        try:
+            os.setxattr(target, name, value)
+            return os.getxattr(target, name) == value
+        except (AttributeError, OSError, NotImplementedError):
+            pass
+        try:
+            import ctypes
+            import ctypes.util
+
+            libc_name = ctypes.util.find_library("c")
+            if libc_name is None:
+                return False
+            libc = ctypes.CDLL(libc_name, use_errno=True)
+            raw_path = os.fsencode(target)
+            raw_name = os.fsencode(name)
+            if sys.platform == "darwin":
+                mac = getattr(libc, "setxattr", None)
+                if mac is not None:
+                    mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
+                    mac.restype = ctypes.c_int
+                    if mac(raw_path, raw_name, value, len(value), 0, 0) == 0:
+                        return extended_attribute(target, name) == value
+            else:
+                linux = getattr(libc, "setxattr", None)
+                if linux is not None:
+                    linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
+                    linux.restype = ctypes.c_int
+                    if linux(raw_path, raw_name, value, len(value), 0) == 0:
+                        return extended_attribute(target, name) == value
+        except (OSError, AttributeError):
+            return False
+        return False
+    try:
+        return os.getxattr(target, name)
+    except (AttributeError, OSError, NotImplementedError):
+        pass
+    try:
+        import ctypes
+        import ctypes.util
+
+        libc_name = ctypes.util.find_library("c")
+        if libc_name is None:
+            return None
+        libc = ctypes.CDLL(libc_name, use_errno=True)
+        raw_path = os.fsencode(target)
+        raw_name = os.fsencode(name)
+        size = 4096
+        buffer = ctypes.create_string_buffer(size)
+        if sys.platform == "darwin":
+            mac = getattr(libc, "getxattr", None)
+            if mac is not None:
+                mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
+                mac.restype = ctypes.c_ssize_t
+                got = mac(raw_path, raw_name, buffer, size, 0, 0)
+                if got >= 0:
+                    return bytes(buffer.raw[:got])
+        else:
+            linux = getattr(libc, "getxattr", None)
+            if linux is not None:
+                linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t)
+                linux.restype = ctypes.c_ssize_t
+                got = linux(raw_path, raw_name, buffer, size)
+                if got >= 0:
+                    return bytes(buffer.raw[:got])
+    except (OSError, AttributeError):
+        return None
+    return None
+
+
 def holder_swap(saved, foreign="file"):
     """Hook code that swaps a holder entry for a foreign one after its proof, as a same-user race would.
 
@@ -3103,8 +3179,64 @@ class OwnershipTest(unittest.TestCase):
                 self.assertEqual(list(swarm.parent.glob(".pstack-t3-stranger-*")), [])
                 self.assert_no_copy_left(swarm)
 
+    def test_a_completed_copy_swap_is_left_at_the_path_with_the_row_kept(self):
+        """A swap at the completed copy move leaves the occupant at the live path and keeps the row."""
+        before_actor = "import os, sys; os.rename(sys.argv[1], sys.argv[2]); open(sys.argv[1], 'wb').write(b'occupant\\x00\\xff')"
+        after_actor = "import os, sys; os.rename(sys.argv[1], sys.argv[2]); open(sys.argv[1], 'wb').write(b'occupant\\x00\\xff')"
+        for kind in ("file", "directory", "link"):
+            for timing in ("before", "after"):
+                with self.subTest(kind=kind, timing=timing):
+                    self.use_fresh()
+                    a, swarm, rows = self.displaced_by(kind)
+                    backup = Path(rows[0]["backup"])
+                    saved = self.home / "saved"
+                    if timing == "before":
+                        swapping = (
+                            "import subprocess\n"
+                            f"saved = {str(saved)!r}\n"
+                            f"actor = {before_actor!r}\n"
+                            "moved = False\n"
+                            "real_place = module.place\n"
+                            "def swapping_place(source, path):\n"
+                            "    global moved\n"
+                            "    if not moved and '.pstack-t3-scrap-' in str(source):\n"
+                            "        moved = True\n"
+                            "        subprocess.run([sys.executable, '-c', actor, str(source), saved], check=True)\n"
+                            "    return real_place(source, path)\n"
+                            "module.place = swapping_place\n"
+                        )
+                    else:
+                        swapping = (
+                            "import subprocess\n"
+                            f"saved = {str(saved)!r}\n"
+                            f"actor = {after_actor!r}\n"
+                            "moved = False\n"
+                            "real_place = module.place\n"
+                            "def swapping_place(source, path):\n"
+                            "    global moved\n"
+                            "    result = real_place(source, path)\n"
+                            "    if not moved and '.pstack-t3-scrap-' in str(source) and result == 0:\n"
+                            "        moved = True\n"
+                            "        subprocess.run([sys.executable, '-c', actor, str(path), saved], check=True)\n"
+                            "    return result\n"
+                            "module.place = swapping_place\n"
+                        )
+                    hook = cross_device(state_dir(self.home) / "backups", swarm) + darwin_renamex() + NO_PROC + swapping
+                    raced = uninstall_hooked(self.home, a, hook)
+                    self.assertGreater(crossings(self.home), 0, raced.stdout + raced.stderr)
+                    self.skipped(
+                        raced,
+                        "removed 3 links, restored 0 entries",
+                        f"skipped restore {backup}: the entry moved to {swarm} could not be confirmed",
+                    )
+                    self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
+                    self.assert_displaced(saved, kind)
+                    self.assertEqual(read_legacy(self.home)["backups"], rows)
+                    self.assert_no_copy_left(swarm)
+                    self.assertEqual(list(swarm.parent.glob(".pstack-t3-stranger-*")), [])
+
     def test_a_directory_restore_preserves_hard_links_xattrs_fifo_modes_and_relative_symlinks(self):
-        """A same-filesystem directory move keeps hard links, xattrs, FIFO type, modes, and relative symlink targets."""
+        """A same-filesystem directory move keeps hard links, FIFO type, modes, and relative symlink targets, and xattrs where the platform offers them."""
         self.use_fresh()
         a, swarm, rows = self.displaced_by("directory")
         backup = Path(rows[0]["backup"])
@@ -3117,13 +3249,15 @@ class OwnershipTest(unittest.TestCase):
         os.mkfifo(backup / "pipe")
         os.chmod(backup / "pipe", 0o620)
         os.link(backup / "SKILL.md", backup / "hard")
-        os.setxattr(backup / "SKILL.md", "user.review", b"metadata")
+        # Linux offers user xattrs. macOS offers xattrs through libc. Where neither works omit xattr asserts but keep other checks.
+        can_xattr = extended_attribute(backup / "SKILL.md", "user.review", b"metadata")
         raced = run(self.home, a, "--harness", "grok", "uninstall")
         self.ok(raced, "removed 3 links, restored 1 entries")
         self.assertEqual(stat.S_IMODE(swarm.stat().st_mode), 0o751)
         self.assertEqual((swarm / "SKILL.md").read_bytes(), b"displaced\x00\xfe")
         self.assertEqual(stat.S_IMODE((swarm / "SKILL.md").stat().st_mode), 0o640)
-        self.assertEqual(os.getxattr(swarm / "SKILL.md", "user.review"), b"metadata")
+        if can_xattr:
+            self.assertEqual(extended_attribute(swarm / "SKILL.md", "user.review"), b"metadata")
         self.assertTrue(os.path.samefile(swarm / "SKILL.md", swarm / "hard"))
         self.assertEqual(stat.S_IMODE((swarm / "nested").stat().st_mode), 0o711)
         self.assertEqual((swarm / "nested" / "deep").read_bytes(), b"deep")

@@ -846,7 +846,7 @@ MOVED = "moved"
 class Published:
     """Successful placement result for `path`.
 
-    For a same-filesystem move or descriptor link, `proved` makes one after checking the live entry against the held descriptor. The EXDEV route makes one after `place_copy` returns success, without checking the live entry against a held descriptor of the completed copy. `drop_backup` requires this result.
+    `proved` makes one after checking the live entry against the held descriptor. `drop_backup` takes this result.
     """
 
     path: str
@@ -955,8 +955,16 @@ def same_entry(path, fd):
     return identity(os.lstat(path))[:2] == identity(os.fstat(fd))[:2]
 
 
-def place_copy(source, path):
-    """Copy the entry at `source` beside `path`, then place the copy. Return what `place` returned."""
+def place_copy(source, path, source_fd):
+    """Copy the entry at `source` beside `path`, hold the copy, then move it. Return Published or a refusal.
+
+    It checks `same_entry` on `source` first. It copies into a SCRAP holder beside `path`. It holds the completed copy open, then `prove_moved` moves the copy and proves the live entry against the held copy. A Published result retires `source` first. A mismatch keeps the backup and its row with a refusal naming the live path. It never compares the copy with the original source descriptor. The finally block discards any entry left at the copy path.
+    """
+    try:
+        if not same_entry(source, source_fd):
+            return CHANGED
+    except OSError:
+        return CHANGED
     with Holder(path, SCRAP) as holder:
         copy = holder.aside
         try:
@@ -964,9 +972,18 @@ def place_copy(source, path):
                 shutil.copytree(source, copy, symlinks=True)
             else:
                 shutil.copy2(source, copy, follow_symlinks=False)
-            return place(copy, path)
+            with ExitStack() as holds:
+                held = hold(copy, holds)
+                if held.fd is None:
+                    return f"the copy could not be held open to prove it is the entry uninstall read ({held.error})"
+                result = prove_moved(copy, path, held.fd)
+                if isinstance(result, Published):
+                    try:
+                        retire(source, source_fd)
+                    except FileNotFoundError:
+                        pass
+                return result
         finally:
-            # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
             if os.path.lexists(copy):
                 discard(copy)
 
@@ -974,7 +991,7 @@ def place_copy(source, path):
 def proved(path, fd):
     """Return Published when `path` names the entry `fd` holds. Else return a refusal naming `path`.
 
-    It moves nothing. It deletes nothing. Only `proved` makes a Published for a same-filesystem move. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after this check refuses it. That window stays.
+    It moves nothing. It deletes nothing. Only `proved` makes a Published.
     """
     try:
         if same_entry(path, fd):
@@ -982,6 +999,17 @@ def proved(path, fd):
     except OSError:
         pass
     return f"the entry moved to {path} could not be confirmed"
+
+
+def prove_moved(source, path, fd):
+    """Move the entry at `source` to `path`, then prove the live entry. Return Published or a refusal."""
+    try:
+        code = place(source, path)
+    except OSError as error:
+        return str(error)
+    if code != 0:
+        return refusal(path, code)
+    return proved(path, fd)
 
 
 def park(entry):
@@ -1018,7 +1046,6 @@ def link_held(fd, path):
 def drop_backup(backup, aside, published, fd):
     """Delete the backup name after the caller reports successful placement in `published`.
 
-    A same-filesystem move or descriptor link is checked by `proved`. The EXDEV route returns this result without checking the live entry against a held descriptor of the completed copy.
     A backup entry that fails the identity check below stays and is reported.
     """
     path = published.path
@@ -1040,7 +1067,7 @@ def drop_backup(backup, aside, published, fd):
 def place_proven(aside, path, fd):
     """Move the proven entry at `aside` to `path`, by a copy when `path` is on another filesystem. Return Published or a refusal.
 
-    It tries `place(aside, path)`. A successful same-filesystem move calls `proved` immediately. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is and keeps the backup row. The caller's refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays. Only `proved` makes a Published for a same-filesystem move. On EXDEV, a successful `place_copy` leads to `retire` and Published without checking the live entry against a held descriptor of the completed copy. `retire` runs only for that copy route.
+    It tries `place(aside, path)`. A successful same-filesystem move calls `proved` immediately. Placement failure returns a refusal and leaves `aside` for the caller. Proof failure leaves the live entry where it is and keeps the backup row. The caller's refusal cleanup can remove a held twin at the private name. Only `proved` makes a Published.
     """
     try:
         code = place(aside, path)
@@ -1051,21 +1078,9 @@ def place_proven(aside, path, fd):
     if code != errno.EXDEV:
         return refusal(path, code)
     try:
-        if not same_entry(aside, fd):
-            return CHANGED
-    except OSError:
-        return CHANGED
-    try:
-        copy_code = place_copy(aside, path)
+        return place_copy(aside, path, fd)
     except OSError as error:
         return str(error)
-    if copy_code != 0:
-        return refusal(path, copy_code)
-    try:
-        retire(aside, fd)
-    except FileNotFoundError:
-        return Published(path)
-    return Published(path)
 
 
 def retire(aside, fd):
@@ -1121,7 +1136,7 @@ def keep(taken, backup, aside, fd, reason):
 def restore_aside(backup, aside, path, fd):
     """Restore through the private name `aside` where the descriptor cannot be linked. Return why the backup was kept.
 
-    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
+    It checks `same_entry` before the move to authorize it, then `place_proven` proves the live entry right after the move. Proof success finishes the restore. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name.
     """
     try:
         # A second name keeps the backup name until place_proven reports successful placement.
@@ -1147,7 +1162,7 @@ def restore_aside(backup, aside, path, fd):
 def restore_backup(backup, path, held):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
 
-    It checks the backup before it links or moves it, links it by descriptor or else gives it a private name by link or rename, then calls `proved` right after the descriptor link reaches `path`, or right after a same-filesystem move in `restore_aside` reaches `path`. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name. A same-user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays.
+    It checks the backup before it links or moves it, links it by descriptor or else gives it a private name by link or rename, then proves the live entry right after it reaches `path`. Proof failure leaves the live entry where it is and keeps the backup row. The refusal cleanup can remove a held twin at the private name.
     """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
