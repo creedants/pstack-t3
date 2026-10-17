@@ -1,0 +1,2 @@
+- kind fix
+- `brigade set --thread ... --replace --context-cap` reads the settings file before it raises the landing owner floor, so an unreadable settings file, one holding invalid UTF-8, invalid JSON, or JSON that is not an object exits 1 with the message the write would print and changes no restaurant.json, no settings file, and no landing owner row.

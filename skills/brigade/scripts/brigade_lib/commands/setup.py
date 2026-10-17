@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import AUTOFIRE, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, low_reserve_of, open_restaurant, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
@@ -101,6 +101,17 @@ def validate_settings(meta):
     low_reserve_of(meta)
 
 
+def preflight_settings(prospective, args):
+    """Read the settings file the set path would write, before set_thread raises the landing floor.
+
+    sync_meta reads that file before it writes, so a refusal there would leave the floor raised while no file
+    changes. This reads it under the same condition, so the refusal is the same sentence.
+    """
+    if args.context_cap is None or effective_provider(prospective) != "claude":
+        return
+    _load(prospective["projectRoot"])
+
+
 def handle_open(args, root):
     if args.admin and args.name:
         raise BrigadeError("open --admin takes no --name")
@@ -150,7 +161,9 @@ def handle_set(restaurant, args):
     if args.thread or args.expect is not None:
         if args.thread is None:
             raise BrigadeError("--expect needs --thread")
-        validate_settings(prospective_settings(restaurant, args))
+        prospective = prospective_settings(restaurant, args)
+        validate_settings(prospective)
+        preflight_settings(prospective, args)
         return set_thread(restaurant, args)
     with restaurant.checked():
         return seam.command(restaurant, args)
