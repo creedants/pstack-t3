@@ -248,7 +248,18 @@ class LaunchTest(BrigadeTest):
         providers_null.write_text('{"providers": [null]}')
         script_catalog = root / "script-catalog.json"
         script_catalog.write_text("{}")
-        deep_text = "[" * 20000 + "]" * 20000
+        # The depth that raises RecursionError depends on the interpreter's C stack,
+        # so grow the fixture until this interpreter refuses it.
+        depth = 20000
+        while depth <= 1048576:
+            deep_text = "[" * depth + "]" * depth
+            try:
+                json.loads(deep_text)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("nested JSON did not raise RecursionError")
         deep_catalog = root / "catalog-deep.json"
         deep_catalog.write_text(deep_text)
         huge_text = '{"a": ' + "9" * 10000 + "}"
