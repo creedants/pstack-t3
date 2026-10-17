@@ -1,4 +1,4 @@
 - kind fix
-- `tests/landing/test_generated.py` records each killpg and each reaping waitpid with its pid and reports signal after reap only when a killpg names a pid that an earlier event reaped
-- `tests/landing/test_generated.py` finds a zombie through `/proc` and then through `ps -o stat=` when `/proc` is absent
-- `tests/landing/test_generated.py` runs the order checks on the host and on simulated Darwin without `os.waitid`
+- `tests/landing/test_generated.py` records each killpg and each waitpid that reaps a child or fails with ChildProcessError for a specific pid with its pid and reports signal after reap only when a killpg names a pid that an earlier event reaped
+- `tests/landing/test_generated.py` finds a zombie through `/proc` and then through `ps -o stat=` when `/proc/<pid>/stat` cannot be read
+- `tests/landing/test_generated.py` runs the order checks on the host and on simulated Darwin without `os.waitid`, except on a Darwin host without `os.waitid` where only the simulated row runs
