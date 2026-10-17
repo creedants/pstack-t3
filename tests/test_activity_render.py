@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -35,6 +36,8 @@ BUNDLED = (
     "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
 )
+# The platform axis of headless_flags.
+MACOS = sys.platform == "darwin"
 PROBE_TIMEOUT = 20
 RENDER_TIMEOUT = 120
 SOCKET_LIMIT = 107
@@ -137,8 +140,24 @@ class BrowserBinary:
     failure: str | None = None
 
 
+def headless_flags(macos):
+    """The flags the probe passes before the profile and target.
+
+    macOS returns --headless alone. Every other platform returns --headless with --disable-gpu and --no-sandbox.
+    """
+    if macos:
+        return ["--headless"]
+    return ["--headless", "--disable-gpu", "--no-sandbox"]
+
+
+def stderr_segment(failed):
+    """A colon and the first three non-empty lines of the browser's stderr, or an empty string when it wrote none."""
+    lines = [line.strip() for line in (failed.stderr or "").splitlines() if line.strip()][:3]
+    return f": {' '.join(lines)}" if lines else ""
+
+
 def confined_run(browser, target, directory, prefix, timeout):
-    """Run browser on target with a timeout of timeout seconds, a profile under directory, HOME and XDG state confined there, and TMPDIR under /tmp."""
+    """Run browser on target with a timeout of timeout seconds, headless_flags(MACOS), a profile under directory, HOME and XDG state confined there, and TMPDIR under /tmp."""
     environment = dict(os.environ)
     for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s")):
         path = Path(directory) / name
@@ -151,14 +170,17 @@ def confined_run(browser, target, directory, prefix, timeout):
             raise unittest.SkipTest(f"chromium socket path too long ({len(socket_path)} > {SOCKET_LIMIT})")
         environment["TMPDIR"] = short_tmp
         profile = tempfile.mkdtemp(prefix=prefix, dir=directory)
-        return subprocess.run([browser, "--headless", "--disable-gpu", "--no-sandbox", f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
+        return subprocess.run([browser, *headless_flags(MACOS), f"--user-data-dir={profile}", "--window-size=390,2000", "--dump-dom", str(target)],
                               capture_output=True, text=True, timeout=timeout, check=True, env=environment).stdout
     finally:
         shutil.rmtree(short_tmp, ignore_errors=True)
 
 
 def skip_segments(items):
-    """One segment per missing name and per failed binary, after later aliases are on the record."""
+    """One segment per missing name and per failed binary, after later aliases are on the record.
+
+    A failed binary's segment names its failure. A nonzero exit also names the first three non-empty lines of the browser's stderr when it wrote any.
+    """
     lines = []
     for item in items:
         if isinstance(item, BrowserMiss):
@@ -203,7 +225,7 @@ def select_browser(directory, timeout=PROBE_TIMEOUT):
             try:
                 confined_run(found, target, directory, "q", timeout)
             except subprocess.CalledProcessError as failed:
-                binary.failure = f"exited {failed.returncode}"
+                binary.failure = f"exited {failed.returncode}{stderr_segment(failed)}"
             except subprocess.TimeoutExpired as failed:
                 binary.failure = f"timed out after {failed.timeout} seconds"
             except OSError as failed:
@@ -505,6 +527,33 @@ class ProbeContractTest(unittest.TestCase):
         socket_path = os.path.join(tmpdir, "org.chromium.Chromium.XXXXXX", "SingletonSocket")
         self.assertLessEqual(len(socket_path), SOCKET_LIMIT)
         self.assertEqual(SOCKET_LIMIT, 107)
+
+    def test_macos_probe_omits_disable_gpu_and_no_sandbox(self):
+        cases = ((True, ["--headless"]), (False, ["--headless", "--disable-gpu", "--no-sandbox"]))
+        for macos, flags in cases:
+            with self.subTest(macos), tempfile.TemporaryDirectory() as root:
+                seen = {}
+
+                def fake_run(args, **kwargs):
+                    seen["args"] = args
+                    completed = mock.Mock()
+                    completed.stdout = ""
+                    return completed
+
+                target = Path(root) / "probe.html"
+                target.write_text("<div id=o></div>")
+                with mock.patch(f"{__name__}.MACOS", macos), mock.patch("subprocess.run", side_effect=fake_run):
+                    confined_run("/opt/a", target, root, "q", 5)
+                self.assertEqual(seen["args"][:len(flags) + 1], ["/opt/a", *flags])
+                self.assertTrue(seen["args"][1 + len(flags)].startswith("--user-data-dir="))
+                self.assertEqual(seen["args"][2 + len(flags):], ["--window-size=390,2000", "--dump-dom", str(target)])
+
+    def test_probe_failure_carries_the_browser_stderr(self):
+        def runner(browser, *args, **kwargs):
+            raise subprocess.CalledProcessError(2, browser, stderr="no usable sandbox\n[1:2:3:4:ERROR:headless_browser.cc(1)] Chrome cannot start\n\n[9:9:9:9:ERROR:page.cc(2)] third line\n[8:8:8:8:ERROR:fourth.cc(3)] fourth line\n")
+
+        _, unavailable = probe_with({"chromium": "/opt/a"}, {"/opt/a": "/snap/one"}, runner)
+        self.assertEqual(unavailable[0], "chromium (/opt/a) exited 2: no usable sandbox [1:2:3:4:ERROR:headless_browser.cc(1)] Chrome cannot start [9:9:9:9:ERROR:page.cc(2)] third line")
 
     def test_render_keeps_its_own_timeout(self):
         timeouts = []
