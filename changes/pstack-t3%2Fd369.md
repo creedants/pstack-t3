@@ -1,0 +1,7 @@
+- kind polish
+- `run_build` is the only build runner. The `supervised` alias is gone and the queue check calls `seam.run_build`.
+- The build watch uses `selectors.DefaultSelector`. Descriptors above 1024 work and a watch error raises at once instead of waiting out the deadline.
+- `run_build` refuses to start while `SIGCHLD` is ignored. The kernel then reaps children and no zombie pins the group id.
+- The grace drain counts `SIGINT` arrivals. An arrival during the wait cuts it short once the run has had two. A grace arrival that is the first arrival of the run waits the full drain and delivery still happens once.
+- The Darwin probe test names the `ps` child as the only non-leader reap.
+- The sampled-lines test saves the entry disposition as `original`, so it no longer shadows the per-iteration `entry`.

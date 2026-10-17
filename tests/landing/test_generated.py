@@ -1035,18 +1035,18 @@ class GeneratedTest(LandingTest):
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import select, signal, sys",
+            "import selectors, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_IGN)",
-            "real = select.select",
+            "real = selectors.DefaultSelector.select",
             "sent = []",
-            "def wrapping(*args, **kwargs):",
+            "def wrapping(self, timeout=None):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(*args, **kwargs)",
-            "select.select = wrapping",
+            "    return real(self, timeout)",
+            "selectors.DefaultSelector.select = wrapping",
             f"try:\n    code, out = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -1066,18 +1066,18 @@ class GeneratedTest(LandingTest):
         work = str(self.work)
         cmd = repr("sleep 0.05; printf finished")
         lines = [
-            "import select, signal, sys",
+            "import selectors, signal, sys",
             f"sys.path.insert(0, {parent!r})",
             "import land",
             "signal.signal(signal.SIGINT, signal.SIG_DFL)",
-            "real = select.select",
+            "real = selectors.DefaultSelector.select",
             "sent = []",
-            "def wrapping(*args, **kwargs):",
+            "def wrapping(self, timeout=None):",
             "    if not sent:",
             "        sent.append(True)",
             "        signal.raise_signal(signal.SIGINT)",
-            "    return real(*args, **kwargs)",
-            "select.select = wrapping",
+            "    return real(self, timeout)",
+            "selectors.DefaultSelector.select = wrapping",
             f"try:\n    result = land.run_build({cmd}, {work!r}, 10)",
             "except KeyboardInterrupt:",
             '    print("CAUGHT_KEYBOARD_INTERRUPT")',
@@ -1091,6 +1091,124 @@ class GeneratedTest(LandingTest):
         self.assertEqual(result.returncode, -signal.SIGINT, result.stdout + result.stderr)
         self.assertNotIn("RETURNED", result.stdout)
         self.assertNotIn("CAUGHT", result.stdout + result.stderr)
+
+    def test_build_watch_supports_descriptors_above_1024(self):
+        """The build watch reads pipes above descriptor 1024."""
+        import resource
+        needed = 1100
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard < needed:
+            self.skipTest(f"hard fd limit {hard} is below the test requirement of {needed}")
+        if soft < needed:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (needed, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        held = []
+        self.addCleanup(lambda: [os.close(fd) for fd in held])
+        while True:
+            first, second = os.pipe()
+            if first > 1024 and second > 1024:
+                os.close(first)
+                os.close(second)
+                break
+            os.close(first)
+            os.close(second)
+            held.append(os.open(os.devnull, os.O_RDONLY))
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        # The command exits 3 so the test can read the status back.
+        code, out = land.run_build("exit 3", str(self.work), 10)
+        self.assertEqual((code, out), (3, ""))
+
+    def test_watch_error_fails_fast_instead_of_waiting_to_the_deadline(self):
+        """Watch errors fail fast instead of waiting to the deadline."""
+        import selectors
+        from unittest import mock
+
+        def failing(self, timeout=None):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+        with mock.patch.object(selectors.DefaultSelector, "select", failing):
+            started = time.monotonic()
+            with self.assertRaises(OSError):
+                land.run_build("exit 0", str(self.work), 30)
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 5)
+
+    def test_run_build_refuses_to_start_while_sigchld_is_ignored(self):
+        """Refuses to start while SIGCHLD is ignored."""
+        from unittest import mock
+        previous = signal.getsignal(signal.SIGCHLD)
+        self.addCleanup(signal.signal, signal.SIGCHLD, previous)
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+        with mock.patch.object(land.subprocess, "Popen", side_effect=AssertionError("spawned")) as spawned:
+            with self.assertRaises(ValueError) as raised:
+                land.run_build("exit 0", str(self.work), 10)
+        self.assertEqual(str(raised.exception), "run_build refuses to start while SIGCHLD is ignored")
+        spawned.assert_not_called()
+        self.assertIs(signal.getsignal(signal.SIGCHLD), signal.SIG_IGN)
+
+    def _grace_run(self, hits):
+        """Run a build whose detached child holds the pipe, send hits SIGINTs during grace, and return the elapsed time and deliveries."""
+        import selectors
+        import shlex
+        from unittest import mock
+        pidfile = self.base / "sleeper.pid"
+        script = (
+            "import os, sys, time\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    os.setsid()\n"
+            "    open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "    time.sleep(30)\n"
+            "else:\n"
+            "    os.waitpid(child, 0)\n"
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)} {shlex.quote(str(pidfile))}"
+        # The command is a process whose detached child holds the pipe open into grace.
+        calls = []
+        previous = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+
+        def recording_previous(signum, frame):
+            calls.append(1)
+
+        signal.signal(signal.SIGINT, recording_previous)
+        real_select = selectors.DefaultSelector.select
+        sent = []
+        started = [None]
+
+        def wrapping(self, timeout=None):
+            # A grace select carries the five second budget. Shorter selects are the initial drain or the exit poll.
+            if timeout is not None and timeout > 1 and len(sent) < hits:
+                sent.append(1)
+                signal.raise_signal(signal.SIGINT)
+            return real_select(self, timeout)
+
+        with mock.patch.object(selectors.DefaultSelector, "select", wrapping):
+            started[0] = time.monotonic()
+            try:
+                land.run_build(command, str(self.work), 0.3)
+            finally:
+                signal.signal(signal.SIGINT, previous)
+                try:
+                    sleeper = int(pidfile.read_text().strip())
+                except (OSError, ValueError):
+                    sleeper = None
+                if sleeper is not None:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(sleeper, signal.SIGKILL)
+        return time.monotonic() - started[0], calls
+
+    def test_second_grace_sigint_cuts_the_drain_short(self):
+        """A second grace SIGINT cuts the five second drain short."""
+        elapsed, calls = self._grace_run(2)
+        self.assertLess(elapsed, 4)
+        self.assertEqual(calls, [1])
+
+    def test_first_grace_sigint_waits_the_full_drain(self):
+        """A first grace SIGINT waits the full five second drain."""
+        elapsed, calls = self._grace_run(1)
+        self.assertGreaterEqual(elapsed, 4.5)
+        self.assertEqual(calls, [1])
 
     def test_install_race_restores_handler_after_interrupt(self):
         """Install race restores the entry handler."""
@@ -1140,20 +1258,35 @@ class GeneratedTest(LandingTest):
                     self.assertEqual([_names(seen, leader) for seen in snapshots], [["killpg", "reaped"]])
                     self.assertIs(restored, returning_previous)
 
-    def test_darwin_ps_reap_is_not_a_leader_reap(self):
-        """Reaps of a non-leader child are not leader reaps."""
+    def test_darwin_ps_probe_reap_is_not_a_leader_reap(self):
+        """Reaps of the ps probe child are not leader reaps."""
+        from unittest import mock
+        real_popen = subprocess.Popen
+        ps_pids = []
+
+        def recording_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            argv = args[0] if args else kwargs.get("args", [])
+            if list(argv)[:1] == ["ps"]:
+                ps_pids.append(process.pid)
+            return process
+
         with _platform(_DARWIN):
             with _GroupTrace() as trace:
-                land.run_build("sleep 5", str(self.work), 0.1)
+                with mock.patch.object(subprocess, "Popen", recording_popen):
+                    land.run_build("sleep 5", str(self.work), 0.1)
             leader = trace.leader()
-            self.assertTrue(any(name == "reaped" and pid != leader for name, pid in trace.events))
+            self.assertTrue(ps_pids)
+            self.assertEqual(
+                {pid for name, pid in trace.events if name == "reaped" and pid != leader},
+                set(ps_pids))
             self.assertEqual(_names(trace.events, leader), ["killpg", "reaped"])
             self.assertFalse(_signalled_after_reap(trace.events))
 
     def test_sigint_sampled_lines_never_signal_after_reap(self):
         """Sampled lines never signal after the reap."""
-        entry = signal.getsignal(signal.SIGINT)
-        self.addCleanup(signal.signal, signal.SIGINT, entry)
+        original = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, original)
         codes = {land.run_build.__code__}
         for value in vars(land._Build).values():
             if callable(value):

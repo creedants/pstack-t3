@@ -1302,7 +1302,7 @@ class LandingTest(LandingTestBase):
         self.assertNotIn("PermissionError", result.stderr)
         self.assert_slots_free()
 
-    def test_supervised_treats_darwin_eperm_for_a_witnessed_zombie_like_a_successful_killpg(self):
+    def test_run_build_treats_darwin_eperm_for_a_witnessed_zombie_like_a_successful_killpg(self):
         """A timed out command reports no status when macOS refuses the killpg for an exited leader."""
         self.governor(1)
         # The shell exits at once and leaves a member that holds the capture pipe, so the leader is an
@@ -1311,7 +1311,7 @@ class LandingTest(LandingTestBase):
         with mock.patch.object(land.sys, "platform", "darwin"), \
                 mock.patch.object(land.os, "killpg",
                                   side_effect=PermissionError(errno.EPERM, "Operation not permitted")):
-            code, output = land.supervised(command, str(self.base), 0.4)
+            code, output = land.run_build(command, str(self.base), 0.4)
         self.assertIsNone(code)
         self.assertEqual(output, "")
 

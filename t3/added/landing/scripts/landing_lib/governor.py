@@ -8,7 +8,7 @@ import math
 import os
 import posixpath
 import re
-import select
+import selectors
 import shlex
 import signal
 import sqlite3
@@ -1036,9 +1036,11 @@ class _Build:
         self._intercept = previous is signal.SIG_DFL or callable(previous)
         self.phase = None
         self._pending = None
+        self._arrivals = 0
         self._popen = None
         self._wake_r = None
         self._wake_w = None
+        self._selector = None
         self._stdout = None
         self._chunks = []
         self.returncode = None
@@ -1048,6 +1050,8 @@ class _Build:
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)
         os.set_blocking(self._wake_w, False)
+        self._selector = selectors.DefaultSelector()
+        self._selector.register(self._wake_r, selectors.EVENT_READ)
         self.phase = _ARMED
         if self._intercept:
             signal.signal(signal.SIGINT, self._on_sigint)
@@ -1055,6 +1059,7 @@ class _Build:
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.phase = _STARTED
         self._stdout = self._popen.stdout
+        self._selector.register(self._stdout.fileno(), selectors.EVENT_READ)
 
     def run(self, timeout):
         """Drive STARTED to REAPED. Returns a pair. Timeout returns None as the status."""
@@ -1065,7 +1070,7 @@ class _Build:
             if ended == "reaped":
                 return self.returncode, self._text()
         self._kill_group()
-        if self._drain(time.monotonic() + _BUILD_DRAIN_GRACE) != "eof":
+        if self._drain(time.monotonic() + _BUILD_DRAIN_GRACE, self._arrivals) != "eof":
             self._close_stdout()
             self._chunks = []
         self._reap_killed()
@@ -1095,6 +1100,12 @@ class _Build:
                 except OSError:
                     pass
                 self._wake_w = None
+            if self._selector is not None:
+                try:
+                    self._selector.close()
+                except (OSError, ValueError):
+                    pass
+                self._selector = None
 
     def deliver(self):
         """Hand a postponed SIGINT to the entry disposition. Runs after close."""
@@ -1114,6 +1125,7 @@ class _Build:
 
     def _on_sigint(self, signum, frame):
         """Record the first SIGINT and wake the runner. Never signals, reaps, or raises."""
+        self._arrivals += 1
         if self._pending is None:
             self._pending = (signum, frame)
         try:
@@ -1121,34 +1133,26 @@ class _Build:
         except OSError:
             pass
 
-    def _drain(self, until):
-        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. Never reaps."""
+    def _drain(self, until, grace_mark=None):
+        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. With a grace mark, return cut when arrivals pass the mark and reach two. Never reaps."""
         while self._stdout is not None:
             if self._pending is not None and self.phase == _STARTED:
                 return "interrupt"
+            # A grace arrival that is the first arrival of the run does not cut.
+            if grace_mark is not None and self._arrivals > grace_mark and self._arrivals >= 2:
+                return "cut"
             remaining = until - time.monotonic()
             if remaining <= 0:
                 return "deadline"
-            readers = [self._wake_r] if self._wake_r is not None else []
-            if self._stdout is not None:
-                try:
-                    readers.append(self._stdout.fileno())
-                except (OSError, ValueError):
-                    self._close_stdout()
-                    return "eof"
-            try:
-                ready, _, _ = select.select(readers, [], [], remaining)
-            except (OSError, ValueError):
-                continue
-            for descriptor in ready:
-                if descriptor == self._wake_r:
+            for key, _ in self._selector.select(remaining):
+                if key.fd == self._wake_r:
                     try:
                         os.read(self._wake_r, 512)
                     except OSError:
                         pass
                 else:
                     try:
-                        chunk = os.read(descriptor, 65536)
+                        chunk = os.read(key.fd, 65536)
                     except BlockingIOError:
                         continue
                     if not chunk:
@@ -1168,10 +1172,7 @@ class _Build:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "deadline"
-            try:
-                select.select([self._wake_r] if self._wake_r is not None else [], [], [], min(delay, remaining))
-            except (OSError, ValueError):
-                pass
+            self._selector.select(min(delay, remaining))
             if self._wake_r is not None:
                 try:
                     os.read(self._wake_r, 512)
@@ -1235,6 +1236,11 @@ class _Build:
     def _close_stdout(self):
         """Close the build pipe and forget it. Ignores close errors."""
         if self._stdout is not None:
+            if self._selector is not None:
+                try:
+                    self._selector.unregister(self._stdout.fileno())
+                except (KeyError, OSError, ValueError):
+                    pass
             try:
                 self._stdout.close()
             except (OSError, ValueError):
@@ -1256,6 +1262,8 @@ def run_build(command, cwd, timeout):
     """
     if threading.current_thread() is not threading.main_thread():
         raise ValueError("signal only works in main thread of the main interpreter")
+    if signal.getsignal(signal.SIGCHLD) is signal.SIG_IGN:
+        raise ValueError("run_build refuses to start while SIGCHLD is ignored")
     build = _Build(signal.getsignal(signal.SIGINT))
     try:
         build.start(command, cwd)
@@ -1268,6 +1276,3 @@ def run_build(command, cwd, timeout):
     return result
 
 
-def supervised(command, cwd, timeout):
-    """Run a shell command in its own process group and attempt SIGKILL at the timeout."""
-    return run_build(command, cwd, timeout)
