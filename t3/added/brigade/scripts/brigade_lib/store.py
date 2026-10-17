@@ -35,10 +35,10 @@ LEASED_STATES = ("in-progress", "in-review", "passed", "sent-back", "blocked")
 IN_FLIGHT_STATES = (*LEASED_STATES, "queued")
 OPEN_LINES = {"in-review": "in review", "passed": "passed, not submitted", "sent-back": "sent back", "blocked": "parked"}
 VERDICTS = {"pass": "passed", "send-back": "sent-back", "blocked": "blocked", "pass-with-edits": "sent-back"}
-# Why a review sent the work back. pass record takes one of these with --verdict send-back and with no other verdict.
+# Why a review sent the work back. pass record takes one of these only with --verdict send-back.
 REASONS = ("false-wording", "missing-test", "wrong-behavior", "out-of-lease", "scope", "other")
 REASON_VERDICTS = ("send-back",)
-# A pass.tsv row that carries no reason counts as this in `pass stats`.
+# A send-back row whose reason is empty or outside REASONS counts as this in `pass stats`.
 UNRECORDED_REASON = "unrecorded"
 # The roles a row of threads.tsv may hold. A report item or --role naming anything else is refused.
 THREAD_ROLES = ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner")
