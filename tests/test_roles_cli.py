@@ -4709,6 +4709,27 @@ class ExcludeBackupTargetCliTest(unittest.TestCase):
         self.assertEqual(payload["decision"], "relaunch")
         self.assertEqual(payload["seat"], {"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5"})
 
+    def test_backup_skips_an_excluded_first_candidate_and_relaunches_on_an_allowed_second(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            roles_file={
+                "version": 1,
+                "backups": {"bug-fix": [
+                    {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
+                    {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+                ]},
+                "exclude": [{"model": "claude-opus-5-5"}],
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "relaunch")
+        self.assertEqual(
+            payload["seat"],
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+        )
+
 
 MALFORMED_BACKUP_SEATS = (
     {"providerInstanceId": ["claudeAgent"], "model": "claude-opus-5-5"},
@@ -4890,6 +4911,14 @@ class BackupCandidateOptionsCliTest(unittest.TestCase):
                 {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
                 {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
             ),
+            (
+                "declared special effort",
+                ("--provider", "grok", "--model", "grok-4.7", "--options", '{"reasoningEffort": "high"}'),
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5",
+                 "options": {"effort": "ultrathink"}},
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5",
+                 "options": {"effort": "ultrathink"}},
+            ),
         )
         for label, failed_flags, candidate, expected in cases:
             with self.subTest(label=label):
@@ -4926,10 +4955,10 @@ MIGRATION_JSON = {
         "swarm workers": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
         "skill tests": [{"providerInstanceId": "claudeAgent", "model": "claude-sonnet-5-5"}],
         "arena runners": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
-        "arena cross-judge pool": [{"providerInstanceId": "grok", "model": "grok-4.7"}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
+        "arena cross-judge pool": [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
         "architect runners": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
-        "interrogate reviewers": [{"providerInstanceId": "grok", "model": "grok-4.7"}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
-        "verifiers": [{"providerInstanceId": "grok", "model": "grok-4.7"}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
+        "interrogate reviewers": [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
+        "verifiers": [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}, {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}],
     },
 }
 LIMIT = "You've hit your usage limit. Try again later.\n"
@@ -5001,7 +5030,10 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
             "verifiers", {"provider": "codex", "model": "gpt-6.1-sol"}, authors=("claudeAgent/claude-opus-5-5",)
         )
         self.assertEqual(claude_author.decision, "relaunch")
-        self.assertEqual(claude_author.seat, {"providerInstanceId": "grok", "model": "grok-4.7"})
+        self.assertEqual(
+            claude_author.seat,
+            {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}},
+        )
 
         for seat in (worker.seat, tests.seat, grok_author.seat, claude_author.seat):
             self.assertNotIn(seat["providerInstanceId"], ("codex", "cursor"))
@@ -5013,6 +5045,17 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
         ):
             with self.subTest(seat=seat):
                 self.assertIsNotNone(roles.exclude_reason(seat, self.exclude))
+
+    def test_the_three_reviewer_backup_lists_carry_the_grok_false_pin(self):
+        expected = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}
+        for role in ("arena cross-judge pool", "interrogate reviewers", "verifiers"):
+            with self.subTest(role=role):
+                result = self.backup(
+                    role, {"provider": "codex", "model": "gpt-6.1-sol"},
+                    authors=("claudeAgent/claude-opus-5-5",),
+                )
+                self.assertEqual(result.decision, "relaunch")
+                self.assertEqual(result.seat, expected)
 
     def test_show_keeps_a_grok_seat_that_declares_fast_mode_false(self):
         seat = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}
@@ -5034,7 +5077,7 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
 
     def test_show_drops_only_the_codex_review_backups_seat(self):
         codex = {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}
-        grok = {"providerInstanceId": "grok", "model": "grok-4.7"}
+        grok = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"fastMode": False}}
         claude = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
         completed = self.show(
             "--parent", "claudeAgent/claude-opus-5-5", "--role", "review backups",
@@ -5042,9 +5085,7 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         entry = json.loads(completed.stdout)["roles"]["review backups"]
-        self.assertNotIn(codex, entry["seats"])
-        self.assertIn(grok, entry["seats"])
-        self.assertIn(claude, entry["seats"])
+        self.assertEqual(entry["seats"], [grok, claude])
         self.assertTrue(any("codex/gpt-6.1-sol" in note for note in entry.get("notes", [])), entry)
 
     def test_validate_lists_the_codex_review_backups_seat(self):

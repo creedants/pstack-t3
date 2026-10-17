@@ -158,7 +158,7 @@ UNSET_NOTE = (
     "review backups is set in no roles file. Set it there to let roles.py backup run a review "
     "panel when a verifier's backups are out. Unset, a verifier parks."
 )
-EXCLUDE_RULE = "the roles file's exclude list refuses that model in every role, backup, and inherit replacement"
+EXCLUDE_RULE = "the roles file's exclude list refuses this seat for this role"
 PANEL_CATALOG_NOTE = (
     "review backups drops seats by the catalog: "
     "call orchestrator_capabilities and rerun roles.py show --catalog"
@@ -1261,14 +1261,15 @@ def _emit_backup(role, label, provider, model, declared_options, failed_options,
     """Launch the candidate seat.
 
     declared_options are the candidate's own. They are settled through the
-    catalog. When they name no effort, the failed seat's level applies.
+    catalog. When they name no effort option, the failed seat's level applies.
     """
     seat = {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}
     if declared_options:
         seat["options"] = dict(declared_options)
         seat, _option_notes, _option_problems = settle_options(seat, model)
-    level = seat_level(seat.get("options"))
-    if level is None:
+    declared = seat.get("options") or {}
+    level = seat_level(declared)
+    if level is None and not any(key in declared for key in (*EFFORT_IDS, "variant")):
         level = seat_level(failed_options)
     if level is not None:
         seat = apply_level(seat, model, level)
@@ -1478,7 +1479,7 @@ def command_backup(args):
     catalog = for_runtime_mode(catalog, mode)
     backups = config.get("backups", {})
     if args.role in backups:
-        problems = backup_problems({args.role: backups[args.role]}, catalog, exclude)
+        problems = backup_problems({args.role: backups[args.role]}, catalog)
         if problems:
             raise RolesError("the roles file's backups key has a problem:\n" + "\n".join(problems))
     options = parse_applied_options(args.options) if args.options else {}
