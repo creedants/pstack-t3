@@ -2046,7 +2046,7 @@ class EmitTest(OutputCase):
                 self.assertEqual(MOD["render_text"](drawn_page, tagged).split("\n"), [tagged(line) for line in lines])
                 self.assertEqual((lines[0][:19], len(lines) > 2), ("Agent activity for ", True))
 
-    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_and_a_running_or_queued_agents_model_is_in_the_text(self):
+    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_and_running_or_queued_agents_models_is_in_the_text(self):
         fixture = named(self.fixture).write()
         document, text = self.document(), self.out("--text")
         self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD", "FIRSTWORD", "SECONDWORD", "THIRDWORD"]))
