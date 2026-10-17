@@ -1133,7 +1133,7 @@ class BrigadeTest(unittest.TestCase):
         run("git", "init", "-q", "-b", "main")
         for name in ("a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "one.txt", "two.txt", "three.txt", "four.txt",
                      "five.txt", "six.txt", "README.md", "srcx", "docs/guide.md", "docs/cli.md", "scripts/install.py",
-                     "src/app.py", "src/app/x.py", "src/a/one.py", "src/b/two.py", "src/a.py",
+                     "src/app.py", "src/app/x.py", "src/a/one.py", "src/b/two.py", "src/a.py", "src/b.py", "src/x.py",
                      "tests/brigade/support.py", "tests/brigade/test_startable.py",
                      "tests/brigade/test_context_cap.py", "t3/added/brigade/scripts/activity.py"):
             target = self.project / name

@@ -142,6 +142,8 @@ class BriefsTest(BrigadeTest):
         run = lambda *a: subprocess.run(a, cwd=self.project, capture_output=True, text=True, check=True)
         run("git", "init", "-q", "-b", "main")
         (self.project / "a.txt").write_text("a\n")
+        (self.project / "src" / "x.py").parent.mkdir(parents=True, exist_ok=True)
+        (self.project / "src" / "x.py").write_text("x\n")
         run("git", "add", "-A")
         run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         land = ROOT / "t3/added/landing/scripts/land.py"
