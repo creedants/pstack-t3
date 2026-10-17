@@ -1332,7 +1332,7 @@ class SkillCountCheckTest(unittest.TestCase):
 
 
 class MinimumT3CodeVersionCheckTest(unittest.TestCase):
-    """README.md and docs/guide.md must name the minimum T3 Code version the setup gate requires."""
+    """A README or a guide that names a minimum T3 Code version other than the setup gate's is a finding."""
 
     def _tree(self, readme, guide):
         temporary = tempfile.TemporaryDirectory()
