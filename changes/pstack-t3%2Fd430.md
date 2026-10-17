@@ -2,6 +2,5 @@
 - `t3/scripts/roles.py` `command_backup` runs its backups preflight with `backup_problems(..., require_runnable=False)`, so a backups candidate the catalog lacks is skipped by `backup_seat` and the loop tries the next one instead of exiting 2.
 - `backup_problems` and `backup_option_problems` take `require_runnable` (default True). `validate` still reports an unavailable backups seat.
 - The preflight still reports a candidate option the catalog does not offer when the candidate's provider is runnable and its model is in the catalog.
-- With `require_runnable=False` a candidate whose provider is not runnable or whose model is not in the catalog reports no problem.
 - A malformed seat stays refused by `parse_backups` when the roles file is read, before the preflight runs.
 - `tests/test_roles_cli.py` adds `BackupUnavailableCandidateCliTest`. Its `test_backup_skips_a_first_candidate_the_catalog_lacks_and_relaunches_on_the_second` pins the skip and `test_validate_names_a_backups_seat_the_catalog_lacks` pins validate's report.
