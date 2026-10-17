@@ -208,8 +208,9 @@ def doc_policy(meta):
 
     A missing key keeps its default. A present value that does not parse is refused through
     refuse_setting, so the message names the file, the key, and the value. A file entry names
-    one document, and a file entry whose path ends with a slash names a directory whose every
-    file is a document. A skill entry names a directory whose every SKILL.md is a document.
+    one document, and a file entry whose path ends with a slash names a directory prefix, so
+    files under it are documents. A skill entry names a directory whose SKILL.md files are
+    documents.
     """
     raw = meta.get("sharedDocs", [])
     if not isinstance(raw, list):
@@ -312,7 +313,7 @@ def _can_cover_catalog(parts, catalog):
 # Other commands keep their tracked only behavior.
 # An explicit SKILL dot md path counts by its form whether or not the index holds it.
 # The check never opens the user path and never reads outside that repository.
-# Every catalog file entry counts even when the index omits it.
+# Every catalog file entry that does not end in a slash counts even when the index omits it.
 # A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one catalog skill root.
 # The catalog is the store's sharedDocs, so no path is built into the tool.
 # The changelog fragment that with fragment appends is not part of the check.

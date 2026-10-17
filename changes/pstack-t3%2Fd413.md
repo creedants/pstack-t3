@@ -1,6 +1,6 @@
 - kind feature
 - An optional `sharedDocs` key in `restaurant.json` sets the shared-document catalog the fire doc check reads, a list of `{"path": <repository path>, "kind": "file"|"skill"}` entries, where an absent or empty list holds no shared document and `--doc-item` only records a `doc-item` note.
-- A `file` entry names one document, a `file` entry whose path ends with `/` names a directory prefix whose every file is a document, and a `skill` entry names a directory whose every `SKILL.md` is a document.
+- A `file` entry names one document, a `file` entry whose path ends with `/` names a directory prefix whose files are documents, and a `skill` entry names a directory whose `SKILL.md` files are documents.
 - An optional `docTimebox` key sets the minutes over which a fire on a held shared document is refused, a whole number of 1 or more, where an absent key reads as 90 and the refusal names that count.
 - `fire` refuses a present `sharedDocs` or `docTimebox` that does not parse, before any write and before any lease claim, with a message naming the key, the file, and the value.
 - `t3/added/brigade/SKILL.md` documents both keys, their defaults, and the refusal rule, and carries the JSON template for this repository's catalog.
