@@ -350,12 +350,20 @@ def exclude_label(rule):
 
 
 def exclude_reason(seat, exclude=(), role=None):
-    """Why the exclude list refuses this seat, or None. Needs no catalog."""
+    """The clause that refuses this seat, or None when the exclude list allows it.
+
+    The clause is "<why>, and <EXCLUDE_RULE>", where <why> names the first entry
+    the seat matches. Every path that refuses a seat embeds this clause, so no
+    path words its own refusal. Needs no catalog.
+    """
     if not isinstance(seat, dict):
         return None
     for number, rule in enumerate(exclude, 1):
         if exclude_rule_matches(rule, seat, role):
-            return f"{bare_id(seat['model'])} matches exclude entry {number} ({exclude_label(rule)})"
+            return (
+                f"{bare_id(seat['model'])} matches exclude entry {number} ({exclude_label(rule)}), "
+                f"and {EXCLUDE_RULE}"
+            )
     return None
 
 
@@ -863,17 +871,17 @@ def inherit_replacement(catalog, budget, name, exclude=()):
     if provider is None or not provider.get("canRunChildTask"):
         detail = "; ".join((provider or {}).get("constraints") or []) or "cannot run child tasks"
         raise RolesError(
-            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}; "
             f"{parent.provider} is not runnable ({detail})"
         )
     model = _first_pickable(provider, exclude, name) if runnable(provider) else None
     if model is None:
         raise RolesError(
-            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}, and {EXCLUDE_RULE}; "
+            f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}; "
             f"{parent.provider} has no model the exclude list allows"
         )
     seat = finish_seat({"providerInstanceId": parent.provider, "model": model["id"]}, model, budget, exclude, name)
-    return seat, [f"inherit replaced by {parent.provider}/{model['id']}: {reason}, and {EXCLUDE_RULE}"]
+    return seat, [f"inherit replaced by {parent.provider}/{model['id']}: {reason}"]
 
 
 def _resolve_inherit(catalog, budget, name, exclude=()):
@@ -964,7 +972,7 @@ def finish_seat(seat, model, budget, exclude=(), role=None):
     seat = apply_budget(seat, model, budget)
     reason = exclude_reason(seat, exclude, role)
     if reason is not None:
-        raise RolesError(f"{seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}")
+        raise RolesError(f"{seat['providerInstanceId']}/{seat['model']}: {reason}")
     return seat
 
 
@@ -982,7 +990,7 @@ def settle_inherit_catalog(name, seats, catalog, parent, exclude=()):
         if reason is not None:
             return CATALOG_REQUIRED, (
                 f"the parent {parent.provider}/{parent.model} {reason}, so inherit needs the catalog: "
-                f"call orchestrator_capabilities and rerun roles.py show --catalog, and {EXCLUDE_RULE}"
+                f"call orchestrator_capabilities and rerun roles.py show --catalog"
             )
     return seats, None
 
@@ -1064,13 +1072,13 @@ def configured_seats(config, name, exclude=()):
         if reason is None:
             kept.append(seat)
         else:
-            notes.append(f"skipped configured seat {seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}")
+            notes.append(f"skipped configured seat {seat['providerInstanceId']}/{seat['model']}: {reason}")
     return (kept or None), notes
 
 
 def excluded_problems(roles, exclude=()):
     return [
-        f"{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}"
+        f"{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}"
         for name, seats in roles.items()
         for seat in seats
         if isinstance(seat, dict) and (reason := exclude_reason(seat, exclude, name))
@@ -1079,7 +1087,7 @@ def excluded_problems(roles, exclude=()):
 
 def excluded_backup_problems(backups, exclude=()):
     return [
-        f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}"
+        f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}: {reason}"
         for name, seats in backups.items()
         for seat in seats
         if (reason := exclude_reason(seat, exclude, name))
@@ -1111,7 +1119,7 @@ def backup_problems(backups, catalog, exclude=(), require_runnable=True):
             where = f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}"
             reason = exclude_reason(seat, exclude, name)
             if reason is not None:
-                problems.append(f"{where}: {reason}, and {EXCLUDE_RULE}")
+                problems.append(f"{where}: {reason}")
                 continue
             problems.extend(backup_option_problems(name, seat, catalog, require_runnable))
     return problems
