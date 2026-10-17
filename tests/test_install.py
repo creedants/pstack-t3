@@ -1092,7 +1092,7 @@ def darwin_renamex():
 def extended_attribute(path, name, value=None):
     """Set an xattr when `value` is given, else get it. Return True or the value when the platform keeps it.
 
-    Linux keeps user names through os.setxattr. macOS keeps names through libc setxattr with its own signature. Where neither works the caller gets False or None and omits xattr asserts but keeps hard link, FIFO, mode, and symlink checks.
+    Linux keeps user names through os.setxattr. On darwin the helper tries libc setxattr with its six-argument signature. Where neither works the caller gets False or None and omits xattr asserts but keeps hard link, FIFO, mode, and symlink checks.
     """
     target = Path(path)
     if value is not None:
@@ -1111,18 +1111,20 @@ def extended_attribute(path, name, value=None):
             libc = ctypes.CDLL(libc_name, use_errno=True)
             raw_path = os.fsencode(target)
             raw_name = os.fsencode(name)
-            linux = getattr(libc, "setxattr", None)
-            if linux is not None:
-                linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
-                linux.restype = ctypes.c_int
-                if linux(raw_path, raw_name, value, len(value), 0) == 0:
-                    return extended_attribute(target, name) == value
-            mac = getattr(libc, "setxattr", None)
-            if mac is not None:
-                mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
-                mac.restype = ctypes.c_int
-                if mac(raw_path, raw_name, value, len(value), 0, 0) == 0:
-                    return extended_attribute(target, name) == value
+            if sys.platform == "darwin":
+                mac = getattr(libc, "setxattr", None)
+                if mac is not None:
+                    mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
+                    mac.restype = ctypes.c_int
+                    if mac(raw_path, raw_name, value, len(value), 0, 0) == 0:
+                        return extended_attribute(target, name) == value
+            else:
+                linux = getattr(libc, "setxattr", None)
+                if linux is not None:
+                    linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
+                    linux.restype = ctypes.c_int
+                    if linux(raw_path, raw_name, value, len(value), 0) == 0:
+                        return extended_attribute(target, name) == value
         except (OSError, AttributeError):
             return False
         return False
@@ -1142,20 +1144,22 @@ def extended_attribute(path, name, value=None):
         raw_name = os.fsencode(name)
         size = 4096
         buffer = ctypes.create_string_buffer(size)
-        linux = getattr(libc, "getxattr", None)
-        if linux is not None:
-            linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t)
-            linux.restype = ctypes.c_ssize_t
-            got = linux(raw_path, raw_name, buffer, size)
-            if got >= 0:
-                return bytes(buffer.raw[:got])
-        mac = getattr(libc, "getxattr", None)
-        if mac is not None:
-            mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
-            mac.restype = ctypes.c_ssize_t
-            got = mac(raw_path, raw_name, buffer, size, 0, 0)
-            if got >= 0:
-                return bytes(buffer.raw[:got])
+        if sys.platform == "darwin":
+            mac = getattr(libc, "getxattr", None)
+            if mac is not None:
+                mac.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
+                mac.restype = ctypes.c_ssize_t
+                got = mac(raw_path, raw_name, buffer, size, 0, 0)
+                if got >= 0:
+                    return bytes(buffer.raw[:got])
+        else:
+            linux = getattr(libc, "getxattr", None)
+            if linux is not None:
+                linux.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t)
+                linux.restype = ctypes.c_ssize_t
+                got = linux(raw_path, raw_name, buffer, size)
+                if got >= 0:
+                    return bytes(buffer.raw[:got])
     except (OSError, AttributeError):
         return None
     return None
@@ -3232,7 +3236,7 @@ class OwnershipTest(unittest.TestCase):
                     self.assertEqual(list(swarm.parent.glob(".pstack-t3-stranger-*")), [])
 
     def test_a_directory_restore_preserves_hard_links_xattrs_fifo_modes_and_relative_symlinks(self):
-        """A same-filesystem directory move keeps hard links, xattrs, FIFO type, modes, and relative symlink targets."""
+        """A same-filesystem directory move keeps hard links, FIFO type, modes, and relative symlink targets, and xattrs where the platform offers them."""
         self.use_fresh()
         a, swarm, rows = self.displaced_by("directory")
         backup = Path(rows[0]["backup"])

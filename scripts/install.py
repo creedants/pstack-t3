@@ -846,7 +846,7 @@ MOVED = "moved"
 class Published:
     """Successful placement result for `path`.
 
-    `proved` makes one after checking the live entry against the held descriptor. `drop_backup` requires this result.
+    `proved` makes one after checking the live entry against the held descriptor. `drop_backup` takes this result.
     """
 
     path: str
