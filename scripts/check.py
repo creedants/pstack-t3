@@ -287,8 +287,8 @@ def minimum_version_findings(readme, guide):
     setup-pstack/SKILL.md. A stated version is the one a line names between T3 Code
     and "or later", in a plain sentence or a Markdown link with optional backticks.
     A stated version that differs from the gate is one finding that names the file,
-    the line, the stated version, and the gate version. A gate string that no
-    REQUIRED_TOOLS entry fully matches is one finding that names the setup skill and
+    the line, the stated version, and the gate version. A gate string that no entry
+    under SETUP_GATE fully matches is one finding that names the setup skill and
     says the minimum version could not be read. A file that cannot be read adds no
     finding, because readme_count_findings or guide_count_findings already names it.
     An empty list means no stated minimum in a readable file differs from the gate version.
