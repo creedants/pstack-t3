@@ -4731,6 +4731,39 @@ class ExcludeBackupTargetCliTest(unittest.TestCase):
         )
 
 
+class BackupUnavailableCandidateCliTest(unittest.TestCase):
+    """T951. The loop skips a backups candidate the catalog lacks, and validate still names it."""
+
+    def test_backup_skips_a_first_candidate_the_catalog_lacks_and_relaunches_on_the_second(self):
+        completed = run_backup(
+            "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            roles_file={"version": 1, "backups": {"bug-fix": [
+                {"providerInstanceId": "kilo", "model": "kilo-1"},
+                {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
+            ]}},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["decision"], "relaunch")
+        self.assertEqual(
+            payload["seat"],
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+        )
+
+    def test_validate_names_a_backups_seat_the_catalog_lacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, backup_catalog())
+            repo.put(repo.user, {"version": 1, "roles": {}, "backups": {"bug-fix": [
+                {"providerInstanceId": "kilo", "model": "kilo-1"},
+            ]}})
+            completed = repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("backups.bug-fix: kilo/kilo-1: not runnable or not in the catalog", completed.stdout)
+
+
 MALFORMED_BACKUP_SEATS = (
     {"providerInstanceId": ["claudeAgent"], "model": "claude-opus-5-5"},
     {"providerInstanceId": "claudeAgent", "model": ["claude-opus-5-5"]},
