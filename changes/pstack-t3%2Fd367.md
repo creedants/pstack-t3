@@ -1,4 +1,4 @@
 - kind feature
-- `t3/added/brigade/scripts/brigade_lib/affected.py` adds a deterministic picker that maps lease paths or diff names to test modules by load, one-hop import, pin, workflow files to `tests.test_run_tests`, and changes fragments to `tests.test_pstack_t3`, adds `tests.test_pstack_t3` to every module list, and names the unmapped path and runs the full suite when no mapping exists
+- `t3/added/brigade/scripts/brigade_lib/affected.py` adds a deterministic picker that maps lease paths or diff names to test modules by load, one-hop import, pin, workflow files to `tests.test_run_tests`, and changes fragments to `tests.test_pstack_t3`, adds `tests.test_pstack_t3` to every module list, and names every unmapped path and runs the full suite when any path has no mapping
 - `t3/added/brigade/scripts/brigade_lib/briefs.py` omits verify to use the picker paragraph and keeps the verify rule as the second bullet, with a supplied verify unchanged
 - `t3/added/brigade/SKILL.md` documents the affected command, the picker scan, and the omitted verify rule
