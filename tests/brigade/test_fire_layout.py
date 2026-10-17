@@ -3,7 +3,12 @@ from .support import (
     BrigadeTest,
     Path,
     ROOT,
+    SCRIPT,
+    _owner_words,
+    call,
 )
+import posixpath
+import subprocess
 
 
 class FireLayoutTest(BrigadeTest):
@@ -13,9 +18,36 @@ class FireLayoutTest(BrigadeTest):
         for name in ("build.py", "cli_reference.py"):
             (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
 
+    def commit_paths(self, paths):
+        for part in paths.split(","):
+            token = part.strip()
+            if not token:
+                continue
+            cleaned = token.replace("\\", "/").strip()
+            if not cleaned:
+                continue
+            made = posixpath.normpath(cleaned).lstrip("/")
+            if made in (".", ""):
+                continue
+            if made == ".." or made.startswith("../"):
+                continue
+            target = self.project / made
+            if target.is_dir():
+                continue
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+        listed = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.project)
+        if listed.returncode != 0:
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "add paths"],
+                           cwd=self.project, check=True, capture_output=True, text=True)
+
     def layout_fire(self, paths, doc_item=False):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths(paths)
         self.init_landing()
         self.landing_env()
         self.open()
@@ -40,6 +72,7 @@ class FireLayoutTest(BrigadeTest):
         self.git_project()
         if with_layout:
             self.vendor_layout()
+        self.commit_paths(given)
         self.init_landing()
         self.landing_env()
         self.open()
@@ -177,6 +210,7 @@ class FireLayoutTest(BrigadeTest):
     def test_cli_reference_top_level_never_runs_but_expansion_works(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("t3/runtime.md")
         cli = self.project / "scripts" / "cli_reference.py"
         marker = self.project / "project-code-ran"
         text = cli.read_text()
@@ -193,6 +227,7 @@ class FireLayoutTest(BrigadeTest):
 
     def test_same_branch_dish_over_unexpanded_lease_prints_only_in_progress(self):
         self.git_project()
+        self.commit_paths("t3/runtime.md,t3/setup.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -211,6 +246,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_blocks_overlapping_generated_dirs(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("t3/added/teach,t3/overrides/teach")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -278,6 +314,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_doc_item_lease_omits_catalog_for_other_holder(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,t3/setup.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -299,6 +336,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_doc_item_expansion_omits_catalog_for_overlap(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,t3/setup.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -320,6 +358,7 @@ class FireLayoutTest(BrigadeTest):
     def test_blocked_doc_item_recheck_unblocks_with_other_catalog_holder(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -349,6 +388,7 @@ class FireLayoutTest(BrigadeTest):
     def test_blocked_legacy_note_without_doc_item_stays_blocked_on_catalog(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -371,6 +411,7 @@ class FireLayoutTest(BrigadeTest):
     def test_blocked_doc_item_with_explicit_catalog_path_stays_blocked(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -392,6 +433,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_doc_item_flag_feeds_derived_fire_omits_catalog(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -425,6 +467,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_blocked_note_paths_agree_with_watch_for_derived_fire(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,docs/skills.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -455,6 +498,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_blocked_dot_path_normalizes_for_generated_overlap_and_derived_fire(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,skills/pstack-runtime/SKILL.md,./t3/runtime.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -487,6 +531,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_empty_blocked_note_falls_back_to_rail_and_ticket_set_updates_rail_preview(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t3/runtime.md,t3/setup.md")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -514,6 +559,7 @@ class FireLayoutTest(BrigadeTest):
     def test_startable_saved_scope_with_whole_repository_component_blocks_the_second_scope(self):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths("README.md,t1.txt,t2.txt")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -545,6 +591,7 @@ class FireLayoutTest(BrigadeTest):
     def saved_scope_pair(self, first, second):
         self.git_project()
         self.vendor_layout()
+        self.commit_paths(f"{first},{second},t1.txt,t2.txt")
         self.init_landing()
         self.landing_env()
         self.open()
@@ -574,3 +621,65 @@ class FireLayoutTest(BrigadeTest):
         self.assertIn("waiting tickets: 2, startable: 1, blocked: 1", text)
         self.assertIn("T1 normal fix, 0m: startable; t1.txt", text)
         self.assertIn("T2 normal fix, 0m: blocked, starts after T1; .,t2.txt", text)
+
+    def test_fire_leases_a_stale_split_path_and_warns_on_stderr(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "tests/test_landing.py"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: tests/test_landing.py is not in the checkout; a stale ticket path leases nothing real"])
+        self.assertIn("tests/test_landing.py", self.land("lease", "list"))
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("tests/test_landing.py", row["paths"])
+
+    def test_fire_leases_a_missing_path_with_no_build_layout_and_warns_on_stderr(self):
+        self.git_project()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "missing.txt"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: missing.txt is not in the checkout; a stale ticket path leases nothing real"])
+        self.assertIn("missing.txt", self.land("lease", "list"))
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("missing.txt", row["paths"])
+
+    def test_fire_warns_once_per_missing_path_sorted_and_deduplicated(self):
+        self.git_project()
+        self.vendor_layout()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                      *_owner_words(self.at), "fire", "--tickets", "T1",
+                                      "--station", "bug-fix", "--summary", "s",
+                                      "--paths", "zebra.txt,apple.txt,zebra.txt"])
+        self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
+        self.assertEqual(outcome.stdout_text().strip(), "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["fire: apple.txt is not in the checkout; a stale ticket path leases nothing real",
+                          "fire: zebra.txt is not in the checkout; a stale ticket path leases nothing real"])
+        listed = self.land("lease", "list")
+        self.assertIn("apple.txt", listed)
+        self.assertIn("zebra.txt", listed)
+        row = self.table_row(self.at, "dishes.tsv", "D1")
+        self.assertEqual(row["state"], "in-progress")
+        self.assertIn("zebra.txt,apple.txt,zebra.txt", row["paths"])

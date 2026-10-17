@@ -24,6 +24,7 @@ from brigade_lib import seam
 from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
+from brigade_lib.tickets import tracked_paths
 
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 
@@ -234,6 +235,21 @@ def _claim_norm(raw):
     if made == ".." or made.startswith("../"):
         return None
     return made
+
+
+def missing_checkout_paths(project_root, raw_list):
+    tracked = tracked_paths(project_root)
+    if tracked is None:
+        return []
+    seen = set()
+    for raw in raw_list:
+        made = _claim_norm(raw)
+        if not made:
+            continue
+        if made in tracked.files or made in tracked.directories:
+            continue
+        seen.add(made)
+    return sorted(seen)
 
 
 def claim_paths(project_root, paths, branch, doc_item=False):
