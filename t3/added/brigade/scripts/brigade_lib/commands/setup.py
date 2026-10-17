@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
@@ -92,13 +93,14 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    The reader predicates decide all five settings, so a value accepted here is a value a reader accepts. A missing
-    key keeps its default.
+    The reader predicates decide all six settings, so a value accepted here is a value a reader accepts. The settings
+    are contextCap, coordinatorProvider, caps, review, lowReserve, and affectedTests. A missing key keeps its default.
     """
     effective_cap(meta)
     effective_provider(meta)
     kind_limits(meta)
     low_reserve_of(meta)
+    layout(meta)
 
 
 def preflight_settings(prospective, args):
