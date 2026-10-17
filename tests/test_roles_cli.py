@@ -4629,7 +4629,7 @@ B2_CONFIG = {
 
 
 class ExcludeFinalTargetCliTest(unittest.TestCase):
-    """B2. The exclude list is checked on the final target, after option mapping and the budget cap."""
+    """B2. The exclude list is checked on the final target, after option mapping and the budget cap. The accepted `--resume` original-seat path is the exception."""
 
     def show(self):
         with tempfile.TemporaryDirectory() as directory:
