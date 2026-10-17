@@ -2112,8 +2112,8 @@ def main(argv=None):
     group.add_argument("--clear-escalate", action="store_true")
     write.add_argument("--set", action="append", help="'<role>=<seat>[;<seat>]', seat = inherit | provider/model[?option=value]")
     write.add_argument("--project", action="store_true", help="write the project file instead of the user file")
-    write.add_argument("--keep", action="store_true", help="accepted and ignored; keeping the stored keys is the default")
-    write.add_argument("--replace", action="store_true", help="rewrite roles, budget, and mode from the flags and write <file>.bak first")
+    write.add_argument("--keep", action="store_true", help="accepted and ignored")
+    write.add_argument("--replace", action="store_true", help="rewrite roles, budget, and mode from the flags and write <file>.bak first when the file exists")
     write.add_argument("--force", action="store_true", help="write despite the problems validate lists, except an excluded seat")
     write.add_argument(
         "--allow-opencode",

@@ -68,8 +68,8 @@ roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT]
 | `--clear-escalate` |  |  |  |  |
 | `--set SET` (repeatable) |  |  |  | '\<role>=\<seat>[;\<seat>]', seat = inherit \| provider/model[?option=value] |
 | `--project` |  |  |  | write the project file instead of the user file |
-| `--keep` |  |  |  | accepted and ignored; keeping the stored keys is the default |
-| `--replace` |  |  |  | rewrite roles, budget, and mode from the flags and write \<file>.bak first |
+| `--keep` |  |  |  | accepted and ignored |
+| `--replace` |  |  |  | rewrite roles, budget, and mode from the flags and write \<file>.bak first when the file exists |
 | `--force` |  |  |  | write despite the problems validate lists, except an excluded seat |
 | `--allow-opencode ALLOW_OPENCODE` (repeatable) |  |  |  | Add this full OpenCode model id to the allow list in the file being written. |
 | `--deny-opencode DENY_OPENCODE` (repeatable) |  |  |  | Remove this full OpenCode model id from the allow list in the file being written. |
