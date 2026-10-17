@@ -235,10 +235,8 @@ def verify_rule(land, picked_layout):
     if picked_layout is not None:
         lines.append(f"The final run of the chain also includes `python3 -m unittest {picked_layout.always}`, "
                      "because that module checks the change note. ")
-    lines.extend([
-        "A prose-only commit runs that module and does not rerun the chain. ",
-        "A fix round runs the affected modules while working and one full run at the end.",
-    ])
+        lines.append("A prose-only commit runs that module and does not rerun the chain. ")
+    lines.append("A fix round runs the affected modules while working and one full run at the end.")
     return "".join(lines)
 
 

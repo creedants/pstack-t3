@@ -102,7 +102,7 @@ Read [script.md](script.md) when a `$B` command refuses, prints a line this skil
 
 Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite. Use the picked modules for worker verification. Leave the full suite to CI and the merge queue unless affected reports an unmapped path.
 
-`affected` reads the layout from the store's `restaurant.json`, which may hold one optional `affectedTests` object. Its six keys are `always`, the required dotted module every modules result includes; `workflowModule`, an optional dotted module a `.github/workflows/` path maps to; `entryPoints`, the required list of repository paths that the helper modules load or run; `helpers`, an optional list of repository paths; `suite`, the optional whole-suite command; and `python`, the optional absolute path of the second interpreter. Without the key the picker is off, and a brief with an empty `--verify` runs the store's `checkCommand` instead, or says no verify command is set. This value, with `buildCommand` `python3 scripts/build.py` and `checkCommand` `python3 scripts/check.py` in the same file, reproduces the paragraph this repository prints today:
+`affected` reads the layout from the store's `restaurant.json`, which may hold one optional `affectedTests` object. Its six keys are `always`, the required dotted module every modules result includes; `workflowModule`, an optional dotted module a `.github/workflows/` path maps to; `entryPoints`, the required list of repository paths that the helper modules load or run; `helpers`, an optional list of repository paths; `suite`, the optional whole-suite command; and `python`, the optional absolute path of the second interpreter. Without the key the picker is off, and a brief with an empty `--verify` runs the store's `checkCommand` instead, or says no verify command is set. This template, with `buildCommand` `python3 scripts/build.py` and `checkCommand` `python3 scripts/check.py` in the same file, preserves this repository's picker paragraph after replacing `<path to a Python 3.10 interpreter>` with the existing interpreter path:
 
 ```json
 "affectedTests": {
@@ -111,7 +111,7 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
   "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
   "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
   "suite": "python3 scripts/run_tests.py -j 8",
-  "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10"
+  "python": "<path to a Python 3.10 interpreter>"
 }
 ```
 
