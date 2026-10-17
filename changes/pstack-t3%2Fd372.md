@@ -1,0 +1,6 @@
+- kind fix
+- `scripts/install.py` holds the completed copy open before its move and proves the live entry against that held copy.
+- `scripts/install.py` retires the source only after that proof and drops the backup only then.
+- `scripts/install.py` makes Published only through proved.
+- `tests/test_install.py` covers the completed copy move for file, directory, and symlink with an occupant before and a late occupant after.
+- `tests/test_install.py` keeps hard link, FIFO, mode, and symlink checks every platform and checks xattrs where the platform offers them.
