@@ -1706,7 +1706,7 @@ class RunTestsTest(unittest.TestCase):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         assert_macos_blocking(self, text)
 
-    def test_a_macos_result_other_than_success_fails_the_312_gate(self):
+    def test_a_macos_failure_cancelled_skipped_or_an_empty_result_fails_the_312_gate(self):
         # This starts a process because the check is an exit status.
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
