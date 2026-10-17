@@ -145,7 +145,7 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `architect runners` | N | architect, one runner per seat |
 | `interrogate reviewers` | N | interrogate, one reviewer per seat |
 | `verifiers` | N | swarm-verify, autopilot, shipping, orchestrate verification |
-| `review backups` | N | `roles.py backup`, when no `verifiers` backups seat is left |
+| `review backups` | N | `roles.py backup`, when `review backups` is set and no `verifiers` backups seat is left |
 
 ### Built-in defaults
 
