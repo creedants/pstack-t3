@@ -1,7 +1,7 @@
 - kind polish
 - `scripts/check.py` runs a minimum-version check in `check_tree`'s guide path, which the build and a bare `python3 scripts/check.py` keep
 - the check derives the gate version from the string `REQUIRED_TOOLS` requires in `setup-pstack/SKILL.md`, and leaves the documents unread when that string names no version
-- it reports `README.md` or `docs/guide.md` when it states a minimum in the shape `T3 Code ... <version> ... or later` with a version other than the gate's
+- it reports a line in `README.md` or `docs/guide.md` that states a version between `T3 Code` and `or later` in a plain sentence or a Markdown link with optional backticks, when that version differs from the gate's
 - the finding names the file, the line, the stated version, and the gate version
 - a bump of the gate string needs no second literal in the new code
 - `tests/test_check.py` pins that a README and a guide naming the gate version are quiet and that a README or a guide naming another version is reported with both versions

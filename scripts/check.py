@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The same case reports a T3 Code minimum version stated as `T3 Code ... or later` in that checkout's `README.md` or `docs/guide.md` that disagrees with the version in the setup gate string. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The same case reports a T3 Code minimum version, stated on a line between `T3 Code` and `or later` in a plain sentence or a Markdown link with optional backticks, that disagrees with the version in the setup gate string. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding.
 """
 
 import ast
@@ -287,7 +287,8 @@ def minimum_version_findings(readme, guide):
     A stated version that differs from the gate is one finding that names the file,
     the line, the stated version, and the gate version. A file that cannot be read
     adds no finding, because readme_count_findings or guide_count_findings already
-    names it. An empty list means every stated minimum names the gate version.
+    names it. An empty list means no stated minimum in a readable file differs
+    from the gate version, or `_setup_gate_version` returned None.
     """
     gate = _setup_gate_version()
     if gate is None:
