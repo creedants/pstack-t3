@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.affected import DEFAULT_SUITE, layout as affected_layout, verify_text as affected_verify_text
+from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
@@ -31,18 +31,6 @@ from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, V
 
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
-TEST_STANDARD = (
-    "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.",
-    "2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.",
-    "3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.",
-    "4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.",
-    "5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.",
-    "6. Never assert a library's own wording.",
-    "7. Add a case to an existing table when the setup is the same.",
-    "8. A test that sleeps to order two processes names the review finding it pins.",
-    "9. Do not add a test for what the project's build already refuses.",
-    "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?",
-)
 
 
 @dataclass(frozen=True)
@@ -63,14 +51,6 @@ _RULES = (
         "Save the full output of any failed test run to a file under <reports>/ before you rerun it, "
         "and name that file in the report.",
         ("<reports>/", "failed test run", "before you rerun", "Save the full output"),
-    ),
-    _Standing(
-        "You may write the change yourself when it changes one file outside tests, the added and removed lines "
-        "outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee "
-        "safety, privacy, or integrity. Count those lines from `git diff --numstat <base>...HEAD`, quote that "
-        "output in the report, and treat every round and commit as one diff. Past that size, or more than one file "
-        "outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.",
-        ("write the change yourself", "one file", "claims check"),
     ),
     _Standing(
         "Make every scratch directory, archive copy, and saved output with `mktemp -d -p <scratch>`, never "
@@ -215,15 +195,15 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
 
 
 def verify_rule(land, picked_layout):
-    suite = picked_layout.suite if picked_layout is not None else DEFAULT_SUITE
     lines = []
     if picked_layout is not None:
         lines.append("While working, run only the affected test modules. ")
+    lines.append(f"Run all builds and tests through `python3 {land} slot -- <command>`. ")
+    if picked_layout is not None:
+        lines.append(f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- {picked_layout.suite}`. ")
+        lines.append("When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. ")
+        lines.append("An affected-module run stays one slot. ")
     lines.extend([
-        f"Run all builds and tests through `python3 {land} slot -- <command>`. ",
-        f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- {suite}`. ",
-        "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. ",
-        "An affected-module run stays one slot. ",
         "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. ",
         "Run the claims check before the final verification. ",
         "Run the full verification chain once, after the last commit. ",
@@ -243,7 +223,7 @@ def _fill_standing(text, values):
     return STANDING_PLACEHOLDER.sub(lambda match: values[match.group(1)], text)
 
 
-def standing_rules(restaurant, base, context, verify):
+def standing_rules(restaurant, context, verify):
     """The STANDING RULES bullets, in _RULES order.
 
     A rule whose placeholder has no value is skipped. A rule is dropped when the coordinator's context and
@@ -254,7 +234,7 @@ def standing_rules(restaurant, base, context, verify):
     except BrigadeError:
         raw = restaurant.meta.get(SCRATCH_KEY)
         raise BrigadeError(f"restaurant.json {SCRATCH_KEY} {raw!r} is invalid: {SCRATCH_REFUSAL}") from None
-    values = {"reports": str(restaurant.dir / "reports"), "base": base, "scratch": scratch}
+    values = {"reports": str(restaurant.dir / "reports"), "scratch": scratch}
     seen = same_text(" ".join(context) + " " + verify)
     lines = []
     for rule in _RULES:
@@ -318,7 +298,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
     report = restaurant.dir / "reports" / f"{ident}.md"
     sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
-    standing = standing_rules(restaurant, base, context, verify)
+    standing = standing_rules(restaurant, context, verify)
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
@@ -349,7 +329,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()) + "\n\n" + "\n".join(TEST_STANDARD),
+        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")

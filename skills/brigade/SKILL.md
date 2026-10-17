@@ -156,6 +156,25 @@ Each item runs in full or light mode per [the runtime's Modes section](../pstack
 
 To open a restaurant, read [opening.md](opening.md#open-a-restaurant) and run its steps in order.
 
+## House rules
+
+`house-rules.md` holds the numbered standing orders every brief pastes. `open` writes the file once, from a template, and never rewrites it. The template holds the two rules below, plus the worker size limit and the test standard. Those last two are a store's to edit or delete.
+
+A store created before the template held them gains them only when the user pastes them into its `house-rules.md`. Paste this text at the end of the file:
+
+- You may write the change yourself when it changes one file outside tests, the added and removed lines outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee safety, privacy, or integrity. Count those lines from `git diff --numstat` against the item's base commit, quote that output in the report, and treat every round and commit as one diff. Past that size, or more than one file outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.
+
+1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.
+2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.
+3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.
+4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.
+5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.
+6. Never assert a library's own wording.
+7. Add a case to an existing table when the setup is the same.
+8. A test that sleeps to order two processes names the review finding it pins.
+9. Do not add a test for what the project's build already refuses.
+10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?
+
 ## First service
 
 A head chef's first wake runs [First service](opening.md#first-service) in opening.md, then Run a service.

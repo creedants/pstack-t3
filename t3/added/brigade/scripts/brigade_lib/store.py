@@ -165,6 +165,19 @@ Paste these into every brief verbatim.
 
 1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.
 2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.
+
+- You may write the change yourself when it changes one file outside tests, the added and removed lines outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee safety, privacy, or integrity. Count those lines from `git diff --numstat` against the item's base commit, quote that output in the report, and treat every round and commit as one diff. Past that size, or more than one file outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.
+
+1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.
+2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.
+3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.
+4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.
+5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.
+6. Never assert a library's own wording.
+7. Add a case to an existing table when the setup is the same.
+8. A test that sleeps to order two processes names the review finding it pins.
+9. Do not add a test for what the project's build already refuses.
+10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?
 """
 
 
